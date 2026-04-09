@@ -38,6 +38,15 @@ class Settings(BaseSettings):
     QWEN_API_KEY: str = ""
     QWEN_MODEL: str = "qwen-plus"
 
+    # Context compaction settings (SummarizingConversationManager)
+    COMPACTION_SUMMARY_RATIO: float = 0.4
+    COMPACTION_PRESERVE_RECENT: int = 6
+
+    # LLM retry settings (ModelRetryStrategy)
+    LLM_RETRY_MAX_ATTEMPTS: int = 6
+    LLM_RETRY_INITIAL_DELAY: int = 4
+    LLM_RETRY_MAX_DELAY: int = 240
+
     @property
     def resolved_embedding_api_base(self) -> str:
         return self.EMBEDDING_API_BASE or self.QWEN_API_BASE

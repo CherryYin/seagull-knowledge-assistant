@@ -165,6 +165,7 @@ export const searchApi = {
 // --- Action Agent ---
 export interface ActionRequest {
   task: string;
+  session_id?: string;
   conversation_history?: { role: string; content: string }[];
 }
 
@@ -187,4 +188,61 @@ export async function* streamAction(body: ActionRequest): AsyncGenerator<string>
 // --- Sync ---
 export const syncApi = {
   sync: () => request<{ notes: Record<string, number>; sources: Record<string, number> }>("/sync", { method: "POST" }),
+};
+
+// --- Chat Sessions (backend-persisted) ---
+export interface ChatSessionMessage {
+  id: string;
+  role: string;
+  content: string;
+  created_at: string;
+}
+
+export interface ChatSessionRecord {
+  id: string;
+  title: string;
+  messages: ChatSessionMessage[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChatSessionList {
+  items: ChatSessionRecord[];
+  total: number;
+}
+
+export interface ChatSessionCreate {
+  id?: string;
+  title?: string;
+  messages?: ChatSessionMessage[];
+}
+
+export interface ChatSessionUpdate {
+  title?: string;
+  messages?: ChatSessionMessage[];
+}
+
+export const chatSessionsApi = {
+  list: (params?: { limit?: number; offset?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.limit) q.set("limit", String(params.limit));
+    if (params?.offset) q.set("offset", String(params.offset));
+    return request<ChatSessionList>(`/chat-sessions?${q}`);
+  },
+  get: (id: string) =>
+    request<ChatSessionRecord>(`/chat-sessions/${encodeURIComponent(id)}`),
+  create: (body: ChatSessionCreate = {}) =>
+    request<ChatSessionRecord>("/chat-sessions", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  update: (id: string, body: ChatSessionUpdate) =>
+    request<ChatSessionRecord>(`/chat-sessions/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  delete: (id: string) =>
+    request<void>(`/chat-sessions/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
 };

@@ -7,6 +7,7 @@ from pkg.api.sources import router as sources_router
 from pkg.api.notes import router as notes_router
 from pkg.api.search import router as search_router
 from pkg.api.action import router as action_router
+from pkg.api.chat_sessions import router as chat_sessions_router
 
 
 @asynccontextmanager
@@ -32,6 +33,7 @@ app.include_router(sources_router, prefix="/sources", tags=["sources"])
 app.include_router(notes_router, prefix="/notes", tags=["notes"])
 app.include_router(search_router, tags=["search"])
 app.include_router(action_router, tags=["action"])
+app.include_router(chat_sessions_router, prefix="/chat-sessions", tags=["chat-sessions"])
 
 
 @app.get("/health")

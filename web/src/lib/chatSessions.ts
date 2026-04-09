@@ -1,37 +1,22 @@
-export interface ChatSessionMessage {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  created_at: string;
-}
+/**
+ * Chat session management — backed by the /chat-sessions REST API.
+ *
+ * All operations are async and persist to PostgreSQL via the backend.
+ * The module re-exports types from api.ts for convenience.
+ */
+import {
+  chatSessionsApi,
+  type ChatSessionMessage,
+  type ChatSessionRecord,
+} from "./api";
 
-export interface ChatSessionRecord {
-  id: string;
-  title: string;
-  created_at: string;
-  updated_at: string;
-  messages: ChatSessionMessage[];
-}
-
-const SESSIONS_STORAGE_KEY = "pkg.chat.sessions";
-const ACTIVE_SESSION_STORAGE_KEY = "pkg.chat.active-session";
+export type { ChatSessionMessage, ChatSessionRecord };
 
 function createId(prefix: string) {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return `${prefix}-${crypto.randomUUID()}`;
   }
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-export function createEmptySession(): ChatSessionRecord {
-  const now = new Date().toISOString();
-  return {
-    id: createId("session"),
-    title: "New Session",
-    created_at: now,
-    updated_at: now,
-    messages: [],
-  };
 }
 
 export function createMessage(
@@ -53,29 +38,26 @@ export function deriveSessionTitle(messages: ChatSessionMessage[]): string {
   return singleLine.length > 40 ? `${singleLine.slice(0, 40)}...` : singleLine;
 }
 
-export function loadSessions(): ChatSessionRecord[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(SESSIONS_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+/** Create a new session on the backend and return it. */
+export async function createEmptySession(): Promise<ChatSessionRecord> {
+  return chatSessionsApi.create({ id: createId("session") });
 }
 
-export function saveSessions(sessions: ChatSessionRecord[]) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(sessions));
+/** Load all sessions from the backend. */
+export async function loadSessions(): Promise<ChatSessionRecord[]> {
+  const result = await chatSessionsApi.list({ limit: 100 });
+  return result.items;
 }
 
-export function loadActiveSessionId(): string | null {
-  if (typeof window === "undefined") return null;
-  return window.localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY);
+/** Save (update) a single session on the backend. */
+export async function saveSession(session: ChatSessionRecord): Promise<ChatSessionRecord> {
+  return chatSessionsApi.update(session.id, {
+    title: session.title,
+    messages: session.messages,
+  });
 }
 
-export function saveActiveSessionId(sessionId: string) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, sessionId);
+/** Delete a session from the backend. */
+export async function deleteSession(sessionId: string): Promise<void> {
+  await chatSessionsApi.delete(sessionId);
 }

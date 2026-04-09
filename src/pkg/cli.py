@@ -220,12 +220,12 @@ def ask(
       pkg ask "Compare the trade-offs I've considered for deterministic vs model-driven orchestration"
       pkg ask "Help me plan the next phase of my knowledge graph project"
     """
-    from pkg.services.action_agent import create_action_agent
+    from pkg.services.action_agent import create_action_agent_sync
 
     console.print(f"\n[bold]Action Agent[/bold] processing: {task}\n")
     console.print("[dim]Agent is thinking and using tools...[/dim]\n")
 
-    agent = create_action_agent()  # uses PrintingCallbackHandler by default
+    agent = create_action_agent_sync()  # uses PrintingCallbackHandler by default
     agent(task)
 
     console.print("\n[green]Done.[/green]")
@@ -238,12 +238,12 @@ def chat():
     Multi-turn conversation where the agent remembers context.
     Type 'exit' or 'quit' to end the session.
     """
-    from pkg.services.action_agent import create_action_agent
+    from pkg.services.action_agent import create_action_agent_sync
 
     console.print("[bold]Interactive Knowledge Chat[/bold]")
     console.print("[dim]Type 'exit' or 'quit' to end. The agent has access to your knowledge base.[/dim]\n")
 
-    agent = create_action_agent()
+    agent = create_action_agent_sync()
 
     while True:
         try:

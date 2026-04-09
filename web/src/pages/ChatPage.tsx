@@ -1,5 +1,5 @@
-import { useRef, useState, useEffect, useCallback, useMemo } from "react";
-import { History, MessageSquarePlus, Send, Sparkles } from "lucide-react";
+import { useRef, useState, useEffect, useCallback } from "react";
+import { History, MessageSquarePlus, Send, Sparkles, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -9,42 +9,57 @@ import {
   createEmptySession,
   createMessage,
   deriveSessionTitle,
-  loadActiveSessionId,
   loadSessions,
-  saveActiveSessionId,
-  saveSessions,
+  saveSession,
+  deleteSession,
   type ChatSessionRecord,
 } from "@/lib/chatSessions";
 
-function getInitialChatState() {
-  const storedSessions = loadSessions();
-  const sessions = storedSessions.length > 0 ? storedSessions : [createEmptySession()];
-  const storedActiveId = loadActiveSessionId();
-  const activeSessionId =
-    storedActiveId && sessions.some((session) => session.id === storedActiveId)
-      ? storedActiveId
-      : sessions[0].id;
-  return { sessions, activeSessionId };
-}
-
 export function ChatPage() {
-  const initialState = useMemo(() => getInitialChatState(), []);
-  const [sessions, setSessions] = useState<ChatSessionRecord[]>(initialState.sessions);
-  const [activeSessionId, setActiveSessionId] = useState(initialState.activeSessionId);
-  const [selectedHistorySessionId, setSelectedHistorySessionId] = useState(initialState.activeSessionId);
+  const [sessions, setSessions] = useState<ChatSessionRecord[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [selectedHistorySessionId, setSelectedHistorySessionId] = useState<string | null>(null);
   const [tab, setTab] = useState<"chat" | "history">("chat");
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [loading, setLoading] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // Load sessions from backend on mount
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const loaded = await loadSessions();
+        if (cancelled) return;
+        if (loaded.length > 0) {
+          setSessions(loaded);
+          setActiveSessionId(loaded[0].id);
+          setSelectedHistorySessionId(loaded[0].id);
+        } else {
+          const fresh = await createEmptySession();
+          if (cancelled) return;
+          setSessions([fresh]);
+          setActiveSessionId(fresh.id);
+          setSelectedHistorySessionId(fresh.id);
+        }
+      } catch (err) {
+        console.error("Failed to load sessions:", err);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const currentSession =
-    sessions.find((session) => session.id === activeSessionId) ?? sessions[0];
+    sessions.find((s) => s.id === activeSessionId) ?? sessions[0] ?? null;
   const historySessions = [...sessions]
-    .filter((session) => session.messages.length > 0)
+    .filter((s) => s.messages.length > 0)
     .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
   const selectedHistorySession =
-    historySessions.find((session) => session.id === selectedHistorySessionId) ??
+    historySessions.find((s) => s.id === selectedHistorySessionId) ??
     historySessions[0] ??
     null;
 
@@ -53,36 +68,37 @@ export function ChatPage() {
   }, []);
 
   useEffect(scrollToBottom, [currentSession?.messages, scrollToBottom]);
-  useEffect(() => saveSessions(sessions), [sessions]);
-  useEffect(() => {
-    if (activeSessionId) saveActiveSessionId(activeSessionId);
-  }, [activeSessionId]);
-  useEffect(() => {
-    if (!sessions.some((session) => session.id === activeSessionId) && sessions[0]) {
-      setActiveSessionId(sessions[0].id);
-    }
-    if (!sessions.some((session) => session.id === selectedHistorySessionId) && sessions[0]) {
-      setSelectedHistorySessionId(sessions[0].id);
-    }
-  }, [sessions, activeSessionId, selectedHistorySessionId]);
 
-  const updateSession = useCallback(
-    (sessionId: string, updater: (session: ChatSessionRecord) => ChatSessionRecord) => {
+  const updateSessionLocal = useCallback(
+    (sessionId: string, updater: (s: ChatSessionRecord) => ChatSessionRecord) => {
       setSessions((prev) =>
-        prev.map((session) => (session.id === sessionId ? updater(session) : session))
+        prev.map((s) => (s.id === sessionId ? updater(s) : s))
       );
     },
     []
   );
 
-  const createNewSession = useCallback(() => {
-    const next = createEmptySession();
-    setSessions((prev) => [next, ...prev]);
-    setActiveSessionId(next.id);
-    setSelectedHistorySessionId(next.id);
-    setInput("");
-    setTab("chat");
-    textareaRef.current?.focus();
+  const handleCreateNewSession = useCallback(async () => {
+    try {
+      const next = await createEmptySession();
+      setSessions((prev) => [next, ...prev]);
+      setActiveSessionId(next.id);
+      setSelectedHistorySessionId(next.id);
+      setInput("");
+      setTab("chat");
+      textareaRef.current?.focus();
+    } catch (err) {
+      console.error("Failed to create session:", err);
+    }
+  }, []);
+
+  const handleDeleteSession = useCallback(async (sessionId: string) => {
+    try {
+      await deleteSession(sessionId);
+      setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+    } catch (err) {
+      console.error("Failed to delete session:", err);
+    }
   }, []);
 
   const handleSubmit = async () => {
@@ -93,15 +109,11 @@ export function ChatPage() {
     const sessionId = currentSession.id;
     const userMsg = createMessage("user", task);
     const assistantMsg = createMessage("assistant", "");
-    const history = currentSession.messages.map((message) => ({
-      role: message.role,
-      content: message.content,
-    }));
 
-    updateSession(sessionId, (session) => {
-      const nextMessages = [...session.messages, userMsg, assistantMsg];
+    updateSessionLocal(sessionId, (s) => {
+      const nextMessages = [...s.messages, userMsg, assistantMsg];
       return {
-        ...session,
+        ...s,
         messages: nextMessages,
         title: deriveSessionTitle(nextMessages),
         updated_at: new Date().toISOString(),
@@ -111,21 +123,24 @@ export function ChatPage() {
     setInput("");
     setStreaming(true);
 
+    let fullResponse = "";
+
     try {
       const stream = streamAction({
         task,
-        conversation_history: history,
+        session_id: sessionId,
       });
 
       for await (const chunk of stream) {
-        updateSession(sessionId, (session) => {
-          const nextMessages = session.messages.map((message) =>
-            message.id === assistantMsg.id
-              ? { ...message, content: message.content + chunk }
-              : message
+        fullResponse += chunk;
+        updateSessionLocal(sessionId, (s) => {
+          const nextMessages = s.messages.map((m) =>
+            m.id === assistantMsg.id
+              ? { ...m, content: m.content + chunk }
+              : m
           );
           return {
-            ...session,
+            ...s,
             messages: nextMessages,
             title: deriveSessionTitle(nextMessages),
             updated_at: new Date().toISOString(),
@@ -133,19 +148,19 @@ export function ChatPage() {
         });
       }
     } catch (err) {
-      updateSession(sessionId, (session) => {
-        const nextMessages = session.messages.map((message) =>
-          message.id === assistantMsg.id
+      updateSessionLocal(sessionId, (s) => {
+        const nextMessages = s.messages.map((m) =>
+          m.id === assistantMsg.id
             ? {
-                ...message,
+                ...m,
                 content:
-                  message.content ||
+                  m.content ||
                   `Error: ${err instanceof Error ? err.message : "Unknown error"}`,
               }
-            : message
+            : m
         );
         return {
-          ...session,
+          ...s,
           messages: nextMessages,
           title: deriveSessionTitle(nextMessages),
           updated_at: new Date().toISOString(),
@@ -153,6 +168,17 @@ export function ChatPage() {
       });
     } finally {
       setStreaming(false);
+      // Persist the final state to backend (the stream endpoint also saves,
+      // but we save here as well to capture the local message IDs)
+      setSessions((prev) => {
+        const session = prev.find((s) => s.id === sessionId);
+        if (session) {
+          saveSession(session).catch((err) =>
+            console.error("Failed to save session:", err)
+          );
+        }
+        return prev;
+      });
     }
   };
 
@@ -163,6 +189,14 @@ export function ChatPage() {
     }
   };
 
+  if (loading) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <p className="text-muted-foreground">Loading sessions...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full flex-col px-6 py-6">
       <div className="mx-auto flex h-full w-full max-w-6xl flex-col">
@@ -170,10 +204,10 @@ export function ChatPage() {
           <div>
             <h1 className="text-2xl font-bold">Chat</h1>
             <p className="text-sm text-muted-foreground">
-              Conversations are grouped and persisted by session.
+              Conversations are persisted to the server.
             </p>
           </div>
-          <Button variant="outline" size="sm" onClick={createNewSession} disabled={streaming}>
+          <Button variant="outline" size="sm" onClick={handleCreateNewSession} disabled={streaming}>
             <MessageSquarePlus className="h-4 w-4" /> New Session
           </Button>
         </div>
@@ -235,7 +269,7 @@ export function ChatPage() {
                 ) : (
                   <div className="mx-auto max-w-3xl py-6">
                     {currentSession.messages.map((msg) => (
-                      <ChatMessage key={msg.id} role={msg.role} content={msg.content} />
+                      <ChatMessage key={msg.id} role={msg.role as "user" | "assistant"} content={msg.content} />
                     ))}
                     <div ref={bottomRef} />
                   </div>
@@ -283,7 +317,7 @@ export function ChatPage() {
                       <button
                         key={session.id}
                         onClick={() => setSelectedHistorySessionId(session.id)}
-                        className={`w-full rounded-lg border px-3 py-3 text-left transition-colors ${
+                        className={`group w-full rounded-lg border px-3 py-3 text-left transition-colors ${
                           selectedHistorySession?.id === session.id
                             ? "border-primary/40 bg-primary/5"
                             : "border-border hover:bg-accent"
@@ -291,9 +325,18 @@ export function ChatPage() {
                       >
                         <div className="mb-1 flex items-center justify-between gap-2">
                           <p className="truncate text-sm font-medium">{session.title}</p>
-                          <span className="shrink-0 text-[10px] text-muted-foreground">
-                            {session.messages.length}
-                          </span>
+                          <div className="flex shrink-0 items-center gap-1">
+                            <span className="text-[10px] text-muted-foreground">
+                              {session.messages.length}
+                            </span>
+                            <Trash2
+                              className="h-3 w-3 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteSession(session.id);
+                              }}
+                            />
+                          </div>
                         </div>
                         <p className="line-clamp-2 text-xs text-muted-foreground">
                           {session.messages[0]?.content || "Empty session"}
@@ -332,7 +375,7 @@ export function ChatPage() {
                     </div>
                     <div className="mx-auto w-full max-w-3xl flex-1 px-6 py-6">
                       {selectedHistorySession.messages.map((message) => (
-                        <ChatMessage key={message.id} role={message.role} content={message.content} />
+                        <ChatMessage key={message.id} role={message.role as "user" | "assistant"} content={message.content} />
                       ))}
                     </div>
                   </div>
