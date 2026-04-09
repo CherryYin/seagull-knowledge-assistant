@@ -1,18 +1,25 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   MessageSquare,
   Search,
   StickyNote,
   FileText,
   RefreshCw,
-  BarChart3,
   Brain,
   ChevronLeft,
+  Palette,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { syncApi } from "@/lib/api";
+import {
+  BACKGROUND_PRESETS,
+  getPresetById,
+  loadBackgroundPresetId,
+  saveBackgroundPresetId,
+  type BackgroundPresetId,
+} from "@/lib/uiBackground";
 
 const navItems = [
   { to: "/", icon: MessageSquare, label: "Chat" },
@@ -25,6 +32,26 @@ export function Layout() {
   const [collapsed, setCollapsed] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<string | null>(null);
+  const [backgroundId, setBackgroundId] = useState<BackgroundPresetId>(loadBackgroundPresetId);
+  const [bgPickerOpen, setBgPickerOpen] = useState(false);
+  const bgPickerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    saveBackgroundPresetId(backgroundId);
+  }, [backgroundId]);
+
+  useEffect(() => {
+    if (!bgPickerOpen) return;
+    const close = (e: MouseEvent) => {
+      if (bgPickerRef.current && !bgPickerRef.current.contains(e.target as Node)) {
+        setBgPickerOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [bgPickerOpen]);
+
+  const mainBg = getPresetById(backgroundId).color;
 
   const handleSync = async () => {
     setSyncing(true);
@@ -103,6 +130,56 @@ export function Layout() {
             <ChevronLeft className={cn("h-4 w-4 shrink-0 transition-transform", collapsed && "rotate-180")} />
             {!collapsed && "Collapse"}
           </Button>
+
+          <div className="relative" ref={bgPickerRef}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn("w-full", collapsed ? "justify-center" : "justify-start")}
+              onClick={() => setBgPickerOpen((o) => !o)}
+              title="Background"
+            >
+              <Palette className="h-4 w-4 shrink-0" />
+              {!collapsed && "Background"}
+            </Button>
+            {bgPickerOpen && (
+              <div
+                className={cn(
+                  "absolute z-50 rounded-lg border border-border bg-card p-2 shadow-lg",
+                  collapsed ? "left-full bottom-0 ml-1 w-[200px]" : "bottom-full left-0 mb-1 w-full min-w-[180px]"
+                )}
+              >
+                <p className="mb-2 px-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Main area
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  {BACKGROUND_PRESETS.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      title={preset.label}
+                      onClick={() => {
+                        setBackgroundId(preset.id);
+                        setBgPickerOpen(false);
+                      }}
+                      className={cn(
+                        "flex h-9 flex-col items-center justify-center gap-0.5 rounded-md border text-[10px] transition-colors",
+                        backgroundId === preset.id
+                          ? "border-primary ring-1 ring-primary/40"
+                          : "border-border hover:border-muted-foreground/40"
+                      )}
+                    >
+                      <span
+                        className="h-5 w-full rounded-sm"
+                        style={{ backgroundColor: preset.color }}
+                      />
+                      <span className="truncate text-muted-foreground">{preset.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Sync result toast */}
@@ -114,7 +191,10 @@ export function Layout() {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 overflow-hidden">
+      <main
+        className="flex-1 overflow-hidden transition-[background-color] duration-300 ease-out"
+        style={{ backgroundColor: mainBg }}
+      >
         <Outlet />
       </main>
     </div>
