@@ -5,6 +5,7 @@ __pycache__/
 dist/
 web/dist/
 web/node_modules/
+web/*.tsbuildinfo
 .env
 .venv/
 *.db
