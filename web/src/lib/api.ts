@@ -94,6 +94,20 @@ export interface NoteCreate {
   source_ids?: string[];
 }
 
+/** Partial update (PATCH). Only include fields to change. */
+export interface NoteUpdate {
+  title?: string;
+  note_type?: string;
+  domains?: string[];
+  tags?: string[];
+  abstract?: string | null;
+  content?: string | null;
+  project?: string | null;
+  status?: string;
+  confidence?: string;
+  source_ids?: string[];
+}
+
 export const notesApi = {
   list: (params?: {
     note_type?: string;
@@ -119,6 +133,11 @@ export const notesApi = {
     request<Note>("/notes", { method: "POST", body: JSON.stringify(body) }),
   upload: (body: FormData) =>
     request<Note>("/notes/upload", { method: "POST", body }),
+  update: (id: string, body: NoteUpdate) =>
+    request<Note>(`/notes/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
 };
 
 // --- Search ---

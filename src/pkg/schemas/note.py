@@ -45,6 +45,24 @@ class NoteList(BaseModel):
     total: int
 
 
+class NoteUpdate(BaseModel):
+    """Partial update; only set fields are applied."""
+
+    title: str | None = None
+    note_type: str | None = Field(
+        default=None,
+        pattern=r"^(architecture|case-study|concept|how-to|inbox)$",
+    )
+    domains: list[str] | None = None
+    tags: list[str] | None = None
+    abstract: str | None = None
+    content: str | None = None
+    project: str | None = None
+    status: str | None = None
+    confidence: str | None = None
+    source_ids: list[str] | None = None
+
+
 class SearchRequest(BaseModel):
     query: str
     mode: str = Field(default="auto", pattern=r"^(auto|sql|vector|hybrid)$")

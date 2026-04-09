@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.db import get_session
 from pkg.models.note import Note, NoteEmbedding
-from pkg.schemas.note import NoteCreate, NoteList, NoteRead
+from pkg.schemas.note import NoteCreate, NoteList, NoteRead, NoteUpdate
 from pkg.services.embedding import get_embedding_service
 from pkg.services.storage import get_storage_service
 
@@ -26,6 +26,17 @@ def _make_note_id(title: str, explicit_id: str | None = None) -> str:
         return explicit_id
     now = datetime.now(timezone.utc)
     return f"note-{now.strftime('%Y%m%d')}-{title[:30].lower().replace(' ', '-')}"
+
+
+def _put_note_markdown_oss(note_id: str, content: str) -> str:
+    """Upload note body to MinIO at notes/{note_id}/note.md. put_object overwrites an existing object."""
+    storage = get_storage_service()
+    object_key = storage.build_object_key("notes", note_id, "note.md")
+    return storage.upload_bytes(
+        object_key=object_key,
+        data=(content or "").encode("utf-8"),
+        content_type="text/markdown",
+    )
 
 
 async def _persist_note(
@@ -66,7 +77,15 @@ async def _persist_note(
 
 @router.post("", response_model=NoteRead, status_code=201)
 async def create_note(body: NoteCreate, session: AsyncSession = Depends(get_session)):
-    return await _persist_note(session=session, body=body)
+    note_id = _make_note_id(body.title, body.id)
+    content = body.content or ""
+    storage_uri = _put_note_markdown_oss(note_id, content)
+    return await _persist_note(
+        session=session,
+        body=body.model_copy(update={"id": note_id}),
+        file_path=storage_uri,
+        content_override=content,
+    )
 
 
 @router.post("/upload", response_model=NoteRead, status_code=201)
@@ -156,6 +175,45 @@ async def list_notes(
     items = list(rows.scalars())
 
     return NoteList(items=items, total=total)
+
+
+@router.patch("/{note_id}", response_model=NoteRead)
+@router.put("/{note_id}", response_model=NoteRead)
+async def update_note(
+    note_id: str,
+    body: NoteUpdate,
+    session: AsyncSession = Depends(get_session),
+):
+    note = await session.get(Note, note_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+
+    patch = body.model_dump(exclude_unset=True)
+    if not patch:
+        return note
+
+    for key, value in patch.items():
+        setattr(note, key, value)
+
+    note.word_count = len((note.content or "").split())
+    # Always persist current body to OSS at notes/{note_id}/note.md (overwrites if present).
+    note.file_path = _put_note_markdown_oss(note_id, note.content or "")
+
+    title_or_abstract_changed = "title" in patch or "abstract" in patch
+    if title_or_abstract_changed:
+        emb_svc = get_embedding_service()
+        emb_row = await session.get(NoteEmbedding, note_id)
+        title_vec = emb_svc.embed_text(note.title)
+        abstract_vec = emb_svc.embed_text(note.abstract or note.title)
+        if emb_row:
+            emb_row.title_vec = title_vec
+            emb_row.abstract_vec = abstract_vec
+        else:
+            session.add(NoteEmbedding(note_id=note_id, title_vec=title_vec, abstract_vec=abstract_vec))
+
+    await session.commit()
+    await session.refresh(note)
+    return note
 
 
 @router.get("/{note_id}", response_model=NoteRead)

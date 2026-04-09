@@ -22,7 +22,7 @@ export function ChatMessage({ role, content }: Props) {
         {isUser ? (
           <User className="h-4 w-4 text-primary" />
         ) : (
-          <Bot className="h-4 w-4 text-emerald-400" />
+          <Bot className="h-4 w-4 text-emerald-600" />
         )}
       </div>
 

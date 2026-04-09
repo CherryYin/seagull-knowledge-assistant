@@ -9,12 +9,12 @@ export type BackgroundPreset = {
 };
 
 export const BACKGROUND_PRESETS: BackgroundPreset[] = [
-  { id: "zinc", label: "Zinc", color: "#09090b" },
-  { id: "slate", label: "Slate", color: "#0f172a" },
-  { id: "blue", label: "Blue", color: "#0a1628" },
-  { id: "green", label: "Green", color: "#0a1810" },
-  { id: "purple", label: "Purple", color: "#120a18" },
-  { id: "warm", label: "Warm", color: "#141008" },
+  { id: "zinc", label: "Zinc", color: "#fafafa" },
+  { id: "slate", label: "Slate", color: "#f8fafc" },
+  { id: "blue", label: "Blue", color: "#eff6ff" },
+  { id: "green", label: "Green", color: "#f0fdf4" },
+  { id: "purple", label: "Purple", color: "#faf5ff" },
+  { id: "warm", label: "Warm", color: "#fffbeb" },
 ];
 
 export function loadBackgroundPresetId(): BackgroundPresetId {
