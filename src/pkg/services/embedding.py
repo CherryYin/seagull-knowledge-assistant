@@ -1,0 +1,42 @@
+from functools import lru_cache
+
+from openai import OpenAI
+
+from pkg.config import settings
+
+
+class EmbeddingService:
+    def __init__(self):
+        self._client = None
+
+    @property
+    def client(self) -> OpenAI:
+        if self._client is None:
+            self._client = OpenAI(
+                base_url=settings.resolved_embedding_api_base,
+                api_key=settings.resolved_embedding_api_key,
+            )
+        return self._client
+
+    def embed_text(self, text: str) -> list[float]:
+        response = self.client.embeddings.create(
+            model=settings.EMBEDDING_MODEL,
+            input=text,
+            dimensions=settings.EMBEDDING_DIM,
+            encoding_format="float",
+        )
+        return response.data[0].embedding
+
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        response = self.client.embeddings.create(
+            model=settings.EMBEDDING_MODEL,
+            input=texts,
+            dimensions=settings.EMBEDDING_DIM,
+            encoding_format="float",
+        )
+        return [item.embedding for item in response.data]
+
+
+@lru_cache(maxsize=1)
+def get_embedding_service() -> EmbeddingService:
+    return EmbeddingService()

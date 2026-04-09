@@ -1,0 +1,182 @@
+from datetime import datetime, timezone
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse, RedirectResponse
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from pkg.db import get_session
+from pkg.models.note import Note, NoteEmbedding
+from pkg.schemas.note import NoteCreate, NoteList, NoteRead
+from pkg.services.embedding import get_embedding_service
+from pkg.services.storage import get_storage_service
+
+router = APIRouter()
+
+
+def _split_csv(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _make_note_id(title: str, explicit_id: str | None = None) -> str:
+    if explicit_id:
+        return explicit_id
+    now = datetime.now(timezone.utc)
+    return f"note-{now.strftime('%Y%m%d')}-{title[:30].lower().replace(' ', '-')}"
+
+
+async def _persist_note(
+    *,
+    session: AsyncSession,
+    body: NoteCreate,
+    file_path: str | None = None,
+    content_override: str | None = None,
+) -> Note:
+    note_id = _make_note_id(body.title, body.id)
+
+    note = Note(
+        id=note_id,
+        title=body.title,
+        note_type=body.note_type,
+        domains=body.domains,
+        tags=body.tags,
+        abstract=body.abstract,
+        content=content_override if content_override is not None else body.content,
+        project=body.project,
+        status=body.status,
+        confidence=body.confidence,
+        source_ids=body.source_ids,
+        file_path=file_path,
+        word_count=len(((content_override if content_override is not None else body.content) or "").split()),
+    )
+    session.add(note)
+
+    emb_svc = get_embedding_service()
+    title_vec = emb_svc.embed_text(note.title)
+    abstract_vec = emb_svc.embed_text(body.abstract or body.title)
+    session.add(NoteEmbedding(note_id=note_id, title_vec=title_vec, abstract_vec=abstract_vec))
+
+    await session.commit()
+    await session.refresh(note)
+    return note
+
+
+@router.post("", response_model=NoteRead, status_code=201)
+async def create_note(body: NoteCreate, session: AsyncSession = Depends(get_session)):
+    return await _persist_note(session=session, body=body)
+
+
+@router.post("/upload", response_model=NoteRead, status_code=201)
+async def upload_note(
+    file: UploadFile = File(...),
+    title: str | None = Form(None),
+    note_type: str = Form("inbox"),
+    domains: str | None = Form(None),
+    tags: str | None = Form(None),
+    abstract: str | None = Form(None),
+    project: str | None = Form(None),
+    status: str = Form("seed"),
+    confidence: str = Form("medium"),
+    source_ids: str | None = Form(None),
+    session: AsyncSession = Depends(get_session),
+):
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded note file is empty")
+
+    inferred_title = title or Path(file.filename or "note").stem
+    content = file_bytes.decode("utf-8", errors="replace")
+    body = NoteCreate(
+        title=inferred_title,
+        note_type=note_type,
+        domains=_split_csv(domains),
+        tags=_split_csv(tags),
+        abstract=abstract,
+        project=project,
+        status=status,
+        confidence=confidence,
+        source_ids=_split_csv(source_ids),
+        content=content,
+    )
+
+    note_id = _make_note_id(body.title, body.id)
+    storage = get_storage_service()
+    object_key = storage.build_object_key("notes", note_id, file.filename)
+    storage_uri = storage.upload_bytes(
+        object_key=object_key,
+        data=file_bytes,
+        content_type=file.content_type,
+    )
+
+    return await _persist_note(
+        session=session,
+        body=body.model_copy(update={"id": note_id}),
+        file_path=storage_uri,
+        content_override=content,
+    )
+
+
+@router.get("", response_model=NoteList)
+async def list_notes(
+    note_type: str | None = None,
+    domain: str | None = None,
+    tag: str | None = None,
+    project: str | None = None,
+    status: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+    session: AsyncSession = Depends(get_session),
+):
+    stmt = select(Note)
+    count_stmt = select(func.count()).select_from(Note)
+
+    if note_type:
+        stmt = stmt.where(Note.note_type == note_type)
+        count_stmt = count_stmt.where(Note.note_type == note_type)
+    if domain:
+        stmt = stmt.where(Note.domains.any(domain))
+        count_stmt = count_stmt.where(Note.domains.any(domain))
+    if tag:
+        stmt = stmt.where(Note.tags.any(tag))
+        count_stmt = count_stmt.where(Note.tags.any(tag))
+    if project:
+        stmt = stmt.where(Note.project == project)
+        count_stmt = count_stmt.where(Note.project == project)
+    if status:
+        stmt = stmt.where(Note.status == status)
+        count_stmt = count_stmt.where(Note.status == status)
+
+    stmt = stmt.order_by(Note.updated_at.desc()).offset(offset).limit(limit)
+
+    total = (await session.execute(count_stmt)).scalar() or 0
+    rows = await session.execute(stmt)
+    items = list(rows.scalars())
+
+    return NoteList(items=items, total=total)
+
+
+@router.get("/{note_id}", response_model=NoteRead)
+async def get_note(note_id: str, session: AsyncSession = Depends(get_session)):
+    note = await session.get(Note, note_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return note
+
+
+@router.get("/{note_id}/file")
+async def get_note_file(note_id: str, session: AsyncSession = Depends(get_session)):
+    note = await session.get(Note, note_id)
+    if not note or not note.file_path:
+        raise HTTPException(status_code=404, detail="Note file not found")
+
+    if note.file_path.startswith("minio://"):
+        url = get_storage_service().generate_download_url(note.file_path)
+        return RedirectResponse(url=url)
+
+    local_path = Path(note.file_path)
+    if not local_path.exists():
+        raise HTTPException(status_code=404, detail="Note file not found")
+    return FileResponse(local_path)
