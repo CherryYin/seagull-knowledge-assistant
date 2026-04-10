@@ -190,6 +190,33 @@ export const syncApi = {
   sync: () => request<{ notes: Record<string, number>; sources: Record<string, number> }>("/sync", { method: "POST" }),
 };
 
+// --- Skills ---
+export interface SkillArg {
+  name: string;
+  description: string;
+  required: boolean;
+}
+
+export interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  args: SkillArg[];
+  template: string;
+  tools_file: string | null;
+  file_path: string | null;
+  source: string; // "local" | "db"
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export const skillsApi = {
+  list: () => request<Skill[]>("/skills"),
+  get: (name: string) => request<Skill>(`/skills/${encodeURIComponent(name)}`),
+  delete: (name: string) =>
+    request<void>(`/skills/${encodeURIComponent(name)}`, { method: "DELETE" }),
+};
+
 // --- Chat Sessions (backend-persisted) ---
 export interface ChatSessionMessage {
   id: string;

@@ -40,10 +40,22 @@ def _make_source_id(title: str, explicit_id: str | None = None) -> str:
 
 
 def _extract_text_content(filename: str | None, content_type: str | None, payload: bytes) -> str | None:
-    suffix = Path(filename or "").suffix.lower()
+    """Extract text from uploaded files.
+
+    For plain text files, decodes UTF-8 directly.
+    For binary documents (PDF, DOCX, PPTX, XLSX, images), uses Docling with OCR.
+    """
+    fname = filename or ""
+    suffix = Path(fname).suffix.lower()
+
+    # Plain text files — direct decode
     if (content_type or "").startswith("text/") or suffix in TEXT_FILE_SUFFIXES:
         return payload.decode("utf-8", errors="replace")
-    return None
+
+    # Binary documents — use Docling
+    from pkg.services.document_extractor import extract_content
+
+    return extract_content(payload, fname)
 
 
 async def _persist_source(

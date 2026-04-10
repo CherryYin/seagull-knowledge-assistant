@@ -6,6 +6,7 @@ import { NotesPage } from "./pages/NotesPage";
 import { NoteDetailPage } from "./pages/NoteDetailPage";
 import { SourcesPage } from "./pages/SourcesPage";
 import { SourceDetailPage } from "./pages/SourceDetailPage";
+import { SkillsPage } from "./pages/SkillsPage";
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
           <Route path="/notes/:id" element={<NoteDetailPage />} />
           <Route path="/sources" element={<SourcesPage />} />
           <Route path="/sources/:id" element={<SourceDetailPage />} />
+          <Route path="/skills" element={<SkillsPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

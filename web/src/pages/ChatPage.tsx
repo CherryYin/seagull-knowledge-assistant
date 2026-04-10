@@ -26,7 +26,7 @@ export function ChatPage() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Load sessions from backend on mount
+  // Load sessions and skills from backend on mount
   useEffect(() => {
     let cancelled = false;
     (async () => {

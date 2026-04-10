@@ -17,10 +17,11 @@ def _run(coro):
 
 @app.command()
 def sync():
-    """Sync markdown files from data/ into the database."""
+    """Sync markdown files from local directories into the database + OSS."""
 
     async def _sync():
         from pkg.db import async_session
+        from pkg.services.skills import sync_skills_from_directory
         from pkg.services.sync_pipeline import (
             sync_notes_from_directory,
             sync_sources_from_directory,
@@ -34,6 +35,10 @@ def sync():
             console.print(f"[bold]Syncing sources from[/bold] {settings.sources_dir}")
             sources_stats = await sync_sources_from_directory(session, settings.sources_dir)
             console.print(f"  Sources: {sources_stats}")
+
+            console.print(f"[bold]Syncing skills from[/bold] {settings.skills_dir}")
+            skills_stats = await sync_skills_from_directory(session, settings.skills_dir)
+            console.print(f"  Skills: {skills_stats}")
 
             console.print("[green]Sync complete.[/green]")
 
@@ -219,14 +224,27 @@ def ask(
       pkg ask "Draft a summary of my architecture designs"
       pkg ask "Compare the trade-offs I've considered for deterministic vs model-driven orchestration"
       pkg ask "Help me plan the next phase of my knowledge graph project"
+      pkg ask "/summarize-topic AI"
     """
     from pkg.services.action_agent import create_action_agent_sync
+    from pkg.services.skills import expand_skill, load_skills, parse_skill_invocation
+
+    # Expand skill invocation if applicable
+    expanded = task
+    invocation = parse_skill_invocation(task)
+    if invocation:
+        skill_name, args = invocation
+        for skill in load_skills(settings.skills_dir):
+            if skill.name == skill_name:
+                expanded = expand_skill(skill, args)
+                console.print(f"[dim]Expanding skill: /{skill_name}[/dim]\n")
+                break
 
     console.print(f"\n[bold]Action Agent[/bold] processing: {task}\n")
     console.print("[dim]Agent is thinking and using tools...[/dim]\n")
 
     agent = create_action_agent_sync()  # uses PrintingCallbackHandler by default
-    agent(task)
+    agent(expanded)
 
     console.print("\n[green]Done.[/green]")
 
@@ -239,11 +257,13 @@ def chat():
     Type 'exit' or 'quit' to end the session.
     """
     from pkg.services.action_agent import create_action_agent_sync
+    from pkg.services.skills import expand_skill, load_skills, parse_skill_invocation
 
     console.print("[bold]Interactive Knowledge Chat[/bold]")
-    console.print("[dim]Type 'exit' or 'quit' to end. The agent has access to your knowledge base.[/dim]\n")
+    console.print("[dim]Type 'exit' or 'quit' to end. Use /skill-name to invoke skills.[/dim]\n")
 
     agent = create_action_agent_sync()
+    skill_list = load_skills(settings.skills_dir)
 
     while True:
         try:
@@ -257,11 +277,53 @@ def chat():
         if not user_input.strip():
             continue
 
+        # Expand skill invocation
+        expanded = user_input
+        invocation = parse_skill_invocation(user_input)
+        if invocation:
+            skill_name, args = invocation
+            for skill in skill_list:
+                if skill.name == skill_name:
+                    expanded = expand_skill(skill, args)
+                    console.print(f"[dim]Expanding skill: /{skill_name}[/dim]")
+                    break
+
         console.print()
-        agent(user_input)
+        agent(expanded)
         console.print()
 
     console.print("\n[green]Session ended.[/green]")
+
+
+@app.command()
+def skills():
+    """List all available skills (local + DB)."""
+    from pkg.services.skills import load_skills_merged
+
+    async def _list():
+        return await load_skills_merged(settings.skills_dir)
+
+    skill_list = _run(_list())
+
+    if not skill_list:
+        console.print(f"[yellow]No skills found in {settings.skills_dir} or DB[/yellow]")
+        console.print("[dim]Create .md files with YAML frontmatter in skills/ or use the API.[/dim]")
+        return
+
+    table = Table(title="Available Skills")
+    table.add_column("Name", style="cyan bold")
+    table.add_column("Description")
+    table.add_column("Source", style="dim")
+    table.add_column("Usage", style="dim")
+
+    for s in skill_list:
+        args_hint = " ".join(
+            f"<{a.name}>" if a.required else f"[{a.name}]"
+            for a in s.args
+        )
+        table.add_row(s.name, s.description, s.source, f"/{s.name} {args_hint}".strip())
+
+    console.print(table)
 
 
 @app.command()

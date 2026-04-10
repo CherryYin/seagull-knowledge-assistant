@@ -32,6 +32,7 @@ from pkg.services.tools import (
     read_source,
     search_knowledge,
 )
+from pkg.services.tools_document import process_document
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,7 @@ _SYSTEM_PROMPT_TEMPLATE = """\
 - **浏览笔记** (list_notes): 按领域/标签/项目浏览笔记
 - **浏览资料** (list_sources): 按类型浏览原始资料
 - **知识统计** (knowledge_stats): 了解知识库的规模和覆盖范围
+- **文档处理** (process_document): 处理PDF、Word、Excel、PPT文档，或协作撰写文档。当用户需要创建、编辑、合并文档时，主动使用此工具。
 
 ## 工作原则
 
@@ -159,21 +161,29 @@ async def _get_cached_kb_stats() -> str:
 
 async def build_system_prompt() -> str:
     """Build the system prompt with dynamic runtime context."""
+    from pkg.services.skills import format_skills_for_prompt, load_skills_merged
+
     today = datetime.now().strftime("%Y-%m-%d")
     kb_stats = await _get_cached_kb_stats()
-    return _SYSTEM_PROMPT_TEMPLATE.format(today=today, kb_stats=kb_stats)
+    base = _SYSTEM_PROMPT_TEMPLATE.format(today=today, kb_stats=kb_stats)
+
+    skills = await load_skills_merged(settings.skills_dir)
+    skills_section = format_skills_for_prompt(skills)
+
+    return base + skills_section
 
 
 # ---------------------------------------------------------------------------
 # All tools available to the agent
 # ---------------------------------------------------------------------------
-TOOLS = [
+_BASE_TOOLS = [
     search_knowledge,
     read_note,
     read_source,
     list_notes,
     list_sources,
     knowledge_stats,
+    process_document,
 ]
 
 
@@ -187,8 +197,15 @@ async def create_action_agent(callback_handler=None) -> Agent:
         callback_handler: Strands callback handler. Defaults to PrintingCallbackHandler.
             Pass None to suppress output (for API usage).
     """
+    from pkg.services.skills import load_skill_tools, load_skills_merged
+
     model = create_model()
     system_prompt = await build_system_prompt()
+
+    # Merge base tools with dynamically loaded skill tools
+    skills = await load_skills_merged(settings.skills_dir)
+    skill_tools = load_skill_tools(settings.skills_dir, skills)
+    all_tools = _BASE_TOOLS + skill_tools
 
     conversation_manager = SummarizingConversationManager(
         summary_ratio=settings.COMPACTION_SUMMARY_RATIO,
@@ -204,7 +221,7 @@ async def create_action_agent(callback_handler=None) -> Agent:
 
     kwargs = {
         "model": model,
-        "tools": TOOLS,
+        "tools": all_tools,
         "system_prompt": system_prompt,
         "conversation_manager": conversation_manager,
         "retry_strategy": retry_strategy,

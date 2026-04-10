@@ -5,6 +5,7 @@ import {
   Search,
   StickyNote,
   FileText,
+  Zap,
   RefreshCw,
   Brain,
   ChevronLeft,
@@ -26,6 +27,7 @@ const navItems = [
   { to: "/search", icon: Search, label: "Search" },
   { to: "/notes", icon: StickyNote, label: "Notes" },
   { to: "/sources", icon: FileText, label: "Sources" },
+  { to: "/skills", icon: Zap, label: "Skills" },
 ];
 
 export function Layout() {

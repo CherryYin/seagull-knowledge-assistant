@@ -6,10 +6,12 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
+from pkg.config import settings
 from pkg.db import async_session
 from pkg.models.chat_session import ChatSession
 from pkg.schemas.action import ActionRequest, ActionResponse
 from pkg.services.action_agent import create_action_agent
+from pkg.services.skills import expand_skill, load_skills_merged, parse_skill_invocation
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +79,19 @@ def _derive_title(messages: list[dict]) -> str:
     return "New Session"
 
 
+async def _try_expand_skill(task: str) -> str:
+    """If task starts with /skill-name, expand it. Otherwise return as-is."""
+    invocation = parse_skill_invocation(task)
+    if invocation is None:
+        return task
+    skill_name, args = invocation
+    skills = await load_skills_merged(settings.skills_dir)
+    for skill in skills:
+        if skill.name == skill_name:
+            return expand_skill(skill, args)
+    return task
+
+
 @router.post("/action", response_model=ActionResponse)
 async def execute_action(body: ActionRequest):
     agent = await create_action_agent(callback_handler=None)
@@ -92,8 +107,10 @@ async def execute_action(body: ActionRequest):
         for msg in body.conversation_history:
             agent.messages.append(_normalize_strands_message(msg))
 
+    task = await _try_expand_skill(body.task)
+
     try:
-        result = await agent.invoke_async(body.task)
+        result = await agent.invoke_async(task)
     except Exception as exc:
         logger.exception("Agent invocation failed")
         raise HTTPException(status_code=503, detail=f"Agent error: {exc}")
@@ -127,11 +144,12 @@ async def execute_action_stream(body: ActionRequest):
         for msg in body.conversation_history:
             agent.messages.append(_normalize_strands_message(msg))
 
+    task = await _try_expand_skill(body.task)
     collected_chunks: list[str] = []
 
     async def event_generator():
         try:
-            async for event in agent.stream_async(body.task):
+            async for event in agent.stream_async(task):
                 if "data" in event:
                     collected_chunks.append(event["data"])
                     yield event["data"]
