@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from pkg.config import settings
 from pkg.db import Base
-from pkg.models.source import Source, SourceEmbedding  # noqa: F401
+from pkg.models.source import Source, SourceChunk, SourceEmbedding  # noqa: F401
 from pkg.models.note import Note, NoteEmbedding  # noqa: F401
 from pkg.models.chat_session import ChatSession  # noqa: F401
 from pkg.models.skill import Skill  # noqa: F401

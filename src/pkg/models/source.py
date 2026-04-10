@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Index, String, Text, func
+from sqlalchemy import Index, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -36,3 +36,18 @@ class SourceEmbedding(Base):
     )
     title_vec = mapped_column(Vector(settings.EMBEDDING_DIM))
     summary_vec = mapped_column(Vector(settings.EMBEDDING_DIM))
+
+
+class SourceChunk(Base):
+    """A chunk of a source document, with its own embedding for fine-grained retrieval."""
+    __tablename__ = "source_chunks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding = mapped_column(Vector(settings.EMBEDDING_DIM))
+
+    __table_args__ = (
+        Index("idx_source_chunks_source", "source_id"),
+    )

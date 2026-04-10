@@ -12,6 +12,11 @@ import { sourcesApi, type SourceCreate } from "@/lib/api";
 
 const SOURCE_TYPES = ["pdf", "article", "conversation", "video", "web", "code"];
 
+/** Files that go through Docling on the server (PDF/Office/images may take a long time, especially with OCR). */
+function isServerHeavyExtract(file: File) {
+  return /\.(pdf|docx|pptx|xlsx|png|jpe?g|tiff?|bmp|webp|html?)$/i.test(file.name);
+}
+
 export function SourcesPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -122,13 +127,22 @@ export function SourcesPage() {
                     <p className="text-xs text-muted-foreground">Selected file: {uploadFile.name}</p>
                   )}
                 </div>
+                {uploadMutation.isPending && uploadFile && isServerHeavyExtract(uploadFile) && (
+                  <p className="text-xs text-muted-foreground rounded-md border border-border bg-muted/50 px-3 py-2">
+                    Server is extracting text (Docling). Large PDFs with OCR can take several minutes. Page progress
+                    appears in the API process logs as{" "}
+                    <span className="font-mono text-[10px]">[docling] PDF progress: x/y pages</span>.
+                  </p>
+                )}
                 <Button
                   className="w-full"
                   onClick={submitSource}
                   disabled={!form.title || createMutation.isPending || uploadMutation.isPending}
                 >
                   {uploadMutation.isPending
-                    ? "Uploading..."
+                    ? uploadFile && isServerHeavyExtract(uploadFile)
+                      ? "Processing on server…"
+                      : "Uploading..."
                     : createMutation.isPending
                       ? "Creating..."
                       : uploadFile

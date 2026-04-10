@@ -118,7 +118,7 @@ class RetrieverAgent:
                 content_preview=(row.content or "")[:200],
             ))
 
-        # Search source embeddings
+        # Search source embeddings (document-level)
         src_stmt = text("""
             SELECT se.source_id, s.title, s.raw_content,
                    1 - (se.summary_vec <=> CAST(:query_vec AS vector)) AS score
@@ -137,6 +137,27 @@ class RetrieverAgent:
                 type="source",
                 score=float(row.score),
                 content_preview=(row.raw_content or "")[:200],
+            ))
+
+        # Search source chunks (fine-grained, within long documents)
+        chunk_stmt = text("""
+            SELECT sc.source_id, s.title, sc.content,
+                   1 - (sc.embedding <=> CAST(:query_vec AS vector)) AS score
+            FROM source_chunks sc
+            JOIN sources s ON s.id = sc.source_id
+            ORDER BY sc.embedding <=> CAST(:query_vec AS vector)
+            LIMIT :top_k
+        """)
+        rows = await self.session.execute(
+            chunk_stmt, {"query_vec": query_vec_literal, "top_k": top_k}
+        )
+        for row in rows:
+            results.append(SearchResult(
+                id=row.source_id,
+                title=row.title,
+                type="source_chunk",
+                score=float(row.score),
+                content_preview=row.content[:200],
             ))
 
         results.sort(key=lambda r: r.score, reverse=True)

@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,6 +25,30 @@ class Settings(BaseSettings):
     EMBEDDING_API_KEY: str = ""
     DATA_DIR: Path = Path("./data")
 
+    # Docling PDF: OCR + table structure load models; first PDF can take minutes on CPU.
+    # Set DOCLING_OCR=false or DOCLING_TABLE_STRUCTURE=false in .env to speed up if you only need text-layer PDFs.
+    DOCLING_OCR: bool = True
+    DOCLING_TABLE_STRUCTURE: bool = True
+
+    # OCR engine: "tesseract" (fast, system-level) or "rapidocr" (onnxruntime-based).
+    DOCLING_OCR_ENGINE: str = Field(
+        default="tesseract",
+        pattern=r"^(tesseract|rapidocr)$",
+    )
+
+    # Tesseract language codes (3-letter ISO 639-2). Requires matching tesseract-ocr-* packages.
+    DOCLING_TESSERACT_LANGS: list[str] = ["eng", "chi_sim"]
+    # Path to tessdata directory. Auto-detected if empty.
+    DOCLING_TESSDATA_PREFIX: str = "/usr/share/tesseract-ocr/4.00/tessdata"
+
+    # RapidOCR backend (only used when DOCLING_OCR_ENGINE=rapidocr).
+    DOCLING_RAPIDOCR_BACKEND: str = Field(
+        default="onnxruntime",
+        pattern=r"^(onnxruntime|openvino|paddle|torch)$",
+    )
+    # False skips angle-classification (slightly faster; worse on rotated scans).
+    DOCLING_OCR_USE_ANGLE_CLS: bool = True
+
     # LLM provider: "azure" or "qwen"
     LLM_PROVIDER: str = "qwen"
 
@@ -46,6 +71,10 @@ class Settings(BaseSettings):
     LLM_RETRY_MAX_ATTEMPTS: int = 6
     LLM_RETRY_INITIAL_DELAY: int = 4
     LLM_RETRY_MAX_DELAY: int = 240
+
+    # Chunking settings for long document embedding
+    CHUNK_SIZE: int = 512       # target chunk size in characters
+    CHUNK_OVERLAP: int = 64     # overlap between consecutive chunks
 
     @property
     def resolved_embedding_api_base(self) -> str:

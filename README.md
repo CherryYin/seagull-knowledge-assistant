@@ -29,7 +29,8 @@ L1 Sources (原始资料)  →  L2 Notes (结构化笔记)  →  L3 Insights (�
 |---|---|
 | 后端框架 | FastAPI + Uvicorn |
 | 数据库 | PostgreSQL 16 + pgvector |
-| ORM | SQLAlchemy (async) + Alembic |
+| ORM | SQLAlchemy (async) + 
+ |
 | 嵌入模型 | Qwen `text-embedding-v4` (DashScope cloud API) |
 | LLM | Azure OpenAI / 通义千问 (可切换) |
 | Agent 框架 | Strands Agents |

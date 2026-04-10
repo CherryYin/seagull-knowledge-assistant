@@ -7,7 +7,8 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.models.note import Note, NoteEmbedding
-from pkg.models.source import Source, SourceEmbedding
+from pkg.models.source import Source, SourceChunk, SourceEmbedding
+from pkg.services.chunking import chunk_text
 from pkg.services.embedding import get_embedding_service
 
 
@@ -86,7 +87,49 @@ async def sync_notes_from_directory(session: AsyncSession, notes_dir: Path) -> d
     return stats
 
 
-async def sync_sources_from_directory(session: AsyncSession, sources_dir: Path) -> dict:
+async def _generate_chunks(
+    session: AsyncSession,
+    emb,
+    source_id: str,
+    content: str,
+) -> None:
+    """Split content into chunks, embed each, and persist as SourceChunk rows.
+
+    Deletes any existing chunks for the source first (handles re-sync).
+    """
+    chunks = chunk_text(content)
+    if not chunks:
+        return
+
+    # Remove old chunks for this source
+    await session.execute(
+        text("DELETE FROM source_chunks WHERE source_id = :sid"),
+        {"sid": source_id},
+    )
+
+    vectors = emb.embed_batch(chunks)
+    for idx, (chunk_content, vec) in enumerate(zip(chunks, vectors)):
+        session.add(SourceChunk(
+            source_id=source_id,
+            chunk_index=idx,
+            content=chunk_content,
+            embedding=vec,
+        ))
+
+
+async def sync_sources_from_directory(
+    session: AsyncSession,
+    sources_dir: Path,
+    progress_callback=None,
+) -> dict:
+    """Sync source files from directory into DB.
+
+    Args:
+        session: Async DB session.
+        sources_dir: Directory to scan for source files.
+        progress_callback: Optional callable(filename, current_page, total_pages)
+            called during Docling extraction to report per-page progress.
+    """
     stats = {"created": 0, "updated": 0, "skipped": 0}
     if not sources_dir.exists():
         return stats
@@ -124,8 +167,14 @@ async def sync_sources_from_directory(session: AsyncSession, sources_dir: Path) 
             url = None
             extra_meta = {"original_filename": src_file.name}
             source_id = _generate_id("src", title)
+
+            # Build per-file progress callback
+            file_progress = None
+            if progress_callback is not None:
+                file_progress = lambda cur, total, _f=src_file.name: progress_callback(_f, cur, total)
+
             try:
-                content = extract_content_from_path(src_file)
+                content = extract_content_from_path(src_file, progress=file_progress)
             except Exception:
                 import logging
                 logging.getLogger(__name__).warning(
@@ -169,6 +218,9 @@ async def sync_sources_from_directory(session: AsyncSession, sources_dir: Path) 
             session.add(SourceEmbedding(
                 source_id=source_id, title_vec=title_vec, summary_vec=summary_vec
             ))
+
+        # Generate chunks for long documents
+        await _generate_chunks(session, emb, source_id, content)
 
     await session.commit()
     return stats

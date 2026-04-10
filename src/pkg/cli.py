@@ -3,6 +3,7 @@ from typing import Optional
 
 import typer
 from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TaskID
 from rich.table import Table
 
 from pkg.config import settings
@@ -33,7 +34,37 @@ def sync():
             console.print(f"  Notes: {notes_stats}")
 
             console.print(f"[bold]Syncing sources from[/bold] {settings.sources_dir}")
-            sources_stats = await sync_sources_from_directory(session, settings.sources_dir)
+
+            # Progress bar for document extraction (per-page)
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("{task.completed}/{task.total} pages"),
+                console=console,
+                transient=True,
+            ) as progress:
+                page_task: TaskID | None = None
+                current_file: str | None = None
+
+                def on_page_progress(filename: str, current_page: int, total_pages: int):
+                    nonlocal page_task, current_file
+                    if filename != current_file:
+                        # New file — finish previous task, start new one
+                        if page_task is not None:
+                            progress.update(page_task, visible=False)
+                        current_file = filename
+                        page_task = progress.add_task(
+                            f"  [cyan]{filename}[/cyan]",
+                            total=total_pages,
+                        )
+                    if page_task is not None:
+                        progress.update(page_task, completed=current_page, total=total_pages)
+
+                sources_stats = await sync_sources_from_directory(
+                    session, settings.sources_dir, progress_callback=on_page_progress
+                )
+
             console.print(f"  Sources: {sources_stats}")
 
             console.print(f"[bold]Syncing skills from[/bold] {settings.skills_dir}")

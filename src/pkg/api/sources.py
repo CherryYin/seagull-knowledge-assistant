@@ -1,4 +1,5 @@
 import hashlib
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -8,12 +9,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.db import get_session
-from pkg.models.source import Source, SourceEmbedding
+from pkg.models.source import Source, SourceChunk, SourceEmbedding
 from pkg.schemas.source import SourceCreate, SourceList, SourceRead
+from pkg.services.chunking import chunk_text
 from pkg.services.embedding import get_embedding_service
 from pkg.services.storage import get_storage_service
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 TEXT_FILE_SUFFIXES = {
     ".md",
@@ -52,7 +55,7 @@ def _extract_text_content(filename: str | None, content_type: str | None, payloa
     if (content_type or "").startswith("text/") or suffix in TEXT_FILE_SUFFIXES:
         return payload.decode("utf-8", errors="replace")
 
-    # Binary documents — use Docling
+    # Binary documents — use Docling (page progress logged in document_extractor)
     from pkg.services.document_extractor import extract_content
 
     return extract_content(payload, fname)
@@ -86,6 +89,19 @@ async def _persist_source(
     title_vec = emb_svc.embed_text(source.title)
     summary_vec = emb_svc.embed_text(raw_content[:500] if raw_content else source.title)
     session.add(SourceEmbedding(source_id=source_id, title_vec=title_vec, summary_vec=summary_vec))
+
+    # Generate chunks for long documents
+    if raw_content:
+        chunks = chunk_text(raw_content)
+        if chunks:
+            vectors = emb_svc.embed_batch(chunks)
+            for idx, (chunk_content, vec) in enumerate(zip(chunks, vectors)):
+                session.add(SourceChunk(
+                    source_id=source_id,
+                    chunk_index=idx,
+                    content=chunk_content,
+                    embedding=vec,
+                ))
 
     await session.commit()
     await session.refresh(source)

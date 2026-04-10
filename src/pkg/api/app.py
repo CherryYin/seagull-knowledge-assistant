@@ -1,4 +1,24 @@
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None  # type: ignore[misc, assignment]
+
+# Load .env early so KG_TORCH_CPU_ONLY applies before PyTorch may be imported later.
+if load_dotenv is not None:
+    _here = Path(__file__).resolve()
+    for _base in (_here.parents[3], Path.cwd()):
+        _env = _base / ".env"
+        if _env.is_file():
+            load_dotenv(_env)
+            break
+
+# Set before any dependency imports PyTorch (Docling/RapidOCR). Avoids slow CUDA probe + driver warnings on WSL/old drivers.
+if os.environ.get("KG_TORCH_CPU_ONLY", "").lower() in ("1", "true", "yes"):
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
