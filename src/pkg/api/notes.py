@@ -1,37 +1,41 @@
 from datetime import datetime, timezone
 from pathlib import Path
 
+import logging
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.db import get_session
+from pkg.models.category import Category
 from pkg.models.note import Note, NoteEmbedding
 from pkg.schemas.note import NoteCreate, NoteList, NoteRead, NoteUpdate
 from pkg.services.embedding import get_embedding_service
 from pkg.services.storage import get_storage_service
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
-def _split_csv(value: str | None) -> list[str]:
+def split_csv(value: str | None) -> list[str]:
     if not value:
         return []
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
-def _make_note_id(title: str, explicit_id: str | None = None) -> str:
+def make_note_id(title: str, explicit_id: str | None = None) -> str:
     if explicit_id:
         return explicit_id
     now = datetime.now(timezone.utc)
     return f"note-{now.strftime('%Y%m%d')}-{title[:30].lower().replace(' ', '-')}"
 
 
-def _put_note_markdown_oss(note_id: str, content: str) -> str:
-    """Upload note body to MinIO at notes/{note_id}/note.md. put_object overwrites an existing object."""
+def put_note_markdown_oss(note_id: str, content: str, category_name: str | None = None) -> str:
+    """Upload note body to MinIO at notes/{category_name}/{note_id}/note.md. put_object overwrites an existing object."""
     storage = get_storage_service()
-    object_key = storage.build_object_key("notes", note_id, "note.md")
+    object_key = storage.build_object_key("notes", note_id, "note.md", category_name=category_name)
     return storage.upload_bytes(
         object_key=object_key,
         data=(content or "").encode("utf-8"),
@@ -39,17 +43,18 @@ def _put_note_markdown_oss(note_id: str, content: str) -> str:
     )
 
 
-async def _persist_note(
+async def persist_note(
     *,
     session: AsyncSession,
     body: NoteCreate,
     file_path: str | None = None,
     content_override: str | None = None,
 ) -> Note:
-    note_id = _make_note_id(body.title, body.id)
+    note_id = make_note_id(body.title, body.id)
 
     note = Note(
         id=note_id,
+        category_id=body.category_id,
         title=body.title,
         note_type=body.note_type,
         domains=body.domains,
@@ -77,10 +82,12 @@ async def _persist_note(
 
 @router.post("", response_model=NoteRead, status_code=201)
 async def create_note(body: NoteCreate, session: AsyncSession = Depends(get_session)):
-    note_id = _make_note_id(body.title, body.id)
+    note_id = make_note_id(body.title, body.id)
     content = body.content or ""
-    storage_uri = _put_note_markdown_oss(note_id, content)
-    return await _persist_note(
+    category = await session.get(Category, body.category_id)
+    category_name = category.name if category else None
+    storage_uri = put_note_markdown_oss(note_id, content, category_name=category_name)
+    return await persist_note(
         session=session,
         body=body.model_copy(update={"id": note_id}),
         file_path=storage_uri,
@@ -93,6 +100,7 @@ async def upload_note(
     file: UploadFile = File(...),
     title: str | None = Form(None),
     note_type: str = Form("inbox"),
+    category_id: int = Form(1),
     domains: str | None = Form(None),
     tags: str | None = Form(None),
     abstract: str | None = Form(None),
@@ -111,26 +119,29 @@ async def upload_note(
     body = NoteCreate(
         title=inferred_title,
         note_type=note_type,
-        domains=_split_csv(domains),
-        tags=_split_csv(tags),
+        category_id=category_id,
+        domains=split_csv(domains),
+        tags=split_csv(tags),
         abstract=abstract,
         project=project,
         status=status,
         confidence=confidence,
-        source_ids=_split_csv(source_ids),
+        source_ids=split_csv(source_ids),
         content=content,
     )
 
-    note_id = _make_note_id(body.title, body.id)
+    note_id = make_note_id(body.title, body.id)
+    category = await session.get(Category, category_id)
+    category_name = category.name if category else None
     storage = get_storage_service()
-    object_key = storage.build_object_key("notes", note_id, file.filename)
+    object_key = storage.build_object_key("notes", note_id, file.filename, category_name=category_name)
     storage_uri = storage.upload_bytes(
         object_key=object_key,
         data=file_bytes,
         content_type=file.content_type,
     )
 
-    return await _persist_note(
+    return await persist_note(
         session=session,
         body=body.model_copy(update={"id": note_id}),
         file_path=storage_uri,
@@ -141,6 +152,7 @@ async def upload_note(
 @router.get("", response_model=NoteList)
 async def list_notes(
     note_type: str | None = None,
+    category_id: int | None = None,
     domain: str | None = None,
     tag: str | None = None,
     project: str | None = None,
@@ -152,6 +164,9 @@ async def list_notes(
     stmt = select(Note)
     count_stmt = select(func.count()).select_from(Note)
 
+    if category_id is not None:
+        stmt = stmt.where(Note.category_id == category_id)
+        count_stmt = count_stmt.where(Note.category_id == category_id)
     if note_type:
         stmt = stmt.where(Note.note_type == note_type)
         count_stmt = count_stmt.where(Note.note_type == note_type)
@@ -174,7 +189,20 @@ async def list_notes(
     rows = await session.execute(stmt)
     items = list(rows.scalars())
 
-    return NoteList(items=items, total=total)
+    # Populate category_name
+    cat_ids = {n.category_id for n in items}
+    cat_map: dict[int, str] = {}
+    if cat_ids:
+        cat_rows = await session.execute(select(Category).where(Category.id.in_(cat_ids)))
+        cat_map = {c.id: c.name for c in cat_rows.scalars()}
+
+    result_items = []
+    for n in items:
+        read = NoteRead.model_validate(n)
+        read.category_name = cat_map.get(n.category_id)
+        result_items.append(read)
+
+    return NoteList(items=result_items, total=total)
 
 
 @router.patch("/{note_id}", response_model=NoteRead)
@@ -196,8 +224,11 @@ async def update_note(
         setattr(note, key, value)
 
     note.word_count = len((note.content or "").split())
-    # Always persist current body to OSS at notes/{note_id}/note.md (overwrites if present).
-    note.file_path = _put_note_markdown_oss(note_id, note.content or "")
+    # Look up category name for OSS path
+    category = await session.get(Category, note.category_id)
+    category_name = category.name if category else None
+    # Always persist current body to OSS (overwrites if present).
+    note.file_path = put_note_markdown_oss(note_id, note.content or "", category_name=category_name)
 
     title_or_abstract_changed = "title" in patch or "abstract" in patch
     if title_or_abstract_changed:
@@ -221,7 +252,32 @@ async def get_note(note_id: str, session: AsyncSession = Depends(get_session)):
     note = await session.get(Note, note_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
-    return note
+    category = await session.get(Category, note.category_id)
+    result = NoteRead.model_validate(note)
+    result.category_name = category.name if category else None
+    return result
+
+
+@router.delete("/{note_id}", status_code=204)
+async def delete_note(note_id: str, session: AsyncSession = Depends(get_session)):
+    note = await session.get(Note, note_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+
+    # Delete stored file from MinIO
+    if note.file_path and note.file_path.startswith("minio://"):
+        try:
+            get_storage_service().delete_object(note.file_path)
+        except Exception:
+            logger.warning("Failed to delete MinIO object for note %s: %s", note_id, note.file_path, exc_info=True)
+
+    # Delete related embedding
+    emb = await session.get(NoteEmbedding, note_id)
+    if emb:
+        await session.delete(emb)
+
+    await session.delete(note)
+    await session.commit()
 
 
 @router.get("/{note_id}/file")

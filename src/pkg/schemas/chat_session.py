@@ -8,6 +8,7 @@ class ChatMessageSchema(BaseModel):
     role: str
     content: str
     created_at: str
+    metadata: dict | None = None
 
 
 class ChatSessionCreate(BaseModel):

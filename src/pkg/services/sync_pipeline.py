@@ -6,6 +6,7 @@ import frontmatter
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from pkg.models.category import Category
 from pkg.models.note import Note, NoteEmbedding
 from pkg.models.source import Source, SourceChunk, SourceEmbedding
 from pkg.services.chunking import chunk_text
@@ -28,6 +29,27 @@ def _word_count(text: str | None) -> int:
     return len(text.split())
 
 
+async def _resolve_category_id(session: AsyncSession, name: str | None) -> int:
+    """Resolve a category name to its id. Auto-creates if missing. Falls back to 'general'."""
+    target = name or "general"
+    stmt = select(Category).where(Category.name == target)
+    result = await session.execute(stmt)
+    cat = result.scalar()
+    if cat:
+        return cat.id
+    if target == "general":
+        # Should not happen after migration, but safety fallback
+        cat = Category(name="general", display_name="General", description="Default category")
+        session.add(cat)
+        await session.flush()
+        return cat.id
+    # Auto-create category from sync
+    cat = Category(name=target, display_name=target.replace("-", " ").title())
+    session.add(cat)
+    await session.flush()
+    return cat.id
+
+
 async def sync_notes_from_directory(session: AsyncSession, notes_dir: Path) -> dict:
     stats = {"created": 0, "updated": 0, "skipped": 0}
     if not notes_dir.exists():
@@ -48,7 +70,11 @@ async def sync_notes_from_directory(session: AsyncSession, notes_dir: Path) -> d
             stats["skipped"] += 1
             continue
 
+        category_name = meta.get("category")
+        category_id = await _resolve_category_id(session, category_name)
+
         note = existing or Note(id=note_id)
+        note.category_id = category_id
         note.title = meta.get("title", md_file.stem)
         note.note_type = meta.get("type", meta.get("note_type", "inbox"))
         note.domains = meta.get("domains", [])
@@ -156,17 +182,17 @@ async def sync_sources_from_directory(
             title = meta.get("title", src_file.stem)
             source_type = meta.get("type", meta.get("source_type", "article"))
             url = meta.get("url")
-            extra_meta = {k: v for k, v in meta.items() if k not in ("id", "title", "type", "source_type", "url")}
+            extra_meta = {k: v for k, v in meta.items() if k not in ("id", "title", "type", "source_type", "url", "category")}
             source_id = meta.get("id") or _generate_id("src", title)
+            category_name = meta.get("category")
         else:
-            # Binary document: extract with Docling
-            from pkg.services.document_extractor import extract_content_from_path
-
+            # Binary document: extract content
             title = src_file.stem
             source_type = _infer_source_type(suffix)
             url = None
             extra_meta = {"original_filename": src_file.name}
             source_id = _generate_id("src", title)
+            category_name = None
 
             # Build per-file progress callback
             file_progress = None
@@ -174,15 +200,29 @@ async def sync_sources_from_directory(
                 file_progress = lambda cur, total, _f=src_file.name: progress_callback(_f, cur, total)
 
             try:
-                content = extract_content_from_path(src_file, progress=file_progress)
+                if suffix == ".pdf":
+                    # Fast path: pymupdf with auto garble detection + Docling force-OCR fallback
+                    from pkg.services.document_extractor import extract_text_pymupdf
+                    content = extract_text_pymupdf(src_file)
+                else:
+                    # Non-PDF binary (DOCX, PPTX, images): Docling
+                    from pkg.services.document_extractor import extract_content_from_path
+                    content = extract_content_from_path(src_file, progress=file_progress)
             except Exception:
                 import logging
                 logging.getLogger(__name__).warning(
-                    "Docling extraction failed for %s, skipping", src_file, exc_info=True
+                    "Text extraction failed for %s, skipping", src_file, exc_info=True
                 )
                 stats["skipped"] += 1
                 continue
 
+        # Infer category from subdirectory if not set via frontmatter
+        if not category_name:
+            rel = src_file.relative_to(sources_dir)
+            if len(rel.parts) > 1:
+                category_name = rel.parts[0]
+
+        category_id = await _resolve_category_id(session, category_name)
         file_hash = _content_hash(content)
 
         existing = await session.get(Source, source_id)
@@ -191,6 +231,7 @@ async def sync_sources_from_directory(
             continue
 
         source = existing or Source(id=source_id)
+        source.category_id = category_id
         source.title = title
         source.source_type = source_type
         source.url = url

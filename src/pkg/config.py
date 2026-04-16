@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     # LLM provider: "azure" or "qwen"
     LLM_PROVIDER: str = "qwen"
 
+    # Tavily web search
+    TAVILY_API_KEY: str = ""
+
     # Azure OpenAI settings
     AZURE_OPENAI_ENDPOINT: str = ""
     AZURE_OPENAI_API_KEY: str = ""

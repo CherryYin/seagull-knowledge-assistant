@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Index, Integer, String, Text, func
+from sqlalchemy import ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -13,6 +13,7 @@ class Source(Base):
     __tablename__ = "sources"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    category_id: Mapped[int] = mapped_column(Integer, ForeignKey("categories.id"), nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     source_type: Mapped[str] = mapped_column(String(50), nullable=False)
     url: Mapped[str | None] = mapped_column(Text)
@@ -25,6 +26,7 @@ class Source(Base):
     __table_args__ = (
         Index("idx_sources_type", "source_type"),
         Index("idx_sources_hash", "content_hash"),
+        Index("idx_sources_category", "category_id"),
     )
 
 

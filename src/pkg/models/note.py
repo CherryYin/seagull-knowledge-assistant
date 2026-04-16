@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Index, String, Text, func
+from sqlalchemy import ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -13,6 +13,7 @@ class Note(Base):
     __tablename__ = "notes"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    category_id: Mapped[int] = mapped_column(Integer, ForeignKey("categories.id"), nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     note_type: Mapped[str] = mapped_column(String(50), nullable=False)
     domains: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
@@ -32,6 +33,7 @@ class Note(Base):
         Index("idx_notes_domains", "domains", postgresql_using="gin"),
         Index("idx_notes_tags", "tags", postgresql_using="gin"),
         Index("idx_notes_sources", "source_ids", postgresql_using="gin"),
+        Index("idx_notes_category", "category_id"),
     )
 
 

@@ -8,6 +8,7 @@ import {
   chatSessionsApi,
   type ChatSessionMessage,
   type ChatSessionRecord,
+  type MessageMetadata,
 } from "./api";
 
 export type { ChatSessionMessage, ChatSessionRecord };
@@ -21,13 +22,15 @@ function createId(prefix: string) {
 
 export function createMessage(
   role: ChatSessionMessage["role"],
-  content: string
+  content: string,
+  metadata?: MessageMetadata | null,
 ): ChatSessionMessage {
   return {
     id: createId("msg"),
     role,
     content,
     created_at: new Date().toISOString(),
+    ...(metadata ? { metadata } : {}),
   };
 }
 

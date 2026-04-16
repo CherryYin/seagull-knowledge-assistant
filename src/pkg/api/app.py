@@ -1,5 +1,8 @@
+import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 try:
@@ -29,11 +32,42 @@ from pkg.api.search import router as search_router
 from pkg.api.action import router as action_router
 from pkg.api.chat_sessions import router as chat_sessions_router
 from pkg.api.skills import router as skills_router
+from pkg.api.knowledge import router as knowledge_router
+from pkg.api.categories import router as categories_router
+
+# Configure root logger so all app loggers (pkg.*) output to console.
+# This is a no-op if logging is already configured (e.g. by pytest).
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s [%(name)s] %(message)s",
+)
+
+logger = logging.getLogger(__name__)
+
+
+async def _daily_summarizer_loop():
+    """Run the temporary-notes summarizer once per day at ~02:00 UTC."""
+    from pkg.services.daily_summarizer import summarize_temporary_notes
+
+    while True:
+        now = datetime.now(timezone.utc)
+        next_run = now.replace(hour=2, minute=0, second=0, microsecond=0)
+        if next_run <= now:
+            next_run += timedelta(days=1)
+        delay = (next_run - now).total_seconds()
+        logger.info("Daily summarizer: next run in %.0f seconds (%s)", delay, next_run.isoformat())
+        await asyncio.sleep(delay)
+        try:
+            await summarize_temporary_notes()
+        except Exception:
+            logger.exception("Daily summarization failed")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    task = asyncio.create_task(_daily_summarizer_loop())
     yield
+    task.cancel()
 
 
 app = FastAPI(
@@ -56,6 +90,8 @@ app.include_router(search_router, tags=["search"])
 app.include_router(action_router, tags=["action"])
 app.include_router(chat_sessions_router, prefix="/chat-sessions", tags=["chat-sessions"])
 app.include_router(skills_router, prefix="/skills", tags=["skills"])
+app.include_router(knowledge_router, prefix="/knowledge", tags=["knowledge"])
+app.include_router(categories_router, prefix="/categories", tags=["categories"])
 
 
 @app.get("/health")

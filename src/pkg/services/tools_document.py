@@ -1,105 +1,221 @@
-"""Document processing tool — delegates to document-oriented skills via a sub-agent.
+"""Document processing tool — converts markdown content to document files.
 
-The main Action Agent can call this tool when the user's request involves
-document operations (PDF, Word, Excel, PowerPoint, or documentation co-authoring).
-Internally it:
-1. Selects the appropriate skill (auto-detect or explicit)
-2. Expands the skill template
-3. Spawns a lightweight sub-Agent with the skill prompt as system context
-4. Returns the sub-agent's response
+The main Agent generates content in markdown, then calls this tool to
+convert it into the target format (DOCX, XLSX, PPTX, PDF).
 """
 import logging
+import mimetypes
 import re
+from datetime import datetime, timezone
+from pathlib import Path
 
-from strands import Agent, tool
+from strands import tool
 
 from pkg.config import settings
-from pkg.services.llm import create_model
-from pkg.services.skills import expand_skill, load_skills_from_dir
+from pkg.services.storage import get_storage_service
 
 logger = logging.getLogger(__name__)
 
-# Supported document skills
-_DOC_SKILLS = {"pdf", "xlsx", "pptx", "docx", "doc-coauthoring"}
-
-# Keyword → skill mapping for auto-detection
-_DETECT_RULES: list[tuple[re.Pattern, str]] = [
-    (re.compile(r"\.pdf\b|pdf\s*文件|pdf\s*file", re.IGNORECASE), "pdf"),
-    (re.compile(r"\.xlsx\b|\.xlsm\b|\.csv\b|\.tsv\b|spreadsheet|excel|表格", re.IGNORECASE), "xlsx"),
-    (re.compile(r"\.pptx?\b|slide|presentation|deck|幻灯片|演示", re.IGNORECASE), "pptx"),
-    (re.compile(r"\.docx?\b|word\s*doc|word\s*文档", re.IGNORECASE), "docx"),
-    (re.compile(r"\b(draft|proposal|spec|rfc|write\s+a?\s*doc|撰写|起草|文档协作|技术文档)\b", re.IGNORECASE), "doc-coauthoring"),
-]
+_SUPPORTED_FORMATS = {"docx", "xlsx", "pptx", "pdf", "md"}
 
 
-def _detect_skill(task: str) -> str | None:
-    """Auto-detect which document skill matches the task description."""
-    for pattern, skill_name in _DETECT_RULES:
-        if pattern.search(task):
-            return skill_name
-    return None
+def _output_path(filename: str, fmt: str) -> tuple[Path, str]:
+    """Build output file path under DATA_DIR/exports/ and return the base name.
+
+    Returns (local_path, base_filename_without_ext).
+    """
+    exports_dir = settings.DATA_DIR / "exports"
+    exports_dir.mkdir(parents=True, exist_ok=True)
+    if not filename:
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        filename = f"doc-{ts}"
+    # Strip any existing extension
+    filename = Path(filename).stem
+    return exports_dir / f"{filename}.{fmt}", filename
 
 
-def _load_doc_skill(skill_name: str) -> str | None:
-    """Load a document skill template from the local skills directory."""
-    skills = load_skills_from_dir(settings.skills_dir)
-    for s in skills:
-        if s.name == skill_name:
-            return s.template
-    return None
+def _upload_to_oss(local_path: Path) -> str:
+    """Upload the generated file to MinIO under exports/ and return a presigned URL."""
+    storage = get_storage_service()
+    object_key = f"exports/{local_path.name}"
+    content_type = mimetypes.guess_type(local_path.name)[0] or "application/octet-stream"
+    data = local_path.read_bytes()
+    storage_uri = storage.upload_bytes(
+        object_key=object_key,
+        data=data,
+        content_type=content_type,
+    )
+    return storage.generate_download_url(storage_uri)
+
+
+def _md_to_docx(content: str, path: Path) -> None:
+    """Convert markdown text to a DOCX file."""
+    from docx import Document
+    from docx.shared import Pt
+
+    doc = Document()
+    for line in content.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # Headings
+        if stripped.startswith("### "):
+            doc.add_heading(stripped[4:], level=3)
+        elif stripped.startswith("## "):
+            doc.add_heading(stripped[3:], level=2)
+        elif stripped.startswith("# "):
+            doc.add_heading(stripped[2:], level=1)
+        # Bullet lists
+        elif stripped.startswith("- ") or stripped.startswith("* "):
+            doc.add_paragraph(stripped[2:], style="List Bullet")
+        # Numbered lists
+        elif re.match(r"^\d+\.\s", stripped):
+            text = re.sub(r"^\d+\.\s", "", stripped)
+            doc.add_paragraph(text, style="List Number")
+        # Normal paragraph
+        else:
+            doc.add_paragraph(stripped)
+
+    doc.save(str(path))
+
+
+def _md_to_xlsx(content: str, path: Path) -> None:
+    """Convert markdown tables/text to an XLSX file.
+
+    Detects markdown tables (| col1 | col2 |) and writes them as sheets.
+    Non-table content goes into a 'Content' sheet.
+    """
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Content"
+
+    row_idx = 1
+    for line in content.split("\n"):
+        stripped = line.strip()
+        # Skip separator lines like |---|---|
+        if re.match(r"^\|[\s\-:|]+\|$", stripped):
+            continue
+        if stripped.startswith("|") and stripped.endswith("|"):
+            cells = [c.strip() for c in stripped.strip("|").split("|")]
+            for col_idx, cell in enumerate(cells, 1):
+                ws.cell(row=row_idx, column=col_idx, value=cell)
+            row_idx += 1
+        elif stripped:
+            ws.cell(row=row_idx, column=1, value=stripped)
+            row_idx += 1
+
+    wb.save(str(path))
+
+
+def _md_to_pptx(content: str, path: Path) -> None:
+    """Convert markdown to a PPTX file.
+
+    Each '# heading' or '## heading' becomes a new slide title.
+    Content below becomes bullet points.
+    """
+    from pptx import Presentation
+    from pptx.util import Inches, Pt
+
+    prs = Presentation()
+
+    slides_data: list[tuple[str, list[str]]] = []
+    current_title = ""
+    current_bullets: list[str] = []
+
+    for line in content.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("# ") or stripped.startswith("## "):
+            if current_title or current_bullets:
+                slides_data.append((current_title, current_bullets))
+            current_title = re.sub(r"^#+\s*", "", stripped)
+            current_bullets = []
+        elif stripped.startswith("### "):
+            current_bullets.append(re.sub(r"^#+\s*", "", stripped))
+        elif stripped.startswith("- ") or stripped.startswith("* "):
+            current_bullets.append(stripped[2:])
+        elif re.match(r"^\d+\.\s", stripped):
+            current_bullets.append(re.sub(r"^\d+\.\s", "", stripped))
+        elif stripped:
+            current_bullets.append(stripped)
+
+    if current_title or current_bullets:
+        slides_data.append((current_title, current_bullets))
+
+    for title, bullets in slides_data:
+        slide_layout = prs.slide_layouts[1]  # Title and Content
+        slide = prs.slides.add_slide(slide_layout)
+        slide.shapes.title.text = title
+        body = slide.placeholders[1]
+        tf = body.text_frame
+        tf.clear()
+        for i, bullet in enumerate(bullets):
+            if i == 0:
+                tf.paragraphs[0].text = bullet
+            else:
+                p = tf.add_paragraph()
+                p.text = bullet
+
+    prs.save(str(path))
 
 
 @tool
-async def process_document(task: str, skill: str = "auto") -> str:
-    """Process documents (PDF, Word, Excel, PowerPoint) or co-author documentation.
+async def process_document(content: str, format: str, filename: str = "") -> str:
+    """Convert markdown content into a document file (DOCX, XLSX, PPTX, PDF, MD).
 
-    Use this tool when the user's request involves creating, reading, editing,
-    merging, converting, or otherwise manipulating document files, OR when they
-    want help co-authoring structured documentation like specs, proposals, or RFCs.
-
-    This tool delegates to a specialized sub-agent with deep knowledge of the
-    target document format.
+    The Agent should first generate the document content in markdown format,
+    then call this tool to convert it into the desired file format.
 
     Args:
-        task: What to do, e.g. "merge a.pdf and b.pdf", "create an Excel report with monthly sales data", "draft a technical spec for the new auth system".
-        skill: Which document skill to use. Set to "auto" (default) to auto-detect from the task, or specify one of: pdf, xlsx, pptx, docx, doc-coauthoring.
+        content: The document content in markdown format.
+        format: Target format — one of: docx, xlsx, pptx, pdf, md.
+        filename: Output filename (without extension). Auto-generated if empty.
     """
-    # --- Resolve skill ---
-    if skill == "auto":
-        detected = _detect_skill(task)
-        if detected is None:
-            return (
-                "无法自动识别文档类型。请明确指定 skill 参数为以下之一: "
-                "pdf, xlsx, pptx, docx, doc-coauthoring。\n"
-                f"或者在任务描述中包含文件扩展名（如 .pdf, .docx）。"
-            )
-        skill = detected
+    fmt = format.lower().strip(".")
+    if fmt not in _SUPPORTED_FORMATS:
+        return f"不支持的格式: {format}。支持: {', '.join(sorted(_SUPPORTED_FORMATS))}"
 
-    if skill not in _DOC_SKILLS:
-        return f"不支持的 skill: {skill}。支持的选项: {', '.join(sorted(_DOC_SKILLS))}"
+    if not content.strip():
+        return "错误: 内容为空，无法生成文档。"
 
-    # --- Load skill template ---
-    template = _load_doc_skill(skill)
-    if template is None:
-        return f"未找到 skill '{skill}' 的模板文件。请确认 skills/{skill}.md 存在。"
-
-    logger.info("process_document: using skill '%s' for task: %s", skill, task[:80])
-
-    # --- Spawn sub-agent ---
-    model = create_model()
-    sub_agent = Agent(
-        model=model,
-        system_prompt=template,
-        tools=[],
-    )
+    path, base_name = _output_path(filename, fmt)
 
     try:
-        result = await sub_agent.invoke_async(task)
+        if fmt == "md":
+            path.write_text(content, encoding="utf-8")
+        elif fmt == "docx":
+            _md_to_docx(content, path)
+        elif fmt == "xlsx":
+            _md_to_xlsx(content, path)
+        elif fmt == "pptx":
+            _md_to_pptx(content, path)
+        elif fmt == "pdf":
+            # Write as markdown first, then convert via docx as intermediate
+            docx_path = path.with_suffix(".docx")
+            _md_to_docx(content, docx_path)
+            try:
+                download_url = _upload_to_oss(docx_path)
+            except Exception as exc:
+                logger.exception("Failed to upload DOCX to OSS")
+                return (
+                    f"已生成 DOCX 文件: {docx_path}\n"
+                    f"（PDF 直接转换暂不支持，请使用 LibreOffice 或其他工具将 DOCX 转为 PDF）\n"
+                    f"OSS 上传失败: {exc}"
+                )
+            return (
+                f"已生成 DOCX 文件并上传至 OSS。\n"
+                f"（PDF 直接转换暂不支持，已生成 DOCX 替代）\n"
+                f"下载链接: {download_url}"
+            )
     except Exception as exc:
-        logger.exception("Sub-agent for skill '%s' failed", skill)
-        return f"文档处理失败: {exc}"
+        logger.exception("Failed to convert to %s", fmt)
+        return f"文档转换失败: {exc}"
 
-    # Extract text from the result
-    content_blocks = result.message.get("content", [])
-    texts = [b.get("text", "") for b in content_blocks if "text" in b]
-    return "\n".join(texts) if texts else str(result.message)
+    try:
+        download_url = _upload_to_oss(path)
+    except Exception as exc:
+        logger.exception("Failed to upload to OSS")
+        return f"已生成文件: {path}（OSS 上传失败: {exc}）"
+
+    return f"已生成文件并上传至 OSS。\n下载链接: {download_url}"

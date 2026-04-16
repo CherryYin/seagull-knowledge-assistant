@@ -41,8 +41,10 @@ class StorageService:
 
         self._bucket_checked = True
 
-    def build_object_key(self, category: str, item_id: str, filename: str | None) -> str:
+    def build_object_key(self, category: str, item_id: str, filename: str | None, category_name: str | None = None) -> str:
         safe_name = Path(filename or item_id).name or item_id
+        if category_name:
+            return f"{category}/{category_name}/{item_id}/{safe_name}"
         return f"{category}/{item_id}/{safe_name}"
 
     def upload_bytes(
@@ -77,6 +79,11 @@ class StorageService:
             Params={"Bucket": bucket, "Key": key},
             ExpiresIn=settings.MINIO_PRESIGNED_EXPIRY_SECONDS,
         )
+
+    def delete_object(self, storage_uri: str) -> None:
+        """Delete an object from MinIO by its storage URI. Silently ignores missing objects."""
+        bucket, key = self.parse_storage_uri(storage_uri)
+        self.client.delete_object(Bucket=bucket, Key=key)
 
 
 @lru_cache(maxsize=1)

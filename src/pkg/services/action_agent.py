@@ -33,6 +33,7 @@ from pkg.services.tools import (
     search_knowledge,
 )
 from pkg.services.tools_document import process_document
+from pkg.services.tools_web import web_search
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,8 @@ _SYSTEM_PROMPT_TEMPLATE = """\
 - **浏览笔记** (list_notes): 按领域/标签/项目浏览笔记
 - **浏览资料** (list_sources): 按类型浏览原始资料
 - **知识统计** (knowledge_stats): 了解知识库的规模和覆盖范围
-- **文档处理** (process_document): 处理PDF、Word、Excel、PPT文档，或协作撰写文档。当用户需要创建、编辑、合并文档时，主动使用此工具。
+- **文档生成** (process_document): 将 markdown 内容转换为 DOCX/XLSX/PPTX/PDF 文件。**当用户要求撰写报告、分析、方案等文档时**，你先用 markdown 格式撰写内容，然后调用此工具转换为目标格式的文件。
+- **网络搜索** (web_search): 搜索互联网获取实时信息。当知识库中没有足够信息，或用户需要最新资讯时使用。
 
 ## 工作原则
 
@@ -116,7 +118,15 @@ _SYSTEM_PROMPT_TEMPLATE = """\
 - 如果是决策分析，要列出各选项的优劣
 - 如果是文档草稿，要有清晰的章节结构
 
-### 5. 用用户的语言
+### 5. 写文档时使用工具
+- 当用户要求"写一份报告"、"撰写分析"、"起草方案"等需要产出文档的任务时：
+  1. 先用 search_knowledge 或 web_search 收集素材
+  2. 你自己用 markdown 格式撰写完整内容
+  3. 调用 process_document(content=你写的markdown, format="docx") 转为文件
+- 不要把写内容的工作交给 process_document，它只负责格式转换
+- 不要在回复中直接写几千字的长文——那是 process_document 的工作
+
+### 6. 用用户的语言
 - 用户的笔记体现了他们的思考方式和常用术语
 - 在回答中采用相同的概念和术语，让回答对用户来说自然、亲切
 """
@@ -184,6 +194,7 @@ _BASE_TOOLS = [
     list_sources,
     knowledge_stats,
     process_document,
+    web_search,
 ]
 
 

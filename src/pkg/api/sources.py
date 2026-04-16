@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import logging
 from datetime import datetime, timezone
@@ -9,8 +10,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.db import get_session
+from pkg.models.category import Category
 from pkg.models.source import Source, SourceChunk, SourceEmbedding
-from pkg.schemas.source import SourceCreate, SourceList, SourceRead
+from pkg.schemas.source import ChunkRead, SourceCreate, SourceList, SourceRead
 from pkg.services.chunking import chunk_text
 from pkg.services.embedding import get_embedding_service
 from pkg.services.storage import get_storage_service
@@ -35,18 +37,26 @@ TEXT_FILE_SUFFIXES = {
 }
 
 
-def _make_source_id(title: str, explicit_id: str | None = None) -> str:
+def make_source_id(title: str, explicit_id: str | None = None) -> str:
     if explicit_id:
         return explicit_id
     now = datetime.now(timezone.utc)
     return f"src-{now.strftime('%Y%m%d')}-{title[:30].lower().replace(' ', '-')}"
 
 
-def _extract_text_content(filename: str | None, content_type: str | None, payload: bytes) -> str | None:
+async def extract_text_content(
+    filename: str | None,
+    content_type: str | None,
+    payload: bytes,
+    pdf_type: str | None = None,
+) -> str | None:
     """Extract text from uploaded files.
 
     For plain text files, decodes UTF-8 directly.
     For binary documents (PDF, DOCX, PPTX, XLSX, images), uses Docling with OCR.
+    For text-based PDFs (pdf_type="text"), uses PyMuPDF for fast extraction.
+    For scanned/image PDFs, forces full-page OCR to bypass broken text layers.
+    For unclear PDFs (pdf_type="vlm"), uses vision LLM page-by-page.
     """
     fname = filename or ""
     suffix = Path(fname).suffix.lower()
@@ -55,13 +65,27 @@ def _extract_text_content(filename: str | None, content_type: str | None, payloa
     if (content_type or "").startswith("text/") or suffix in TEXT_FILE_SUFFIXES:
         return payload.decode("utf-8", errors="replace")
 
-    # Binary documents — use Docling (page progress logged in document_extractor)
+    # Text-based PDF — fast path via PyMuPDF (no OCR)
+    if pdf_type == "text" and suffix == ".pdf":
+        from pkg.services.document_extractor import extract_content_pymupdf
+
+        return await asyncio.to_thread(extract_content_pymupdf, payload, fname)
+
+    # Unclear/low-quality PDF — vision LLM page-by-page
+    if pdf_type == "vlm" and suffix == ".pdf":
+        from pkg.services.document_extractor import extract_content_vlm_from_bytes
+
+        return await extract_content_vlm_from_bytes(payload, fname)
+
+    # Binary documents — use Docling
+    # For scanned/image PDFs, force full-page OCR to bypass broken text layers
     from pkg.services.document_extractor import extract_content
 
-    return extract_content(payload, fname)
+    force_ocr = pdf_type == "ocr" and suffix == ".pdf"
+    return await asyncio.to_thread(extract_content, payload, fname, force_full_page_ocr=force_ocr)
 
 
-async def _persist_source(
+async def persist_source(
     *,
     session: AsyncSession,
     body: SourceCreate,
@@ -69,12 +93,13 @@ async def _persist_source(
     raw_content_override: str | None = None,
     content_hash_override: str | None = None,
 ) -> Source:
-    source_id = _make_source_id(body.title, body.id)
+    source_id = make_source_id(body.title, body.id)
     raw_content = raw_content_override if raw_content_override is not None else body.raw_content
     content_hash = content_hash_override or hashlib.sha256((raw_content or "").encode()).hexdigest()
 
     source = Source(
         id=source_id,
+        category_id=body.category_id,
         title=body.title,
         source_type=body.source_type,
         url=body.url,
@@ -110,7 +135,7 @@ async def _persist_source(
 
 @router.post("", response_model=SourceRead, status_code=201)
 async def create_source(body: SourceCreate, session: AsyncSession = Depends(get_session)):
-    return await _persist_source(session=session, body=body)
+    return await persist_source(session=session, body=body)
 
 
 @router.post("/upload", response_model=SourceRead, status_code=201)
@@ -118,7 +143,9 @@ async def upload_source(
     file: UploadFile = File(...),
     title: str | None = Form(None),
     source_type: str = Form("article"),
+    category_id: int = Form(1),
     url: str | None = Form(None),
+    pdf_type: str | None = Form(None),
     session: AsyncSession = Depends(get_session),
 ):
     payload = await file.read()
@@ -129,20 +156,23 @@ async def upload_source(
     body = SourceCreate(
         title=inferred_title,
         source_type=source_type,
+        category_id=category_id,
         url=url,
-        raw_content=_extract_text_content(file.filename, file.content_type, payload),
+        raw_content=await extract_text_content(file.filename, file.content_type, payload, pdf_type=pdf_type),
     )
 
-    source_id = _make_source_id(body.title, body.id)
+    source_id = make_source_id(body.title, body.id)
+    category = await session.get(Category, category_id)
+    category_name = category.name if category else None
     storage = get_storage_service()
-    object_key = storage.build_object_key("sources", source_id, file.filename)
+    object_key = storage.build_object_key("sources", source_id, file.filename, category_name=category_name)
     storage_uri = storage.upload_bytes(
         object_key=object_key,
         data=payload,
         content_type=file.content_type,
     )
 
-    return await _persist_source(
+    return await persist_source(
         session=session,
         body=body.model_copy(update={"id": source_id, "file_path": storage_uri}),
         file_path=storage_uri,
@@ -154,6 +184,7 @@ async def upload_source(
 @router.get("", response_model=SourceList)
 async def list_sources(
     source_type: str | None = None,
+    category_id: int | None = None,
     limit: int = 20,
     offset: int = 0,
     session: AsyncSession = Depends(get_session),
@@ -161,6 +192,9 @@ async def list_sources(
     stmt = select(Source)
     count_stmt = select(func.count()).select_from(Source)
 
+    if category_id is not None:
+        stmt = stmt.where(Source.category_id == category_id)
+        count_stmt = count_stmt.where(Source.category_id == category_id)
     if source_type:
         stmt = stmt.where(Source.source_type == source_type)
         count_stmt = count_stmt.where(Source.source_type == source_type)
@@ -171,7 +205,20 @@ async def list_sources(
     rows = await session.execute(stmt)
     items = list(rows.scalars())
 
-    return SourceList(items=items, total=total)
+    # Populate category_name
+    cat_ids = {s.category_id for s in items}
+    cat_map: dict[int, str] = {}
+    if cat_ids:
+        cat_rows = await session.execute(select(Category).where(Category.id.in_(cat_ids)))
+        cat_map = {c.id: c.name for c in cat_rows.scalars()}
+
+    result_items = []
+    for s in items:
+        read = SourceRead.model_validate(s)
+        read.category_name = cat_map.get(s.category_id)
+        result_items.append(read)
+
+    return SourceList(items=result_items, total=total)
 
 
 @router.get("/{source_id}", response_model=SourceRead)
@@ -179,7 +226,52 @@ async def get_source(source_id: str, session: AsyncSession = Depends(get_session
     source = await session.get(Source, source_id)
     if not source:
         raise HTTPException(status_code=404, detail="Source not found")
-    return source
+    category = await session.get(Category, source.category_id)
+    result = SourceRead.model_validate(source)
+    result.category_name = category.name if category else None
+    return result
+
+
+@router.get("/{source_id}/chunks", response_model=list[ChunkRead])
+async def get_source_chunks(source_id: str, session: AsyncSession = Depends(get_session)):
+    source = await session.get(Source, source_id)
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+    rows = await session.execute(
+        select(SourceChunk)
+        .where(SourceChunk.source_id == source_id)
+        .order_by(SourceChunk.chunk_index)
+    )
+    return list(rows.scalars())
+
+
+@router.delete("/{source_id}", status_code=204)
+async def delete_source(source_id: str, session: AsyncSession = Depends(get_session)):
+    source = await session.get(Source, source_id)
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    # Delete stored file from MinIO
+    if source.file_path and source.file_path.startswith("minio://"):
+        try:
+            get_storage_service().delete_object(source.file_path)
+        except Exception:
+            logger.warning("Failed to delete MinIO object for source %s: %s", source_id, source.file_path, exc_info=True)
+
+    # Delete related embedding
+    emb = await session.get(SourceEmbedding, source_id)
+    if emb:
+        await session.delete(emb)
+
+    # Delete related chunks
+    chunks = await session.execute(
+        select(SourceChunk).where(SourceChunk.source_id == source_id)
+    )
+    for chunk in chunks.scalars():
+        await session.delete(chunk)
+
+    await session.delete(source)
+    await session.commit()
 
 
 @router.get("/{source_id}/file")

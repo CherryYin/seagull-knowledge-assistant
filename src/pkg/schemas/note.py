@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 class NoteCreate(BaseModel):
     id: str | None = None
     title: str
+    category_id: int = 1
     note_type: str = Field(
         default="inbox",
         pattern=r"^(architecture|case-study|concept|how-to|inbox)$",
@@ -25,6 +26,8 @@ class NoteRead(BaseModel):
 
     id: str
     title: str
+    category_id: int
+    category_name: str | None = None
     note_type: str
     domains: list[str]
     tags: list[str]
@@ -49,6 +52,7 @@ class NoteUpdate(BaseModel):
     """Partial update; only set fields are applied."""
 
     title: str | None = None
+    category_id: int | None = None
     note_type: str | None = Field(
         default=None,
         pattern=r"^(architecture|case-study|concept|how-to|inbox)$",

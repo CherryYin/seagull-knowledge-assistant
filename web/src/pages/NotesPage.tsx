@@ -1,14 +1,15 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { Plus, StickyNote, Upload } from "lucide-react";
+import { Plus, StickyNote, Upload, ChevronDown, ChevronRight, FolderOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { notesApi, type NoteCreate } from "@/lib/api";
+import { CategorySelect } from "@/components/CategorySelect";
+import { notesApi, categoriesApi, type NoteCreate, type Note } from "@/lib/api";
 
 const NOTE_TYPES = ["inbox", "architecture", "case-study", "concept", "how-to"];
 
@@ -16,21 +17,65 @@ export function NotesPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [typeFilter, setTypeFilter] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<number | null>(null);
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState<NoteCreate>({ title: "", note_type: "inbox", content: "", domains: [], tags: [] });
+  const [form, setForm] = useState<NoteCreate>({ title: "", category_id: 1, note_type: "inbox", content: "", domains: [], tags: [] });
   const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+
+  const { data: categoriesData } = useQuery({
+    queryKey: ["categories"],
+    queryFn: () => categoriesApi.list(),
+  });
+  const categories = categoriesData?.items ?? [];
 
   const { data, isLoading } = useQuery({
-    queryKey: ["notes", typeFilter],
-    queryFn: () => notesApi.list({ note_type: typeFilter || undefined, limit: 50 }),
+    queryKey: ["notes", typeFilter, categoryFilter],
+    queryFn: () => notesApi.list({ note_type: typeFilter || undefined, category_id: categoryFilter ?? undefined, limit: 100 }),
   });
+
+  // Group notes by category
+  const groupedNotes = useMemo(() => {
+    if (!data?.items) return [];
+    const groups = new Map<string, { categoryId: number; categoryName: string; displayName: string; notes: Note[] }>();
+
+    for (const note of data.items) {
+      const key = note.category_name || "general";
+      if (!groups.has(key)) {
+        const cat = categories.find((c) => c.name === key);
+        groups.set(key, {
+          categoryId: note.category_id,
+          categoryName: key,
+          displayName: cat?.display_name || key,
+          notes: [],
+        });
+      }
+      groups.get(key)!.notes.push(note);
+    }
+
+    // Sort: "general" last, others alphabetically
+    return [...groups.values()].sort((a, b) => {
+      if (a.categoryName === "general") return 1;
+      if (b.categoryName === "general") return -1;
+      return a.displayName.localeCompare(b.displayName);
+    });
+  }, [data?.items, categories]);
+
+  const toggleCategory = (name: string) => {
+    setCollapsedCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
 
   const createMutation = useMutation({
     mutationFn: notesApi.create,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notes"] });
       setOpen(false);
-      setForm({ title: "", note_type: "inbox", content: "", domains: [], tags: [] });
+      setForm({ title: "", category_id: 1, note_type: "inbox", content: "", domains: [], tags: [] });
       setUploadFile(null);
     },
   });
@@ -40,7 +85,7 @@ export function NotesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notes"] });
       setOpen(false);
-      setForm({ title: "", note_type: "inbox", content: "", domains: [], tags: [] });
+      setForm({ title: "", category_id: 1, note_type: "inbox", content: "", domains: [], tags: [] });
       setUploadFile(null);
     },
   });
@@ -51,6 +96,7 @@ export function NotesPage() {
     payload.append("file", uploadFile);
     payload.append("title", form.title || uploadFile.name.replace(/\.[^.]+$/, ""));
     payload.append("note_type", form.note_type || "inbox");
+    payload.append("category_id", String(form.category_id));
     payload.append("domains", (form.domains || []).join(","));
     payload.append("tags", (form.tags || []).join(","));
     payload.append("abstract", form.abstract || "");
@@ -69,6 +115,9 @@ export function NotesPage() {
     }
     createMutation.mutate(form);
   }
+
+  // Should we show grouped view? Only when not filtering by a specific category
+  const showGrouped = categoryFilter === null && groupedNotes.length > 1;
 
   return (
     <div className="h-full overflow-y-auto">
@@ -89,7 +138,7 @@ export function NotesPage() {
                   value={form.title}
                   onChange={(e) => setForm({ ...form, title: e.target.value })}
                 />
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                   <select
                     className="flex h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm w-40"
                     value={form.note_type}
@@ -97,11 +146,16 @@ export function NotesPage() {
                   >
                     {NOTE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                   </select>
-                  <Input
-                    placeholder="Domains (comma separated)"
-                    onChange={(e) => setForm({ ...form, domains: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
+                  <CategorySelect
+                    categories={categories}
+                    value={form.category_id}
+                    onChange={(id) => setForm({ ...form, category_id: id })}
                   />
                 </div>
+                <Input
+                  placeholder="Domains (comma separated)"
+                  onChange={(e) => setForm({ ...form, domains: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
+                />
                 <Input
                   placeholder="Tags (comma separated)"
                   onChange={(e) => setForm({ ...form, tags: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
@@ -155,6 +209,29 @@ export function NotesPage() {
           </Dialog>
         </div>
 
+        {/* Category filter */}
+        <div className="flex gap-2 mb-2 flex-wrap">
+          <button
+            onClick={() => setCategoryFilter(null)}
+            className={`px-3 py-1 rounded-md text-xs cursor-pointer transition-colors ${
+              categoryFilter === null ? "bg-emerald-500/20 text-emerald-600 font-medium" : "text-muted-foreground hover:bg-accent"
+            }`}
+          >
+            All Categories
+          </button>
+          {categories.map((c) => (
+            <button
+              key={c.id}
+              onClick={() => setCategoryFilter(c.id)}
+              className={`px-3 py-1 rounded-md text-xs cursor-pointer transition-colors ${
+                categoryFilter === c.id ? "bg-emerald-500/20 text-emerald-600 font-medium" : "text-muted-foreground hover:bg-accent"
+              }`}
+            >
+              {c.display_name}
+            </button>
+          ))}
+        </div>
+
         {/* Type filter */}
         <div className="flex gap-2 mb-4 flex-wrap">
           <button
@@ -187,40 +264,76 @@ export function NotesPage() {
           </div>
         )}
 
-        <div className="grid gap-3 md:grid-cols-2">
-          {data?.items.map((note) => (
-            <Card
-              key={note.id}
-              className="cursor-pointer hover:border-primary/40 transition-colors"
-              onClick={() => navigate(`/notes/${encodeURIComponent(note.id)}`)}
-            >
-              <CardHeader className="pb-2">
-                <div className="flex items-center gap-2 mb-1">
-                  <Badge variant="note">{note.note_type}</Badge>
-                  <Badge variant="outline">{note.status}</Badge>
+        {showGrouped ? (
+          /* Grouped by category */
+          <div className="space-y-6">
+            {groupedNotes.map((group) => {
+              const isCollapsed = collapsedCategories.has(group.categoryName);
+              return (
+                <div key={group.categoryName}>
+                  <button
+                    onClick={() => toggleCategory(group.categoryName)}
+                    className="flex items-center gap-2 mb-3 cursor-pointer group"
+                  >
+                    {isCollapsed ? (
+                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                    ) : (
+                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                    )}
+                    <FolderOpen className="h-4 w-4 text-emerald-500" />
+                    <span className="text-sm font-semibold">{group.displayName}</span>
+                    <span className="text-xs text-muted-foreground">({group.notes.length})</span>
+                  </button>
+                  {!isCollapsed && (
+                    <div className="grid gap-3 md:grid-cols-2">
+                      {group.notes.map((note) => (
+                        <NoteCard key={note.id} note={note} onClick={() => navigate(`/notes/${encodeURIComponent(note.id)}`)} />
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <CardTitle className="text-sm">{note.title}</CardTitle>
-                {note.abstract && (
-                  <CardDescription className="line-clamp-2">{note.abstract}</CardDescription>
-                )}
-              </CardHeader>
-              <CardContent>
-                <div className="flex flex-wrap gap-1">
-                  {note.domains.map((d) => (
-                    <span key={d} className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{d}</span>
-                  ))}
-                  {note.tags.map((t) => (
-                    <span key={t} className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">#{t}</span>
-                  ))}
-                </div>
-                <p className="text-[10px] text-muted-foreground mt-2">
-                  {new Date(note.updated_at).toLocaleDateString()} · {note.word_count ?? 0} words
-                </p>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+              );
+            })}
+          </div>
+        ) : (
+          /* Flat list (filtered by category or only one category) */
+          <div className="grid gap-3 md:grid-cols-2">
+            {data?.items.map((note) => (
+              <NoteCard key={note.id} note={note} onClick={() => navigate(`/notes/${encodeURIComponent(note.id)}`)} />
+            ))}
+          </div>
+        )}
       </div>
     </div>
+  );
+}
+
+function NoteCard({ note, onClick }: { note: Note; onClick: () => void }) {
+  return (
+    <Card className="cursor-pointer hover:border-primary/40 transition-colors" onClick={onClick}>
+      <CardHeader className="pb-2">
+        <div className="flex items-center gap-2 mb-1">
+          <Badge variant="note">{note.note_type}</Badge>
+          <Badge variant="outline">{note.status}</Badge>
+        </div>
+        <CardTitle className="text-sm">{note.title}</CardTitle>
+        {note.abstract && (
+          <CardDescription className="line-clamp-2">{note.abstract}</CardDescription>
+        )}
+      </CardHeader>
+      <CardContent>
+        <div className="flex flex-wrap gap-1">
+          {note.domains.map((d) => (
+            <span key={d} className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{d}</span>
+          ))}
+          {note.tags.map((t) => (
+            <span key={t} className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">#{t}</span>
+          ))}
+        </div>
+        <p className="text-[10px] text-muted-foreground mt-2">
+          {new Date(note.updated_at).toLocaleDateString()} · {note.word_count ?? 0} words
+        </p>
+      </CardContent>
+    </Card>
   );
 }

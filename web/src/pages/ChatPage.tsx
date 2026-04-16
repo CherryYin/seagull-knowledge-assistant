@@ -4,7 +4,13 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ChatMessage } from "@/components/ChatMessage";
-import { streamAction } from "@/lib/api";
+import {
+  streamAction,
+  chatSessionsApi,
+  knowledgeApi,
+  type DocumentMetadata,
+  type ChatSessionMessage,
+} from "@/lib/api";
 import {
   createEmptySession,
   createMessage,
@@ -101,42 +107,68 @@ export function ChatPage() {
     }
   }, []);
 
-  const handleSubmit = async () => {
-    if (!currentSession) return;
-    const task = input.trim();
-    if (!task || streaming) return;
+  const sendMessage = useCallback(
+    async (task: string, truncateAfterIndex?: number) => {
+      if (!currentSession || streaming) return;
+      const sessionId = currentSession.id;
 
-    const sessionId = currentSession.id;
-    const userMsg = createMessage("user", task);
-    const assistantMsg = createMessage("assistant", "");
+      // If retrying, truncate messages first
+      if (truncateAfterIndex !== undefined) {
+        updateSessionLocal(sessionId, (s) => ({
+          ...s,
+          messages: s.messages.slice(0, truncateAfterIndex),
+        }));
+      }
 
-    updateSessionLocal(sessionId, (s) => {
-      const nextMessages = [...s.messages, userMsg, assistantMsg];
-      return {
-        ...s,
-        messages: nextMessages,
-        title: deriveSessionTitle(nextMessages),
-        updated_at: new Date().toISOString(),
-      };
-    });
-    setSelectedHistorySessionId(sessionId);
-    setInput("");
-    setStreaming(true);
+      const userMsg = createMessage("user", task);
+      const assistantMsg = createMessage("assistant", "");
 
-    let fullResponse = "";
-
-    try {
-      const stream = streamAction({
-        task,
-        session_id: sessionId,
+      updateSessionLocal(sessionId, (s) => {
+        const nextMessages = [...s.messages, userMsg, assistantMsg];
+        return {
+          ...s,
+          messages: nextMessages,
+          title: deriveSessionTitle(nextMessages),
+          updated_at: new Date().toISOString(),
+        };
       });
+      setSelectedHistorySessionId(sessionId);
+      setStreaming(true);
 
-      for await (const chunk of stream) {
-        fullResponse += chunk;
+      let fullResponse = "";
+
+      try {
+        const stream = streamAction({
+          task,
+          session_id: sessionId,
+        });
+
+        for await (const chunk of stream) {
+          fullResponse += chunk;
+          updateSessionLocal(sessionId, (s) => {
+            const nextMessages = s.messages.map((m) =>
+              m.id === assistantMsg.id
+                ? { ...m, content: m.content + chunk }
+                : m
+            );
+            return {
+              ...s,
+              messages: nextMessages,
+              title: deriveSessionTitle(nextMessages),
+              updated_at: new Date().toISOString(),
+            };
+          });
+        }
+      } catch (err) {
         updateSessionLocal(sessionId, (s) => {
           const nextMessages = s.messages.map((m) =>
             m.id === assistantMsg.id
-              ? { ...m, content: m.content + chunk }
+              ? {
+                  ...m,
+                  content:
+                    m.content ||
+                    `Error: ${err instanceof Error ? err.message : "Unknown error"}`,
+                }
               : m
           );
           return {
@@ -146,41 +178,71 @@ export function ChatPage() {
             updated_at: new Date().toISOString(),
           };
         });
-      }
-    } catch (err) {
-      updateSessionLocal(sessionId, (s) => {
-        const nextMessages = s.messages.map((m) =>
-          m.id === assistantMsg.id
-            ? {
-                ...m,
-                content:
-                  m.content ||
-                  `Error: ${err instanceof Error ? err.message : "Unknown error"}`,
-              }
-            : m
-        );
-        return {
-          ...s,
-          messages: nextMessages,
-          title: deriveSessionTitle(nextMessages),
-          updated_at: new Date().toISOString(),
-        };
-      });
-    } finally {
-      setStreaming(false);
-      // Persist the final state to backend (the stream endpoint also saves,
-      // but we save here as well to capture the local message IDs)
-      setSessions((prev) => {
-        const session = prev.find((s) => s.id === sessionId);
-        if (session) {
-          saveSession(session).catch((err) =>
-            console.error("Failed to save session:", err)
+      } finally {
+        setStreaming(false);
+        // Persist the final state to backend (the stream endpoint also saves,
+        // but we save here as well to capture the local message IDs)
+        setSessions((prev) => {
+          const session = prev.find((s) => s.id === sessionId);
+          if (session) {
+            saveSession(session).catch((err) =>
+              console.error("Failed to save session:", err)
+            );
+          }
+          return prev;
+        });
+        // Refresh session from backend to pick up server-populated metadata
+        try {
+          const refreshed = await chatSessionsApi.get(sessionId);
+          setSessions((prev) =>
+            prev.map((s) => (s.id === sessionId ? refreshed : s))
           );
+        } catch {
+          // Non-critical: metadata just won't show until page reload
         }
-        return prev;
-      });
-    }
+      }
+    },
+    [currentSession, streaming, updateSessionLocal]
+  );
+
+  const handleSubmit = async () => {
+    const task = input.trim();
+    if (!task || streaming) return;
+    setInput("");
+    sendMessage(task);
   };
+
+  const handleRetry = useCallback(
+    (userMsg: ChatSessionMessage, msgIndex: number) => {
+      sendMessage(userMsg.content, msgIndex);
+    },
+    [sendMessage]
+  );
+
+  const handleNewKnowledge = useCallback(
+    async (doc: DocumentMetadata, assistantMsg: ChatSessionMessage) => {
+      if (!currentSession) return;
+      await knowledgeApi.saveDocument({
+        storage_uri: doc.storage_uri,
+        document_format: doc.format,
+        document_filename: doc.filename,
+        message_content: assistantMsg.content,
+        session_id: currentSession.id,
+      });
+    },
+    [currentSession]
+  );
+
+  const handleRemember = useCallback(
+    async (assistantMsg: ChatSessionMessage) => {
+      if (!currentSession) return;
+      await knowledgeApi.remember({
+        content: assistantMsg.content,
+        session_id: currentSession.id,
+      });
+    },
+    [currentSession]
+  );
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -268,8 +330,32 @@ export function ChatPage() {
                   </div>
                 ) : (
                   <div className="mx-auto max-w-3xl py-6">
-                    {currentSession.messages.map((msg) => (
-                      <ChatMessage key={msg.id} role={msg.role as "user" | "assistant"} content={msg.content} />
+                    {currentSession.messages.map((msg, idx) => (
+                      <ChatMessage
+                        key={msg.id}
+                        role={msg.role as "user" | "assistant"}
+                        content={msg.content}
+                        metadata={msg.metadata}
+                        streaming={
+                          streaming && idx === currentSession.messages.length - 1
+                        }
+                        onRetry={
+                          msg.role === "user" && !streaming
+                            ? () => handleRetry(msg, idx)
+                            : undefined
+                        }
+                        onNewKnowledge={
+                          msg.role === "assistant" &&
+                          msg.metadata?.documents?.length
+                            ? (doc) => handleNewKnowledge(doc, msg)
+                            : undefined
+                        }
+                        onRemember={
+                          msg.role === "assistant" && !streaming
+                            ? () => handleRemember(msg)
+                            : undefined
+                        }
+                      />
                     ))}
                     <div ref={bottomRef} />
                   </div>
@@ -375,7 +461,12 @@ export function ChatPage() {
                     </div>
                     <div className="mx-auto w-full max-w-3xl flex-1 px-6 py-6">
                       {selectedHistorySession.messages.map((message) => (
-                        <ChatMessage key={message.id} role={message.role as "user" | "assistant"} content={message.content} />
+                        <ChatMessage
+                          key={message.id}
+                          role={message.role as "user" | "assistant"}
+                          content={message.content}
+                          metadata={message.metadata}
+                        />
                       ))}
                     </div>
                   </div>

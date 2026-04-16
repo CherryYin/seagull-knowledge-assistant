@@ -1,7 +1,9 @@
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -16,6 +18,8 @@ from pkg.services.skills import expand_skill, load_skills_merged, parse_skill_in
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_DOWNLOAD_LINK_RE = re.compile(r"下载链接:\s*(https?://\S+)")
 
 
 def _normalize_strands_message(msg: dict[str, Any]) -> dict[str, Any]:
@@ -62,13 +66,43 @@ async def _save_session_messages(
         await db.commit()
 
 
-def _make_message_dict(role: str, content: str) -> dict:
-    return {
+def _make_message_dict(role: str, content: str, metadata: dict | None = None) -> dict:
+    msg = {
         "id": f"msg-{uuid.uuid4()}",
         "role": role,
         "content": content,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
+    if metadata:
+        msg["metadata"] = metadata
+    return msg
+
+
+def _extract_document_metadata(text: str) -> dict | None:
+    """Parse assistant response text for generated document download links.
+
+    Returns metadata dict with documents list, or None if no documents found.
+    """
+    matches = _DOWNLOAD_LINK_RE.findall(text)
+    if not matches:
+        return None
+    documents = []
+    for url in matches:
+        parsed = urlparse(url)
+        # Extract the OSS object key from the URL path (e.g., /knowledge-graph/exports/doc.docx)
+        path_parts = parsed.path.lstrip("/").split("/", 1)
+        object_key = path_parts[1] if len(path_parts) > 1 else path_parts[0]
+        filename = unquote(object_key.rsplit("/", 1)[-1])
+        fmt = filename.rsplit(".", 1)[-1] if "." in filename else "unknown"
+        # Build permanent storage URI instead of using the presigned URL
+        bucket = settings.MINIO_BUCKET
+        storage_uri = f"minio://{bucket}/{object_key}"
+        documents.append({
+            "storage_uri": storage_uri,
+            "format": fmt,
+            "filename": filename,
+        })
+    return {"documents": documents}
 
 
 def _derive_title(messages: list[dict]) -> str:
@@ -119,7 +153,8 @@ async def execute_action(body: ActionRequest):
 
     if session_id:
         db_messages.append(_make_message_dict("user", body.task))
-        db_messages.append(_make_message_dict("assistant", result_text))
+        doc_meta = _extract_document_metadata(result_text)
+        db_messages.append(_make_message_dict("assistant", result_text, metadata=doc_meta))
         await _save_session_messages(session_id, _derive_title(db_messages), db_messages)
 
     return ActionResponse(
@@ -167,8 +202,9 @@ async def execute_action_stream(body: ActionRequest):
                 yield chunk
             # After stream completes, persist to DB
             full_response = "".join(collected_chunks)
+            doc_meta = _extract_document_metadata(full_response)
             db_messages.append(_make_message_dict("user", body.task))
-            db_messages.append(_make_message_dict("assistant", full_response))
+            db_messages.append(_make_message_dict("assistant", full_response, metadata=doc_meta))
             await _save_session_messages(
                 session_id, _derive_title(db_messages), db_messages
             )
