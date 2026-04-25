@@ -6,7 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.config import settings
 from pkg.db import get_session
+from pkg.api.deps import get_current_user
 from pkg.models.skill import Skill
+from pkg.models.user import User
 from pkg.schemas.skill import SkillCreate, SkillList, SkillRead, SkillUpdate
 from pkg.services.skills import load_skills_merged
 
@@ -30,7 +32,7 @@ def _skill_to_read(s, source: str = "db") -> dict:
 
 
 @router.get("", response_model=list[SkillRead])
-async def list_skills():
+async def list_skills(user: User = Depends(get_current_user)):
     """List all skills merged from local files and DB."""
     skills = await load_skills_merged(settings.skills_dir)
     return [
@@ -51,6 +53,7 @@ async def list_skills():
 @router.post("", response_model=SkillRead, status_code=201)
 async def create_skill(
     body: SkillCreate,
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     """Create a new skill in DB + OSS."""
@@ -105,6 +108,7 @@ async def create_skill(
 @router.get("/{skill_name}", response_model=SkillRead)
 async def get_skill(
     skill_name: str,
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     skill_id = f"skill-{skill_name}"
@@ -118,6 +122,7 @@ async def get_skill(
 async def update_skill(
     skill_name: str,
     body: SkillUpdate,
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     skill_id = f"skill-{skill_name}"
@@ -142,6 +147,7 @@ async def update_skill(
 @router.delete("/{skill_name}", status_code=204)
 async def delete_skill(
     skill_name: str,
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     skill_id = f"skill-{skill_name}"

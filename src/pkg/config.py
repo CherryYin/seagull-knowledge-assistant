@@ -82,9 +82,11 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = ""
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_DAYS: int = 7
-    ADMIN_INIT_PASSWORD: str = "admin123"
+    ADMIN_INIT_PASSWORD: str = ""
 
     # Chunking settings for long document embedding
+    CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
+
     CHUNK_MAX_TOKENS: int = 2048  # max tokens per chunk (tiktoken)
 
     @property

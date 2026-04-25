@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.api.deps import get_current_user
+from pkg.config import settings
 from pkg.db import get_session
 from pkg.models.category import Category
 from pkg.models.note import Note, NoteEmbedding
@@ -315,7 +316,10 @@ async def get_note_file(
         url = await get_storage_service().generate_download_url(note.file_path)
         return RedirectResponse(url=url)
 
-    local_path = Path(note.file_path)
+    local_path = Path(note.file_path).resolve()
+    allowed_root = Path(settings.DATA_DIR).resolve()
+    if not local_path.is_relative_to(allowed_root):
+        raise HTTPException(status_code=403, detail="Access denied")
     if not local_path.exists():
         raise HTTPException(status_code=404, detail="Note file not found")
     return FileResponse(local_path)

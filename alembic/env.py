@@ -15,6 +15,7 @@ from pkg.models.note import Note, NoteEmbedding  # noqa: F401
 from pkg.models.chat_session import ChatSession  # noqa: F401
 from pkg.models.skill import Skill  # noqa: F401
 from pkg.models.user import User, UserMemory, UserSettings, ActivityLog  # noqa: F401
+from pkg.models.stats import KnowledgeStats  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL_SYNC)

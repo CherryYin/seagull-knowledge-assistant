@@ -26,6 +26,7 @@ if os.environ.get("KG_TORCH_CPU_ONLY", "").lower() in ("1", "true", "yes"):
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from pkg.config import settings
 from pkg.api.sources import router as sources_router
 from pkg.api.notes import router as notes_router
 from pkg.api.search import router as search_router
@@ -87,6 +88,15 @@ async def _user_profiler_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if not settings.JWT_SECRET_KEY or len(settings.JWT_SECRET_KEY) < 32:
+        raise RuntimeError(
+            "JWT_SECRET_KEY must be set to a random string of at least 32 characters. "
+            "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
+        )
+    if not settings.ADMIN_INIT_PASSWORD or settings.ADMIN_INIT_PASSWORD in ("admin123", "password"):
+        logger.warning(
+            "ADMIN_INIT_PASSWORD is empty or weak — set a strong password in .env"
+        )
     task = asyncio.create_task(_daily_summarizer_loop())
     profiler_task = asyncio.create_task(_user_profiler_loop())
     yield
@@ -103,7 +113,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )

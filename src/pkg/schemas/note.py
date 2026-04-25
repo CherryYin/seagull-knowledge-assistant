@@ -9,7 +9,7 @@ class NoteCreate(BaseModel):
     category_id: int = 1
     note_type: str = Field(
         default="inbox",
-        pattern=r"^(architecture|case-study|concept|how-to|inbox)$",
+        pattern=r"^(architecture|case-study|concept|how-to|inbox|remember)$",
     )
     domains: list[str] = []
     tags: list[str] = []
@@ -55,7 +55,7 @@ class NoteUpdate(BaseModel):
     category_id: int | None = None
     note_type: str | None = Field(
         default=None,
-        pattern=r"^(architecture|case-study|concept|how-to|inbox)$",
+        pattern=r"^(architecture|case-study|concept|how-to|inbox|remember)$",
     )
     domains: list[str] | None = None
     tags: list[str] | None = None

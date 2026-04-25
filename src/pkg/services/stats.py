@@ -170,7 +170,8 @@ async def get_knowledge_rankings(
             base = base.where(item_info.c.item_type == item_type)
 
         if title:
-            base = base.where(item_info.c.title.ilike(f"%{title}%"))
+            escaped = title.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            base = base.where(item_info.c.title.ilike(f"%{escaped}%"))
 
         # Count total
         count_stmt = select(func.count()).select_from(base.subquery())

@@ -107,7 +107,7 @@ async def remember_knowledge(
 
     note_body = NoteCreate(
         title=title,
-        note_type="inbox",
+        note_type="remember",
         category_id=category_id,
         content=body.content,
         status="temporary",
@@ -127,7 +127,7 @@ async def remember_knowledge(
 
 
 @router.post("/summarize-daily")
-async def trigger_daily_summary():
+async def trigger_daily_summary(user: User = Depends(get_current_user)):
     """Manually trigger the daily temporary notes summarization."""
     from pkg.services.daily_summarizer import summarize_temporary_notes
 

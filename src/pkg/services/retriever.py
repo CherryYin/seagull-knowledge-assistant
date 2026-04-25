@@ -7,6 +7,10 @@ from pkg.schemas.note import SearchResult
 from pkg.services.embedding import get_embedding_service
 
 
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 class RetrieverAgent:
     def __init__(self, session: AsyncSession, user_id: str | None = None):
         self.session = session
@@ -56,7 +60,7 @@ class RetrieverAgent:
             if "status" in filters:
                 stmt = stmt.where(Note.status == filters["status"])
         if query:
-            like_pattern = f"%{query}%"
+            like_pattern = f"%{_escape_like(query)}%"
             stmt = stmt.where(
                 or_(Note.title.ilike(like_pattern), Note.abstract.ilike(like_pattern))
             )
@@ -78,7 +82,7 @@ class RetrieverAgent:
         if self.user_id:
             src_stmt = src_stmt.where(or_(Source.user_id == self.user_id, Source.is_shared == True))
         if query:
-            like_pattern = f"%{query}%"
+            like_pattern = f"%{_escape_like(query)}%"
             src_stmt = src_stmt.where(Source.title.ilike(like_pattern))
         if filters and "source_type" in filters:
             src_stmt = src_stmt.where(Source.source_type == filters["source_type"])
