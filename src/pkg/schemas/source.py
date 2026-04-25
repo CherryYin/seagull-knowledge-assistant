@@ -14,6 +14,18 @@ class SourceCreate(BaseModel):
     metadata: dict | None = None
 
 
+class SourceUpdate(BaseModel):
+    """Partial update; only set fields are applied."""
+
+    title: str | None = None
+    category_id: int | None = None
+    source_type: str | None = Field(
+        default=None,
+        pattern=r"^(pdf|article|conversation|video|web|code)$",
+    )
+    url: str | None = None
+
+
 class SourceRead(BaseModel):
     model_config = {"from_attributes": True}
 

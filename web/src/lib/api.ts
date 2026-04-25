@@ -1,7 +1,16 @@
 const BASE = "/api";
+const TOKEN_KEY = "auth_token";
+
+function authHeaders(headers: Headers): Headers {
+  const token = localStorage.getItem(TOKEN_KEY);
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  return headers;
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const headers = new Headers(init?.headers);
+  const headers = authHeaders(new Headers(init?.headers));
   if (!(init?.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
@@ -9,6 +18,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers,
     ...init,
   });
+  if (res.status === 401) {
+    // Token expired or invalid — clear and redirect to login
+    localStorage.removeItem(TOKEN_KEY);
+    window.location.href = "/login";
+    throw new Error("Unauthorized");
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
     throw new Error(`${res.status}: ${text}`);
@@ -53,6 +68,14 @@ export interface SourceChunk {
   content: string;
 }
 
+/** Partial update (PATCH). Only include fields to change. */
+export interface SourceUpdate {
+  title?: string;
+  category_id?: number;
+  source_type?: string;
+  url?: string | null;
+}
+
 export const sourcesApi = {
   list: (params?: { source_type?: string; category_id?: number; limit?: number; offset?: number }) => {
     const q = new URLSearchParams();
@@ -68,6 +91,11 @@ export const sourcesApi = {
     request<Source>("/sources", { method: "POST", body: JSON.stringify(body) }),
   upload: (body: FormData) =>
     request<Source>("/sources/upload", { method: "POST", body }),
+  update: (id: string, body: SourceUpdate) =>
+    request<Source>(`/sources/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
   delete: (id: string) =>
     request<void>(`/sources/${encodeURIComponent(id)}`, { method: "DELETE" }),
 };
@@ -219,19 +247,56 @@ export interface ActionRequest {
   conversation_history?: { role: string; content: string }[];
 }
 
-export async function* streamAction(body: ActionRequest): AsyncGenerator<string> {
+export type SSEvent =
+  | { type: "step"; tool: string; status: "running" | "done" }
+  | { type: "content"; text: string }
+  | { type: "ask_human"; question: string }
+  | { type: "error"; message: string }
+  | { type: "done"; session_id: string };
+
+export async function* streamAction(body: ActionRequest): AsyncGenerator<SSEvent> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const token = localStorage.getItem(TOKEN_KEY);
+  if (token) headers["Authorization"] = `Bearer ${token}`;
   const res = await fetch(`${BASE}/action/stream`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`);
   const reader = res.body!.getReader();
   const decoder = new TextDecoder();
+  let buffer = "";
+
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    yield decoder.decode(value, { stream: true });
+    buffer += decoder.decode(value, { stream: true });
+
+    // Parse SSE frames: "event: <type>\ndata: <json>\n\n"
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop() || ""; // Keep incomplete frame in buffer
+
+    for (const frame of frames) {
+      if (!frame.trim()) continue;
+      let eventType = "content";
+      let dataStr = "";
+      for (const line of frame.split("\n")) {
+        if (line.startsWith("event: ")) {
+          eventType = line.slice(7).trim();
+        } else if (line.startsWith("data: ")) {
+          dataStr = line.slice(6);
+        }
+      }
+      if (!dataStr) continue;
+      try {
+        const data = JSON.parse(dataStr);
+        yield { type: eventType, ...data } as SSEvent;
+      } catch {
+        // Non-JSON data, treat as content text
+        yield { type: "content", text: dataStr } as SSEvent;
+      }
+    }
   }
 }
 
@@ -274,8 +339,15 @@ export interface DocumentMetadata {
   filename: string;
 }
 
+export interface ReferenceInfo {
+  id: string;
+  type: "note" | "source" | "web";
+  title: string;
+}
+
 export interface MessageMetadata {
   documents?: DocumentMetadata[];
+  references?: ReferenceInfo[];
 }
 
 export interface ChatSessionMessage {
@@ -336,6 +408,24 @@ export const chatSessionsApi = {
 };
 
 // --- Knowledge ---
+// --- Knowledge ---
+export interface KnowledgeStatsItem {
+  item_id: string;
+  item_type: string;
+  title: string;
+  category_name?: string | null;
+  search_count: number;
+  retrieval_count: number;
+  reference_count: number;
+  total_count: number;
+  last_accessed_at?: string | null;
+}
+
+export interface KnowledgeStatsList {
+  items: KnowledgeStatsItem[];
+  total: number;
+}
+
 export interface SaveDocumentRequest {
   storage_uri: string;
   document_format: string;
@@ -365,5 +455,65 @@ export const knowledgeApi = {
     request<Note>("/knowledge/remember", {
       method: "POST",
       body: JSON.stringify(body),
+    }),
+  stats: (params?: {
+    sort_by?: string;
+    item_type?: string;
+    title?: string;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const q = new URLSearchParams();
+    if (params?.sort_by) q.set("sort_by", params.sort_by);
+    if (params?.item_type) q.set("item_type", params.item_type);
+    if (params?.title) q.set("title", params.title);
+    if (params?.limit) q.set("limit", String(params.limit));
+    if (params?.offset) q.set("offset", String(params.offset));
+    return request<KnowledgeStatsList>(`/knowledge/stats?${q}`);
+  },
+};
+
+// --- Auth / User Management ---
+export interface UserRecord {
+  id: string;
+  username: string;
+  display_name: string;
+  email?: string | null;
+  role: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface UserCreateRequest {
+  username: string;
+  display_name: string;
+  email?: string;
+  password: string;
+  role?: string;
+}
+
+export interface UserUpdateRequest {
+  display_name?: string;
+  email?: string;
+  role?: string;
+  is_active?: boolean;
+}
+
+export const authApi = {
+  listUsers: () => request<UserRecord[]>("/auth/users"),
+  createUser: (body: UserCreateRequest) =>
+    request<UserRecord>("/auth/users", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateUser: (id: string, body: UserUpdateRequest) =>
+    request<UserRecord>(`/auth/users/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  changePassword: (old_password: string, new_password: string) =>
+    request<{ detail: string }>("/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ old_password, new_password }),
     }),
 };

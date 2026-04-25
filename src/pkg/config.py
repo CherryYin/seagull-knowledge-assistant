@@ -70,14 +70,22 @@ class Settings(BaseSettings):
     COMPACTION_SUMMARY_RATIO: float = 0.4
     COMPACTION_PRESERVE_RECENT: int = 6
 
+    # User profiler settings
+    PROFILE_UPDATE_DAY: int = 0  # 0=Monday, 6=Sunday
+
     # LLM retry settings (ModelRetryStrategy)
     LLM_RETRY_MAX_ATTEMPTS: int = 6
     LLM_RETRY_INITIAL_DELAY: int = 4
     LLM_RETRY_MAX_DELAY: int = 240
 
+    # JWT / Auth settings
+    JWT_SECRET_KEY: str = ""
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRE_DAYS: int = 7
+    ADMIN_INIT_PASSWORD: str = "admin123"
+
     # Chunking settings for long document embedding
-    CHUNK_SIZE: int = 512       # target chunk size in characters
-    CHUNK_OVERLAP: int = 64     # overlap between consecutive chunks
+    CHUNK_MAX_TOKENS: int = 2048  # max tokens per chunk (tiktoken)
 
     @property
     def resolved_embedding_api_base(self) -> str:

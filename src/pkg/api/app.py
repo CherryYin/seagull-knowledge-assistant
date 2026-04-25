@@ -34,6 +34,7 @@ from pkg.api.chat_sessions import router as chat_sessions_router
 from pkg.api.skills import router as skills_router
 from pkg.api.knowledge import router as knowledge_router
 from pkg.api.categories import router as categories_router
+from pkg.api.auth import router as auth_router
 
 # Configure root logger so all app loggers (pkg.*) output to console.
 # This is a no-op if logging is already configured (e.g. by pytest).
@@ -63,11 +64,34 @@ async def _daily_summarizer_loop():
             logger.exception("Daily summarization failed")
 
 
+async def _user_profiler_loop():
+    """Run user profiling once per week (configurable day, 03:00 UTC)."""
+    from pkg.config import settings
+    from pkg.services.user_profiler import profile_all_users
+
+    while True:
+        now = datetime.now(timezone.utc)
+        target_day = settings.PROFILE_UPDATE_DAY  # 0=Monday
+        days_ahead = (target_day - now.weekday()) % 7
+        if days_ahead == 0 and now.hour >= 3:
+            days_ahead = 7
+        next_run = (now + timedelta(days=days_ahead)).replace(hour=3, minute=0, second=0, microsecond=0)
+        delay = (next_run - now).total_seconds()
+        logger.info("User profiler: next run in %.0f seconds (%s)", delay, next_run.isoformat())
+        await asyncio.sleep(delay)
+        try:
+            await profile_all_users()
+        except Exception:
+            logger.exception("User profiling failed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     task = asyncio.create_task(_daily_summarizer_loop())
+    profiler_task = asyncio.create_task(_user_profiler_loop())
     yield
     task.cancel()
+    profiler_task.cancel()
 
 
 app = FastAPI(
@@ -92,6 +116,7 @@ app.include_router(chat_sessions_router, prefix="/chat-sessions", tags=["chat-se
 app.include_router(skills_router, prefix="/skills", tags=["skills"])
 app.include_router(knowledge_router, prefix="/knowledge", tags=["knowledge"])
 app.include_router(categories_router, prefix="/categories", tags=["categories"])
+app.include_router(auth_router, prefix="/auth", tags=["auth"])
 
 
 @app.get("/health")

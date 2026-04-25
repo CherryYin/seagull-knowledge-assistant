@@ -6,13 +6,15 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from pkg.api.deps import get_current_user
 from pkg.db import get_session
 from pkg.models.category import Category
 from pkg.models.source import Source, SourceChunk, SourceEmbedding
-from pkg.schemas.source import ChunkRead, SourceCreate, SourceList, SourceRead
+from pkg.models.user import User
+from pkg.schemas.source import ChunkRead, SourceCreate, SourceList, SourceRead, SourceUpdate
 from pkg.services.chunking import chunk_text
 from pkg.services.embedding import get_embedding_service
 from pkg.services.storage import get_storage_service
@@ -89,16 +91,20 @@ async def persist_source(
     *,
     session: AsyncSession,
     body: SourceCreate,
+    user_id: str,
     file_path: str | None = None,
     raw_content_override: str | None = None,
     content_hash_override: str | None = None,
 ) -> Source:
     source_id = make_source_id(body.title, body.id)
     raw_content = raw_content_override if raw_content_override is not None else body.raw_content
+    if raw_content:
+        raw_content = raw_content.replace("\x00", "")
     content_hash = content_hash_override or hashlib.sha256((raw_content or "").encode()).hexdigest()
 
     source = Source(
         id=source_id,
+        user_id=user_id,
         category_id=body.category_id,
         title=body.title,
         source_type=body.source_type,
@@ -111,15 +117,15 @@ async def persist_source(
     session.add(source)
 
     emb_svc = get_embedding_service()
-    title_vec = emb_svc.embed_text(source.title)
-    summary_vec = emb_svc.embed_text(raw_content[:500] if raw_content else source.title)
+    title_vec = await emb_svc.embed_text(source.title)
+    summary_vec = await emb_svc.embed_text(raw_content if raw_content else source.title)
     session.add(SourceEmbedding(source_id=source_id, title_vec=title_vec, summary_vec=summary_vec))
 
     # Generate chunks for long documents
     if raw_content:
         chunks = chunk_text(raw_content)
         if chunks:
-            vectors = emb_svc.embed_batch(chunks)
+            vectors = await emb_svc.embed_batch(chunks)
             for idx, (chunk_content, vec) in enumerate(zip(chunks, vectors)):
                 session.add(SourceChunk(
                     source_id=source_id,
@@ -134,8 +140,12 @@ async def persist_source(
 
 
 @router.post("", response_model=SourceRead, status_code=201)
-async def create_source(body: SourceCreate, session: AsyncSession = Depends(get_session)):
-    return await persist_source(session=session, body=body)
+async def create_source(
+    body: SourceCreate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await persist_source(session=session, body=body, user_id=user.id)
 
 
 @router.post("/upload", response_model=SourceRead, status_code=201)
@@ -146,6 +156,7 @@ async def upload_source(
     category_id: int = Form(1),
     url: str | None = Form(None),
     pdf_type: str | None = Form(None),
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
     payload = await file.read()
@@ -166,7 +177,7 @@ async def upload_source(
     category_name = category.name if category else None
     storage = get_storage_service()
     object_key = storage.build_object_key("sources", source_id, file.filename, category_name=category_name)
-    storage_uri = storage.upload_bytes(
+    storage_uri = await storage.upload_bytes(
         object_key=object_key,
         data=payload,
         content_type=file.content_type,
@@ -175,6 +186,7 @@ async def upload_source(
     return await persist_source(
         session=session,
         body=body.model_copy(update={"id": source_id, "file_path": storage_uri}),
+        user_id=user.id,
         file_path=storage_uri,
         raw_content_override=body.raw_content,
         content_hash_override=hashlib.sha256(payload).hexdigest(),
@@ -187,10 +199,12 @@ async def list_sources(
     category_id: int | None = None,
     limit: int = 20,
     offset: int = 0,
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    stmt = select(Source)
-    count_stmt = select(func.count()).select_from(Source)
+    ownership = or_(Source.user_id == user.id, Source.is_shared == True)
+    stmt = select(Source).where(ownership)
+    count_stmt = select(func.count()).select_from(Source).where(ownership)
 
     if category_id is not None:
         stmt = stmt.where(Source.category_id == category_id)
@@ -222,9 +236,13 @@ async def list_sources(
 
 
 @router.get("/{source_id}", response_model=SourceRead)
-async def get_source(source_id: str, session: AsyncSession = Depends(get_session)):
+async def get_source(
+    source_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
     source = await session.get(Source, source_id)
-    if not source:
+    if not source or (source.user_id != user.id and not source.is_shared):
         raise HTTPException(status_code=404, detail="Source not found")
     category = await session.get(Category, source.category_id)
     result = SourceRead.model_validate(source)
@@ -232,10 +250,56 @@ async def get_source(source_id: str, session: AsyncSession = Depends(get_session
     return result
 
 
-@router.get("/{source_id}/chunks", response_model=list[ChunkRead])
-async def get_source_chunks(source_id: str, session: AsyncSession = Depends(get_session)):
+@router.patch("/{source_id}", response_model=SourceRead)
+@router.put("/{source_id}", response_model=SourceRead)
+async def update_source(
+    source_id: str,
+    body: SourceUpdate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
     source = await session.get(Source, source_id)
-    if not source:
+    if not source or source.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    patch = body.model_dump(exclude_unset=True)
+    if not patch:
+        category = await session.get(Category, source.category_id)
+        result = SourceRead.model_validate(source)
+        result.category_name = category.name if category else None
+        return result
+
+    for key, value in patch.items():
+        setattr(source, key, value)
+
+    # Re-embed if title changed
+    if "title" in patch:
+        emb_svc = get_embedding_service()
+        emb_row = await session.get(SourceEmbedding, source_id)
+        title_vec = await emb_svc.embed_text(source.title)
+        if emb_row:
+            emb_row.title_vec = title_vec
+        else:
+            summary_vec = await emb_svc.embed_text(source.title)
+            session.add(SourceEmbedding(source_id=source_id, title_vec=title_vec, summary_vec=summary_vec))
+
+    await session.commit()
+    await session.refresh(source)
+
+    category = await session.get(Category, source.category_id)
+    result = SourceRead.model_validate(source)
+    result.category_name = category.name if category else None
+    return result
+
+
+@router.get("/{source_id}/chunks", response_model=list[ChunkRead])
+async def get_source_chunks(
+    source_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    source = await session.get(Source, source_id)
+    if not source or (source.user_id != user.id and not source.is_shared):
         raise HTTPException(status_code=404, detail="Source not found")
     rows = await session.execute(
         select(SourceChunk)
@@ -246,15 +310,19 @@ async def get_source_chunks(source_id: str, session: AsyncSession = Depends(get_
 
 
 @router.delete("/{source_id}", status_code=204)
-async def delete_source(source_id: str, session: AsyncSession = Depends(get_session)):
+async def delete_source(
+    source_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
     source = await session.get(Source, source_id)
-    if not source:
+    if not source or source.user_id != user.id:
         raise HTTPException(status_code=404, detail="Source not found")
 
     # Delete stored file from MinIO
     if source.file_path and source.file_path.startswith("minio://"):
         try:
-            get_storage_service().delete_object(source.file_path)
+            await get_storage_service().delete_object(source.file_path)
         except Exception:
             logger.warning("Failed to delete MinIO object for source %s: %s", source_id, source.file_path, exc_info=True)
 
@@ -275,13 +343,17 @@ async def delete_source(source_id: str, session: AsyncSession = Depends(get_sess
 
 
 @router.get("/{source_id}/file")
-async def get_source_file(source_id: str, session: AsyncSession = Depends(get_session)):
+async def get_source_file(
+    source_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
     source = await session.get(Source, source_id)
-    if not source or not source.file_path:
+    if not source or (source.user_id != user.id and not source.is_shared) or not source.file_path:
         raise HTTPException(status_code=404, detail="Source file not found")
 
     if source.file_path.startswith("minio://"):
-        url = get_storage_service().generate_download_url(source.file_path)
+        url = await get_storage_service().generate_download_url(source.file_path)
         return RedirectResponse(url=url)
 
     local_path = Path(source.file_path)

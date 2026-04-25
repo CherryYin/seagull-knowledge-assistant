@@ -77,7 +77,7 @@ async def create_skill(
         post.metadata["tools"] = body.tools_file
     raw_content = fm.dumps(post)
 
-    storage_uri = storage.upload_bytes(
+    storage_uri = await storage.upload_bytes(
         object_key=object_key,
         data=raw_content.encode("utf-8"),
         content_type="text/markdown",

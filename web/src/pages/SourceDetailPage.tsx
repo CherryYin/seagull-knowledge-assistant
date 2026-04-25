@@ -2,11 +2,13 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
-import { ArrowLeft, Download, ExternalLink, Trash2, List, FileText } from "lucide-react";
+import { ArrowLeft, Download, ExternalLink, Trash2, List, FileText, Pencil, Check, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { sourcesApi, type SourceChunk } from "@/lib/api";
+import { CategorySelect } from "@/components/CategorySelect";
+import { sourcesApi, categoriesApi, type Source, type SourceChunk, type SourceUpdate } from "@/lib/api";
 
 type ViewMode = "full" | "slices";
 
@@ -18,6 +20,8 @@ export function SourceDetailPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("full");
   const [selectedChunk, setSelectedChunk] = useState(0);
   const previewRef = useRef<HTMLDivElement>(null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<{ title: string; category_id: number; source_type: string; url: string } | null>(null);
 
   const { data: source, isLoading, error } = useQuery({
     queryKey: ["source", id],
@@ -31,6 +35,21 @@ export function SourceDetailPage() {
     enabled: !!id && viewMode === "slices",
   });
 
+  const { data: catData } = useQuery({
+    queryKey: ["categories"],
+    queryFn: () => categoriesApi.list(),
+  });
+  const categories = catData?.items ?? [];
+
+  const updateMutation = useMutation({
+    mutationFn: (body: SourceUpdate) => sourcesApi.update(id!, body),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(["source", id], updated);
+      queryClient.invalidateQueries({ queryKey: ["sources"] });
+      setEditing(false);
+    },
+  });
+
   const deleteMutation = useMutation({
     mutationFn: () => sourcesApi.delete(id!),
     onSuccess: () => {
@@ -38,6 +57,32 @@ export function SourceDetailPage() {
       navigate("/sources");
     },
   });
+
+  function startEdit() {
+    if (!source) return;
+    setDraft({
+      title: source.title,
+      category_id: source.category_id,
+      source_type: source.source_type,
+      url: source.url ?? "",
+    });
+    setEditing(true);
+  }
+
+  function cancelEdit() {
+    setEditing(false);
+    setDraft(null);
+  }
+
+  function saveEdit() {
+    if (!draft || !source) return;
+    const patch: SourceUpdate = {};
+    if (draft.title !== source.title) patch.title = draft.title;
+    if (draft.category_id !== source.category_id) patch.category_id = draft.category_id;
+    if (draft.source_type !== source.source_type) patch.source_type = draft.source_type;
+    if ((draft.url || null) !== (source.url || null)) patch.url = draft.url || null;
+    updateMutation.mutate(patch);
+  }
 
   // Find the selected chunk's content position in raw_content for highlighting
   const highlightRange = useMemo(() => {
@@ -69,6 +114,21 @@ export function SourceDetailPage() {
           <Button variant="ghost" size="sm" onClick={() => navigate("/sources")}>
             <ArrowLeft className="h-4 w-4" /> Back to Sources
           </Button>
+          {!editing && (
+            <Button variant="outline" size="sm" onClick={startEdit}>
+              <Pencil className="h-4 w-4" /> Edit
+            </Button>
+          )}
+          {editing && (
+            <>
+              <Button variant="default" size="sm" onClick={saveEdit} disabled={updateMutation.isPending}>
+                <Check className="h-4 w-4" /> {updateMutation.isPending ? "Saving..." : "Save"}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={cancelEdit} disabled={updateMutation.isPending}>
+                <X className="h-4 w-4" /> Cancel
+              </Button>
+            </>
+          )}
           <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" onClick={() => setDeleteOpen(true)}>
             <Trash2 className="h-4 w-4" /> Delete
           </Button>
@@ -90,17 +150,70 @@ export function SourceDetailPage() {
 
         {/* Source meta */}
         <div className="mb-6">
-          <div className="flex items-center gap-2 mb-2">
-            <Badge variant="source">{source.source_type}</Badge>
-            {source.category_name && source.category_name !== "general" && (
-              <Badge variant="secondary">{source.category_name}</Badge>
-            )}
-          </div>
-          <h1 className="text-2xl font-bold">{source.title}</h1>
-          {source.url && (
-            <a href={source.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-sm text-primary hover:underline mt-1">
-              {source.url} <ExternalLink className="h-3 w-3" />
-            </a>
+          {editing && draft ? (
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">Title</label>
+                <Input
+                  value={draft.title}
+                  onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+                  className="mt-1"
+                />
+              </div>
+              <div className="flex gap-4">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">Category</label>
+                  <div className="mt-1">
+                    <CategorySelect
+                      categories={categories}
+                      value={draft.category_id}
+                      onChange={(id) => setDraft({ ...draft, category_id: id })}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">Type</label>
+                  <select
+                    className="flex h-9 mt-1 rounded-md border border-input bg-transparent px-3 py-1 text-sm w-40"
+                    value={draft.source_type}
+                    onChange={(e) => setDraft({ ...draft, source_type: e.target.value })}
+                  >
+                    {["pdf", "article", "conversation", "video", "web", "code"].map((t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">URL</label>
+                <Input
+                  value={draft.url}
+                  onChange={(e) => setDraft({ ...draft, url: e.target.value })}
+                  className="mt-1"
+                  placeholder="https://..."
+                />
+              </div>
+              {updateMutation.isError && (
+                <p className="text-sm text-destructive">
+                  {updateMutation.error instanceof Error ? updateMutation.error.message : "Update failed"}
+                </p>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 mb-2">
+                <Badge variant="source">{source.source_type}</Badge>
+                {source.category_name && source.category_name !== "general" && (
+                  <Badge variant="secondary">{source.category_name}</Badge>
+                )}
+              </div>
+              <h1 className="text-2xl font-bold">{source.title}</h1>
+              {source.url && (
+                <a href={source.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-sm text-primary hover:underline mt-1">
+                  {source.url} <ExternalLink className="h-3 w-3" />
+                </a>
+              )}
+            </>
           )}
           {source.file_path && (
             <div className="mt-3">

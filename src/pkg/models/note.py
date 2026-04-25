@@ -13,6 +13,7 @@ class Note(Base):
     __tablename__ = "notes"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
     category_id: Mapped[int] = mapped_column(Integer, ForeignKey("categories.id"), nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     note_type: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -34,6 +35,7 @@ class Note(Base):
         Index("idx_notes_tags", "tags", postgresql_using="gin"),
         Index("idx_notes_sources", "source_ids", postgresql_using="gin"),
         Index("idx_notes_category", "category_id"),
+        Index("idx_notes_user_id", "user_id"),
     )
 
 

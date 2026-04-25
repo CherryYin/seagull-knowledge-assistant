@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 from pkg.config import settings
 
@@ -10,16 +10,17 @@ class EmbeddingService:
         self._client = None
 
     @property
-    def client(self) -> OpenAI:
+    def client(self) -> AsyncOpenAI:
         if self._client is None:
-            self._client = OpenAI(
+            self._client = AsyncOpenAI(
                 base_url=settings.resolved_embedding_api_base,
                 api_key=settings.resolved_embedding_api_key,
             )
         return self._client
 
-    def embed_text(self, text: str) -> list[float]:
-        response = self.client.embeddings.create(
+    async def embed_text(self, text: str, max_len: int = 8000) -> list[float]:
+        text = (text or "").strip()[:max_len] or "empty"
+        response = await self.client.embeddings.create(
             model=settings.EMBEDDING_MODEL,
             input=text,
             dimensions=settings.EMBEDDING_DIM,
@@ -27,11 +28,11 @@ class EmbeddingService:
         )
         return response.data[0].embedding
 
-    def embed_batch(self, texts: list[str], batch_size: int = 10) -> list[list[float]]:
+    async def embed_batch(self, texts: list[str], batch_size: int = 10) -> list[list[float]]:
         results: list[list[float]] = []
         for i in range(0, len(texts), batch_size):
             batch = texts[i : i + batch_size]
-            response = self.client.embeddings.create(
+            response = await self.client.embeddings.create(
                 model=settings.EMBEDDING_MODEL,
                 input=batch,
                 dimensions=settings.EMBEDDING_DIM,

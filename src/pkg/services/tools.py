@@ -7,6 +7,12 @@ import asyncio
 from strands import tool
 
 
+def _get_user_id() -> str | None:
+    """Get the current user ID from the context variable (set by API layer)."""
+    from pkg.services.action_agent import current_user_id
+    return current_user_id.get()
+
+
 @tool
 async def search_knowledge(query: str, mode: str = "vector", top_k: int = 5) -> str:
     """Search the personal knowledge base using semantic or structured search.
@@ -23,11 +29,19 @@ async def search_knowledge(query: str, mode: str = "vector", top_k: int = 5) -> 
     from pkg.services.retriever import RetrieverAgent
 
     async with async_session() as session:
-        retriever = RetrieverAgent(session)
+        retriever = RetrieverAgent(session, user_id=_get_user_id())
         results = await retriever.search(query=query, mode=mode, top_k=top_k)
 
     if not results:
         return "未找到相关内容。知识库中可能没有与此查询相关的笔记或资料。"
+
+    # Track retrieval hits per item
+    from pkg.services.stats import increment_stats_mixed
+    items = []
+    for r in results:
+        itype = "note" if r.type == "note" else "source"
+        items.append((r.id, itype))
+    await increment_stats_mixed(items, "retrieval_count")
 
     lines = [f"找到 {len(results)} 条相关结果：\n"]
     for i, r in enumerate(results, 1):
@@ -60,6 +74,10 @@ async def read_note(note_id: str) -> str:
 
     if not note:
         return f"笔记 {note_id} 不存在。请检查ID是否正确。"
+
+    # Track retrieval
+    from pkg.services.stats import increment_stats
+    await increment_stats([note_id], "note", "retrieval_count")
 
     parts = [
         f"# {note.title}",
@@ -97,6 +115,10 @@ async def read_source(source_id: str) -> str:
     if not source:
         return f"资料 {source_id} 不存在。请检查ID是否正确。"
 
+    # Track retrieval
+    from pkg.services.stats import increment_stats
+    await increment_stats([source_id], "source", "retrieval_count")
+
     parts = [
         f"# {source.title}",
         f"类型: {source.source_type}",
@@ -133,6 +155,9 @@ async def list_notes(
 
     async with async_session() as session:
         stmt = select(Note)
+        user_id = _get_user_id()
+        if user_id:
+            stmt = stmt.where(Note.user_id == user_id)
         if domain:
             stmt = stmt.where(Note.domains.any(domain))
         if tag:
@@ -177,6 +202,10 @@ async def list_sources(source_type: str = "", limit: int = 20) -> str:
 
     async with async_session() as session:
         stmt = select(Source)
+        user_id = _get_user_id()
+        if user_id:
+            from sqlalchemy import or_
+            stmt = stmt.where(or_(Source.user_id == user_id, Source.is_shared == True))
         if source_type:
             stmt = stmt.where(Source.source_type == source_type)
         stmt = stmt.order_by(Source.ingested_at.desc()).limit(limit)
@@ -210,16 +239,21 @@ async def knowledge_stats() -> str:
     from pkg.models.source import Source
 
     async with async_session() as session:
-        note_count = (await session.execute(
-            select(func.count()).select_from(Note)
-        )).scalar() or 0
-        source_count = (await session.execute(
-            select(func.count()).select_from(Source)
-        )).scalar() or 0
+        user_id = _get_user_id()
+        note_q = select(func.count()).select_from(Note)
+        source_q = select(func.count()).select_from(Source)
+        if user_id:
+            from sqlalchemy import or_
+            note_q = note_q.where(Note.user_id == user_id)
+            source_q = source_q.where(or_(Source.user_id == user_id, Source.is_shared == True))
 
-        note_types = await session.execute(
-            select(Note.note_type, func.count()).group_by(Note.note_type)
-        )
+        note_count = (await session.execute(note_q)).scalar() or 0
+        source_count = (await session.execute(source_q)).scalar() or 0
+
+        type_q = select(Note.note_type, func.count()).group_by(Note.note_type)
+        if user_id:
+            type_q = type_q.where(Note.user_id == user_id)
+        note_types = await session.execute(type_q)
         type_breakdown = {row[0]: row[1] for row in note_types}
 
     lines = [
@@ -232,3 +266,25 @@ async def knowledge_stats() -> str:
         for t, c in type_breakdown.items():
             lines.append(f"- {t}: {c}")
     return "\n".join(lines)
+
+
+@tool
+def ask_human(question: str) -> str:
+    """向用户提出问题并等待回复。在以下情况时使用此工具：
+
+    - 研究方向需要用户确认或选择
+    - 找到多个可能的路径需要用户决定
+    - 需要用户补充关键信息才能继续
+    - 中间成果需要用户审阅反馈
+
+    调用此工具后你必须立即停止当前回复，等待用户在下一条消息中回答。
+
+    Args:
+        question: 要向用户提出的问题。应包含当前进展摘要和具体选项。
+    """
+    return (
+        f"[WAITING_FOR_HUMAN]\n"
+        f"{question}\n\n"
+        f"---\n"
+        f"（请在下方输入你的回复，我将继续执行。）"
+    )

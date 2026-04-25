@@ -4,8 +4,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from pkg.api.deps import get_current_user
 from pkg.db import get_session
 from pkg.models.chat_session import ChatSession
+from pkg.models.user import User
 from pkg.schemas.chat_session import (
     ChatSessionCreate,
     ChatSessionList,
@@ -19,11 +21,13 @@ router = APIRouter()
 @router.post("", response_model=ChatSessionRead, status_code=201)
 async def create_session(
     body: ChatSessionCreate,
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     session_id = body.id or f"session-{uuid.uuid4()}"
     obj = ChatSession(
         id=session_id,
+        user_id=user.id,
         title=body.title,
         messages=[m.model_dump() for m in body.messages],
     )
@@ -37,13 +41,15 @@ async def create_session(
 async def list_sessions(
     limit: int = 50,
     offset: int = 0,
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
-    count_stmt = select(func.count()).select_from(ChatSession)
+    count_stmt = select(func.count()).select_from(ChatSession).where(ChatSession.user_id == user.id)
     total = (await db.execute(count_stmt)).scalar() or 0
 
     stmt = (
         select(ChatSession)
+        .where(ChatSession.user_id == user.id)
         .order_by(ChatSession.updated_at.desc())
         .offset(offset)
         .limit(limit)
@@ -56,10 +62,11 @@ async def list_sessions(
 @router.get("/{session_id}", response_model=ChatSessionRead)
 async def get_session_by_id(
     session_id: str,
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     obj = await db.get(ChatSession, session_id)
-    if not obj:
+    if not obj or obj.user_id != user.id:
         raise HTTPException(status_code=404, detail="Session not found")
     return obj
 
@@ -68,10 +75,11 @@ async def get_session_by_id(
 async def update_session(
     session_id: str,
     body: ChatSessionUpdate,
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     obj = await db.get(ChatSession, session_id)
-    if not obj:
+    if not obj or obj.user_id != user.id:
         raise HTTPException(status_code=404, detail="Session not found")
 
     if body.title is not None:
@@ -87,10 +95,11 @@ async def update_session(
 @router.delete("/{session_id}", status_code=204)
 async def delete_session(
     session_id: str,
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     obj = await db.get(ChatSession, session_id)
-    if not obj:
+    if not obj or obj.user_id != user.id:
         raise HTTPException(status_code=404, detail="Session not found")
     await db.delete(obj)
     await db.commit()

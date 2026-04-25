@@ -1,15 +1,18 @@
 import { useRef, useState, useEffect, useCallback } from "react";
-import { History, MessageSquarePlus, Send, Sparkles, Trash2 } from "lucide-react";
+import { History, MessageSquarePlus, Microscope, Send, Sparkles, Trash2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ChatMessage } from "@/components/ChatMessage";
+import { ResearchSteps, type StepInfo } from "@/components/ResearchSteps";
 import {
   streamAction,
   chatSessionsApi,
   knowledgeApi,
   type DocumentMetadata,
   type ChatSessionMessage,
+  type SSEvent,
 } from "@/lib/api";
 import {
   createEmptySession,
@@ -28,6 +31,8 @@ export function ChatPage() {
   const [tab, setTab] = useState<"chat" | "history">("chat");
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [steps, setSteps] = useState<StepInfo[]>([]);
+  const [deepResearch, setDeepResearch] = useState(false);
   const [loading, setLoading] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -134,6 +139,7 @@ export function ChatPage() {
       });
       setSelectedHistorySessionId(sessionId);
       setStreaming(true);
+      setSteps([]);
 
       let fullResponse = "";
 
@@ -143,21 +149,53 @@ export function ChatPage() {
           session_id: sessionId,
         });
 
-        for await (const chunk of stream) {
-          fullResponse += chunk;
-          updateSessionLocal(sessionId, (s) => {
-            const nextMessages = s.messages.map((m) =>
-              m.id === assistantMsg.id
-                ? { ...m, content: m.content + chunk }
-                : m
-            );
-            return {
-              ...s,
-              messages: nextMessages,
-              title: deriveSessionTitle(nextMessages),
-              updated_at: new Date().toISOString(),
-            };
-          });
+        for await (const event of stream) {
+          switch (event.type) {
+            case "content":
+              fullResponse += event.text;
+              updateSessionLocal(sessionId, (s) => {
+                const nextMessages = s.messages.map((m) =>
+                  m.id === assistantMsg.id
+                    ? { ...m, content: m.content + event.text }
+                    : m
+                );
+                return {
+                  ...s,
+                  messages: nextMessages,
+                  title: deriveSessionTitle(nextMessages),
+                  updated_at: new Date().toISOString(),
+                };
+              });
+              break;
+            case "step":
+              setSteps((prev) => {
+                if (event.status === "running") {
+                  return [...prev, { tool: event.tool, status: "running" }];
+                }
+                // Mark matching running step as done
+                return prev.map((s) =>
+                  s.tool === event.tool && s.status === "running"
+                    ? { ...s, status: "done" as const }
+                    : s
+                );
+              });
+              break;
+            case "ask_human":
+              // ask_human question is already part of the content stream
+              break;
+            case "error":
+              updateSessionLocal(sessionId, (s) => {
+                const nextMessages = s.messages.map((m) =>
+                  m.id === assistantMsg.id
+                    ? { ...m, content: m.content + `\n\nError: ${event.message}` }
+                    : m
+                );
+                return { ...s, messages: nextMessages, updated_at: new Date().toISOString() };
+              });
+              break;
+            case "done":
+              break;
+          }
         }
       } catch (err) {
         updateSessionLocal(sessionId, (s) => {
@@ -180,6 +218,7 @@ export function ChatPage() {
         });
       } finally {
         setStreaming(false);
+        setSteps([]);
         // Persist the final state to backend (the stream endpoint also saves,
         // but we save here as well to capture the local message IDs)
         setSessions((prev) => {
@@ -206,9 +245,10 @@ export function ChatPage() {
   );
 
   const handleSubmit = async () => {
-    const task = input.trim();
-    if (!task || streaming) return;
+    const raw = input.trim();
+    if (!raw || streaming) return;
     setInput("");
+    const task = deepResearch ? `/deep-research ${raw}` : raw;
     sendMessage(task);
   };
 
@@ -357,12 +397,30 @@ export function ChatPage() {
                         }
                       />
                     ))}
+                    {streaming && steps.length > 0 && (
+                      <ResearchSteps steps={steps} />
+                    )}
                     <div ref={bottomRef} />
                   </div>
                 )}
               </div>
 
               <div className="border-t border-border bg-card/50 px-6 py-4">
+                <div className="mx-auto flex max-w-3xl items-center gap-2 mb-2">
+                  <button
+                    type="button"
+                    onClick={() => setDeepResearch((v) => !v)}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition-colors border cursor-pointer",
+                      deepResearch
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "bg-transparent text-muted-foreground border-border hover:bg-accent"
+                    )}
+                  >
+                    <Microscope className="h-3.5 w-3.5" />
+                    Deep Research
+                  </button>
+                </div>
                 <div className="mx-auto flex max-w-3xl items-end gap-3">
                   <Textarea
                     ref={textareaRef}

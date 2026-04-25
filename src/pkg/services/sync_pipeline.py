@@ -50,7 +50,7 @@ async def _resolve_category_id(session: AsyncSession, name: str | None) -> int:
     return cat.id
 
 
-async def sync_notes_from_directory(session: AsyncSession, notes_dir: Path) -> dict:
+async def sync_notes_from_directory(session: AsyncSession, notes_dir: Path, user_id: str | None = None) -> dict:
     stats = {"created": 0, "updated": 0, "skipped": 0}
     if not notes_dir.exists():
         return stats
@@ -90,15 +90,17 @@ async def sync_notes_from_directory(session: AsyncSession, notes_dir: Path) -> d
         note.updated_at = datetime.now(timezone.utc)
 
         if not existing:
+            if user_id:
+                note.user_id = user_id
             session.add(note)
             stats["created"] += 1
         else:
             stats["updated"] += 1
 
         # Generate embeddings
-        title_vec = emb.embed_text(note.title)
+        title_vec = await emb.embed_text(note.title)
         abstract_text = note.abstract or note.title
-        abstract_vec = emb.embed_text(abstract_text)
+        abstract_vec = await emb.embed_text(abstract_text)
 
         emb_row = await session.get(NoteEmbedding, note_id)
         if emb_row:
@@ -133,7 +135,7 @@ async def _generate_chunks(
         {"sid": source_id},
     )
 
-    vectors = emb.embed_batch(chunks)
+    vectors = await emb.embed_batch(chunks)
     for idx, (chunk_content, vec) in enumerate(zip(chunks, vectors)):
         session.add(SourceChunk(
             source_id=source_id,
@@ -147,6 +149,7 @@ async def sync_sources_from_directory(
     session: AsyncSession,
     sources_dir: Path,
     progress_callback=None,
+    user_id: str | None = None,
 ) -> dict:
     """Sync source files from directory into DB.
 
@@ -241,15 +244,17 @@ async def sync_sources_from_directory(
         source.metadata_ = extra_meta
 
         if not existing:
+            if user_id:
+                source.user_id = user_id
             session.add(source)
             stats["created"] += 1
         else:
             stats["updated"] += 1
 
         # Generate embeddings
-        title_vec = emb.embed_text(source.title)
+        title_vec = await emb.embed_text(source.title)
         summary_text = (extra_meta.get("summary") if suffix == ".md" else None) or source.title
-        summary_vec = emb.embed_text(summary_text)
+        summary_vec = await emb.embed_text(summary_text)
 
         emb_row = await session.get(SourceEmbedding, source_id)
         if emb_row:

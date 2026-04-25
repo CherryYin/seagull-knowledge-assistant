@@ -151,8 +151,8 @@ def add_note(
             session.add(note)
 
             emb = get_embedding_service()
-            title_vec = emb.embed_text(title)
-            abstract_vec = emb.embed_text(content or title)
+            title_vec = await emb.embed_text(title)
+            abstract_vec = await emb.embed_text(content or title)
             session.add(NoteEmbedding(
                 note_id=note_id, title_vec=title_vec, abstract_vec=abstract_vec
             ))
@@ -194,8 +194,8 @@ def add_source(
             session.add(source)
 
             emb = get_embedding_service()
-            title_vec = emb.embed_text(title)
-            summary_vec = emb.embed_text(content[:500] if content else title)
+            title_vec = await emb.embed_text(title)
+            summary_vec = await emb.embed_text(content[:500] if content else title)
             session.add(SourceEmbedding(
                 source_id=source_id, title_vec=title_vec, summary_vec=summary_vec
             ))

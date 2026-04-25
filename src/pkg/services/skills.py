@@ -213,7 +213,7 @@ async def sync_skills_from_directory(
         # Upload to OSS
         object_key = storage.build_object_key("skills", skill_id, f"{skill.name}.md")
         raw_content = md_file.read_text(encoding="utf-8")
-        storage_uri = storage.upload_bytes(
+        storage_uri = await storage.upload_bytes(
             object_key=object_key,
             data=raw_content.encode("utf-8"),
             content_type="text/markdown",

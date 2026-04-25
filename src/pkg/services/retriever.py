@@ -8,9 +8,10 @@ from pkg.services.embedding import get_embedding_service
 
 
 class RetrieverAgent:
-    def __init__(self, session: AsyncSession):
+    def __init__(self, session: AsyncSession, user_id: str | None = None):
         self.session = session
         self.emb = get_embedding_service()
+        self.user_id = user_id
 
     async def search(
         self, query: str, mode: str = "auto", top_k: int = 5, filters: dict | None = None
@@ -41,6 +42,8 @@ class RetrieverAgent:
 
         # Search notes
         stmt = select(Note)
+        if self.user_id:
+            stmt = stmt.where(Note.user_id == self.user_id)
         if filters:
             if "domains" in filters:
                 stmt = stmt.where(Note.domains.overlap(filters["domains"]))
@@ -72,6 +75,8 @@ class RetrieverAgent:
 
         # Search sources
         src_stmt = select(Source)
+        if self.user_id:
+            src_stmt = src_stmt.where(or_(Source.user_id == self.user_id, Source.is_shared == True))
         if query:
             like_pattern = f"%{query}%"
             src_stmt = src_stmt.where(Source.title.ilike(like_pattern))
@@ -92,21 +97,31 @@ class RetrieverAgent:
         return results[:top_k]
 
     async def vector_search(self, query: str, top_k: int = 5) -> list[SearchResult]:
-        query_vec = self.emb.embed_text(query)
+        query_vec = await self.emb.embed_text(query)
         query_vec_literal = self._vector_literal(query_vec)
         results: list[SearchResult] = []
 
+        # Build optional user filter clauses for raw SQL
+        note_user_clause = ""
+        source_user_clause = ""
+        user_params: dict = {}
+        if self.user_id:
+            note_user_clause = "WHERE n.user_id = :user_id"
+            source_user_clause = "WHERE (s.user_id = :user_id OR s.is_shared = true)"
+            user_params["user_id"] = self.user_id
+
         # Search note embeddings
-        note_stmt = text("""
+        note_stmt = text(f"""
             SELECT ne.note_id, n.title, n.abstract, n.content,
                    1 - (ne.abstract_vec <=> CAST(:query_vec AS vector)) AS score
             FROM note_embeddings ne
             JOIN notes n ON n.id = ne.note_id
+            {note_user_clause}
             ORDER BY ne.abstract_vec <=> CAST(:query_vec AS vector)
             LIMIT :top_k
         """)
         rows = await self.session.execute(
-            note_stmt, {"query_vec": query_vec_literal, "top_k": top_k}
+            note_stmt, {"query_vec": query_vec_literal, "top_k": top_k, **user_params}
         )
         for row in rows:
             results.append(SearchResult(
@@ -119,16 +134,17 @@ class RetrieverAgent:
             ))
 
         # Search source embeddings (document-level)
-        src_stmt = text("""
+        src_stmt = text(f"""
             SELECT se.source_id, s.title, s.raw_content,
                    1 - (se.summary_vec <=> CAST(:query_vec AS vector)) AS score
             FROM source_embeddings se
             JOIN sources s ON s.id = se.source_id
+            {source_user_clause}
             ORDER BY se.summary_vec <=> CAST(:query_vec AS vector)
             LIMIT :top_k
         """)
         rows = await self.session.execute(
-            src_stmt, {"query_vec": query_vec_literal, "top_k": top_k}
+            src_stmt, {"query_vec": query_vec_literal, "top_k": top_k, **user_params}
         )
         for row in rows:
             results.append(SearchResult(
@@ -140,16 +156,17 @@ class RetrieverAgent:
             ))
 
         # Search source chunks (fine-grained, within long documents)
-        chunk_stmt = text("""
+        chunk_stmt = text(f"""
             SELECT sc.source_id, s.title, sc.content,
                    1 - (sc.embedding <=> CAST(:query_vec AS vector)) AS score
             FROM source_chunks sc
             JOIN sources s ON s.id = sc.source_id
+            {source_user_clause}
             ORDER BY sc.embedding <=> CAST(:query_vec AS vector)
             LIMIT :top_k
         """)
         rows = await self.session.execute(
-            chunk_stmt, {"query_vec": query_vec_literal, "top_k": top_k}
+            chunk_stmt, {"query_vec": query_vec_literal, "top_k": top_k, **user_params}
         )
         for row in rows:
             results.append(SearchResult(

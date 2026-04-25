@@ -1,40 +1,66 @@
-# Personal Knowledge Graph
+<p align="center">
+  <img src="assets/seagull.png" alt="Seagull Logo" width="180" />
+</p>
 
-[中文](README.md) | [English](README.en.md)
+<h1 align="center">Seagull — Personal Knowledge Graph</h1>
 
-A three-layer personal knowledge mining system that turns Markdown notes and raw source materials into a searchable, chat-enabled knowledge base.
+<p align="center">
+  A three-layer personal knowledge mining system that turns Markdown notes, PDFs, and other raw materials into a searchable, chat-enabled intelligent knowledge base.
+</p>
 
-## Architecture Overview
+<p align="center">
+  <a href="README.md">中文</a> | <a href="README.en.md">English</a>
+</p>
+
+## Architecture
 
 ```text
 L1 Sources (raw materials)  →  L2 Notes (structured notes)  →  L3 Insights (planned)
          ↓                              ↓
-   embeddings + full-text index   embeddings + structured metadata
+   vector embeddings             vector embeddings
+   + chunk embeddings            + structured metadata
+   + full-text index             + full-text index
          ↓                              ↓
               ┌─────────────────────┐
-              │   Retriever Agent   │  (deterministic retrieval: SQL / vector / hybrid)
+              │   Retriever Agent   │  (deterministic: SQL / vector / hybrid)
               └─────────┬───────────┘
                         ↓
               ┌─────────────────────┐
               │    Action Agent     │  (model-driven: Strands Agent + LLM)
+              │   9 built-in tools  │
+              │   + dynamic Skills  │
               └─────────────────────┘
 ```
 
-- **Retriever Agent**: deterministic retrieval layer with SQL filters, vector similarity, and hybrid search
-- **Action Agent**: a Strands-based LLM agent that can call knowledge tools autonomously
+- **Retriever Agent** — deterministic retrieval layer with SQL filters, vector similarity, and hybrid search
+- **Action Agent** — a Strands-based LLM agent that autonomously calls knowledge tools to complete complex tasks
+
+## Key Features
+
+- **Multi-format document ingestion** — PDF, DOCX, PPTX, XLSX, HTML, images with automatic OCR for scanned documents (Tesseract / RapidOCR)
+- **Smart chunking & embeddings** — long documents are automatically split into overlapping chunks (512 chars, 64 overlap), each chunk independently embedded for fine-grained retrieval
+- **Three search modes** — vector semantic search, SQL structured filtering, hybrid search with automatic mode selection
+- **AI agent chat** — multi-turn conversations where the agent can search the knowledge base, read documents, process files, and search the web
+- **Web search** — Tavily API integration for real-time internet search
+- **Skills system** — reusable prompt templates (20+ built-in), extensible with custom Python tools
+- **File storage** — MinIO / S3-compatible object storage with file upload and presigned download URLs
+- **Session persistence** — conversation history stored in the database with session management and replay
 
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
-| Backend framework | FastAPI + Uvicorn |
-| Database | PostgreSQL 16 + pgvector |
-| ORM | SQLAlchemy (async) + Alembic |
-| Embeddings | Qwen `text-embedding-v4` (DashScope cloud API) |
+| Backend | FastAPI + Uvicorn |
+| Database | PostgreSQL 16 + pgvector (HNSW indexes) |
+| ORM | SQLAlchemy 2.0 (async) + Alembic |
+| Embeddings | Qwen `text-embedding-v4` (1024 dims) |
 | LLM | Azure OpenAI / Qwen (switchable) |
 | Agent framework | Strands Agents |
+| Document parsing | Docling (PDF/DOCX/PPTX/XLSX) + Tesseract OCR |
+| Web search | Tavily API |
+| File storage | MinIO (S3-compatible) |
 | CLI | Typer + Rich |
-| Frontend | React 19 + TypeScript + Tailwind CSS + Vite |
+| Frontend | React 19 + TypeScript + Tailwind CSS 4 + Vite |
 
 ## Quick Start
 
@@ -44,44 +70,49 @@ L1 Sources (raw materials)  →  L2 Notes (structured notes)  →  L3 Insights (
 docker compose up -d
 ```
 
-This starts PostgreSQL and MinIO. Default endpoints:
+This starts PostgreSQL and MinIO:
 
 - PostgreSQL: `localhost:5433`
 - MinIO API: `http://127.0.0.1:9000`
 - MinIO Console: `http://127.0.0.1:9001`
 
-### 2. Install Python dependencies
+### 2. Install dependencies
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-### 3. Configure environment variables
+Tesseract OCR (optional, for scanned document recognition):
+
+```bash
+sudo apt install tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-sim libtesseract-dev
+```
+
+### 3. Configure environment
 
 ```bash
 cp .env.example .env
-# Edit `.env` and fill in your chat-model and embedding API keys
 ```
 
-`docker-compose.yml` now reads PostgreSQL and MinIO credentials from `.env` instead of hardcoding default passwords in the committed compose file.
-
-Key configuration values:
+Key configuration:
 
 | Variable | Description | Default |
 |---|---|---|
 | `LLM_PROVIDER` | LLM provider (`azure` / `qwen`) | `qwen` |
-| `QWEN_API_KEY` | Qwen chat API key | — |
-| `EMBEDDING_API_BASE` | Embedding API base URL using the DashScope OpenAI-compatible endpoint | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
-| `EMBEDDING_API_KEY` | Embedding API key, can be different from the chat-model account/plan | — |
-| `AZURE_OPENAI_API_KEY` | Azure OpenAI key | — |
+| `QWEN_API_KEY` | Qwen API key | — |
+| `EMBEDDING_API_KEY` | Embedding API key | — |
 | `EMBEDDING_MODEL` | Embedding model | `text-embedding-v4` |
-| `DATABASE_URL` | Database connection string | `postgresql+asyncpg://...localhost:5433/knowledge_graph` |
-| `POSTGRES_PASSWORD` | Local PostgreSQL password used by Docker Compose | `local-dev-postgres-password` |
-| `MINIO_ENDPOINT` | MinIO / S3-compatible endpoint | `http://127.0.0.1:9000` |
-| `MINIO_ROOT_PASSWORD` | Local MinIO root password used by Docker Compose | `local-dev-minio-password` |
-| `MINIO_BUCKET` | Bucket for uploaded files | `knowledge-graph` |
+| `TAVILY_API_KEY` | Tavily web search API key | — |
+| `AZURE_OPENAI_API_KEY` | Azure OpenAI key (when using Azure) | — |
+| `DATABASE_URL` | Database connection | `postgresql+asyncpg://...localhost:5433/knowledge_graph` |
+| `POSTGRES_PASSWORD` | PostgreSQL password (for Docker Compose) | — |
+| `MINIO_ENDPOINT` | MinIO endpoint | `http://127.0.0.1:9000` |
+| `MINIO_ROOT_PASSWORD` | MinIO password (for Docker Compose) | — |
+| `DOCLING_OCR_ENGINE` | OCR engine (`tesseract` / `rapidocr`) | `tesseract` |
+| `CHUNK_SIZE` | Chunk size in characters | `512` |
+| `CHUNK_OVERLAP` | Chunk overlap in characters | `64` |
 
 ### 4. Initialize the database
 
@@ -91,94 +122,119 @@ alembic upgrade head
 
 ### 5. Import knowledge
 
-Put Markdown files into `data/sources/` (raw materials) and `data/notes/` (notes), then sync:
+Place files in `data/sources/` (raw materials) and `data/notes/` (notes). Supports Markdown and binary documents (PDF, DOCX, etc.):
 
 ```bash
 pkg sync
 ```
+
+### 6. Start services
+
+```bash
+# Backend API
+pkg serve
+
+# Frontend (separate terminal)
+cd web && npm install && npm run dev
+```
+
+- API: `http://localhost:8000` (Swagger: `http://localhost:8000/docs`)
+- Frontend: `http://localhost:5173`
 
 ## CLI Usage
 
 ```bash
-# Sync Markdown files into the database
-pkg sync
-
-# Search the knowledge base
-pkg search "knowledge graph"
-pkg search "embedding" --mode vector --top-k 10
-
-# Quickly add notes / sources
-pkg add-note "Meeting Notes" --content "..." --tags meeting
-pkg add-source "Paper Title" --source-type article --url "https://..."
-
-# View statistics
-pkg stats
-
-# One-shot question answering over the knowledge base
-pkg ask "Summarize the design ideas behind the three-layer architecture"
-
-# Interactive multi-turn chat
-pkg chat
-
-# Start the API server
-pkg serve
+pkg sync                                          # Sync files to database
+pkg search "knowledge graph"                      # Search knowledge base
+pkg search "embedding" --mode vector --top-k 10   # Vector search
+pkg add-note "Meeting Notes" --content "..." --tags meeting  # Add a note
+pkg add-source "Paper Title" --source-type article           # Add a source
+pkg stats                                          # View statistics
+pkg ask "Summarize the three-layer architecture"   # One-shot Q&A
+pkg chat                                           # Multi-turn chat
+pkg skills                                         # List available skills
+pkg serve                                          # Start API server
 ```
 
-## API
+## Agent Tools
 
-After starting the server, open `http://localhost:8000/docs` for the full API documentation.
+The Action Agent has the following built-in tools and selects them autonomously based on the task:
 
-Main endpoints:
+| Tool | Description |
+|---|---|
+| `search_knowledge` | Semantic / structured knowledge base search |
+| `read_note` | Read full note content |
+| `read_source` | Read full source content |
+| `list_notes` | Browse notes by domain / tag / project |
+| `list_sources` | Browse sources by type |
+| `knowledge_stats` | Knowledge base statistics |
+| `process_document` | Document processing (PDF/DOCX/XLSX/PPTX operations) |
+| `web_search` | Internet search (Tavily) |
+
+The agent also dynamically loads Skill tools from the `skills/` directory.
+
+## API Endpoints
 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/health` | Health check |
-| `GET` | `/sources` | List sources |
-| `POST` | `/sources/upload` | Upload source files to MinIO |
-| `GET` | `/sources/{id}/file` | Open the original source file |
-| `GET` | `/notes` | List notes |
-| `POST` | `/notes/upload` | Upload note files to MinIO |
-| `GET` | `/notes/{id}/file` | Open the original note file |
+| `GET/POST` | `/sources` | List / create sources |
+| `POST` | `/sources/upload` | Upload source files |
+| `GET` | `/sources/{id}` | Get source details |
+| `GET` | `/sources/{id}/file` | Download original source file |
+| `GET/POST` | `/notes` | List / create notes |
+| `PATCH` | `/notes/{id}` | Update a note |
+| `POST` | `/notes/upload` | Upload note files |
 | `POST` | `/search` | Search the knowledge base |
 | `POST` | `/action` | Invoke the Action Agent |
-
-## Frontend
-
-```bash
-cd web
-npm install
-npm run dev
-```
-
-Open `http://localhost:5173`.
+| `POST` | `/action/stream` | Stream Action Agent response |
+| `GET/POST` | `/chat-sessions` | Session management |
+| `GET/PATCH/DELETE` | `/chat-sessions/{id}` | Session details / update / delete |
+| `GET/POST` | `/skills` | Skills management |
+| `POST` | `/sync` | Trigger file sync |
 
 ## Project Structure
 
 ```text
 src/pkg/
-├── api/              # FastAPI routes
-│   ├── app.py        # Application entrypoint
-│   ├── sources.py    # Source CRUD
-│   ├── notes.py      # Note CRUD
-│   ├── search.py     # Search API
-│   └── action.py     # Action Agent API
-├── models/           # SQLAlchemy models
-├── schemas/          # Pydantic schemas
+├── api/                    # FastAPI routes
+│   ├── app.py              # App entrypoint & middleware
+│   ├── sources.py          # Source CRUD + file upload
+│   ├── notes.py            # Note CRUD + file upload
+│   ├── search.py           # Search + sync endpoints
+│   ├── action.py           # Action Agent API (sync / streaming)
+│   ├── chat_sessions.py    # Multi-turn session management
+│   └── skills.py           # Skills CRUD
+├── models/                 # SQLAlchemy models
+│   ├── source.py           # Source + SourceEmbedding + SourceChunk
+│   ├── note.py             # Note + NoteEmbedding
+│   ├── chat_session.py     # ChatSession
+│   └── skill.py            # Skill
+├── schemas/                # Pydantic validation schemas
 ├── services/
-│   ├── embedding.py      # Embedding service
-│   ├── retriever.py      # Deterministic retrieval agent
-│   ├── action_agent.py   # Model-driven action agent
-│   ├── llm.py            # LLM client
-│   ├── storage.py        # MinIO / object storage service
-│   ├── sync_pipeline.py  # Markdown sync pipeline
-│   └── tools.py          # Agent tool definitions
-├── cli.py            # Typer CLI
-├── config.py         # Configuration management
-└── db.py             # Database connection
-web/                  # React frontend
+│   ├── retriever.py        # Retriever Agent (SQL / vector / hybrid)
+│   ├── action_agent.py     # Action Agent + system prompt
+│   ├── llm.py              # LLM client factory (Azure / Qwen)
+│   ├── embedding.py        # Embedding service (auto-batching)
+│   ├── chunking.py         # Document chunking
+│   ├── document_extractor.py  # Docling extraction + OCR
+│   ├── storage.py          # MinIO object storage
+│   ├── sync_pipeline.py    # File sync pipeline
+│   ├── tools.py            # Knowledge tools (search / read / stats)
+│   ├── tools_web.py        # Web search tool (Tavily)
+│   ├── tools_document.py   # Document processing tool
+│   └── skills.py           # Skill loading & expansion
+├── cli.py                  # Typer CLI
+├── config.py               # Configuration management
+└── db.py                   # Database connection
+web/                        # React frontend
+├── src/pages/              # Pages: Chat, Search, Notes, Sources, Skills
+├── src/components/         # Components: ChatMessage, SearchResultCard, Layout
+└── src/lib/                # API client, utilities
+skills/                     # Skill templates (20+ built-in)
 data/
-├── sources/          # Raw source materials (Markdown)
-└── notes/            # Structured notes (Markdown)
+├── sources/                # Raw source materials
+└── notes/                  # Structured notes
 ```
 
 ## License

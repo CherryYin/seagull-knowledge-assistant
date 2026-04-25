@@ -7,11 +7,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.db import get_session
 from pkg.api.categories import get_default_category_id
+from pkg.api.deps import get_current_user
 from pkg.api.notes import make_note_id, persist_note, put_note_markdown_oss
 from pkg.api.sources import extract_text_content, make_source_id, persist_source
-from pkg.schemas.knowledge import RememberRequest, SaveDocumentRequest, SaveDocumentResponse
+from pkg.schemas.knowledge import (
+    KnowledgeStatsList,
+    KnowledgeStatsRead,
+    RememberRequest,
+    SaveDocumentRequest,
+    SaveDocumentResponse,
+)
 from pkg.schemas.note import NoteCreate, NoteRead
 from pkg.schemas.source import SourceCreate
+from pkg.models.user import User
 from pkg.services.storage import get_storage_service
 
 logger = logging.getLogger(__name__)
@@ -28,22 +36,24 @@ _FORMAT_TO_SOURCE_TYPE: dict[str, str] = {
 
 
 @router.post("/save-document", response_model=SaveDocumentResponse, status_code=201)
-async def save_document(body: SaveDocumentRequest, session: AsyncSession = Depends(get_session)):
+async def save_document(
+    body: SaveDocumentRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
     """Save a generated document as a Source + Note."""
     storage = get_storage_service()
     category_id = body.category_id or await get_default_category_id(session)
 
     # Download the file bytes from OSS via storage URI
-    bucket, object_key = storage.parse_storage_uri(body.storage_uri)
     try:
-        resp = storage.client.get_object(Bucket=bucket, Key=object_key)
-        payload = resp["Body"].read()
+        payload = await storage.get_object(body.storage_uri)
     except Exception as exc:
         raise HTTPException(status_code=404, detail=f"Cannot read document from storage: {exc}")
 
     # Create Source record
     source_type = _FORMAT_TO_SOURCE_TYPE.get(body.document_format, "article")
-    raw_content = extract_text_content(body.document_filename, None, payload)
+    raw_content = await extract_text_content(body.document_filename, None, payload)
 
     source_body = SourceCreate(
         title=Path(body.document_filename).stem.replace("-", " ").replace("_", " ").title(),
@@ -55,6 +65,7 @@ async def save_document(body: SaveDocumentRequest, session: AsyncSession = Depen
     source = await persist_source(
         session=session,
         body=source_body,
+        user_id=user.id,
         file_path=body.storage_uri,
         raw_content_override=raw_content,
         content_hash_override=hashlib.sha256(payload).hexdigest(),
@@ -72,10 +83,11 @@ async def save_document(body: SaveDocumentRequest, session: AsyncSession = Depen
         tags=["from-document"],
     )
     note_id = make_note_id(note_body.title)
-    storage_uri = put_note_markdown_oss(note_id, body.message_content)
+    storage_uri = await put_note_markdown_oss(note_id, body.message_content)
     note = await persist_note(
         session=session,
         body=note_body.model_copy(update={"id": note_id}),
+        user_id=user.id,
         file_path=storage_uri,
         content_override=body.message_content,
     )
@@ -84,7 +96,11 @@ async def save_document(body: SaveDocumentRequest, session: AsyncSession = Depen
 
 
 @router.post("/remember", response_model=NoteRead, status_code=201)
-async def remember_knowledge(body: RememberRequest, session: AsyncSession = Depends(get_session)):
+async def remember_knowledge(
+    body: RememberRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
     """Save assistant response as a temporary note for later daily summarization."""
     title = body.title or body.content.replace("\n", " ").strip()[:40] or "Chat memory"
     category_id = body.category_id or await get_default_category_id(session)
@@ -99,10 +115,11 @@ async def remember_knowledge(body: RememberRequest, session: AsyncSession = Depe
         domains=["chat-memory"],
     )
     note_id = make_note_id(note_body.title)
-    storage_uri = put_note_markdown_oss(note_id, body.content)
+    storage_uri = await put_note_markdown_oss(note_id, body.content)
     note = await persist_note(
         session=session,
         body=note_body.model_copy(update={"id": note_id}),
+        user_id=user.id,
         file_path=storage_uri,
         content_override=body.content,
     )
@@ -118,3 +135,29 @@ async def trigger_daily_summary():
     if note_id is None:
         return {"status": "skipped", "detail": "No temporary notes to summarize"}
     return {"status": "ok", "note_id": note_id}
+
+
+@router.get("/stats", response_model=KnowledgeStatsList)
+async def get_knowledge_stats(
+    sort_by: str = "total_count",
+    item_type: str | None = None,
+    title: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    user: User = Depends(get_current_user),
+):
+    """Get knowledge usage statistics ranked by search/retrieval/reference counts."""
+    from pkg.services.stats import get_knowledge_rankings
+
+    items, total = await get_knowledge_rankings(
+        user_id=user.id,
+        sort_by=sort_by,
+        item_type=item_type,
+        title=title,
+        limit=limit,
+        offset=offset,
+    )
+    return KnowledgeStatsList(
+        items=[KnowledgeStatsRead(**item) for item in items],
+        total=total,
+    )

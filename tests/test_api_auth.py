@@ -1,0 +1,116 @@
+"""Tests for auth API endpoints (/auth/*)."""
+
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi.testclient import TestClient
+
+from pkg.services.auth import hash_password
+
+
+@pytest.fixture
+def auth_client(fake_user, fake_admin, mock_session):
+    """Client with login-capable user fixtures and admin overrides."""
+    from pkg.api.app import app
+    from pkg.api.deps import get_current_user, get_admin_user
+    from pkg.db import get_session
+
+    # Give the fake user a real hashed password for login tests
+    fake_user.hashed_password = hash_password("correct-password")
+
+    async def override_get_session():
+        yield mock_session
+
+    async def override_get_current_user():
+        return fake_user
+
+    async def override_get_admin_user():
+        return fake_admin
+
+    app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_current_user] = override_get_current_user
+    app.dependency_overrides[get_admin_user] = override_get_admin_user
+
+    with TestClient(app, raise_server_exceptions=False) as c:
+        yield c
+
+    app.dependency_overrides.clear()
+
+
+# ---------------------------------------------------------------------------
+# POST /auth/login
+# ---------------------------------------------------------------------------
+class TestLogin:
+    def test_success(self, auth_client, mock_session, fake_user):
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = fake_user
+        mock_session.execute.return_value = mock_result
+
+        resp = auth_client.post("/auth/login", json={"username": "testuser", "password": "correct-password"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "access_token" in data
+        assert data["token_type"] == "bearer"
+
+    def test_wrong_password(self, auth_client, mock_session, fake_user):
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = fake_user
+        mock_session.execute.return_value = mock_result
+
+        resp = auth_client.post("/auth/login", json={"username": "testuser", "password": "wrong"})
+        assert resp.status_code == 401
+
+    def test_user_not_found(self, auth_client, mock_session):
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_session.execute.return_value = mock_result
+
+        resp = auth_client.post("/auth/login", json={"username": "nobody", "password": "x"})
+        assert resp.status_code == 401
+
+    def test_inactive_user(self, auth_client, mock_session, fake_user):
+        fake_user.is_active = False
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = fake_user
+        mock_session.execute.return_value = mock_result
+
+        resp = auth_client.post("/auth/login", json={"username": "testuser", "password": "correct-password"})
+        assert resp.status_code == 403
+        fake_user.is_active = True  # restore
+
+
+# ---------------------------------------------------------------------------
+# GET /auth/me
+# ---------------------------------------------------------------------------
+class TestGetMe:
+    def test_returns_user(self, auth_client, fake_user):
+        resp = auth_client.get("/auth/me")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["id"] == fake_user.id
+        assert data["username"] == fake_user.username
+
+
+# ---------------------------------------------------------------------------
+# POST /auth/change-password
+# ---------------------------------------------------------------------------
+class TestChangePassword:
+    def test_success(self, auth_client, mock_session, fake_user):
+        fake_user.hashed_password = hash_password("old-pass")
+
+        resp = auth_client.post("/auth/change-password", json={
+            "old_password": "old-pass",
+            "new_password": "new-pass",
+        })
+        assert resp.status_code == 200
+        mock_session.commit.assert_awaited()
+
+    def test_wrong_old_password(self, auth_client, fake_user):
+        fake_user.hashed_password = hash_password("real-old-pass")
+
+        resp = auth_client.post("/auth/change-password", json={
+            "old_password": "wrong",
+            "new_password": "new-pass",
+        })
+        assert resp.status_code == 400

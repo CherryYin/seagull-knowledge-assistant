@@ -1,11 +1,35 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import { cn } from "@/lib/utils";
-import { Bot, User, RotateCw, BookPlus, Brain, Check } from "lucide-react";
+import { Bot, User, RotateCw, BookPlus, Brain, Check, FileText, StickyNote, Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { DocumentMetadata, MessageMetadata } from "@/lib/api";
+import type { DocumentMetadata, MessageMetadata, ReferenceInfo } from "@/lib/api";
+
+const CITATION_RE = /\[来源[：:]\s*((?:note|src|source)-[^\]]+)\]/g;
+
+function linkifyCitations(text: string): string {
+  return text.replace(CITATION_RE, (_match, id: string) => {
+    const trimmed = id.trim();
+    if (trimmed.startsWith("note-")) {
+      return `[来源: ${trimmed}](/notes/${encodeURIComponent(trimmed)})`;
+    }
+    // Normalize "source-xxx" to "src-xxx" for the route
+    const sourceId = trimmed.startsWith("source-")
+      ? "src-" + trimmed.slice("source-".length)
+      : trimmed;
+    return `[来源: ${trimmed}](/sources/${encodeURIComponent(sourceId)})`;
+  });
+}
+
+function citationLabel(id: string): string {
+  if (id.startsWith("note-")) return id.slice("note-".length).replace(/-/g, " ");
+  if (id.startsWith("src-")) return id.slice("src-".length).replace(/-/g, " ");
+  if (id.startsWith("source-")) return id.slice("source-".length).replace(/-/g, " ");
+  return id.replace(/-/g, " ");
+}
 
 interface Props {
   role: "user" | "assistant";
@@ -27,6 +51,7 @@ export function ChatMessage({
   onRemember,
 }: Props) {
   const isUser = role === "user";
+  const navigate = useNavigate();
   const [retryLoading, setRetryLoading] = useState(false);
   const [newKnowledgeLoading, setNewKnowledgeLoading] = useState(false);
   const [rememberLoading, setRememberLoading] = useState(false);
@@ -34,6 +59,30 @@ export function ChatMessage({
   const [rememberDone, setRememberDone] = useState(false);
 
   const hasDocuments = !!(metadata?.documents && metadata.documents.length > 0);
+
+  const markdownComponents = {
+    a: ({ href, children, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { children?: React.ReactNode }) => {
+      const isNoteCitation = href?.startsWith("/notes/");
+      const isSourceCitation = href?.startsWith("/sources/");
+      if ((isNoteCitation || isSourceCitation) && href) {
+        const rawId = decodeURIComponent(href.split("/").pop() || "");
+        const label = citationLabel(rawId);
+        const Icon = isNoteCitation ? StickyNote : FileText;
+        return (
+          <button
+            type="button"
+            onClick={() => navigate(href)}
+            className="inline-flex items-center gap-0.5 rounded bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary hover:bg-primary/20 transition-colors cursor-pointer no-underline align-baseline"
+            title={rawId}
+          >
+            <Icon className="h-3 w-3 shrink-0" />
+            {label}
+          </button>
+        );
+      }
+      return <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>;
+    },
+  };
 
   const handleRetry = async () => {
     if (!onRetry) return;
@@ -105,9 +154,49 @@ export function ChatMessage({
             </div>
           ) : (
             <div className="prose prose-sm">
-              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
-                {content}
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeHighlight]}
+                components={markdownComponents}
+              >
+                {linkifyCitations(content)}
               </ReactMarkdown>
+            </div>
+          )}
+
+          {/* Reference footer */}
+          {!isUser && metadata?.references && metadata.references.length > 0 && (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-border/50 pt-2">
+              <span className="text-[10px] text-muted-foreground mr-0.5">引用:</span>
+              {metadata.references.map((ref) => {
+                if (ref.type === "web") {
+                  return (
+                    <a
+                      key={ref.id}
+                      href={ref.id}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-0.5 rounded bg-blue-500/10 px-1.5 py-0.5 text-xs text-blue-600 hover:bg-blue-500/20 transition-colors no-underline"
+                      title={ref.id}
+                    >
+                      <Globe className="h-3 w-3 shrink-0" />
+                      {ref.title}
+                    </a>
+                  );
+                }
+                return (
+                  <button
+                    key={ref.id}
+                    type="button"
+                    onClick={() => navigate(ref.type === "note" ? `/notes/${encodeURIComponent(ref.id)}` : `/sources/${encodeURIComponent(ref.id)}`)}
+                    className="inline-flex items-center gap-0.5 rounded bg-primary/10 px-1.5 py-0.5 text-xs text-primary hover:bg-primary/20 transition-colors cursor-pointer"
+                    title={ref.id}
+                  >
+                    {ref.type === "note" ? <StickyNote className="h-3 w-3 shrink-0" /> : <FileText className="h-3 w-3 shrink-0" />}
+                    {ref.title}
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>

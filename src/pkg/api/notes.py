@@ -8,9 +8,11 @@ from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from pkg.api.deps import get_current_user
 from pkg.db import get_session
 from pkg.models.category import Category
 from pkg.models.note import Note, NoteEmbedding
+from pkg.models.user import User
 from pkg.schemas.note import NoteCreate, NoteList, NoteRead, NoteUpdate
 from pkg.services.embedding import get_embedding_service
 from pkg.services.storage import get_storage_service
@@ -32,11 +34,11 @@ def make_note_id(title: str, explicit_id: str | None = None) -> str:
     return f"note-{now.strftime('%Y%m%d')}-{title[:30].lower().replace(' ', '-')}"
 
 
-def put_note_markdown_oss(note_id: str, content: str, category_name: str | None = None) -> str:
+async def put_note_markdown_oss(note_id: str, content: str, category_name: str | None = None) -> str:
     """Upload note body to MinIO at notes/{category_name}/{note_id}/note.md. put_object overwrites an existing object."""
     storage = get_storage_service()
     object_key = storage.build_object_key("notes", note_id, "note.md", category_name=category_name)
-    return storage.upload_bytes(
+    return await storage.upload_bytes(
         object_key=object_key,
         data=(content or "").encode("utf-8"),
         content_type="text/markdown",
@@ -47,6 +49,7 @@ async def persist_note(
     *,
     session: AsyncSession,
     body: NoteCreate,
+    user_id: str,
     file_path: str | None = None,
     content_override: str | None = None,
 ) -> Note:
@@ -54,6 +57,7 @@ async def persist_note(
 
     note = Note(
         id=note_id,
+        user_id=user_id,
         category_id=body.category_id,
         title=body.title,
         note_type=body.note_type,
@@ -71,8 +75,8 @@ async def persist_note(
     session.add(note)
 
     emb_svc = get_embedding_service()
-    title_vec = emb_svc.embed_text(note.title)
-    abstract_vec = emb_svc.embed_text(body.abstract or body.title)
+    title_vec = await emb_svc.embed_text(note.title)
+    abstract_vec = await emb_svc.embed_text(body.abstract or body.title)
     session.add(NoteEmbedding(note_id=note_id, title_vec=title_vec, abstract_vec=abstract_vec))
 
     await session.commit()
@@ -81,15 +85,20 @@ async def persist_note(
 
 
 @router.post("", response_model=NoteRead, status_code=201)
-async def create_note(body: NoteCreate, session: AsyncSession = Depends(get_session)):
+async def create_note(
+    body: NoteCreate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
     note_id = make_note_id(body.title, body.id)
     content = body.content or ""
     category = await session.get(Category, body.category_id)
     category_name = category.name if category else None
-    storage_uri = put_note_markdown_oss(note_id, content, category_name=category_name)
+    storage_uri = await put_note_markdown_oss(note_id, content, category_name=category_name)
     return await persist_note(
         session=session,
         body=body.model_copy(update={"id": note_id}),
+        user_id=user.id,
         file_path=storage_uri,
         content_override=content,
     )
@@ -108,6 +117,7 @@ async def upload_note(
     status: str = Form("seed"),
     confidence: str = Form("medium"),
     source_ids: str | None = Form(None),
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
     file_bytes = await file.read()
@@ -135,7 +145,7 @@ async def upload_note(
     category_name = category.name if category else None
     storage = get_storage_service()
     object_key = storage.build_object_key("notes", note_id, file.filename, category_name=category_name)
-    storage_uri = storage.upload_bytes(
+    storage_uri = await storage.upload_bytes(
         object_key=object_key,
         data=file_bytes,
         content_type=file.content_type,
@@ -144,6 +154,7 @@ async def upload_note(
     return await persist_note(
         session=session,
         body=body.model_copy(update={"id": note_id}),
+        user_id=user.id,
         file_path=storage_uri,
         content_override=content,
     )
@@ -159,10 +170,11 @@ async def list_notes(
     status: str | None = None,
     limit: int = 20,
     offset: int = 0,
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    stmt = select(Note)
-    count_stmt = select(func.count()).select_from(Note)
+    stmt = select(Note).where(Note.user_id == user.id)
+    count_stmt = select(func.count()).select_from(Note).where(Note.user_id == user.id)
 
     if category_id is not None:
         stmt = stmt.where(Note.category_id == category_id)
@@ -210,10 +222,11 @@ async def list_notes(
 async def update_note(
     note_id: str,
     body: NoteUpdate,
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
     note = await session.get(Note, note_id)
-    if not note:
+    if not note or note.user_id != user.id:
         raise HTTPException(status_code=404, detail="Note not found")
 
     patch = body.model_dump(exclude_unset=True)
@@ -228,14 +241,14 @@ async def update_note(
     category = await session.get(Category, note.category_id)
     category_name = category.name if category else None
     # Always persist current body to OSS (overwrites if present).
-    note.file_path = put_note_markdown_oss(note_id, note.content or "", category_name=category_name)
+    note.file_path = await put_note_markdown_oss(note_id, note.content or "", category_name=category_name)
 
     title_or_abstract_changed = "title" in patch or "abstract" in patch
     if title_or_abstract_changed:
         emb_svc = get_embedding_service()
         emb_row = await session.get(NoteEmbedding, note_id)
-        title_vec = emb_svc.embed_text(note.title)
-        abstract_vec = emb_svc.embed_text(note.abstract or note.title)
+        title_vec = await emb_svc.embed_text(note.title)
+        abstract_vec = await emb_svc.embed_text(note.abstract or note.title)
         if emb_row:
             emb_row.title_vec = title_vec
             emb_row.abstract_vec = abstract_vec
@@ -248,9 +261,13 @@ async def update_note(
 
 
 @router.get("/{note_id}", response_model=NoteRead)
-async def get_note(note_id: str, session: AsyncSession = Depends(get_session)):
+async def get_note(
+    note_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
     note = await session.get(Note, note_id)
-    if not note:
+    if not note or note.user_id != user.id:
         raise HTTPException(status_code=404, detail="Note not found")
     category = await session.get(Category, note.category_id)
     result = NoteRead.model_validate(note)
@@ -259,15 +276,19 @@ async def get_note(note_id: str, session: AsyncSession = Depends(get_session)):
 
 
 @router.delete("/{note_id}", status_code=204)
-async def delete_note(note_id: str, session: AsyncSession = Depends(get_session)):
+async def delete_note(
+    note_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
     note = await session.get(Note, note_id)
-    if not note:
+    if not note or note.user_id != user.id:
         raise HTTPException(status_code=404, detail="Note not found")
 
     # Delete stored file from MinIO
     if note.file_path and note.file_path.startswith("minio://"):
         try:
-            get_storage_service().delete_object(note.file_path)
+            await get_storage_service().delete_object(note.file_path)
         except Exception:
             logger.warning("Failed to delete MinIO object for note %s: %s", note_id, note.file_path, exc_info=True)
 
@@ -281,13 +302,17 @@ async def delete_note(note_id: str, session: AsyncSession = Depends(get_session)
 
 
 @router.get("/{note_id}/file")
-async def get_note_file(note_id: str, session: AsyncSession = Depends(get_session)):
+async def get_note_file(
+    note_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
     note = await session.get(Note, note_id)
-    if not note or not note.file_path:
+    if not note or note.user_id != user.id or not note.file_path:
         raise HTTPException(status_code=404, detail="Note file not found")
 
     if note.file_path.startswith("minio://"):
-        url = get_storage_service().generate_download_url(note.file_path)
+        url = await get_storage_service().generate_download_url(note.file_path)
         return RedirectResponse(url=url)
 
     local_path = Path(note.file_path)

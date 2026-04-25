@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useState, useEffect, useRef } from "react";
 import {
   MessageSquare,
@@ -6,14 +6,18 @@ import {
   StickyNote,
   FileText,
   Zap,
+  BarChart3,
   RefreshCw,
-  Brain,
   ChevronLeft,
   Palette,
+  LogOut,
+  Users,
+  User,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { syncApi } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import {
   BACKGROUND_PRESETS,
   getPresetById,
@@ -28,6 +32,7 @@ const navItems = [
   { to: "/notes", icon: StickyNote, label: "Notes" },
   { to: "/sources", icon: FileText, label: "Sources" },
   { to: "/skills", icon: Zap, label: "Skills" },
+  { to: "/stats", icon: BarChart3, label: "Stats" },
 ];
 
 export function Layout() {
@@ -36,7 +41,11 @@ export function Layout() {
   const [syncResult, setSyncResult] = useState<string | null>(null);
   const [backgroundId, setBackgroundId] = useState<BackgroundPresetId>(loadBackgroundPresetId);
   const [bgPickerOpen, setBgPickerOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   const bgPickerRef = useRef<HTMLDivElement>(null);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+  const { user, logout, isAdmin } = useAuth();
+  const navigate = useNavigate();
 
   useEffect(() => {
     saveBackgroundPresetId(backgroundId);
@@ -52,6 +61,17 @@ export function Layout() {
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [bgPickerOpen]);
+
+  useEffect(() => {
+    if (!userMenuOpen) return;
+    const close = (e: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [userMenuOpen]);
 
   const mainBg = getPresetById(backgroundId).color;
 
@@ -84,8 +104,8 @@ export function Layout() {
       >
         {/* Logo */}
         <div className="flex items-center gap-2 px-4 h-14 border-b border-border shrink-0">
-          <Brain className="h-6 w-6 text-primary shrink-0" />
-          {!collapsed && <span className="font-semibold text-sm">Knowledge Graph</span>}
+          <img src="/seagull.png" alt="Seagull" className="h-7 w-7 shrink-0" />
+          {!collapsed && <span className="font-semibold text-sm">Seagull</span>}
         </div>
 
         {/* Nav */}
@@ -112,6 +132,59 @@ export function Layout() {
 
         {/* Bottom actions */}
         <div className="border-t border-border p-2 space-y-1">
+          {/* User menu */}
+          <div className="relative" ref={userMenuRef}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn("w-full", collapsed ? "justify-center" : "justify-start")}
+              onClick={() => setUserMenuOpen((o) => !o)}
+              title={user?.display_name}
+            >
+              <User className="h-4 w-4 shrink-0" />
+              {!collapsed && (
+                <span className="truncate">{user?.display_name || user?.username}</span>
+              )}
+            </Button>
+            {userMenuOpen && (
+              <div
+                className={cn(
+                  "absolute z-50 rounded-lg border border-border bg-card p-2 shadow-lg",
+                  collapsed ? "left-full bottom-0 ml-1 w-[180px]" : "bottom-full left-0 mb-1 w-full min-w-[160px]"
+                )}
+              >
+                <p className="px-2 py-1 text-xs text-muted-foreground truncate">
+                  {user?.display_name}
+                  <span className="ml-1 text-[10px] uppercase">({user?.role})</span>
+                </p>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
+                    onClick={() => {
+                      setUserMenuOpen(false);
+                      navigate("/admin/users");
+                    }}
+                  >
+                    <Users className="h-3.5 w-3.5" />
+                    User Management
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-destructive hover:bg-accent"
+                  onClick={() => {
+                    setUserMenuOpen(false);
+                    logout();
+                  }}
+                >
+                  <LogOut className="h-3.5 w-3.5" />
+                  Sign out
+                </button>
+              </div>
+            )}
+          </div>
+
           <Button
             variant="ghost"
             size="sm"

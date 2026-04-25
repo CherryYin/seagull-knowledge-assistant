@@ -34,18 +34,18 @@ def _output_path(filename: str, fmt: str) -> tuple[Path, str]:
     return exports_dir / f"{filename}.{fmt}", filename
 
 
-def _upload_to_oss(local_path: Path) -> str:
+async def _upload_to_oss(local_path: Path) -> str:
     """Upload the generated file to MinIO under exports/ and return a presigned URL."""
     storage = get_storage_service()
     object_key = f"exports/{local_path.name}"
     content_type = mimetypes.guess_type(local_path.name)[0] or "application/octet-stream"
     data = local_path.read_bytes()
-    storage_uri = storage.upload_bytes(
+    storage_uri = await storage.upload_bytes(
         object_key=object_key,
         data=data,
         content_type=content_type,
     )
-    return storage.generate_download_url(storage_uri)
+    return await storage.generate_download_url(storage_uri)
 
 
 def _md_to_docx(content: str, path: Path) -> None:
@@ -195,7 +195,7 @@ async def process_document(content: str, format: str, filename: str = "") -> str
             docx_path = path.with_suffix(".docx")
             _md_to_docx(content, docx_path)
             try:
-                download_url = _upload_to_oss(docx_path)
+                download_url = await _upload_to_oss(docx_path)
             except Exception as exc:
                 logger.exception("Failed to upload DOCX to OSS")
                 return (
@@ -213,7 +213,7 @@ async def process_document(content: str, format: str, filename: str = "") -> str
         return f"文档转换失败: {exc}"
 
     try:
-        download_url = _upload_to_oss(path)
+        download_url = await _upload_to_oss(path)
     except Exception as exc:
         logger.exception("Failed to upload to OSS")
         return f"已生成文件: {path}（OSS 上传失败: {exc}）"

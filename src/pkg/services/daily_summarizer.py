@@ -93,7 +93,7 @@ async def summarize_temporary_notes() -> str | None:
 
     storage = get_storage_service()
     object_key = storage.build_object_key("notes", note_id, "note.md")
-    storage_uri = storage.upload_bytes(
+    storage_uri = await storage.upload_bytes(
         object_key=object_key,
         data=summary.encode("utf-8"),
         content_type="text/markdown",
@@ -129,8 +129,8 @@ async def summarize_temporary_notes() -> str | None:
             session.add(note)
 
             emb_svc = get_embedding_service()
-            title_vec = emb_svc.embed_text(title)
-            abstract_vec = emb_svc.embed_text(summary[:500])
+            title_vec = await emb_svc.embed_text(title)
+            abstract_vec = await emb_svc.embed_text(summary[:8000])
             session.add(NoteEmbedding(note_id=note_id, title_vec=title_vec, abstract_vec=abstract_vec))
 
         # Archive processed temporary notes
