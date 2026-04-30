@@ -2,13 +2,25 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
-import { ArrowLeft, Download, ExternalLink, Trash2, List, FileText, Pencil, Check, X } from "lucide-react";
+import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+import { ArrowLeft, Download, ExternalLink, Trash2, List, FileText, Pencil, Check, X, Rss, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { CategorySelect } from "@/components/CategorySelect";
-import { sourcesApi, categoriesApi, type Source, type SourceChunk, type SourceUpdate } from "@/lib/api";
+import { sourcesApi, categoriesApi, downloadFile, type Source, type SourceChunk, type SourceUpdate, type SourceList } from "@/lib/api";
+
+const sanitizeSchema = {
+  ...defaultSchema,
+  attributes: {
+    ...defaultSchema.attributes,
+    code: [...(defaultSchema.attributes?.code || []), "className"],
+    span: [...(defaultSchema.attributes?.span || []), "className"],
+  },
+};
 
 type ViewMode = "full" | "slices";
 
@@ -55,6 +67,41 @@ export function SourceDetailPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["sources"] });
       navigate("/sources");
+    },
+  });
+
+  const isRssEnabled = source?.metadata_?.rss_enabled === "true";
+
+  const { data: articlesData } = useQuery({
+    queryKey: ["source-articles", id],
+    queryFn: () => sourcesApi.listArticles(id!, { limit: 10 }),
+    enabled: !!id && source?.source_type === "web" && isRssEnabled,
+  });
+
+  const enableRssMutation = useMutation({
+    mutationFn: () => sourcesApi.enableRss(id!),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(["source", id], updated);
+      queryClient.invalidateQueries({ queryKey: ["sources"] });
+    },
+  });
+
+  const disableRssMutation = useMutation({
+    mutationFn: () => sourcesApi.disableRss(id!),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(["source", id], updated);
+      queryClient.invalidateQueries({ queryKey: ["source-articles", id] });
+      queryClient.invalidateQueries({ queryKey: ["sources"] });
+    },
+  });
+
+  const [fetchResult, setFetchResult] = useState<{ new_articles: number } | null>(null);
+
+  const fetchFeedMutation = useMutation({
+    mutationFn: () => sourcesApi.fetchFeed(id!),
+    onSuccess: (result) => {
+      setFetchResult(result);
+      queryClient.invalidateQueries({ queryKey: ["source-articles", id] });
     },
   });
 
@@ -217,10 +264,12 @@ export function SourceDetailPage() {
           )}
           {source.file_path && (
             <div className="mt-3">
-              <Button asChild variant="outline" size="sm">
-                <a href={`/api/sources/${encodeURIComponent(source.id)}/file`} target="_blank" rel="noopener noreferrer">
-                  <Download className="h-4 w-4" /> Open Stored File
-                </a>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => downloadFile(`/sources/${encodeURIComponent(source.id)}/file`, source.title)}
+              >
+                <Download className="h-4 w-4" /> Download Source File
               </Button>
             </div>
           )}
@@ -230,11 +279,109 @@ export function SourceDetailPage() {
           </div>
         </div>
 
+        {/* RSS Section — only for web sources */}
+        {source.source_type === "web" && (
+          <div className="mb-6 rounded-lg border border-border p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Rss className="h-4 w-4 text-orange-500" />
+              <span className="text-sm font-medium">RSS Feed</span>
+            </div>
+            {!isRssEnabled ? (
+              <div>
+                <p className="text-sm text-muted-foreground mb-2">
+                  Enable RSS to automatically fetch new articles from this feed.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => enableRssMutation.mutate()}
+                  disabled={enableRssMutation.isPending}
+                >
+                  <Rss className="h-4 w-4" />
+                  {enableRssMutation.isPending ? "Validating feed..." : "Enable RSS"}
+                </Button>
+                {enableRssMutation.isError && (
+                  <p className="text-sm text-destructive mt-2">
+                    {enableRssMutation.error instanceof Error ? enableRssMutation.error.message : "Failed to enable RSS"}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="secondary" className="bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300">
+                    RSS Active
+                  </Badge>
+                  {source.metadata_?.feed_title ? (
+                    <span className="text-xs text-muted-foreground">{String(source.metadata_.feed_title)}</span>
+                  ) : null}
+                  {source.metadata_?.last_fetch_at ? (
+                    <span className="text-xs text-muted-foreground">
+                      Last fetch: {new Date(String(source.metadata_.last_fetch_at)).toLocaleString()}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => { setFetchResult(null); fetchFeedMutation.mutate(); }}
+                    disabled={fetchFeedMutation.isPending}
+                  >
+                    <RefreshCw className={`h-4 w-4 ${fetchFeedMutation.isPending ? "animate-spin" : ""}`} />
+                    {fetchFeedMutation.isPending ? "Fetching..." : "Fetch Now"}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => disableRssMutation.mutate()}
+                    disabled={disableRssMutation.isPending}
+                  >
+                    {disableRssMutation.isPending ? "Disabling..." : "Disable RSS"}
+                  </Button>
+                </div>
+                {fetchResult && (
+                  <p className="text-sm text-muted-foreground">
+                    Fetched {fetchResult.new_articles} new article{fetchResult.new_articles !== 1 ? "s" : ""}.
+                  </p>
+                )}
+                {fetchFeedMutation.isError && (
+                  <p className="text-sm text-destructive">
+                    {fetchFeedMutation.error instanceof Error ? fetchFeedMutation.error.message : "Fetch failed"}
+                  </p>
+                )}
+                {articlesData && articlesData.items.length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground mb-1">
+                      Recent Articles ({articlesData.total} total)
+                    </p>
+                    <div className="space-y-1">
+                      {articlesData.items.map((article) => (
+                        <div
+                          key={article.id}
+                          className="flex items-center gap-2 text-sm cursor-pointer hover:bg-accent/50 rounded px-2 py-1 transition-colors"
+                          onClick={() => navigate(`/sources/${article.id}`)}
+                        >
+                          <span className="truncate flex-1">{article.title}</span>
+                          <span className="text-xs text-muted-foreground shrink-0">
+                            {new Date(article.ingested_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Content area */}
         {viewMode === "full" ? (
           <div className="rounded-lg border border-border p-6 max-h-[70vh] overflow-y-auto">
             <div className="prose">
-              <ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight, [rehypeSanitize, sanitizeSchema]]}>
                 {source.raw_content || (source.file_path ? "*(Original file stored in MinIO)*" : "*No content*")}
               </ReactMarkdown>
             </div>
@@ -291,7 +438,7 @@ export function SourceDetailPage() {
               <div className="p-4">
                 {hasChunks && chunks[selectedChunk] ? (
                   <div className="prose text-sm">
-                    <ReactMarkdown>{chunks[selectedChunk].content}</ReactMarkdown>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight, [rehypeSanitize, sanitizeSchema]]}>{chunks[selectedChunk].content}</ReactMarkdown>
                   </div>
                 ) : (
                   <p className="text-sm text-muted-foreground">Select a slice to view its content.</p>

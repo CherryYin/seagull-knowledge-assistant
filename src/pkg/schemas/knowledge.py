@@ -4,10 +4,11 @@ from pydantic import BaseModel
 
 
 class SaveDocumentRequest(BaseModel):
-    storage_uri: str        # minio://bucket/exports/filename.ext
-    document_format: str    # docx, xlsx, pptx, pdf, md
-    document_filename: str
     message_content: str
+    title: str | None = None
+    storage_uri: str | None = None
+    document_format: str | None = None
+    document_filename: str | None = None
     session_id: str | None = None
     category_id: int | None = None
 

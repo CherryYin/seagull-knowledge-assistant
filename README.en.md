@@ -45,6 +45,7 @@ L1 Sources (raw materials)  →  L2 Notes (structured notes)  →  L3 Insights (
 - **Skills system** — reusable prompt templates (20+ built-in), extensible with custom Python tools
 - **File storage** — MinIO / S3-compatible object storage with file upload and presigned download URLs
 - **Session persistence** — conversation history stored in the database with session management and replay
+- **Agent Profiles** — users can create multiple agent configurations (custom instructions, model selection, tool/skill whitelists, temperature) and switch between them in conversations
 
 ## Tech Stack
 
@@ -113,6 +114,9 @@ Key configuration:
 | `DOCLING_OCR_ENGINE` | OCR engine (`tesseract` / `rapidocr`) | `tesseract` |
 | `CHUNK_SIZE` | Chunk size in characters | `512` |
 | `CHUNK_OVERLAP` | Chunk overlap in characters | `64` |
+| `ALLOWED_MODELS` | User-selectable LLM models (JSON array) | `["qwen-plus","qwen-max","qwen-turbo"]` |
+| `JWT_SECRET_KEY` | JWT signing secret (min 32 chars) | — |
+| `ADMIN_INIT_PASSWORD` | Admin initial password | — |
 
 ### 4. Initialize the database
 
@@ -130,16 +134,27 @@ pkg sync
 
 ### 6. Start services
 
+**Backend API:**
+
 ```bash
-# Backend API
+# Option 1: Using the CLI command (recommended for dev, includes hot reload)
 pkg serve
 
-# Frontend (separate terminal)
-cd web && npm install && npm run dev
+# Option 2: Using uvicorn directly
+uvicorn pkg.api.app:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-- API: `http://localhost:8000` (Swagger: `http://localhost:8000/docs`)
-- Frontend: `http://localhost:5173`
+The backend runs at `http://localhost:8000` by default. Swagger docs at `http://localhost:8000/docs`.
+
+**Frontend:**
+
+```bash
+cd web
+npm install    # first run or when dependencies change
+npm run dev
+```
+
+The frontend runs at `http://localhost:5173` by default, with a proxy configured to forward `/api` requests to the backend.
 
 ## CLI Usage
 
@@ -190,6 +205,11 @@ The agent also dynamically loads Skill tools from the `skills/` directory.
 | `POST` | `/action/stream` | Stream Action Agent response |
 | `GET/POST` | `/chat-sessions` | Session management |
 | `GET/PATCH/DELETE` | `/chat-sessions/{id}` | Session details / update / delete |
+| `GET/POST` | `/agent-profiles` | Agent Profile management |
+| `GET/PATCH/DELETE` | `/agent-profiles/{id}` | Profile details / update / delete |
+| `POST` | `/agent-profiles/{id}/set-default` | Set as default profile |
+| `GET` | `/agent-profiles/available-tools` | Available tools list |
+| `GET` | `/agent-profiles/allowed-models` | Allowed models list |
 | `GET/POST` | `/skills` | Skills management |
 | `POST` | `/sync` | Trigger file sync |
 
@@ -204,11 +224,13 @@ src/pkg/
 │   ├── search.py           # Search + sync endpoints
 │   ├── action.py           # Action Agent API (sync / streaming)
 │   ├── chat_sessions.py    # Multi-turn session management
+│   ├── agent_profiles.py   # Agent Profile CRUD
 │   └── skills.py           # Skills CRUD
 ├── models/                 # SQLAlchemy models
 │   ├── source.py           # Source + SourceEmbedding + SourceChunk
 │   ├── note.py             # Note + NoteEmbedding
 │   ├── chat_session.py     # ChatSession
+│   ├── agent_profile.py    # AgentProfile
 │   └── skill.py            # Skill
 ├── schemas/                # Pydantic validation schemas
 ├── services/
@@ -228,7 +250,7 @@ src/pkg/
 ├── config.py               # Configuration management
 └── db.py                   # Database connection
 web/                        # React frontend
-├── src/pages/              # Pages: Chat, Search, Notes, Sources, Skills
+├── src/pages/              # Pages: Chat, Search, Notes, Sources, Skills, Profiles
 ├── src/components/         # Components: ChatMessage, SearchResultCard, Layout
 └── src/lib/                # API client, utilities
 skills/                     # Skill templates (20+ built-in)

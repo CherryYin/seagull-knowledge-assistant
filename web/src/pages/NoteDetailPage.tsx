@@ -2,16 +2,28 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, useMemo, useRef } from "react";
 import ReactMarkdown from "react-markdown";
-import { ArrowLeft, Download, Pencil, Save, X, Trash2, List, FileText } from "lucide-react";
+import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+import { ArrowLeft, Download, Pencil, Save, X, Trash2, List, FileText, FileDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { notesApi, categoriesApi, type NoteUpdate } from "@/lib/api";
+import { notesApi, categoriesApi, downloadFile, type NoteUpdate } from "@/lib/api";
 import { CategorySelect } from "@/components/CategorySelect";
 
-const NOTE_TYPES = ["inbox", "architecture", "case-study", "concept", "how-to"] as const;
+const sanitizeSchema = {
+  ...defaultSchema,
+  attributes: {
+    ...defaultSchema.attributes,
+    code: [...(defaultSchema.attributes?.code || []), "className"],
+    span: [...(defaultSchema.attributes?.span || []), "className"],
+  },
+};
+
+const NOTE_TYPES = ["inbox", "architecture", "case-study", "concept", "how-to", "remember"] as const;
 
 type ViewMode = "full" | "slices";
 
@@ -191,6 +203,13 @@ export function NoteDetailPage() {
               <Button variant="outline" size="sm" onClick={startEdit}>
                 <Pencil className="h-4 w-4" /> Edit
               </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => notesApi.exportPdf(note.id, note.title)}
+              >
+                <FileDown className="h-4 w-4" /> Export PDF
+              </Button>
               <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" onClick={() => setDeleteOpen(true)}>
                 <Trash2 className="h-4 w-4" /> Delete
               </Button>
@@ -339,19 +358,17 @@ export function NoteDetailPage() {
                 )}
                 {note.file_path && (
                   <div className="mb-4">
-                    <Button asChild variant="outline" size="sm">
-                      <a
-                        href={`/api/notes/${encodeURIComponent(note.id)}/file`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        <Download className="h-4 w-4" /> Open Stored File
-                      </a>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => downloadFile(`/notes/${encodeURIComponent(note.id)}/file`, note.title)}
+                    >
+                      <Download className="h-4 w-4" /> Download Source File
                     </Button>
                   </div>
                 )}
                 <div className="prose max-h-[70vh] overflow-y-auto">
-                  <ReactMarkdown>{note.content || "*No content*"}</ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight, [rehypeSanitize, sanitizeSchema]]}>{note.content || "*No content*"}</ReactMarkdown>
                 </div>
               </>
             ) : (
@@ -414,11 +431,11 @@ export function NoteDetailPage() {
                     <div className="p-4">
                       {hasSections && sections[selectedSection] ? (
                         <div className="prose text-sm">
-                          <ReactMarkdown>{sections[selectedSection].content}</ReactMarkdown>
+                          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight, [rehypeSanitize, sanitizeSchema]]}>{sections[selectedSection].content}</ReactMarkdown>
                         </div>
                       ) : (
                         <div className="prose text-sm">
-                          <ReactMarkdown>{note.content || "*No content*"}</ReactMarkdown>
+                          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight, [rehypeSanitize, sanitizeSchema]]}>{note.content || "*No content*"}</ReactMarkdown>
                         </div>
                       )}
                     </div>

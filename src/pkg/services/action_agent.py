@@ -199,8 +199,16 @@ async def _get_cached_kb_stats() -> str:
     return text
 
 
-async def build_system_prompt() -> str:
-    """Build the system prompt with dynamic runtime context."""
+async def build_system_prompt(
+    custom_append: str = "",
+    enabled_skills: list[str] | None = None,
+) -> str:
+    """Build the system prompt with dynamic runtime context.
+
+    Args:
+        custom_append: User-defined instructions appended at the end.
+        enabled_skills: If not None, only include these skills in the prompt.
+    """
     from pkg.services.skills import format_skills_for_prompt, load_skills_merged
 
     today = datetime.now().strftime("%Y-%m-%d")
@@ -208,12 +216,19 @@ async def build_system_prompt() -> str:
     base = _SYSTEM_PROMPT_TEMPLATE.format(today=today, kb_stats=kb_stats)
 
     skills = await load_skills_merged(settings.skills_dir)
+    if enabled_skills is not None:
+        skills = [s for s in skills if s.name in enabled_skills]
     skills_section = format_skills_for_prompt(skills)
 
     # Inject user memory if available
     user_memory_section = await _get_user_memory_section()
 
-    return base + skills_section + user_memory_section
+    prompt = base + skills_section + user_memory_section
+
+    if custom_append and custom_append.strip():
+        prompt += f"\n\n## 用户自定义指令\n{custom_append.strip()}\n"
+
+    return prompt
 
 
 async def _get_user_memory_section() -> str:
@@ -264,25 +279,43 @@ _BASE_TOOLS = [
 ]
 
 
+def _get_tool_name(tool) -> str:
+    """Extract tool name from a Strands tool (decorated function or callable)."""
+    return getattr(tool, "tool_name", None) or getattr(tool, "__name__", "unknown")
+
+
 # ---------------------------------------------------------------------------
 # Agent factory
 # ---------------------------------------------------------------------------
-async def create_action_agent(callback_handler=None) -> Agent:
+async def create_action_agent(callback_handler=None, profile=None) -> Agent:
     """Create a new Action Agent instance (async).
 
     Args:
         callback_handler: Strands callback handler. Defaults to PrintingCallbackHandler.
             Pass None to suppress output (for API usage).
+        profile: Optional AgentProfile instance to customize the agent behavior.
     """
     from pkg.services.skills import load_skill_tools, load_skills_merged
 
-    model = create_model()
-    system_prompt = await build_system_prompt()
+    model = create_model(
+        model_id=profile.model_id if profile else None,
+        temperature=profile.temperature if profile else None,
+    )
+    system_prompt = await build_system_prompt(
+        custom_append=profile.system_prompt_append if profile else "",
+        enabled_skills=profile.enabled_skills if profile else None,
+    )
 
     # Merge base tools with dynamically loaded skill tools
     skills = await load_skills_merged(settings.skills_dir)
+    if profile and profile.enabled_skills is not None:
+        skills = [s for s in skills if s.name in profile.enabled_skills]
     skill_tools = load_skill_tools(settings.skills_dir, skills)
-    all_tools = _BASE_TOOLS + skill_tools
+
+    all_tools = list(_BASE_TOOLS) + skill_tools
+    if profile and profile.enabled_tools is not None:
+        enabled_set = set(profile.enabled_tools)
+        all_tools = [t for t in all_tools if _get_tool_name(t) in enabled_set]
 
     conversation_manager = SummarizingConversationManager(
         summary_ratio=settings.COMPACTION_SUMMARY_RATIO,

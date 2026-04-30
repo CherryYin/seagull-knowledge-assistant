@@ -203,6 +203,7 @@ async def process_document(content: str, format: str, filename: str = "") -> str
                     f"（PDF 直接转换暂不支持，请使用 LibreOffice 或其他工具将 DOCX 转为 PDF）\n"
                     f"OSS 上传失败: {exc}"
                 )
+            docx_path.unlink(missing_ok=True)
             return (
                 f"已生成 DOCX 文件并上传至 OSS。\n"
                 f"（PDF 直接转换暂不支持，已生成 DOCX 替代）\n"
@@ -218,4 +219,5 @@ async def process_document(content: str, format: str, filename: str = "") -> str
         logger.exception("Failed to upload to OSS")
         return f"已生成文件: {path}（OSS 上传失败: {exc}）"
 
+    path.unlink(missing_ok=True)
     return f"已生成文件并上传至 OSS。\n下载链接: {download_url}"

@@ -32,6 +32,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
+export async function downloadFile(path: string, fallbackFilename = "download") {
+  const headers = authHeaders(new Headers());
+  const res = await fetch(`${BASE}${path}`, { headers });
+  if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`);
+  const blob = await res.blob();
+  const disposition = res.headers.get("content-disposition");
+  const match = disposition?.match(/filename="?([^"]+)"?/);
+  const filename = match?.[1] ?? fallbackFilename;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // --- Sources ---
 export interface Source {
   id: string;
@@ -98,6 +114,18 @@ export const sourcesApi = {
     }),
   delete: (id: string) =>
     request<void>(`/sources/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  enableRss: (id: string) =>
+    request<Source>(`/sources/${encodeURIComponent(id)}/rss/enable`, { method: "POST" }),
+  disableRss: (id: string) =>
+    request<Source>(`/sources/${encodeURIComponent(id)}/rss/disable`, { method: "POST" }),
+  fetchFeed: (id: string) =>
+    request<{ new_articles: number }>(`/sources/${encodeURIComponent(id)}/rss/fetch`, { method: "POST" }),
+  listArticles: (id: string, params?: { limit?: number; offset?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.limit) q.set("limit", String(params.limit));
+    if (params?.offset) q.set("offset", String(params.offset));
+    return request<SourceList>(`/sources/${encodeURIComponent(id)}/articles?${q}`);
+  },
 };
 
 // --- Notes ---
@@ -189,6 +217,8 @@ export const notesApi = {
     }),
   delete: (id: string) =>
     request<void>(`/notes/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  exportPdf: (id: string, title?: string) =>
+    downloadFile(`/notes/${encodeURIComponent(id)}/export/pdf`, `${title || "note"}.pdf`),
 };
 
 // --- Categories ---
@@ -244,6 +274,7 @@ export const searchApi = {
 export interface ActionRequest {
   task: string;
   session_id?: string;
+  profile_id?: string;
   conversation_history?: { role: string; content: string }[];
 }
 
@@ -254,7 +285,7 @@ export type SSEvent =
   | { type: "error"; message: string }
   | { type: "done"; session_id: string };
 
-export async function* streamAction(body: ActionRequest): AsyncGenerator<SSEvent> {
+export async function* streamAction(body: ActionRequest, signal?: AbortSignal): AsyncGenerator<SSEvent> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const token = localStorage.getItem(TOKEN_KEY);
   if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -262,41 +293,45 @@ export async function* streamAction(body: ActionRequest): AsyncGenerator<SSEvent
     method: "POST",
     headers,
     body: JSON.stringify(body),
+    signal,
   });
   if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`);
-  const reader = res.body!.getReader();
+  if (!res.body) throw new Error("No response body");
+  const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
 
-    // Parse SSE frames: "event: <type>\ndata: <json>\n\n"
-    const frames = buffer.split("\n\n");
-    buffer = frames.pop() || ""; // Keep incomplete frame in buffer
+      const frames = buffer.split("\n\n");
+      buffer = frames.pop() || "";
 
-    for (const frame of frames) {
-      if (!frame.trim()) continue;
-      let eventType = "content";
-      let dataStr = "";
-      for (const line of frame.split("\n")) {
-        if (line.startsWith("event: ")) {
-          eventType = line.slice(7).trim();
-        } else if (line.startsWith("data: ")) {
-          dataStr = line.slice(6);
+      for (const frame of frames) {
+        if (!frame.trim()) continue;
+        let eventType = "content";
+        let dataStr = "";
+        for (const line of frame.split("\n")) {
+          if (line.startsWith("event: ")) {
+            eventType = line.slice(7).trim();
+          } else if (line.startsWith("data: ")) {
+            dataStr = line.slice(6);
+          }
+        }
+        if (!dataStr) continue;
+        try {
+          const data = JSON.parse(dataStr);
+          yield { type: eventType, ...data } as SSEvent;
+        } catch {
+          yield { type: "content", text: dataStr } as SSEvent;
         }
       }
-      if (!dataStr) continue;
-      try {
-        const data = JSON.parse(dataStr);
-        yield { type: eventType, ...data } as SSEvent;
-      } catch {
-        // Non-JSON data, treat as content text
-        yield { type: "content", text: dataStr } as SSEvent;
-      }
     }
+  } finally {
+    reader.releaseLock();
   }
 }
 
@@ -362,6 +397,7 @@ export interface ChatSessionRecord {
   id: string;
   title: string;
   messages: ChatSessionMessage[];
+  profile_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -427,11 +463,13 @@ export interface KnowledgeStatsList {
 }
 
 export interface SaveDocumentRequest {
-  storage_uri: string;
-  document_format: string;
-  document_filename: string;
   message_content: string;
+  title?: string;
+  storage_uri?: string;
+  document_format?: string;
+  document_filename?: string;
   session_id?: string;
+  category_id?: number;
 }
 
 export interface SaveDocumentResponse {
@@ -471,6 +509,75 @@ export const knowledgeApi = {
     if (params?.offset) q.set("offset", String(params.offset));
     return request<KnowledgeStatsList>(`/knowledge/stats?${q}`);
   },
+};
+
+// --- Agent Profiles ---
+export interface AgentProfile {
+  id: string;
+  name: string;
+  description: string;
+  system_prompt_append: string;
+  model_id: string | null;
+  temperature: number | null;
+  enabled_tools: string[] | null;
+  enabled_skills: string[] | null;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentProfileList {
+  items: AgentProfile[];
+  total: number;
+}
+
+export interface AgentProfileCreate {
+  name: string;
+  description?: string;
+  system_prompt_append?: string;
+  model_id?: string | null;
+  temperature?: number | null;
+  enabled_tools?: string[] | null;
+  enabled_skills?: string[] | null;
+  is_default?: boolean;
+}
+
+export interface AgentProfileUpdate {
+  name?: string;
+  description?: string;
+  system_prompt_append?: string;
+  model_id?: string | null;
+  temperature?: number | null;
+  enabled_tools?: string[] | null;
+  enabled_skills?: string[] | null;
+  is_default?: boolean;
+}
+
+export const agentProfilesApi = {
+  list: () => request<AgentProfileList>("/agent-profiles"),
+  get: (id: string) =>
+    request<AgentProfile>(`/agent-profiles/${encodeURIComponent(id)}`),
+  create: (body: AgentProfileCreate) =>
+    request<AgentProfile>("/agent-profiles", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  update: (id: string, body: AgentProfileUpdate) =>
+    request<AgentProfile>(`/agent-profiles/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  delete: (id: string) =>
+    request<void>(`/agent-profiles/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+  setDefault: (id: string) =>
+    request<AgentProfile>(
+      `/agent-profiles/${encodeURIComponent(id)}/set-default`,
+      { method: "POST" }
+    ),
+  availableTools: () => request<string[]>("/agent-profiles/available-tools"),
+  allowedModels: () => request<string[]>("/agent-profiles/allowed-models"),
 };
 
 // --- Auth / User Management ---

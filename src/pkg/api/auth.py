@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -115,7 +115,11 @@ async def update_user(
     user = await session.get(User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    for field, value in body.model_dump(exclude_unset=True).items():
+    updates = body.model_dump(exclude_unset=True)
+    _ALLOWED_ROLES = {"user", "admin"}
+    if "role" in updates and updates["role"] not in _ALLOWED_ROLES:
+        raise HTTPException(status_code=422, detail=f"role must be one of: {', '.join(_ALLOWED_ROLES)}")
+    for field, value in updates.items():
         setattr(user, field, value)
     await session.commit()
     await session.refresh(user)
@@ -236,8 +240,8 @@ async def generate_profile(user: User = Depends(get_current_user)):
 
 @router.get("/me/activity", response_model=list[ActivityRead])
 async def list_activity(
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):

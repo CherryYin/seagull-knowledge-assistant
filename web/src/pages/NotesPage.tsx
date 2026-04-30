@@ -11,7 +11,7 @@ import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle } from 
 import { CategorySelect } from "@/components/CategorySelect";
 import { notesApi, categoriesApi, type NoteCreate, type Note } from "@/lib/api";
 
-const NOTE_TYPES = ["inbox", "architecture", "case-study", "concept", "how-to"];
+const NOTE_TYPES = ["inbox", "architecture", "case-study", "concept", "how-to", "remember"];
 
 export function NotesPage() {
   const navigate = useNavigate();

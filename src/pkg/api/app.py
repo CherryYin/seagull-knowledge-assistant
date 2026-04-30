@@ -36,6 +36,7 @@ from pkg.api.skills import router as skills_router
 from pkg.api.knowledge import router as knowledge_router
 from pkg.api.categories import router as categories_router
 from pkg.api.auth import router as auth_router
+from pkg.api.agent_profiles import router as agent_profiles_router
 
 # Configure root logger so all app loggers (pkg.*) output to console.
 # This is a no-op if logging is already configured (e.g. by pytest).
@@ -86,6 +87,35 @@ async def _user_profiler_loop():
             logger.exception("User profiling failed")
 
 
+async def _rss_fetcher_loop():
+    """Fetch RSS feeds every RSS_FETCH_INTERVAL_HOURS (first run ~60s after startup)."""
+    from pkg.services.rss_fetcher import cleanup_old_rss_articles, fetch_all_feeds
+
+    await asyncio.sleep(60)
+    while True:
+        try:
+            stats = await fetch_all_feeds()
+            deleted = await cleanup_old_rss_articles()
+            logger.info("RSS fetch complete: %s, cleaned %d old articles", stats, deleted)
+        except Exception:
+            logger.exception("RSS fetch loop failed")
+        await asyncio.sleep(settings.RSS_FETCH_INTERVAL_HOURS * 3600)
+
+
+async def _rss_summary_loop():
+    """Summarize RSS articles every RSS_SUMMARY_INTERVAL_HOURS (first run ~5min after startup)."""
+    from pkg.services.rss_summarizer import summarize_rss_by_topic
+
+    await asyncio.sleep(300)
+    while True:
+        try:
+            note_ids = await summarize_rss_by_topic()
+            logger.info("RSS summary complete: created %d topic notes", len(note_ids))
+        except Exception:
+            logger.exception("RSS summary loop failed")
+        await asyncio.sleep(settings.RSS_SUMMARY_INTERVAL_HOURS * 3600)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if not settings.JWT_SECRET_KEY or len(settings.JWT_SECRET_KEY) < 32:
@@ -99,9 +129,13 @@ async def lifespan(app: FastAPI):
         )
     task = asyncio.create_task(_daily_summarizer_loop())
     profiler_task = asyncio.create_task(_user_profiler_loop())
+    rss_fetch_task = asyncio.create_task(_rss_fetcher_loop())
+    rss_summary_task = asyncio.create_task(_rss_summary_loop())
     yield
     task.cancel()
     profiler_task.cancel()
+    rss_fetch_task.cancel()
+    rss_summary_task.cancel()
 
 
 app = FastAPI(
@@ -127,6 +161,7 @@ app.include_router(skills_router, prefix="/skills", tags=["skills"])
 app.include_router(knowledge_router, prefix="/knowledge", tags=["knowledge"])
 app.include_router(categories_router, prefix="/categories", tags=["categories"])
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
+app.include_router(agent_profiles_router, prefix="/agent-profiles", tags=["agent-profiles"])
 
 
 @app.get("/health")

@@ -44,6 +44,7 @@ L1 Sources (原始资料)  →  L2 Notes (结构化笔记)  →  L3 Insights (�
 - **Skills 系统** — 可复用的 prompt 模板（20+ 内置 skill），支持自定义 Python 工具扩展
 - **文件存储** — MinIO / S3 兼容对象存储，支持文件上传和预签名 URL 下载
 - **多轮会话持久化** — 对话历史存储在数据库中，支持会话管理和历史回放
+- **Agent Profile** — 用户可创建多个 Agent 配置（自定义指令、模型选择、工具/技能白名单、temperature），在对话中自由切换
 
 ## 技术栈
 
@@ -112,6 +113,9 @@ cp .env.example .env
 | `DOCLING_OCR_ENGINE` | OCR 引擎 (`tesseract` / `rapidocr`) | `tesseract` |
 | `CHUNK_SIZE` | 分块大小（字符） | `512` |
 | `CHUNK_OVERLAP` | 分块重叠（字符） | `64` |
+| `ALLOWED_MODELS` | 用户可选的 LLM 模型列表（JSON 数组） | `["qwen-plus","qwen-max","qwen-turbo"]` |
+| `JWT_SECRET_KEY` | JWT 签名密钥（至少 32 字符） | — |
+| `ADMIN_INIT_PASSWORD` | 管理员初始密码 | — |
 
 ### 4. 初始化数据库
 
@@ -129,16 +133,27 @@ pkg sync
 
 ### 6. 启动服务
 
+**后端 API:**
+
 ```bash
-# 后端 API
+# 方式一：使用 CLI 命令（推荐开发时使用，自带 hot reload）
 pkg serve
 
-# 前端（另一个终端）
-cd web && npm install && npm run dev
+# 方式二：直接使用 uvicorn
+uvicorn pkg.api.app:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-- API: `http://localhost:8000` (Swagger: `http://localhost:8000/docs`)
-- 前端: `http://localhost:5173`
+后端默认运行在 `http://localhost:8000`，Swagger 文档在 `http://localhost:8000/docs`。
+
+**前端:**
+
+```bash
+cd web
+npm install    # 首次运行或依赖变更时
+npm run dev
+```
+
+前端默认运行在 `http://localhost:5173`，已配置代理转发 `/api` 请求到后端。
 
 ## CLI 使用
 
@@ -189,6 +204,11 @@ Action Agent 拥有以下内置工具，可根据任务自主选择调用：
 | `POST` | `/action/stream` | 流式调用 Action Agent |
 | `GET/POST` | `/chat-sessions` | 会话管理 |
 | `GET/PATCH/DELETE` | `/chat-sessions/{id}` | 会话详情/更新/删除 |
+| `GET/POST` | `/agent-profiles` | Agent Profile 管理 |
+| `GET/PATCH/DELETE` | `/agent-profiles/{id}` | Profile 详情/更新/删除 |
+| `POST` | `/agent-profiles/{id}/set-default` | 设为默认 Profile |
+| `GET` | `/agent-profiles/available-tools` | 可用工具列表 |
+| `GET` | `/agent-profiles/allowed-models` | 可选模型列表 |
 | `GET/POST` | `/skills` | Skills 管理 |
 | `POST` | `/sync` | 触发文件同步 |
 
@@ -203,11 +223,13 @@ src/pkg/
 │   ├── search.py           # 搜索 + 同步接口
 │   ├── action.py           # Action Agent 接口（同步/流式）
 │   ├── chat_sessions.py    # 多轮对话会话管理
+│   ├── agent_profiles.py   # Agent Profile CRUD
 │   └── skills.py           # Skills CRUD
 ├── models/                 # SQLAlchemy 模型
 │   ├── source.py           # Source + SourceEmbedding + SourceChunk
 │   ├── note.py             # Note + NoteEmbedding
 │   ├── chat_session.py     # ChatSession
+│   ├── agent_profile.py    # AgentProfile
 │   └── skill.py            # Skill
 ├── schemas/                # Pydantic 验证模型
 ├── services/
@@ -227,7 +249,7 @@ src/pkg/
 ├── config.py               # 配置管理
 └── db.py                   # 数据库连接
 web/                        # React 前端
-├── src/pages/              # 页面：Chat, Search, Notes, Sources, Skills
+├── src/pages/              # 页面：Chat, Search, Notes, Sources, Skills, Profiles
 ├── src/components/         # 组件：ChatMessage, SearchResultCard, Layout
 └── src/lib/                # API 客户端, 工具函数
 skills/                     # Skill 模板（20+ 内置）

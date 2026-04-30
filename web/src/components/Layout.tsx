@@ -7,12 +7,14 @@ import {
   FileText,
   Zap,
   BarChart3,
+  PenLine,
   RefreshCw,
   ChevronLeft,
   Palette,
   LogOut,
   Users,
   User,
+  Bot,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -31,7 +33,9 @@ const navItems = [
   { to: "/search", icon: Search, label: "Search" },
   { to: "/notes", icon: StickyNote, label: "Notes" },
   { to: "/sources", icon: FileText, label: "Sources" },
+  { to: "/writing", icon: PenLine, label: "Writing" },
   { to: "/skills", icon: Zap, label: "Skills" },
+  { to: "/profiles", icon: Bot, label: "Profiles" },
   { to: "/stats", icon: BarChart3, label: "Stats" },
 ];
 

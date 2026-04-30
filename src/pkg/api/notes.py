@@ -1,10 +1,11 @@
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 import logging
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,7 +33,8 @@ def make_note_id(title: str, explicit_id: str | None = None) -> str:
     if explicit_id:
         return explicit_id
     now = datetime.now(timezone.utc)
-    return f"note-{now.strftime('%Y%m%d')}-{title[:30].lower().replace(' ', '-')}"
+    suffix = uuid.uuid4().hex[:8]
+    return f"note-{now.strftime('%Y%m%d')}-{title[:30].lower().replace(' ', '-')}-{suffix}"
 
 
 async def put_note_markdown_oss(note_id: str, content: str, category_name: str | None = None) -> str:
@@ -75,10 +77,13 @@ async def persist_note(
     )
     session.add(note)
 
-    emb_svc = get_embedding_service()
-    title_vec = await emb_svc.embed_text(note.title)
-    abstract_vec = await emb_svc.embed_text(body.abstract or body.title)
-    session.add(NoteEmbedding(note_id=note_id, title_vec=title_vec, abstract_vec=abstract_vec))
+    try:
+        emb_svc = get_embedding_service()
+        title_vec = await emb_svc.embed_text(note.title)
+        abstract_vec = await emb_svc.embed_text(body.abstract or body.title)
+        session.add(NoteEmbedding(note_id=note_id, title_vec=title_vec, abstract_vec=abstract_vec))
+    except Exception:
+        logger.error("Embedding generation failed for note %s — saving without embeddings", note_id, exc_info=True)
 
     await session.commit()
     await session.refresh(note)
@@ -169,8 +174,8 @@ async def list_notes(
     tag: str | None = None,
     project: str | None = None,
     status: str | None = None,
-    limit: int = 20,
-    offset: int = 0,
+    limit: int = Query(default=20, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
@@ -246,15 +251,18 @@ async def update_note(
 
     title_or_abstract_changed = "title" in patch or "abstract" in patch
     if title_or_abstract_changed:
-        emb_svc = get_embedding_service()
-        emb_row = await session.get(NoteEmbedding, note_id)
-        title_vec = await emb_svc.embed_text(note.title)
-        abstract_vec = await emb_svc.embed_text(note.abstract or note.title)
-        if emb_row:
-            emb_row.title_vec = title_vec
-            emb_row.abstract_vec = abstract_vec
-        else:
-            session.add(NoteEmbedding(note_id=note_id, title_vec=title_vec, abstract_vec=abstract_vec))
+        try:
+            emb_svc = get_embedding_service()
+            emb_row = await session.get(NoteEmbedding, note_id)
+            title_vec = await emb_svc.embed_text(note.title)
+            abstract_vec = await emb_svc.embed_text(note.abstract or note.title)
+            if emb_row:
+                emb_row.title_vec = title_vec
+                emb_row.abstract_vec = abstract_vec
+            else:
+                session.add(NoteEmbedding(note_id=note_id, title_vec=title_vec, abstract_vec=abstract_vec))
+        except Exception:
+            logger.error("Embedding update failed for note %s", note_id, exc_info=True)
 
     await session.commit()
     await session.refresh(note)
@@ -323,3 +331,96 @@ async def get_note_file(
     if not local_path.exists():
         raise HTTPException(status_code=404, detail="Note file not found")
     return FileResponse(local_path)
+
+
+_PDF_HTML_TEMPLATE = """\
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+@page {{ size: A4; margin: 2cm; }}
+body {{
+    font-family: "Noto Sans CJK SC", "Microsoft YaHei", "PingFang SC",
+                 "Hiragino Sans GB", "Source Han Sans CN", sans-serif;
+    font-size: 12pt;
+    line-height: 1.8;
+    color: #1a1a1a;
+}}
+h1 {{ font-size: 22pt; margin-top: 0; }}
+h2 {{ font-size: 16pt; border-bottom: 1px solid #ddd; padding-bottom: 4pt; }}
+h3 {{ font-size: 13pt; }}
+code {{
+    font-family: "Fira Code", "Source Code Pro", "Noto Sans Mono CJK SC", monospace;
+    background: #f5f5f5;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 10pt;
+}}
+pre {{
+    background: #f5f5f5;
+    padding: 12px;
+    border-radius: 4px;
+    overflow-x: auto;
+    font-size: 10pt;
+    line-height: 1.5;
+}}
+pre code {{ background: none; padding: 0; }}
+table {{
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1em 0;
+}}
+th, td {{
+    border: 1px solid #ddd;
+    padding: 6px 10px;
+    text-align: left;
+}}
+th {{ background: #f5f5f5; font-weight: bold; }}
+blockquote {{
+    border-left: 3px solid #ddd;
+    padding-left: 12px;
+    color: #555;
+    margin-left: 0;
+}}
+</style>
+</head>
+<body>
+<h1>{title}</h1>
+{body}
+</body>
+</html>
+"""
+
+
+@router.get("/{note_id}/export/pdf")
+async def export_note_pdf(
+    note_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Export a note's markdown content as a PDF."""
+    note = await session.get(Note, note_id)
+    if not note or note.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Note not found")
+
+    content = note.content or ""
+    if not content.strip():
+        raise HTTPException(status_code=422, detail="Note has no content to export")
+
+    import markdown as md
+    from weasyprint import HTML
+
+    html_body = md.markdown(
+        content,
+        extensions=["tables", "fenced_code", "toc", "nl2br"],
+    )
+    full_html = _PDF_HTML_TEMPLATE.format(title=note.title, body=html_body)
+    pdf_bytes = HTML(string=full_html).write_pdf()
+
+    safe_title = note.title.replace('"', "'")
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{safe_title}.pdf"'},
+    )

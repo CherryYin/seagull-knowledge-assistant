@@ -15,6 +15,7 @@ class ChatSessionCreate(BaseModel):
     id: str | None = None
     title: str = "New Session"
     messages: list[ChatMessageSchema] = []
+    profile_id: str | None = None
 
 
 class ChatSessionRead(BaseModel):
@@ -23,6 +24,7 @@ class ChatSessionRead(BaseModel):
     id: str
     title: str
     messages: list[ChatMessageSchema]
+    profile_id: str | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -367,5 +367,74 @@ def serve(
     uvicorn.run("pkg.api.app:app", host=host, port=port, reload=True)
 
 
+@app.command(name="fetch-feeds")
+def fetch_feeds(
+    source_id: Optional[str] = typer.Option(None, help="Fetch a specific feed by source ID"),
+):
+    """Fetch RSS feeds and persist new articles."""
+
+    async def _fetch():
+        if source_id:
+            from pkg.db import async_session
+            from pkg.models.source import Source
+            from pkg.services.rss_fetcher import fetch_single_feed
+
+            async with async_session() as session:
+                feed = await session.get(Source, source_id)
+                if not feed:
+                    console.print(f"[red]Source not found: {source_id}[/red]")
+                    return
+                count = await fetch_single_feed(feed, session)
+                console.print(f"[green]Fetched {count} new articles from {feed.title}[/green]")
+        else:
+            from pkg.services.rss_fetcher import fetch_all_feeds
+
+            stats = await fetch_all_feeds()
+            console.print(f"[green]RSS fetch complete:[/green] {stats}")
+
+    _run(_fetch())
+
+
+@app.command(name="summarize-rss")
+def summarize_rss():
+    """Generate topic summaries from recent RSS articles."""
+
+    async def _summarize():
+        from pkg.services.rss_summarizer import summarize_rss_by_topic
+
+        note_ids = await summarize_rss_by_topic()
+        if note_ids:
+            console.print(f"[green]Created {len(note_ids)} topic summaries:[/green]")
+            for nid in note_ids:
+                console.print(f"  {nid}")
+        else:
+            console.print("[yellow]No recent RSS articles to summarize.[/yellow]")
+
+    _run(_summarize())
+
+
+@app.command(name="cleanup-rss")
+def cleanup_rss(
+    days: Optional[int] = typer.Option(None, help="Override retention days"),
+):
+    """Delete RSS articles older than retention period."""
+
+    async def _cleanup():
+        if days is not None:
+            from pkg.config import settings
+            original = settings.RSS_RETENTION_DAYS
+            settings.RSS_RETENTION_DAYS = days
+
+        from pkg.services.rss_fetcher import cleanup_old_rss_articles
+
+        deleted = await cleanup_old_rss_articles()
+        console.print(f"[green]Cleaned up {deleted} old RSS articles.[/green]")
+
+        if days is not None:
+            settings.RSS_RETENTION_DAYS = original  # type: ignore[possibly-undefined]
+
+    _run(_cleanup())
+
+
 if __name__ == "__main__":
     app()

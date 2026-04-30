@@ -10,7 +10,9 @@ import { SourcesPage } from "./pages/SourcesPage";
 import { SourceDetailPage } from "./pages/SourceDetailPage";
 import { SkillsPage } from "./pages/SkillsPage";
 import { StatsPage } from "./pages/StatsPage";
+import { WritingPage } from "./pages/WritingPage";
 import { AdminUsersPage } from "./pages/AdminUsersPage";
+import { AgentProfilesPage } from "./pages/AgentProfilesPage";
 import type { ReactNode } from "react";
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
@@ -33,6 +35,20 @@ function LoginGuard() {
   return <LoginPage />;
 }
 
+function AdminRoute({ children }: { children: ReactNode }) {
+  const { user, loading, isAdmin } = useAuth();
+  if (loading) {
+    return (
+      <div className="flex h-screen items-center justify-center text-muted-foreground">
+        Loading...
+      </div>
+    );
+  }
+  if (!user) return <Navigate to="/login" replace />;
+  if (!isAdmin) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -53,8 +69,10 @@ export default function App() {
             <Route path="/sources" element={<SourcesPage />} />
             <Route path="/sources/:id" element={<SourceDetailPage />} />
             <Route path="/skills" element={<SkillsPage />} />
+            <Route path="/profiles" element={<AgentProfilesPage />} />
+            <Route path="/writing" element={<WritingPage />} />
             <Route path="/stats" element={<StatsPage />} />
-            <Route path="/admin/users" element={<AdminUsersPage />} />
+            <Route path="/admin/users" element={<AdminRoute><AdminUsersPage /></AdminRoute>} />
           </Route>
         </Routes>
       </AuthProvider>

@@ -2,14 +2,14 @@ import hashlib
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.db import get_session
 from pkg.api.categories import get_default_category_id
 from pkg.api.deps import get_current_user
 from pkg.api.notes import make_note_id, persist_note, put_note_markdown_oss
-from pkg.api.sources import extract_text_content, make_source_id, persist_source
+from pkg.api.sources import make_source_id, persist_source
 from pkg.schemas.knowledge import (
     KnowledgeStatsList,
     KnowledgeStatsRead,
@@ -26,14 +26,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-_FORMAT_TO_SOURCE_TYPE: dict[str, str] = {
-    "docx": "article",
-    "xlsx": "code",
-    "pptx": "article",
-    "pdf": "pdf",
-    "md": "article",
-}
-
 
 @router.post("/save-document", response_model=SaveDocumentResponse, status_code=201)
 async def save_document(
@@ -41,55 +33,62 @@ async def save_document(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    """Save a generated document as a Source + Note."""
+    """Save a generated document as MD — creates a Source + Note pair."""
     storage = get_storage_service()
     category_id = body.category_id or await get_default_category_id(session)
 
-    # Download the file bytes from OSS via storage URI
-    try:
-        payload = await storage.get_object(body.storage_uri)
-    except Exception as exc:
-        raise HTTPException(status_code=404, detail=f"Cannot read document from storage: {exc}")
+    # Derive title
+    title = body.title
+    if not title and body.document_filename:
+        title = Path(body.document_filename).stem.replace("-", " ").replace("_", " ").title()
+    if not title:
+        title = body.message_content.replace("\n", " ").strip()[:40] or "Untitled Document"
 
-    # Create Source record
-    source_type = _FORMAT_TO_SOURCE_TYPE.get(body.document_format, "article")
-    raw_content = await extract_text_content(body.document_filename, None, payload)
+    raw_content = body.message_content
+
+    # Upload markdown as .md file to MinIO
+    source_id = make_source_id(title)
+    md_object_key = f"exports/{source_id}.md"
+    md_storage_uri = await storage.upload_bytes(
+        object_key=md_object_key,
+        data=raw_content.encode("utf-8"),
+        content_type="text/markdown; charset=utf-8",
+    )
 
     source_body = SourceCreate(
-        title=Path(body.document_filename).stem.replace("-", " ").replace("_", " ").title(),
-        source_type=source_type,
+        title=title,
+        source_type="article",
         category_id=category_id,
         raw_content=raw_content,
-        file_path=body.storage_uri,
+        file_path=md_storage_uri,
     )
     source = await persist_source(
         session=session,
-        body=source_body,
+        body=source_body.model_copy(update={"id": source_id}),
         user_id=user.id,
-        file_path=body.storage_uri,
+        file_path=md_storage_uri,
         raw_content_override=raw_content,
-        content_hash_override=hashlib.sha256(payload).hexdigest(),
+        content_hash_override=hashlib.sha256(raw_content.encode()).hexdigest(),
     )
 
     # Create Note record linked to the source
-    note_title = Path(body.document_filename).stem.replace("-", " ").replace("_", " ").title()
     note_body = NoteCreate(
-        title=note_title,
+        title=title,
         note_type="concept",
         category_id=category_id,
-        content=body.message_content,
+        content=raw_content,
         source_ids=[source.id],
         status="seed",
         tags=["from-document"],
     )
-    note_id = make_note_id(note_body.title)
-    storage_uri = await put_note_markdown_oss(note_id, body.message_content)
+    note_id = make_note_id(title)
+    note_storage_uri = await put_note_markdown_oss(note_id, raw_content)
     note = await persist_note(
         session=session,
         body=note_body.model_copy(update={"id": note_id}),
         user_id=user.id,
-        file_path=storage_uri,
-        content_override=body.message_content,
+        file_path=note_storage_uri,
+        content_override=raw_content,
     )
 
     return SaveDocumentResponse(source_id=source.id, note_id=note.id)
@@ -142,8 +141,8 @@ async def get_knowledge_stats(
     sort_by: str = "total_count",
     item_type: str | None = None,
     title: str | None = None,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     user: User = Depends(get_current_user),
 ):
     """Get knowledge usage statistics ranked by search/retrieval/reference counts."""

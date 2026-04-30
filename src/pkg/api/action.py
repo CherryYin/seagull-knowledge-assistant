@@ -49,11 +49,13 @@ def _normalize_strands_message(msg: dict[str, Any]) -> dict[str, Any]:
     return {"role": role, "content": blocks}
 
 
-async def _load_session_history(session_id: str) -> tuple[ChatSession | None, list[dict]]:
-    """Load conversation history from a persisted chat session."""
+async def _load_session_history(session_id: str, user_id: str) -> tuple[ChatSession | None, list[dict]]:
+    """Load conversation history from a persisted chat session, scoped to the requesting user."""
     async with async_session() as db:
         obj = await db.get(ChatSession, session_id)
         if obj is None:
+            return None, []
+        if obj.user_id != user_id:
             return None, []
         return obj, list(obj.messages or [])
 
@@ -63,12 +65,13 @@ async def _save_session_messages(
     title: str,
     messages: list[dict],
     user_id: str | None = None,
+    profile_id: str | None = None,
 ) -> None:
     """Persist updated messages to the chat session."""
     async with async_session() as db:
         obj = await db.get(ChatSession, session_id)
         if obj is None:
-            obj = ChatSession(id=session_id, user_id=user_id or "", title=title, messages=messages)
+            obj = ChatSession(id=session_id, user_id=user_id or "", title=title, messages=messages, profile_id=profile_id)
             db.add(obj)
         else:
             obj.title = title
@@ -188,16 +191,38 @@ async def _try_expand_skill(task: str) -> str:
     return task
 
 
+async def _load_profile(profile_id: str | None, user_id: str):
+    """Load an AgentProfile by explicit ID or fall back to user's default profile."""
+    from sqlalchemy import select
+
+    from pkg.models.agent_profile import AgentProfile
+
+    async with async_session() as db:
+        if profile_id:
+            profile = await db.get(AgentProfile, profile_id)
+            if not profile or profile.user_id != user_id:
+                raise HTTPException(status_code=404, detail="Profile not found")
+            return profile
+        result = await db.execute(
+            select(AgentProfile).where(
+                AgentProfile.user_id == user_id,
+                AgentProfile.is_default.is_(True),
+            )
+        )
+        return result.scalar_one_or_none()
+
+
 @router.post("/action", response_model=ActionResponse)
 async def execute_action(body: ActionRequest, user: User = Depends(get_current_user)):
     current_user_id.set(user.id)
-    agent = await create_action_agent(callback_handler=None)
+    profile = await _load_profile(body.profile_id, user.id)
+    agent = await create_action_agent(callback_handler=None, profile=profile)
 
     session_id = body.session_id
     db_messages: list[dict] = []
 
     if session_id:
-        _, db_messages = await _load_session_history(session_id)
+        _, db_messages = await _load_session_history(session_id, user.id)
         for msg in db_messages:
             agent.messages.append(_normalize_strands_message(msg))
     elif body.conversation_history:
@@ -224,7 +249,7 @@ async def execute_action(body: ActionRequest, user: User = Depends(get_current_u
         if refs:
             meta["references"] = refs
         db_messages.append(_make_message_dict("assistant", result_text, metadata=meta or None))
-        await _save_session_messages(session_id, _derive_title(db_messages), db_messages, user_id=user.id)
+        await _save_session_messages(session_id, _derive_title(db_messages), db_messages, user_id=user.id, profile_id=body.profile_id)
 
     return ActionResponse(
         result=result_text,
@@ -242,13 +267,14 @@ def _sse(event_type: str, data: dict | str) -> str:
 @router.post("/action/stream")
 async def execute_action_stream(body: ActionRequest, user: User = Depends(get_current_user)):
     current_user_id.set(user.id)
-    agent = await create_action_agent(callback_handler=None)
+    profile = await _load_profile(body.profile_id, user.id)
+    agent = await create_action_agent(callback_handler=None, profile=profile)
 
     session_id = body.session_id
     db_messages: list[dict] = []
 
     if session_id:
-        _, db_messages = await _load_session_history(session_id)
+        _, db_messages = await _load_session_history(session_id, user.id)
         for msg in db_messages:
             agent.messages.append(_normalize_strands_message(msg))
     elif body.conversation_history:
@@ -322,7 +348,7 @@ async def execute_action_stream(body: ActionRequest, user: User = Depends(get_cu
             db_messages.append(_make_message_dict("user", body.task))
             db_messages.append(_make_message_dict("assistant", full_response, metadata=meta or None))
             await _save_session_messages(
-                session_id, _derive_title(db_messages), db_messages, user_id=user.id
+                session_id, _derive_title(db_messages), db_messages, user_id=user.id, profile_id=body.profile_id
             )
 
     return StreamingResponse(

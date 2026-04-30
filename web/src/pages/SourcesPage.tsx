@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { Plus, FileText, Upload, ChevronDown, ChevronRight, FolderOpen } from "lucide-react";
+import { Plus, FileText, Upload, ChevronDown, ChevronRight, FolderOpen, Rss } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -340,11 +340,17 @@ export function SourcesPage() {
 }
 
 function SourceCard({ source, onClick }: { source: Source; onClick: () => void }) {
+  const isRss = source.source_type === "web" && source.metadata_?.rss_enabled === "true";
   return (
     <Card className="cursor-pointer hover:border-primary/40 transition-colors" onClick={onClick}>
       <CardHeader className="pb-2">
         <div className="flex items-center gap-2 mb-1">
           <Badge variant="source">{source.source_type}</Badge>
+          {isRss && (
+            <Badge variant="secondary" className="bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300 gap-1">
+              <Rss className="h-3 w-3" /> RSS
+            </Badge>
+          )}
         </div>
         <CardTitle className="text-sm">{source.title}</CardTitle>
       </CardHeader>
@@ -354,6 +360,9 @@ function SourceCard({ source, onClick }: { source: Source; onClick: () => void }
         )}
         <p className="text-[10px] text-muted-foreground mt-2">
           {new Date(source.ingested_at).toLocaleDateString()}
+          {isRss && source.metadata_?.last_fetch_at ? (
+            <> &middot; Last fetch: {new Date(String(source.metadata_.last_fetch_at)).toLocaleDateString()}</>
+          ) : null}
         </p>
       </CardContent>
     </Card>

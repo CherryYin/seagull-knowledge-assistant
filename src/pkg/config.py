@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     QWEN_API_KEY: str = ""
     QWEN_MODEL: str = "qwen-plus"
 
+    # Allowed models for user selection in Agent Profiles
+    ALLOWED_MODELS: list[str] = ["qwen-plus", "qwen-max", "qwen-turbo"]
+
     # Context compaction settings (SummarizingConversationManager)
     COMPACTION_SUMMARY_RATIO: float = 0.4
     COMPACTION_PRESERVE_RECENT: int = 6
@@ -88,6 +91,13 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
     CHUNK_MAX_TOKENS: int = 2048  # max tokens per chunk (tiktoken)
+
+    # RSS feed settings
+    RSS_FETCH_INTERVAL_HOURS: int = 4
+    RSS_SUMMARY_INTERVAL_HOURS: int = 6
+    RSS_FETCH_TIMEOUT: int = 30
+    RSS_MAX_ARTICLES_PER_FEED: int = 20
+    RSS_RETENTION_DAYS: int = 30
 
     @property
     def resolved_embedding_api_base(self) -> str:

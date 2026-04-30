@@ -1,5 +1,6 @@
 import { useRef, useState, useEffect, useCallback } from "react";
-import { History, MessageSquarePlus, Microscope, Send, Sparkles, Trash2 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Bot, History, MessageSquarePlus, Microscope, Send, Sparkles, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -10,6 +11,7 @@ import {
   streamAction,
   chatSessionsApi,
   knowledgeApi,
+  agentProfilesApi,
   type DocumentMetadata,
   type ChatSessionMessage,
   type SSEvent,
@@ -33,9 +35,15 @@ export function ChatPage() {
   const [streaming, setStreaming] = useState(false);
   const [steps, setSteps] = useState<StepInfo[]>([]);
   const [deepResearch, setDeepResearch] = useState(false);
+  const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => { abortRef.current?.abort(); };
+  }, []);
 
   // Load sessions and skills from backend on mount
   useEffect(() => {
@@ -63,6 +71,19 @@ export function ChatPage() {
     })();
     return () => { cancelled = true; };
   }, []);
+
+  const { data: profilesData } = useQuery({
+    queryKey: ["agent-profiles"],
+    queryFn: agentProfilesApi.list,
+  });
+  const profiles = profilesData?.items ?? [];
+
+  useEffect(() => {
+    if (profiles.length > 0 && activeProfileId === null) {
+      const def = profiles.find((p) => p.is_default);
+      if (def) setActiveProfileId(def.id);
+    }
+  }, [profiles, activeProfileId]);
 
   const currentSession =
     sessions.find((s) => s.id === activeSessionId) ?? sessions[0] ?? null;
@@ -142,12 +163,15 @@ export function ChatPage() {
       setSteps([]);
 
       let fullResponse = "";
+      const abortController = new AbortController();
+      abortRef.current = abortController;
 
       try {
         const stream = streamAction({
           task,
           session_id: sessionId,
-        });
+          profile_id: activeProfileId ?? undefined,
+        }, abortController.signal);
 
         for await (const event of stream) {
           switch (event.type) {
@@ -217,6 +241,7 @@ export function ChatPage() {
           };
         });
       } finally {
+        abortRef.current = null;
         setStreaming(false);
         setSteps([]);
         // Persist the final state to backend (the stream endpoint also saves,
@@ -260,13 +285,17 @@ export function ChatPage() {
   );
 
   const handleNewKnowledge = useCallback(
-    async (doc: DocumentMetadata, assistantMsg: ChatSessionMessage) => {
+    async (doc: DocumentMetadata | undefined, assistantMsg: ChatSessionMessage) => {
       if (!currentSession) return;
+      const title = doc?.filename
+        ? doc.filename.replace(/\.[^.]+$/, "").replace(/[-_]/g, " ")
+        : undefined;
       await knowledgeApi.saveDocument({
-        storage_uri: doc.storage_uri,
-        document_format: doc.format,
-        document_filename: doc.filename,
         message_content: assistantMsg.content,
+        title,
+        storage_uri: doc?.storage_uri,
+        document_format: doc?.format,
+        document_filename: doc?.filename,
         session_id: currentSession.id,
       });
     },
@@ -420,6 +449,21 @@ export function ChatPage() {
                     <Microscope className="h-3.5 w-3.5" />
                     Deep Research
                   </button>
+                  {profiles.length > 0 && (
+                    <div className="flex items-center gap-1.5 rounded-full border border-border px-2 py-0.5">
+                      <Bot className="h-3.5 w-3.5 text-muted-foreground" />
+                      <select
+                        value={activeProfileId ?? ""}
+                        onChange={(e) => setActiveProfileId(e.target.value || null)}
+                        className="bg-transparent text-xs text-muted-foreground outline-none cursor-pointer py-0.5"
+                      >
+                        <option value="">Default</option>
+                        {profiles.map((p) => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                 </div>
                 <div className="mx-auto flex max-w-3xl items-end gap-3">
                   <Textarea

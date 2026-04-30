@@ -1,10 +1,11 @@
 import asyncio
 import hashlib
 import logging
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,7 +45,8 @@ def make_source_id(title: str, explicit_id: str | None = None) -> str:
     if explicit_id:
         return explicit_id
     now = datetime.now(timezone.utc)
-    return f"src-{now.strftime('%Y%m%d')}-{title[:30].lower().replace(' ', '-')}"
+    suffix = uuid.uuid4().hex[:8]
+    return f"src-{now.strftime('%Y%m%d')}-{title[:30].lower().replace(' ', '-')}-{suffix}"
 
 
 async def extract_text_content(
@@ -117,23 +119,25 @@ async def persist_source(
     )
     session.add(source)
 
-    emb_svc = get_embedding_service()
-    title_vec = await emb_svc.embed_text(source.title)
-    summary_vec = await emb_svc.embed_text(raw_content if raw_content else source.title)
-    session.add(SourceEmbedding(source_id=source_id, title_vec=title_vec, summary_vec=summary_vec))
+    try:
+        emb_svc = get_embedding_service()
+        title_vec = await emb_svc.embed_text(source.title)
+        summary_vec = await emb_svc.embed_text(raw_content if raw_content else source.title)
+        session.add(SourceEmbedding(source_id=source_id, title_vec=title_vec, summary_vec=summary_vec))
 
-    # Generate chunks for long documents
-    if raw_content:
-        chunks = chunk_text(raw_content)
-        if chunks:
-            vectors = await emb_svc.embed_batch(chunks)
-            for idx, (chunk_content, vec) in enumerate(zip(chunks, vectors)):
-                session.add(SourceChunk(
-                    source_id=source_id,
-                    chunk_index=idx,
-                    content=chunk_content,
-                    embedding=vec,
-                ))
+        if raw_content:
+            chunks = chunk_text(raw_content)
+            if chunks:
+                vectors = await emb_svc.embed_batch(chunks)
+                for idx, (chunk_content, vec) in enumerate(zip(chunks, vectors)):
+                    session.add(SourceChunk(
+                        source_id=source_id,
+                        chunk_index=idx,
+                        content=chunk_content,
+                        embedding=vec,
+                    ))
+    except Exception:
+        logger.error("Embedding generation failed for source %s — saving without embeddings", source_id, exc_info=True)
 
     await session.commit()
     await session.refresh(source)
@@ -198,8 +202,8 @@ async def upload_source(
 async def list_sources(
     source_type: str | None = None,
     category_id: int | None = None,
-    limit: int = 20,
-    offset: int = 0,
+    limit: int = Query(default=20, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
@@ -364,3 +368,149 @@ async def get_source_file(
     if not local_path.exists():
         raise HTTPException(status_code=404, detail="Source file not found")
     return FileResponse(local_path)
+
+
+# --- RSS Feed Endpoints ---
+
+
+@router.post("/{source_id}/rss/enable", response_model=SourceRead)
+async def enable_rss(
+    source_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Enable RSS fetching for a web source. Validates the feed URL first."""
+    source = await session.get(Source, source_id)
+    if not source or source.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Source not found")
+    if source.source_type != "web":
+        raise HTTPException(status_code=422, detail="RSS can only be enabled on web sources")
+    if not source.url:
+        raise HTTPException(status_code=422, detail="Source must have a URL to enable RSS")
+
+    import feedparser
+    import httpx
+
+    _headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
+    url = source.url.rstrip("/")
+    # Build candidate URLs: original, .rss suffix, /feed
+    candidates = [url]
+    if not url.endswith((".rss", ".xml", ".atom", "/feed")):
+        candidates.append(url + ".rss")
+        candidates.append(url + "/feed")
+
+    feed = None
+    feed_url = url
+    last_error = None
+    async with httpx.AsyncClient(timeout=settings.RSS_FETCH_TIMEOUT, headers=_headers) as client:
+        for candidate in candidates:
+            try:
+                resp = await client.get(candidate, follow_redirects=True)
+                resp.raise_for_status()
+                parsed = feedparser.parse(resp.content)
+                if parsed.entries:
+                    feed = parsed
+                    feed_url = candidate
+                    break
+            except httpx.HTTPError as exc:
+                last_error = exc
+
+    if not feed or not feed.entries:
+        detail = f"Cannot find a valid RSS feed for this URL"
+        if last_error:
+            detail += f": {last_error}"
+        raise HTTPException(status_code=422, detail=detail)
+
+    meta = dict(source.metadata_ or {})
+    meta["rss_enabled"] = "true"
+    meta["feed_title"] = feed.feed.get("title", "")
+    meta["feed_url"] = feed_url
+    meta["entries_available"] = len(feed.entries)
+    if feed_url != source.url:
+        source.url = feed_url
+    source.metadata_ = meta
+    await session.commit()
+    await session.refresh(source)
+    return source
+
+
+@router.post("/{source_id}/rss/disable", response_model=SourceRead)
+async def disable_rss(
+    source_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Disable RSS fetching for a web source."""
+    source = await session.get(Source, source_id)
+    if not source or source.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    meta = dict(source.metadata_ or {})
+    meta.pop("rss_enabled", None)
+    source.metadata_ = meta
+    await session.commit()
+    await session.refresh(source)
+    return source
+
+
+@router.post("/{source_id}/rss/fetch")
+async def fetch_rss_now(
+    source_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Manually trigger an immediate RSS fetch for this source."""
+    source = await session.get(Source, source_id)
+    if not source or source.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    meta = source.metadata_ or {}
+    if meta.get("rss_enabled") != "true":
+        raise HTTPException(status_code=422, detail="RSS is not enabled for this source")
+
+    from pkg.services.rss_fetcher import fetch_single_feed
+
+    new_count = await fetch_single_feed(source, session)
+    return {"new_articles": new_count}
+
+
+@router.get("/{source_id}/articles", response_model=SourceList)
+async def list_feed_articles(
+    source_id: str,
+    limit: int = Query(default=20, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """List articles fetched from this RSS feed."""
+    source = await session.get(Source, source_id)
+    if not source or source.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    from sqlalchemy import text as sql_text
+
+    base_filter = sql_text("metadata->>'feed_source_id' = :feed_id")
+
+    count_stmt = (
+        select(func.count())
+        .select_from(Source)
+        .where(base_filter.bindparams(feed_id=source_id))
+    )
+    total = (await session.execute(count_stmt)).scalar() or 0
+
+    stmt = (
+        select(Source)
+        .where(base_filter.bindparams(feed_id=source_id))
+        .order_by(Source.ingested_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    rows = await session.execute(stmt)
+    items = list(rows.scalars())
+
+    return SourceList(items=items, total=total)
