@@ -94,7 +94,7 @@ class Settings(BaseSettings):
 
     # RSS feed settings
     RSS_FETCH_INTERVAL_HOURS: int = 4
-    RSS_SUMMARY_INTERVAL_HOURS: int = 6
+    RSS_SUMMARY_INTERVAL_HOURS: int = 24
     RSS_FETCH_TIMEOUT: int = 30
     RSS_MAX_ARTICLES_PER_FEED: int = 20
     RSS_RETENTION_DAYS: int = 30

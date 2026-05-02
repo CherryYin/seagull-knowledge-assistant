@@ -420,7 +420,7 @@ async def fetch_all_feeds() -> dict[str, int]:
 
 async def cleanup_old_rss_articles() -> int:
     """Delete RSS articles older than RSS_RETENTION_DAYS. Returns count deleted."""
-    cutoff = datetime.now(timezone.utc) - timedelta(days=settings.RSS_RETENTION_DAYS)
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=settings.RSS_RETENTION_DAYS)
     deleted = 0
 
     async with async_session() as session:

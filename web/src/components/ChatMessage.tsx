@@ -16,7 +16,7 @@ const sanitizeSchema = {
 import { cn } from "@/lib/utils";
 import { Bot, User, RotateCw, Brain, Check, FileText, StickyNote, Globe, FileOutput } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { DocumentMetadata, MessageMetadata, ReferenceInfo } from "@/lib/api";
+import type { MessageMetadata, ReferenceInfo } from "@/lib/api";
 
 const CITATION_RE = /\[来源[：:]\s*((?:note|src|source)-[^\]]+)\]/g;
 
@@ -47,7 +47,7 @@ interface Props {
   metadata?: MessageMetadata | null;
   streaming?: boolean;
   onRetry?: () => void;
-  onNewKnowledge?: (doc: DocumentMetadata) => void;
+  onNewKnowledge?: () => void;
   onRemember?: () => void;
 }
 
@@ -67,8 +67,6 @@ export function ChatMessage({
   const [rememberLoading, setRememberLoading] = useState(false);
   const [newKnowledgeDone, setNewKnowledgeDone] = useState(false);
   const [rememberDone, setRememberDone] = useState(false);
-
-  const hasDocuments = !!(metadata?.documents && metadata.documents.length > 0);
 
   const markdownComponents = {
     a: ({ href, children, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { children?: React.ReactNode }) => {
@@ -104,11 +102,11 @@ export function ChatMessage({
     }
   };
 
-  const handleNewKnowledge = async (doc: DocumentMetadata) => {
+  const handleNewKnowledge = async () => {
     if (!onNewKnowledge) return;
     setNewKnowledgeLoading(true);
     try {
-      await onNewKnowledge(doc);
+      await onNewKnowledge();
       setNewKnowledgeDone(true);
       setTimeout(() => setNewKnowledgeDone(false), 2000);
     } catch {
@@ -228,13 +226,13 @@ export function ChatMessage({
               </Button>
             )}
 
-            {/* Save to Writing button — on assistant messages with documents */}
-            {!isUser && hasDocuments && onNewKnowledge && (
+            {/* Save to Writing button — on assistant messages with generated documents */}
+            {!isUser && metadata?.has_generated_document && onNewKnowledge && (
               <Button
                 variant="ghost"
                 size="sm"
                 className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
-                onClick={() => handleNewKnowledge(metadata!.documents![0])}
+                onClick={handleNewKnowledge}
                 disabled={newKnowledgeLoading || newKnowledgeDone}
               >
                 {newKnowledgeDone ? (
@@ -242,7 +240,7 @@ export function ChatMessage({
                 ) : (
                   <FileOutput className={cn("h-3 w-3", newKnowledgeLoading && "animate-pulse")} />
                 )}
-                {newKnowledgeDone ? "已存入" : "文档存入"}
+                {newKnowledgeDone ? "Saved" : "Save doc"}
               </Button>
             )}
 

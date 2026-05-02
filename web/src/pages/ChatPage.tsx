@@ -6,13 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ChatMessage } from "@/components/ChatMessage";
+import { QuestionCard } from "@/components/QuestionCard";
 import { ResearchSteps, type StepInfo } from "@/components/ResearchSteps";
 import {
   streamAction,
   chatSessionsApi,
   knowledgeApi,
   agentProfilesApi,
-  type DocumentMetadata,
   type ChatSessionMessage,
   type SSEvent,
 } from "@/lib/api";
@@ -35,6 +35,10 @@ export function ChatPage() {
   const [streaming, setStreaming] = useState(false);
   const [steps, setSteps] = useState<StepInfo[]>([]);
   const [deepResearch, setDeepResearch] = useState(false);
+  const [pendingQuestion, setPendingQuestion] = useState<{
+    question: string;
+    options?: string[];
+  } | null>(null);
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -136,6 +140,7 @@ export function ChatPage() {
   const sendMessage = useCallback(
     async (task: string, truncateAfterIndex?: number) => {
       if (!currentSession || streaming) return;
+      setPendingQuestion(null);
       const sessionId = currentSession.id;
 
       // If retrying, truncate messages first
@@ -205,7 +210,10 @@ export function ChatPage() {
               });
               break;
             case "ask_human":
-              // ask_human question is already part of the content stream
+              setPendingQuestion({
+                question: (event as any).question,
+                options: (event as any).options,
+              });
               break;
             case "error":
               updateSessionLocal(sessionId, (s) => {
@@ -244,6 +252,15 @@ export function ChatPage() {
         abortRef.current = null;
         setStreaming(false);
         setSteps([]);
+        // Fallback: if ask_human SSE didn't fire but content has the marker
+        if (fullResponse.includes("[WAITING_FOR_HUMAN]")) {
+          setPendingQuestion((prev) => {
+            if (prev) return prev; // SSE already set it
+            const lines = fullResponse.split("[WAITING_FOR_HUMAN]").pop()?.trim() || "";
+            const question = lines.split("\n---")[0].trim();
+            return question ? { question } : null;
+          });
+        }
         // Persist the final state to backend (the stream endpoint also saves,
         // but we save here as well to capture the local message IDs)
         setSessions((prev) => {
@@ -285,17 +302,11 @@ export function ChatPage() {
   );
 
   const handleNewKnowledge = useCallback(
-    async (doc: DocumentMetadata | undefined, assistantMsg: ChatSessionMessage) => {
+    async (assistantMsg: ChatSessionMessage) => {
       if (!currentSession) return;
-      const title = doc?.filename
-        ? doc.filename.replace(/\.[^.]+$/, "").replace(/[-_]/g, " ")
-        : undefined;
       await knowledgeApi.saveDocument({
-        message_content: assistantMsg.content,
-        title,
-        storage_uri: doc?.storage_uri,
-        document_format: doc?.format,
-        document_filename: doc?.filename,
+        message_content: assistantMsg.metadata?.document_content || assistantMsg.content,
+        title: assistantMsg.metadata?.document_title,
         session_id: currentSession.id,
       });
     },
@@ -415,8 +426,8 @@ export function ChatPage() {
                         }
                         onNewKnowledge={
                           msg.role === "assistant" &&
-                          msg.metadata?.documents?.length
-                            ? (doc) => handleNewKnowledge(doc, msg)
+                          msg.metadata?.has_generated_document
+                            ? () => handleNewKnowledge(msg)
                             : undefined
                         }
                         onRemember={
@@ -434,6 +445,16 @@ export function ChatPage() {
                 )}
               </div>
 
+              {pendingQuestion ? (
+                <QuestionCard
+                  question={pendingQuestion.question}
+                  options={pendingQuestion.options}
+                  onAnswer={(answer) => {
+                    setPendingQuestion(null);
+                    sendMessage(answer);
+                  }}
+                />
+              ) : (
               <div className="border-t border-border bg-card/50 px-6 py-4">
                 <div className="mx-auto flex max-w-3xl items-center gap-2 mb-2">
                   <button
@@ -483,6 +504,7 @@ export function ChatPage() {
                   Agent searches your knowledge base and reasons over it. Shift+Enter for new line.
                 </p>
               </div>
+              )}
             </div>
           </TabsContent>
 

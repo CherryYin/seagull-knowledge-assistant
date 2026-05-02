@@ -92,7 +92,7 @@ _SYSTEM_PROMPT_TEMPLATE = """\
 - **浏览笔记** (list_notes): 按领域/标签/项目浏览笔记
 - **浏览资料** (list_sources): 按类型浏览原始资料
 - **知识统计** (knowledge_stats): 了解知识库的规模和覆盖范围
-- **文档生成** (process_document): 将 markdown 内容转换为 DOCX/XLSX/PPTX/PDF 文件。**当用户要求撰写报告、分析、方案等文档时**，你先用 markdown 格式撰写内容，然后调用此工具转换为目标格式的文件。
+- **文档生成** (process_document): 将 markdown 内容保存为文件。**当用户要求撰写报告、分析、方案等文档时**，你先用 markdown 格式撰写内容，然后调用此工具保存为 md 文件（默认格式）。也支持 docx/xlsx/pptx 格式。
 - **网络搜索** (web_search): 搜索互联网获取实时信息。当知识库中没有足够信息，或用户需要最新资讯时使用。
 - **询问用户** (ask_human): 向用户提问并等待回复。当需要用户确认方向、选择选项或补充信息时使用。调用后必须停止当前回复，等待用户回答。
 
@@ -152,7 +152,7 @@ _SYSTEM_PROMPT_TEMPLATE = """\
 - 当用户要求"写一份报告"、"撰写分析"、"起草方案"等需要产出文档的任务时：
   1. 先用 search_knowledge 或 web_search 收集素材
   2. 你自己用 markdown 格式撰写完整内容
-  3. 调用 process_document(content=你写的markdown, format="docx") 转为文件
+  3. 调用 process_document(content=你写的markdown, format="md") 保存为文件
 - 不要把写内容的工作交给 process_document，它只负责格式转换
 - 不要在回复中直接写几千字的长文——那是 process_document 的工作
 

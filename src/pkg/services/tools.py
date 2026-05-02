@@ -269,7 +269,7 @@ async def knowledge_stats() -> str:
 
 
 @tool
-def ask_human(question: str) -> str:
+def ask_human(question: str, options: list[str] | None = None) -> str:
     """向用户提出问题并等待回复。在以下情况时使用此工具：
 
     - 研究方向需要用户确认或选择
@@ -281,6 +281,7 @@ def ask_human(question: str) -> str:
 
     Args:
         question: 要向用户提出的问题。应包含当前进展摘要和具体选项。
+        options: 可选的选项列表，前端将以按钮形式展示供用户快速选择。
     """
     return (
         f"[WAITING_FOR_HUMAN]\n"

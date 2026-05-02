@@ -161,15 +161,15 @@ def _md_to_pptx(content: str, path: Path) -> None:
 
 
 @tool
-async def process_document(content: str, format: str, filename: str = "") -> str:
-    """Convert markdown content into a document file (DOCX, XLSX, PPTX, PDF, MD).
+async def process_document(content: str, format: str = "md", filename: str = "") -> str:
+    """Convert markdown content into a document file (MD, DOCX, XLSX, PPTX).
 
     The Agent should first generate the document content in markdown format,
-    then call this tool to convert it into the desired file format.
+    then call this tool to save it. Default format is md.
 
     Args:
         content: The document content in markdown format.
-        format: Target format — one of: docx, xlsx, pptx, pdf, md.
+        format: Target format — one of: md, docx, xlsx, pptx. Defaults to md.
         filename: Output filename (without extension). Auto-generated if empty.
     """
     fmt = format.lower().strip(".")

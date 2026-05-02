@@ -15,6 +15,7 @@ import {
   Users,
   User,
   Bot,
+  Newspaper,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -33,6 +34,7 @@ const navItems = [
   { to: "/search", icon: Search, label: "Search" },
   { to: "/notes", icon: StickyNote, label: "Notes" },
   { to: "/sources", icon: FileText, label: "Sources" },
+  { to: "/digest", icon: Newspaper, label: "Digest" },
   { to: "/writing", icon: PenLine, label: "Writing" },
   { to: "/skills", icon: Zap, label: "Skills" },
   { to: "/profiles", icon: Bot, label: "Profiles" },

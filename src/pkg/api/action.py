@@ -102,12 +102,10 @@ def _extract_document_metadata(text: str) -> dict | None:
     documents = []
     for url in matches:
         parsed = urlparse(url)
-        # Extract the OSS object key from the URL path (e.g., /knowledge-graph/exports/doc.docx)
         path_parts = parsed.path.lstrip("/").split("/", 1)
         object_key = path_parts[1] if len(path_parts) > 1 else path_parts[0]
         filename = unquote(object_key.rsplit("/", 1)[-1])
         fmt = filename.rsplit(".", 1)[-1] if "." in filename else "unknown"
-        # Build permanent storage URI instead of using the presigned URL
         bucket = settings.MINIO_BUCKET
         storage_uri = f"minio://{bucket}/{object_key}"
         documents.append({
@@ -116,6 +114,45 @@ def _extract_document_metadata(text: str) -> dict | None:
             "filename": filename,
         })
     return {"documents": documents}
+
+
+def _collect_tool_result_links(messages: list) -> str:
+    """Extract text containing download links from tool results in agent conversation."""
+    parts: list[str] = []
+    for msg in messages:
+        if msg.get("role") != "user":
+            continue
+        for block in msg.get("content", []):
+            if not isinstance(block, dict) or "toolResult" not in block:
+                continue
+            for item in block["toolResult"].get("content", []):
+                if isinstance(item, dict) and "text" in item:
+                    if _DOWNLOAD_LINK_RE.search(item["text"]):
+                        parts.append(item["text"])
+    return "\n".join(parts)
+
+
+def _extract_generated_document(messages: list) -> dict | None:
+    """Extract document content from process_document tool input in agent messages.
+
+    Returns {"content": ..., "title": ...} or None if no document tool was used.
+    """
+    for msg in messages:
+        if msg.get("role") != "assistant":
+            continue
+        for block in msg.get("content", []):
+            if not isinstance(block, dict) or "toolUse" not in block:
+                continue
+            tool_use = block["toolUse"]
+            if tool_use.get("name") != "process_document":
+                continue
+            tool_input = tool_use.get("input", {})
+            content = tool_input.get("content", "")
+            filename = tool_input.get("filename", "")
+            if content:
+                title = filename.replace("-", " ").replace("_", " ").strip() if filename else None
+                return {"content": content, "title": title}
+    return None
 
 
 def _derive_title(messages: list[dict]) -> str:
@@ -244,7 +281,15 @@ async def execute_action(body: ActionRequest, user: User = Depends(get_current_u
 
     if session_id:
         db_messages.append(_make_message_dict("user", body.task))
-        meta = _extract_document_metadata(result_text) or {}
+        tool_links = _collect_tool_result_links(agent.messages)
+        combined_text = result_text + "\n" + tool_links if tool_links else result_text
+        meta = _extract_document_metadata(combined_text) or {}
+        doc_info = _extract_generated_document(agent.messages)
+        if doc_info:
+            meta["has_generated_document"] = True
+            meta["document_content"] = doc_info["content"]
+            if doc_info["title"]:
+                meta["document_title"] = doc_info["title"]
         refs = await _extract_references(result_text)
         if refs:
             meta["references"] = refs
@@ -286,6 +331,7 @@ async def execute_action_stream(body: ActionRequest, user: User = Depends(get_cu
 
     async def event_generator():
         current_tool: str | None = None
+        ask_human_emitted = False
         try:
             async for event in agent.stream_async(task):
                 # Detect tool-use start from contentBlockStart
@@ -297,10 +343,10 @@ async def execute_action_stream(body: ActionRequest, user: User = Depends(get_cu
                 )
                 if block_start:
                     tool_name = block_start.get("name", "unknown")
-                    # Close previous tool step if any
                     if current_tool:
                         yield _sse("step", {"tool": current_tool, "status": "done"})
                     current_tool = tool_name
+                    ask_human_emitted = False
                     if tool_name != "ask_human":
                         yield _sse("step", {"tool": tool_name, "status": "running"})
 
@@ -310,22 +356,29 @@ async def execute_action_stream(body: ActionRequest, user: User = Depends(get_cu
                     collected_chunks.append(text)
                     yield _sse("content", {"text": text})
 
-                # Detect ask_human tool result in the stream
-                tool_use_data = event.get("current_tool_use", {})
-                if tool_use_data.get("name") == "ask_human" and "input" in tool_use_data:
-                    tool_input = tool_use_data["input"]
-                    if isinstance(tool_input, dict):
-                        question = tool_input.get("question", "")
-                    elif isinstance(tool_input, str):
-                        # Sometimes input arrives as a raw JSON string
-                        try:
-                            question = json.loads(tool_input).get("question", tool_input)
-                        except (json.JSONDecodeError, AttributeError):
-                            question = tool_input
-                    else:
+                # Detect ask_human tool input (emit once per call)
+                if not ask_human_emitted:
+                    tool_use_data = event.get("current_tool_use", {})
+                    if tool_use_data.get("name") == "ask_human" and "input" in tool_use_data:
+                        tool_input = tool_use_data["input"]
                         question = ""
-                    if question:
-                        yield _sse("ask_human", {"question": question})
+                        options = None
+                        if isinstance(tool_input, dict):
+                            question = tool_input.get("question", "")
+                            options = tool_input.get("options")
+                        elif isinstance(tool_input, str):
+                            try:
+                                parsed = json.loads(tool_input)
+                                question = parsed.get("question", "")
+                                options = parsed.get("options")
+                            except (json.JSONDecodeError, AttributeError):
+                                pass
+                        if question and len(question) > 10:
+                            ask_human_emitted = True
+                            evt: dict = {"question": question}
+                            if options:
+                                evt["options"] = options
+                            yield _sse("ask_human", evt)
 
         except Exception:
             logger.exception("Agent stream failed")
@@ -335,13 +388,19 @@ async def execute_action_stream(body: ActionRequest, user: User = Depends(get_cu
         if current_tool:
             yield _sse("step", {"tool": current_tool, "status": "done"})
 
-        yield _sse("done", {"session_id": session_id or ""})
-
-        # Persist to DB after stream completes
+        # Persist to DB before sending done so the frontend can refresh immediately
         if session_id:
             full_response = "".join(collected_chunks)
             await _track_references(full_response)
-            meta = _extract_document_metadata(full_response) or {}
+            tool_links = _collect_tool_result_links(agent.messages)
+            scan_text = full_response + "\n" + tool_links if tool_links else full_response
+            meta = _extract_document_metadata(scan_text) or {}
+            doc_info = _extract_generated_document(agent.messages)
+            if doc_info:
+                meta["has_generated_document"] = True
+                meta["document_content"] = doc_info["content"]
+                if doc_info["title"]:
+                    meta["document_title"] = doc_info["title"]
             refs = await _extract_references(full_response)
             if refs:
                 meta["references"] = refs
@@ -350,6 +409,8 @@ async def execute_action_stream(body: ActionRequest, user: User = Depends(get_cu
             await _save_session_messages(
                 session_id, _derive_title(db_messages), db_messages, user_id=user.id, profile_id=body.profile_id
             )
+
+        yield _sse("done", {"session_id": session_id or ""})
 
     return StreamingResponse(
         event_generator(),

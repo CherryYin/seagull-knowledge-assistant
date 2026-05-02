@@ -281,7 +281,7 @@ export interface ActionRequest {
 export type SSEvent =
   | { type: "step"; tool: string; status: "running" | "done" }
   | { type: "content"; text: string }
-  | { type: "ask_human"; question: string }
+  | { type: "ask_human"; question: string; options?: string[] }
   | { type: "error"; message: string }
   | { type: "done"; session_id: string };
 
@@ -383,6 +383,9 @@ export interface ReferenceInfo {
 export interface MessageMetadata {
   documents?: DocumentMetadata[];
   references?: ReferenceInfo[];
+  has_generated_document?: boolean;
+  document_content?: string;
+  document_title?: string;
 }
 
 export interface ChatSessionMessage {
@@ -483,7 +486,33 @@ export interface RememberRequest {
   title?: string;
 }
 
+export interface DashboardData {
+  counts: {
+    notes: number;
+    sources: number;
+    chats: number;
+    digest_pending: number;
+  };
+  trends: Array<{
+    date: string;
+    notes: number;
+    sources: number;
+    chats: number;
+  }>;
+  category_distribution: Array<{
+    name: string;
+    display_name: string;
+    notes: number;
+    sources: number;
+  }>;
+  note_type_distribution: Array<{
+    type: string;
+    count: number;
+  }>;
+}
+
 export const knowledgeApi = {
+  dashboard: () => request<DashboardData>("/knowledge/dashboard"),
   saveDocument: (body: SaveDocumentRequest) =>
     request<SaveDocumentResponse>("/knowledge/save-document", {
       method: "POST",

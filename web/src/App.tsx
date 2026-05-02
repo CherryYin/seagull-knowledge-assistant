@@ -11,6 +11,7 @@ import { SourceDetailPage } from "./pages/SourceDetailPage";
 import { SkillsPage } from "./pages/SkillsPage";
 import { StatsPage } from "./pages/StatsPage";
 import { WritingPage } from "./pages/WritingPage";
+import { DigestPage } from "./pages/DigestPage";
 import { AdminUsersPage } from "./pages/AdminUsersPage";
 import { AgentProfilesPage } from "./pages/AgentProfilesPage";
 import type { ReactNode } from "react";
@@ -71,6 +72,7 @@ export default function App() {
             <Route path="/skills" element={<SkillsPage />} />
             <Route path="/profiles" element={<AgentProfilesPage />} />
             <Route path="/writing" element={<WritingPage />} />
+            <Route path="/digest" element={<DigestPage />} />
             <Route path="/stats" element={<StatsPage />} />
             <Route path="/admin/users" element={<AdminRoute><AdminUsersPage /></AdminRoute>} />
           </Route>

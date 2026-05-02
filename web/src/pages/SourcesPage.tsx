@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { CategorySelect } from "@/components/CategorySelect";
 import { sourcesApi, categoriesApi, type SourceCreate, type Source } from "@/lib/api";
@@ -317,9 +316,9 @@ export function SourcesPage() {
                     <span className="text-xs text-muted-foreground">({group.sources.length})</span>
                   </button>
                   {!isCollapsed && (
-                    <div className="grid gap-3 md:grid-cols-2">
+                    <div className="space-y-1">
                       {group.sources.map((source) => (
-                        <SourceCard key={source.id} source={source} onClick={() => navigate(`/sources/${encodeURIComponent(source.id)}`)} />
+                        <SourceRow key={source.id} source={source} onClick={() => navigate(`/sources/${encodeURIComponent(source.id)}`)} />
                       ))}
                     </div>
                   )}
@@ -328,9 +327,9 @@ export function SourcesPage() {
             })}
           </div>
         ) : (
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className="space-y-1">
             {data?.items.map((source) => (
-              <SourceCard key={source.id} source={source} onClick={() => navigate(`/sources/${encodeURIComponent(source.id)}`)} />
+              <SourceRow key={source.id} source={source} onClick={() => navigate(`/sources/${encodeURIComponent(source.id)}`)} />
             ))}
           </div>
         )}
@@ -339,32 +338,22 @@ export function SourcesPage() {
   );
 }
 
-function SourceCard({ source, onClick }: { source: Source; onClick: () => void }) {
+function SourceRow({ source, onClick }: { source: Source; onClick: () => void }) {
   const isRss = source.source_type === "web" && source.metadata_?.rss_enabled === "true";
   return (
-    <Card className="cursor-pointer hover:border-primary/40 transition-colors" onClick={onClick}>
-      <CardHeader className="pb-2">
-        <div className="flex items-center gap-2 mb-1">
-          <Badge variant="source">{source.source_type}</Badge>
-          {isRss && (
-            <Badge variant="secondary" className="bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300 gap-1">
-              <Rss className="h-3 w-3" /> RSS
-            </Badge>
-          )}
-        </div>
-        <CardTitle className="text-sm">{source.title}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {source.url && (
-          <p className="text-xs text-primary truncate">{source.url}</p>
-        )}
-        <p className="text-[10px] text-muted-foreground mt-2">
-          {new Date(source.ingested_at).toLocaleDateString()}
-          {isRss && source.metadata_?.last_fetch_at ? (
-            <> &middot; Last fetch: {new Date(String(source.metadata_.last_fetch_at)).toLocaleDateString()}</>
-          ) : null}
-        </p>
-      </CardContent>
-    </Card>
+    <div
+      className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-transparent hover:border-border hover:bg-accent/50 cursor-pointer transition-colors"
+      onClick={onClick}
+    >
+      <Badge variant="source" className="shrink-0">{source.source_type}</Badge>
+      {isRss && <Rss className="h-3.5 w-3.5 text-orange-500 shrink-0" />}
+      <span className="text-sm font-medium truncate flex-1">{source.title}</span>
+      {source.url && (
+        <span className="text-xs text-muted-foreground truncate max-w-[200px] hidden md:block">{source.url}</span>
+      )}
+      <span className="text-xs text-muted-foreground shrink-0">
+        {new Date(source.ingested_at).toLocaleDateString()}
+      </span>
+    </div>
   );
 }

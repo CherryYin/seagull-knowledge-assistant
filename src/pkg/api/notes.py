@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 import logging
 
@@ -366,6 +367,7 @@ pre {{
     line-height: 1.5;
 }}
 pre code {{ background: none; padding: 0; }}
+.highlight pre {{ background: #f8f8f8; padding: 12px; border-radius: 4px; }}
 table {{
     border-collapse: collapse;
     width: 100%;
@@ -373,7 +375,7 @@ table {{
 }}
 th, td {{
     border: 1px solid #ddd;
-    padding: 6px 10px;
+    padding: 8px 12px;
     text-align: left;
 }}
 th {{ background: #f5f5f5; font-weight: bold; }}
@@ -382,6 +384,12 @@ blockquote {{
     padding-left: 12px;
     color: #555;
     margin-left: 0;
+}}
+del {{ color: #999; text-decoration: line-through; }}
+.task-list {{ list-style: none; padding-left: 0; }}
+.task-list-item {{ position: relative; padding-left: 1.5em; }}
+.task-list-control input[type="checkbox"] {{
+    position: absolute; left: 0; top: 0.3em;
 }}
 </style>
 </head>
@@ -413,14 +421,32 @@ async def export_note_pdf(
 
     html_body = md.markdown(
         content,
-        extensions=["tables", "fenced_code", "toc", "nl2br"],
+        extensions=[
+            "tables",
+            "toc",
+            "pymdownx.superfences",
+            "pymdownx.tasklist",
+            "pymdownx.tilde",
+            "pymdownx.highlight",
+            "pymdownx.inlinehilite",
+        ],
+        extension_configs={
+            "pymdownx.highlight": {
+                "use_pygments": True,
+                "pygments_style": "default",
+                "noclasses": True,
+            },
+            "pymdownx.tasklist": {
+                "custom_checkbox": True,
+            },
+        },
     )
     full_html = _PDF_HTML_TEMPLATE.format(title=note.title, body=html_body)
     pdf_bytes = HTML(string=full_html).write_pdf()
 
-    safe_title = note.title.replace('"', "'")
+    encoded_filename = quote(f"{note.title}.pdf")
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{safe_title}.pdf"'},
+        headers={"Content-Disposition": f"attachment; filename=\"note.pdf\"; filename*=UTF-8''{encoded_filename}"},
     )

@@ -84,8 +84,8 @@ def _parse_topics(raw: str) -> list[TopicSummary]:
 
 async def summarize_rss_by_topic() -> list[str]:
     """Summarize recent RSS articles by topic. Returns list of created note IDs."""
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
-    cutoff_iso = cutoff.isoformat()
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=24)
+    cutoff_iso = cutoff.replace(tzinfo=timezone.utc).isoformat()
 
     async with async_session() as session:
         result = await session.execute(
@@ -171,10 +171,10 @@ async def summarize_rss_by_topic() -> list[str]:
             title = f"RSS: {topic.topic} - {today}"
             body = NoteCreate(
                 title=title,
-                note_type="inbox",
+                note_type="digest",
                 category_id=default_cat_id,
                 content=topic.summary,
-                status="seed",
+                status="pending_review",
                 tags=["rss-summary", "auto-generated"],
                 domains=["rss"],
                 source_ids=article_ids,

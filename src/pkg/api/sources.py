@@ -514,3 +514,12 @@ async def list_feed_articles(
     items = list(rows.scalars())
 
     return SourceList(items=items, total=total)
+
+
+@router.post("/rss/summarize")
+async def trigger_rss_summary(user: User = Depends(get_current_user)):
+    """Manually trigger RSS topic summarization."""
+    from pkg.services.rss_summarizer import summarize_rss_by_topic
+
+    note_ids = await summarize_rss_by_topic()
+    return {"note_ids": note_ids, "count": len(note_ids)}
