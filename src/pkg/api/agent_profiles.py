@@ -46,6 +46,11 @@ async def available_tools(_user: User = Depends(get_current_user)) -> list[str]:
 
 @router.get("/allowed-models")
 async def allowed_models(_user: User = Depends(get_current_user)) -> list[str]:
+    from pkg.services.llm import list_all_models
+
+    models = await list_all_models()
+    if models:
+        return [m["id"] for m in models]
     return settings.ALLOWED_MODELS
 
 
@@ -55,9 +60,6 @@ async def create_profile(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
-    if body.model_id and body.model_id not in settings.ALLOWED_MODELS:
-        raise HTTPException(status_code=422, detail=f"Model '{body.model_id}' not in allowed models")
-
     if body.is_default:
         await _clear_default(db, user.id)
 
@@ -116,9 +118,6 @@ async def update_profile(
         raise HTTPException(status_code=404, detail="Profile not found")
 
     patch = body.model_dump(exclude_unset=True)
-
-    if "model_id" in patch and patch["model_id"] and patch["model_id"] not in settings.ALLOWED_MODELS:
-        raise HTTPException(status_code=422, detail=f"Model '{patch['model_id']}' not in allowed models")
 
     if patch.get("is_default"):
         await _clear_default(db, user.id)

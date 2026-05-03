@@ -275,6 +275,8 @@ export interface ActionRequest {
   task: string;
   session_id?: string;
   profile_id?: string;
+  model_id?: string;
+  provider_id?: string;
   conversation_history?: { role: string; content: string }[];
 }
 
@@ -486,6 +488,13 @@ export interface RememberRequest {
   title?: string;
 }
 
+export interface ModelInfo {
+  id: string;
+  display_name: string;
+  provider_id: string;
+  provider_name: string;
+}
+
 export interface DashboardData {
   counts: {
     notes: number;
@@ -512,6 +521,7 @@ export interface DashboardData {
 }
 
 export const knowledgeApi = {
+  models: () => request<ModelInfo[]>("/knowledge/models"),
   dashboard: () => request<DashboardData>("/knowledge/dashboard"),
   saveDocument: (body: SaveDocumentRequest) =>
     request<SaveDocumentResponse>("/knowledge/save-document", {

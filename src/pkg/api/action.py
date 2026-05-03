@@ -253,7 +253,10 @@ async def _load_profile(profile_id: str | None, user_id: str):
 async def execute_action(body: ActionRequest, user: User = Depends(get_current_user)):
     current_user_id.set(user.id)
     profile = await _load_profile(body.profile_id, user.id)
-    agent = await create_action_agent(callback_handler=None, profile=profile)
+    agent = await create_action_agent(
+        callback_handler=None, profile=profile,
+        model_id=body.model_id, provider_id=body.provider_id,
+    )
 
     session_id = body.session_id
     db_messages: list[dict] = []
@@ -313,7 +316,10 @@ def _sse(event_type: str, data: dict | str) -> str:
 async def execute_action_stream(body: ActionRequest, user: User = Depends(get_current_user)):
     current_user_id.set(user.id)
     profile = await _load_profile(body.profile_id, user.id)
-    agent = await create_action_agent(callback_handler=None, profile=profile)
+    agent = await create_action_agent(
+        callback_handler=None, profile=profile,
+        model_id=body.model_id, provider_id=body.provider_id,
+    )
 
     session_id = body.session_id
     db_messages: list[dict] = []

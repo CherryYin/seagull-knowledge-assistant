@@ -287,18 +287,22 @@ def _get_tool_name(tool) -> str:
 # ---------------------------------------------------------------------------
 # Agent factory
 # ---------------------------------------------------------------------------
-async def create_action_agent(callback_handler=None, profile=None) -> Agent:
+async def create_action_agent(callback_handler=None, profile=None, model_id=None, provider_id=None) -> Agent:
     """Create a new Action Agent instance (async).
 
     Args:
         callback_handler: Strands callback handler. Defaults to PrintingCallbackHandler.
             Pass None to suppress output (for API usage).
         profile: Optional AgentProfile instance to customize the agent behavior.
+        model_id: Override model ID (takes priority over profile.model_id).
+        provider_id: LLM provider ID from the registry.
     """
     from pkg.services.skills import load_skill_tools, load_skills_merged
 
+    effective_model_id = model_id or (profile.model_id if profile else None)
     model = create_model(
-        model_id=profile.model_id if profile else None,
+        model_id=effective_model_id,
+        provider_id=provider_id,
         temperature=profile.temperature if profile else None,
     )
     system_prompt = await build_system_prompt(

@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Bot, History, MessageSquarePlus, Microscope, Send, Sparkles, Trash2 } from "lucide-react";
+import { Bot, Cpu, History, MessageSquarePlus, Microscope, Send, Sparkles, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -40,6 +40,7 @@ export function ChatPage() {
     options?: string[];
   } | null>(null);
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
+  const [activeModel, setActiveModel] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -81,6 +82,12 @@ export function ChatPage() {
     queryFn: agentProfilesApi.list,
   });
   const profiles = profilesData?.items ?? [];
+
+  const { data: models } = useQuery({
+    queryKey: ["models"],
+    queryFn: () => knowledgeApi.models(),
+    staleTime: 60 * 60 * 1000,
+  });
 
   useEffect(() => {
     if (profiles.length > 0 && activeProfileId === null) {
@@ -172,10 +179,15 @@ export function ChatPage() {
       abortRef.current = abortController;
 
       try {
+        const [selectedProviderId, selectedModelId] = activeModel
+          ? activeModel.split(":", 2)
+          : [undefined, undefined];
         const stream = streamAction({
           task,
           session_id: sessionId,
           profile_id: activeProfileId ?? undefined,
+          model_id: selectedModelId,
+          provider_id: selectedProviderId,
         }, abortController.signal);
 
         for await (const event of stream) {
@@ -482,6 +494,35 @@ export function ChatPage() {
                         {profiles.map((p) => (
                           <option key={p.id} value={p.id}>{p.name}</option>
                         ))}
+                      </select>
+                    </div>
+                  )}
+                  {models && models.length > 0 && (
+                    <div className="flex items-center gap-1.5 rounded-full border border-border px-2 py-0.5">
+                      <Cpu className="h-3.5 w-3.5 text-muted-foreground" />
+                      <select
+                        value={activeModel ?? ""}
+                        onChange={(e) => setActiveModel(e.target.value || null)}
+                        className="bg-transparent text-xs text-muted-foreground outline-none cursor-pointer py-0.5 max-w-[180px]"
+                      >
+                        <option value="">System Default</option>
+                        {(() => {
+                          const groups = new Map<string, typeof models>();
+                          for (const m of models) {
+                            const key = m.provider_id;
+                            if (!groups.has(key)) groups.set(key, []);
+                            groups.get(key)!.push(m);
+                          }
+                          return [...groups.entries()].map(([providerId, items]) => (
+                            <optgroup key={providerId} label={items[0].provider_name}>
+                              {items.map((m) => (
+                                <option key={`${providerId}:${m.id}`} value={`${providerId}:${m.id}`}>
+                                  {m.display_name}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ));
+                        })()}
                       </select>
                     </div>
                   )}

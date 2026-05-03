@@ -1,7 +1,23 @@
+import json
+import os
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class LLMProviderConfig(BaseModel):
+    id: str
+    display_name: str
+    base_url: str
+    api_key: str = ""
+    api_key_env: str | None = None
+    default_model: str | None = None
+
+    def resolve_api_key(self) -> str:
+        if self.api_key_env:
+            return os.environ.get(self.api_key_env, self.api_key)
+        return self.api_key
 
 
 class Settings(BaseSettings):
@@ -66,8 +82,11 @@ class Settings(BaseSettings):
     QWEN_API_KEY: str = ""
     QWEN_MODEL: str = "qwen-plus"
 
-    # Allowed models for user selection in Agent Profiles
+    # Allowed models for user selection in Agent Profiles (legacy, used as fallback)
     ALLOWED_MODELS: list[str] = ["qwen-plus", "qwen-max", "qwen-turbo"]
+
+    # LLM provider registry — JSON array of {id, display_name, base_url, api_key, default_model?}
+    LLM_PROVIDERS: str = "[]"
 
     # Context compaction settings (SummarizingConversationManager)
     COMPACTION_SUMMARY_RATIO: float = 0.4
@@ -118,6 +137,30 @@ class Settings(BaseSettings):
     @property
     def skills_dir(self) -> Path:
         return Path("./skills")
+
+    def get_llm_providers(self) -> list[LLMProviderConfig]:
+        """Parse LLM_PROVIDERS JSON. Falls back to a single provider from legacy QWEN_* config."""
+        try:
+            raw = json.loads(self.LLM_PROVIDERS)
+        except (json.JSONDecodeError, TypeError):
+            raw = []
+        if raw:
+            return [LLMProviderConfig(**entry) for entry in raw]
+        if self.QWEN_API_KEY:
+            return [LLMProviderConfig(
+                id="qwen",
+                display_name="Qwen",
+                base_url=self.QWEN_API_BASE,
+                api_key=self.QWEN_API_KEY,
+                default_model=self.QWEN_MODEL,
+            )]
+        return []
+
+    def get_provider(self, provider_id: str) -> LLMProviderConfig | None:
+        for p in self.get_llm_providers():
+            if p.id == provider_id:
+                return p
+        return None
 
 
 settings = Settings()

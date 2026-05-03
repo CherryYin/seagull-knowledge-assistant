@@ -38,6 +38,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+@router.get("/models")
+async def list_models(user: User = Depends(get_current_user)):
+    """Return available models from all configured LLM providers."""
+    from pkg.services.llm import list_all_models
+
+    return await list_all_models()
+
+
 @router.post("/save-document", response_model=SaveDocumentResponse, status_code=201)
 async def save_document(
     body: SaveDocumentRequest,

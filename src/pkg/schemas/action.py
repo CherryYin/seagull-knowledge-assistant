@@ -5,6 +5,8 @@ class ActionRequest(BaseModel):
     task: str
     session_id: str | None = None
     profile_id: str | None = None
+    model_id: str | None = None
+    provider_id: str | None = None
     conversation_history: list[dict[str, str]] = []
 
 
