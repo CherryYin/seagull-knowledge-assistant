@@ -14,6 +14,7 @@ import { WritingPage } from "./pages/WritingPage";
 import { DigestPage } from "./pages/DigestPage";
 import { AdminUsersPage } from "./pages/AdminUsersPage";
 import { AgentProfilesPage } from "./pages/AgentProfilesPage";
+import { UserProfilePage } from "./pages/UserProfilePage";
 import type { ReactNode } from "react";
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
@@ -71,6 +72,7 @@ export default function App() {
             <Route path="/sources/:id" element={<SourceDetailPage />} />
             <Route path="/skills" element={<SkillsPage />} />
             <Route path="/profiles" element={<AgentProfilesPage />} />
+            <Route path="/profile" element={<UserProfilePage />} />
             <Route path="/writing" element={<WritingPage />} />
             <Route path="/digest" element={<DigestPage />} />
             <Route path="/stats" element={<StatsPage />} />

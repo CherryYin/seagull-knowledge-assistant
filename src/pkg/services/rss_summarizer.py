@@ -8,12 +8,10 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 
-from openai import AsyncOpenAI
 from pydantic import BaseModel
 from sqlalchemy import and_, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pkg.config import settings
 from pkg.db import async_session
 from pkg.models.source import Source
 from pkg.services.embedding import get_embedding_service
@@ -44,27 +42,6 @@ _SYSTEM_PROMPT = """\
 输出严格的 JSON 数组格式（不要包含 markdown 代码块标记）：
 [{"topic": "主题名称", "summary": "详细的 markdown 格式综述内容"}]
 """
-
-
-def _build_llm_client() -> tuple[AsyncOpenAI, str]:
-    """Build an LLM client following the provider pattern from daily_summarizer."""
-    if settings.LLM_PROVIDER == "azure":
-        client = AsyncOpenAI(
-            base_url=(
-                f"{settings.AZURE_OPENAI_ENDPOINT}"
-                f"/openai/deployments/{settings.AZURE_OPENAI_DEPLOYMENT}"
-            ),
-            api_key=settings.AZURE_OPENAI_API_KEY,
-            default_headers={"api-version": settings.AZURE_OPENAI_API_VERSION},
-            timeout=_LLM_TIMEOUT,
-        )
-        return client, settings.AZURE_OPENAI_DEPLOYMENT
-    client = AsyncOpenAI(
-        base_url=settings.QWEN_API_BASE,
-        api_key=settings.QWEN_API_KEY,
-        timeout=_LLM_TIMEOUT,
-    )
-    return client, settings.QWEN_MODEL
 
 
 def _parse_topics(raw: str) -> list[TopicSummary]:
@@ -123,7 +100,8 @@ async def summarize_rss_by_topic() -> list[str]:
         )
     combined = "\n---\n\n".join(parts)
 
-    client, model = _build_llm_client()
+    from pkg.services.llm import create_async_client
+    client, model = create_async_client()
     topics: list[TopicSummary] = []
 
     for attempt in range(_MAX_LLM_RETRIES):

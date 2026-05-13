@@ -65,24 +65,24 @@ class Settings(BaseSettings):
     # False skips angle-classification (slightly faster; worse on rotated scans).
     DOCLING_OCR_USE_ANGLE_CLS: bool = True
 
-    # LLM provider: "azure" or "qwen"
+    # Legacy — only used as fallback when LLM_PROVIDERS is not configured
     LLM_PROVIDER: str = "qwen"
 
     # Tavily web search
     TAVILY_API_KEY: str = ""
 
-    # Azure OpenAI settings
+    # Legacy — Azure OpenAI (fallback only)
     AZURE_OPENAI_ENDPOINT: str = ""
     AZURE_OPENAI_API_KEY: str = ""
     AZURE_OPENAI_DEPLOYMENT: str = "gpt-4o"
     AZURE_OPENAI_API_VERSION: str = "2024-12-01-preview"
 
-    # Qwen API settings (OpenAI-compatible)
+    # Legacy — Qwen API (fallback only, also used for embedding API key resolution)
     QWEN_API_BASE: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     QWEN_API_KEY: str = ""
     QWEN_MODEL: str = "qwen-plus"
 
-    # Allowed models for user selection in Agent Profiles (legacy, used as fallback)
+    # Deprecated — agent_profiles now uses dynamic model discovery via /knowledge/models
     ALLOWED_MODELS: list[str] = ["qwen-plus", "qwen-max", "qwen-turbo"]
 
     # LLM provider registry — JSON array of {id, display_name, base_url, api_key, default_model?}

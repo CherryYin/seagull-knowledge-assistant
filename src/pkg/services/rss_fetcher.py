@@ -42,6 +42,20 @@ _MIN_RSS_CONTENT_LEN = 200
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _mark_fetch_meta(meta: dict, status: str, **extra) -> None:
+    """Record the latest RSS fetch attempt in source metadata."""
+    meta["last_fetch_at"] = datetime.now(timezone.utc).isoformat()
+    meta["last_fetch_status"] = status
+    if status == "ok":
+        meta.pop("last_fetch_error", None)
+    for key, value in extra.items():
+        if value is not None:
+            meta[key] = value
+
+
+def _should_use_conditional_request(meta: dict) -> bool:
+    return meta.get("use_conditional_requests") is True
+
 def _article_hash(entry: dict) -> str:
     """Compute a stable dedup hash from a feed entry's guid or link."""
     key = entry.get("id") or entry.get("link") or entry.get("title", "")
@@ -121,12 +135,14 @@ def _is_single_topic_feed(entries: list[dict]) -> bool:
     """True when all entries are posts within the same topic/page."""
     if len(entries) <= 1:
         return True
-    bases: set[str] = set()
+    topic_keys: set[str] = set()
     for e in entries:
         link = e.get("link", "")
-        base = re.sub(r"/\d+$", "", link)
-        bases.add(base)
-    return len(bases) == 1
+        match = re.search(r"/t/(?:[^/]+/)?(\d+)(?:/\d+)?/?$", link)
+        if not match:
+            return False
+        topic_keys.add(match.group(1))
+    return len(topic_keys) == 1
 
 
 def _post_number(entry: dict) -> int:
@@ -226,9 +242,9 @@ async def fetch_single_feed(feed_source: Source, session: AsyncSession) -> int:
         return 0
 
     headers: dict[str, str] = {**_HTTP_HEADERS}
-    if meta.get("etag"):
+    if _should_use_conditional_request(meta) and meta.get("etag"):
         headers["If-None-Match"] = meta["etag"]
-    if meta.get("last_modified"):
+    if _should_use_conditional_request(meta) and meta.get("last_modified"):
         headers["If-Modified-Since"] = meta["last_modified"]
 
     start = time.monotonic()
@@ -240,12 +256,16 @@ async def fetch_single_feed(feed_source: Source, session: AsyncSession) -> int:
             "RSS fetch HTTP error for source=%s url=%s: %s",
             feed_source.id, feed_url, exc,
         )
+        _mark_fetch_meta(meta, "error", last_fetch_error=str(exc))
+        feed_source.metadata_ = meta
+        await session.commit()
         return 0
 
     if resp.status_code == 304:
         logger.info("RSS feed not modified: source=%s", feed_source.id)
-        meta["last_fetch_at"] = datetime.now(timezone.utc).isoformat()
+        _mark_fetch_meta(meta, "not_modified", http_status=resp.status_code)
         feed_source.metadata_ = meta
+        await session.commit()
         return 0
 
     if resp.status_code >= 400:
@@ -253,14 +273,21 @@ async def fetch_single_feed(feed_source: Source, session: AsyncSession) -> int:
             "RSS fetch failed: source=%s status=%d url=%s",
             feed_source.id, resp.status_code, feed_url,
         )
+        _mark_fetch_meta(meta, "error", http_status=resp.status_code)
+        feed_source.metadata_ = meta
+        await session.commit()
         return 0
 
     feed = feedparser.parse(resp.content)
     if feed.bozo and not feed.entries:
+        parse_error = str(feed.get("bozo_exception", "unknown"))
         logger.error(
             "RSS parse error for source=%s: %s",
             feed_source.id, feed.get("bozo_exception", "unknown"),
         )
+        _mark_fetch_meta(meta, "error", last_fetch_error=parse_error)
+        feed_source.metadata_ = meta
+        await session.commit()
         return 0
 
     entries = feed.entries[:settings.RSS_MAX_ARTICLES_PER_FEED]
@@ -272,7 +299,7 @@ async def fetch_single_feed(feed_source: Source, session: AsyncSession) -> int:
 
         if new_hash != feed_source.content_hash:
             await _update_source_content(feed_source, merged, session)
-            meta["last_fetch_at"] = datetime.now(timezone.utc).isoformat()
+            _mark_fetch_meta(meta, "ok")
             meta["last_fetch_count"] = len(entries)
             meta["feed_type"] = "topic"
             feed_source.metadata_ = meta
@@ -284,7 +311,7 @@ async def fetch_single_feed(feed_source: Source, session: AsyncSession) -> int:
             )
             return 1  # one source updated
 
-        meta["last_fetch_at"] = datetime.now(timezone.utc).isoformat()
+        _mark_fetch_meta(meta, "ok", last_fetch_count=0)
         feed_source.metadata_ = meta
         await session.commit()
         logger.info("RSS topic unchanged: source=%s", feed_source.id)
@@ -357,8 +384,7 @@ async def fetch_single_feed(feed_source: Source, session: AsyncSession) -> int:
                     feed_source.id, title, exc_info=True,
                 )
 
-    meta["last_fetch_at"] = datetime.now(timezone.utc).isoformat()
-    meta["last_fetch_count"] = new_count
+    _mark_fetch_meta(meta, "ok", last_fetch_count=new_count)
     meta["feed_type"] = "collection"
     if resp.headers.get("etag"):
         meta["etag"] = resp.headers["etag"]

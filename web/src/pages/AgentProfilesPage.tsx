@@ -168,7 +168,7 @@ export function AgentProfilesPage() {
       <div className="max-w-5xl mx-auto px-6 py-8">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-bold">Agent Profiles</h1>
+            <h1 className="text-2xl font-bold">Agents</h1>
             <p className="text-sm text-muted-foreground mt-1">
               Create and manage custom agent configurations for different use cases.
             </p>

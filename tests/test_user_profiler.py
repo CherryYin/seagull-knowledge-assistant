@@ -10,9 +10,9 @@ from pkg.services.user_profiler import (
     PROFILE_MEMORY_KEY,
     _format_activity_summary,
     _get_recent_activities,
+    _get_chat_stats,
     _get_note_stats,
     _get_source_stats,
-    _get_chat_stats,
     generate_user_profile,
 )
 
@@ -99,6 +99,40 @@ class TestGetRecentActivities:
         assert result["search_queries"] == []
         assert result["chat_topics"] == []
         assert result["active_period"] == "unknown"
+
+    @pytest.mark.asyncio
+    async def test_uses_naive_datetime_cutoff(self):
+        with patch("pkg.services.user_profiler.async_session") as mock_session_ctx:
+            mock_session = AsyncMock()
+            mock_result = MagicMock()
+            mock_result.scalars.return_value = []
+            mock_session.execute.return_value = mock_result
+            mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            await _get_recent_activities("user-1")
+
+        stmt = mock_session.execute.await_args.args[0]
+        cutoff = stmt.compile().params["created_at_1"]
+        assert cutoff.tzinfo is None
+
+
+class TestGetChatStats:
+    @pytest.mark.asyncio
+    async def test_uses_naive_datetime_cutoff(self):
+        with patch("pkg.services.user_profiler.async_session") as mock_session_ctx:
+            mock_session = AsyncMock()
+            mock_result = MagicMock()
+            mock_result.scalars.return_value = []
+            mock_session.execute.return_value = mock_result
+            mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            await _get_chat_stats("user-1")
+
+        stmt = mock_session.execute.await_args.args[0]
+        cutoff = stmt.compile().params["updated_at_1"]
+        assert cutoff.tzinfo is None
 
 
 # ---------------------------------------------------------------------------

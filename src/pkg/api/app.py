@@ -34,6 +34,8 @@ from pkg.api.action import router as action_router
 from pkg.api.chat_sessions import router as chat_sessions_router
 from pkg.api.skills import router as skills_router
 from pkg.api.knowledge import router as knowledge_router
+from pkg.api.models import router as models_router
+from pkg.api.dashboard import router as dashboard_router
 from pkg.api.categories import router as categories_router
 from pkg.api.auth import router as auth_router
 from pkg.api.agent_profiles import router as agent_profiles_router
@@ -159,6 +161,8 @@ app.include_router(action_router, tags=["action"])
 app.include_router(chat_sessions_router, prefix="/chat-sessions", tags=["chat-sessions"])
 app.include_router(skills_router, prefix="/skills", tags=["skills"])
 app.include_router(knowledge_router, prefix="/knowledge", tags=["knowledge"])
+app.include_router(models_router, prefix="/knowledge", tags=["models"])
+app.include_router(dashboard_router, prefix="/knowledge", tags=["dashboard"])
 app.include_router(categories_router, prefix="/categories", tags=["categories"])
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(agent_profiles_router, prefix="/agent-profiles", tags=["agent-profiles"])

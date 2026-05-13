@@ -9,10 +9,8 @@ import logging
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 
-from openai import AsyncOpenAI
 from sqlalchemy import func, select
 
-from pkg.config import settings
 from pkg.db import async_session
 from pkg.models.chat_session import ChatSession
 from pkg.models.note import Note
@@ -22,6 +20,11 @@ from pkg.models.user import ActivityLog, User, UserMemory
 logger = logging.getLogger(__name__)
 
 PROFILE_MEMORY_KEY = "user_profile"
+
+
+def _utc_now_naive() -> datetime:
+    """Return UTC now matching the project's timestamp-without-timezone columns."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 _PROFILE_SYSTEM_PROMPT = """\
 你是一个用户行为分析师。根据以下用户的使用数据，生成一份结构化的用户画像。
@@ -116,7 +119,7 @@ async def profile_all_users() -> int:
 
 async def _get_recent_activities(user_id: str, days: int = 30) -> dict:
     """Collect recent activity logs grouped by type."""
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff = _utc_now_naive() - timedelta(days=days)
 
     async with async_session() as session:
         stmt = (
@@ -222,7 +225,7 @@ async def _get_source_stats(user_id: str) -> dict:
 
 async def _get_chat_stats(user_id: str, days: int = 30) -> dict:
     """Get recent chat session titles and frequency."""
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff = _utc_now_naive() - timedelta(days=days)
 
     async with async_session() as session:
         stmt = (
@@ -295,19 +298,8 @@ def _format_activity_summary(
 
 async def _llm_generate_profile(summary_text: str) -> dict | None:
     """Call LLM to generate structured profile JSON from activity summary."""
-    if settings.LLM_PROVIDER == "azure":
-        client = AsyncOpenAI(
-            base_url=f"{settings.AZURE_OPENAI_ENDPOINT}/openai/deployments/{settings.AZURE_OPENAI_DEPLOYMENT}",
-            api_key=settings.AZURE_OPENAI_API_KEY,
-            default_headers={"api-version": settings.AZURE_OPENAI_API_VERSION},
-        )
-        model = settings.AZURE_OPENAI_DEPLOYMENT
-    else:
-        client = AsyncOpenAI(
-            base_url=settings.QWEN_API_BASE,
-            api_key=settings.QWEN_API_KEY,
-        )
-        model = settings.QWEN_MODEL
+    from pkg.services.llm import create_async_client
+    client, model = create_async_client()
 
     try:
         response = await client.chat.completions.create(

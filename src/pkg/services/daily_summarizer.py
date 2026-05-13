@@ -7,10 +7,8 @@ creates a new summary note, and archives the originals.
 import logging
 from datetime import datetime, timezone
 
-from openai import AsyncOpenAI
 from sqlalchemy import select
 
-from pkg.config import settings
 from pkg.db import async_session
 from pkg.models.category import Category
 from pkg.models.note import Note, NoteEmbedding
@@ -55,19 +53,8 @@ async def summarize_temporary_notes() -> str | None:
     combined = "\n---\n\n".join(parts)
 
     # Call LLM for summarization
-    if settings.LLM_PROVIDER == "azure":
-        client = AsyncOpenAI(
-            base_url=f"{settings.AZURE_OPENAI_ENDPOINT}/openai/deployments/{settings.AZURE_OPENAI_DEPLOYMENT}",
-            api_key=settings.AZURE_OPENAI_API_KEY,
-            default_headers={"api-version": settings.AZURE_OPENAI_API_VERSION},
-        )
-        model = settings.AZURE_OPENAI_DEPLOYMENT
-    else:
-        client = AsyncOpenAI(
-            base_url=settings.QWEN_API_BASE,
-            api_key=settings.QWEN_API_KEY,
-        )
-        model = settings.QWEN_MODEL
+    from pkg.services.llm import create_async_client
+    client, model = create_async_client()
 
     try:
         response = await client.chat.completions.create(
