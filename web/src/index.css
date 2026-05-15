@@ -81,6 +81,49 @@ body {
   color: inherit;
   font-size: 0.85em;
 }
+.prose .mermaid-diagram {
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  margin-bottom: 1em;
+  overflow-x: auto;
+  padding: 1rem;
+  position: relative;
+}
+.prose .mermaid-diagram-actions {
+  display: flex;
+  gap: 0.35rem;
+  justify-content: flex-end;
+  margin-bottom: 0.75rem;
+}
+.prose .mermaid-diagram-actions button {
+  background: var(--color-muted);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-foreground);
+  cursor: pointer;
+  font-size: 0.72rem;
+  line-height: 1;
+  padding: 0.35rem 0.5rem;
+}
+.prose .mermaid-diagram-actions button:hover {
+  background: var(--color-accent);
+}
+.prose .mermaid-diagram-download-error {
+  color: var(--color-destructive);
+  font-size: 0.72rem;
+  margin-bottom: 0.75rem;
+  text-align: right;
+}
+.prose .mermaid-diagram svg {
+  display: block;
+  height: auto;
+  margin: 0 auto;
+  max-width: 100%;
+}
+.prose .mermaid-diagram-error pre {
+  margin-bottom: 0;
+}
 .prose blockquote {
   border-left: 3px solid var(--color-primary);
   padding-left: 1em;

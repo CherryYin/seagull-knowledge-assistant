@@ -26,6 +26,7 @@ from strands.event_loop._retry import ModelRetryStrategy
 from pkg.config import settings
 from pkg.services.llm import create_model
 from pkg.services.tools import (
+    agentic_rag,
     ask_human,
     knowledge_stats,
     list_notes,
@@ -86,6 +87,7 @@ _SYSTEM_PROMPT_TEMPLATE = """\
 
 ## 你的能力
 你可以通过工具访问知识库：
+- **Agentic RAG** (agentic_rag): 对复杂/探索性问题进行多轮检索、打开高相关条目并汇总证据；这是宽泛问题和多跳问题的首选工具
 - **搜索知识** (search_knowledge): 语义搜索或结构化检索
 - **阅读笔记** (read_note): 读取笔记的完整内容
 - **阅读资料** (read_source): 读取原始资料的完整内容
@@ -106,6 +108,7 @@ _SYSTEM_PROMPT_TEMPLATE = """\
 
 ### 1. 知识驱动，而非凭空创造
 - 回答问题时，**先搜索知识库**，基于用户已有的笔记和资料来回答
+- 如果问题宽泛、需要综合多条笔记/资料、或第一次不知道该搜什么，优先使用 agentic_rag；如果只需要查一个明确关键词，再用 search_knowledge
 - 如果知识库中有相关内容，优先引用它，而不是生成通用回答
 - 如果知识库不够，用 web_search 搜索互联网补充
 
@@ -267,6 +270,7 @@ async def _get_user_memory_section() -> str:
 # All tools available to the agent
 # ---------------------------------------------------------------------------
 _BASE_TOOLS = [
+    agentic_rag,
     search_knowledge,
     read_note,
     read_source,

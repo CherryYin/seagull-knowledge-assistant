@@ -67,6 +67,10 @@ class NoteUpdate(BaseModel):
     source_ids: list[str] | None = None
 
 
+class DigestMergeRequest(BaseModel):
+    source_ids: list[str] = Field(min_length=1)
+
+
 class SearchRequest(BaseModel):
     query: str
     mode: str = Field(default="auto", pattern=r"^(auto|sql|vector|hybrid)$")

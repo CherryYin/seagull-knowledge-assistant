@@ -19,6 +19,13 @@ from pkg.models.user import User
 from pkg.schemas.action import ActionRequest, ActionResponse
 from pkg.services.action_agent import create_action_agent, current_user_id
 from pkg.services.activity import log_activity
+from pkg.services.agent_runs import (
+    add_run_event,
+    complete_run,
+    fail_run,
+    start_run,
+    update_run_status,
+)
 from pkg.services.skills import expand_skill, load_skills_merged, parse_skill_invocation
 from pkg.services.stats import increment_stats_mixed
 
@@ -29,6 +36,18 @@ router = APIRouter()
 _DOWNLOAD_LINK_RE = re.compile(r"下载链接:\s*(https?://\S+)")
 _REFERENCE_RE = re.compile(r"\[来源[：:]\s*((?:note|src|source)-[^\]]+)\]")
 _WEB_REF_RE = re.compile(r"\[网络[：:]\s*([^\]]+)\]\((https?://[^)]+)\)")
+
+
+def _status_for_tool(tool_name: str) -> tuple[str, str]:
+    if tool_name == "search_knowledge":
+        return "searching", "knowledge_searched"
+    if tool_name == "read_note":
+        return "reading", "note_read"
+    if tool_name == "read_source":
+        return "reading", "source_read"
+    if tool_name == "process_document":
+        return "writing", "document_generated"
+    return "tool_calling", "tool_started"
 
 
 def _normalize_strands_message(msg: dict[str, Any]) -> dict[str, Any]:
@@ -253,10 +272,31 @@ async def _load_profile(profile_id: str | None, user_id: str):
 async def execute_action(body: ActionRequest, user: User = Depends(get_current_user)):
     current_user_id.set(user.id)
     profile = await _load_profile(body.profile_id, user.id)
-    agent = await create_action_agent(
-        callback_handler=None, profile=profile,
-        model_id=body.model_id, provider_id=body.provider_id,
+    task = await _try_expand_skill(body.task)
+    run = await start_run(
+        user_id=user.id,
+        profile_id=profile.id if profile else body.profile_id,
+        agent_type=profile.agent_type if profile else "action",
+        task=body.task,
     )
+    await add_run_event(run.id, user.id, "task_received", "Task received", detail=body.task)
+    await add_run_event(
+        run.id,
+        user.id,
+        "profile_loaded",
+        "Profile loaded" if profile else "Default agent loaded",
+        detail=profile.name if profile else None,
+        metadata={"profile_id": profile.id, "agent_type": profile.agent_type} if profile else None,
+    )
+    try:
+        agent = await create_action_agent(
+            callback_handler=None, profile=profile,
+            model_id=body.model_id, provider_id=body.provider_id,
+        )
+    except Exception as exc:
+        logger.exception("Agent creation failed")
+        await fail_run(run.id, str(exc))
+        raise HTTPException(status_code=503, detail=f"Agent error: {exc}")
 
     session_id = body.session_id
     db_messages: list[dict] = []
@@ -269,15 +309,17 @@ async def execute_action(body: ActionRequest, user: User = Depends(get_current_u
         for msg in body.conversation_history:
             agent.messages.append(_normalize_strands_message(msg))
 
-    task = await _try_expand_skill(body.task)
-
     try:
+        await update_run_status(run.id, "thinking")
+        await add_run_event(run.id, user.id, "state_changed", "Thinking")
         result = await agent.invoke_async(task)
     except Exception as exc:
         logger.exception("Agent invocation failed")
+        await fail_run(run.id, str(exc))
         raise HTTPException(status_code=503, detail=f"Agent error: {exc}")
 
     result_text = result.message.get("content", [{}])[0].get("text", str(result.message))
+    await complete_run(run.id, result_preview=result_text)
 
     await log_activity(user.id, "chat", {"task": body.task[:200], "session_id": session_id})
     await _track_references(result_text)
@@ -303,6 +345,7 @@ async def execute_action(body: ActionRequest, user: User = Depends(get_current_u
         result=result_text,
         stop_reason=result.stop_reason or "end_turn",
         session_id=session_id,
+        run_id=run.id,
     )
 
 
@@ -316,10 +359,31 @@ def _sse(event_type: str, data: dict | str) -> str:
 async def execute_action_stream(body: ActionRequest, user: User = Depends(get_current_user)):
     current_user_id.set(user.id)
     profile = await _load_profile(body.profile_id, user.id)
-    agent = await create_action_agent(
-        callback_handler=None, profile=profile,
-        model_id=body.model_id, provider_id=body.provider_id,
+    task = await _try_expand_skill(body.task)
+    run = await start_run(
+        user_id=user.id,
+        profile_id=profile.id if profile else body.profile_id,
+        agent_type=profile.agent_type if profile else "action",
+        task=body.task,
     )
+    await add_run_event(run.id, user.id, "task_received", "Task received", detail=body.task)
+    await add_run_event(
+        run.id,
+        user.id,
+        "profile_loaded",
+        "Profile loaded" if profile else "Default agent loaded",
+        detail=profile.name if profile else None,
+        metadata={"profile_id": profile.id, "agent_type": profile.agent_type} if profile else None,
+    )
+    try:
+        agent = await create_action_agent(
+            callback_handler=None, profile=profile,
+            model_id=body.model_id, provider_id=body.provider_id,
+        )
+    except Exception as exc:
+        logger.exception("Agent creation failed")
+        await fail_run(run.id, str(exc))
+        raise HTTPException(status_code=503, detail=f"Agent error: {exc}")
 
     session_id = body.session_id
     db_messages: list[dict] = []
@@ -332,12 +396,16 @@ async def execute_action_stream(body: ActionRequest, user: User = Depends(get_cu
         for msg in body.conversation_history:
             agent.messages.append(_normalize_strands_message(msg))
 
-    task = await _try_expand_skill(body.task)
     collected_chunks: list[str] = []
 
     async def event_generator():
         current_tool: str | None = None
         ask_human_emitted = False
+        failed = False
+        writing_started = False
+        yield _sse("run", {"run_id": run.id})
+        await update_run_status(run.id, "thinking")
+        await add_run_event(run.id, user.id, "state_changed", "Thinking")
         try:
             async for event in agent.stream_async(task):
                 # Detect tool-use start from contentBlockStart
@@ -351,15 +419,35 @@ async def execute_action_stream(body: ActionRequest, user: User = Depends(get_cu
                     tool_name = block_start.get("name", "unknown")
                     if current_tool:
                         yield _sse("step", {"tool": current_tool, "status": "done"})
+                        await add_run_event(
+                            run.id,
+                            user.id,
+                            "tool_finished",
+                            f"Tool finished: {current_tool}",
+                            metadata={"tool": current_tool},
+                        )
                     current_tool = tool_name
                     ask_human_emitted = False
                     if tool_name != "ask_human":
+                        status, event_type = _status_for_tool(tool_name)
+                        await update_run_status(run.id, status)
+                        await add_run_event(
+                            run.id,
+                            user.id,
+                            event_type,
+                            f"Tool started: {tool_name}",
+                            metadata={"tool": tool_name},
+                        )
                         yield _sse("step", {"tool": tool_name, "status": "running"})
 
                 # Text content
                 if "data" in event:
                     text = event["data"]
                     collected_chunks.append(text)
+                    if not writing_started:
+                        writing_started = True
+                        await update_run_status(run.id, "writing")
+                        await add_run_event(run.id, user.id, "state_changed", "Writing response")
                     yield _sse("content", {"text": text})
 
                 # Detect ask_human tool input (emit once per call)
@@ -388,11 +476,20 @@ async def execute_action_stream(body: ActionRequest, user: User = Depends(get_cu
 
         except Exception:
             logger.exception("Agent stream failed")
+            failed = True
+            await fail_run(run.id, "Agent encountered an error. Please try again.")
             yield _sse("error", {"message": "Agent encountered an error. Please try again."})
 
         # Close last tool step
         if current_tool:
             yield _sse("step", {"tool": current_tool, "status": "done"})
+            await add_run_event(
+                run.id,
+                user.id,
+                "tool_finished",
+                f"Tool finished: {current_tool}",
+                metadata={"tool": current_tool},
+            )
 
         # Persist to DB before sending done so the frontend can refresh immediately
         if session_id:
@@ -416,7 +513,11 @@ async def execute_action_stream(body: ActionRequest, user: User = Depends(get_cu
                 session_id, _derive_title(db_messages), db_messages, user_id=user.id, profile_id=body.profile_id
             )
 
-        yield _sse("done", {"session_id": session_id or ""})
+        full_response = "".join(collected_chunks)
+        if not failed:
+            await complete_run(run.id, result_preview=full_response)
+
+        yield _sse("done", {"session_id": session_id or "", "run_id": run.id})
 
     return StreamingResponse(
         event_generator(),

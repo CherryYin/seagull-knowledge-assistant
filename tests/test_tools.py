@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pkg.services.tools import ask_human, search_knowledge, read_note
+from pkg.services.tools import agentic_rag, ask_human, read_note, search_knowledge
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +68,65 @@ class TestSearchKnowledge:
                     assert "1 条" in result
                     assert "Test Note" in result
                     assert "0.95" in result
+
+
+# ---------------------------------------------------------------------------
+# agentic_rag (mocked DB)
+# ---------------------------------------------------------------------------
+class TestAgenticRag:
+    @pytest.mark.asyncio
+    async def test_no_results_includes_trace(self):
+        with patch("pkg.services.action_agent.current_user_id") as mock_ctx:
+            mock_ctx.get.return_value = "test-user"
+
+            mock_retriever = AsyncMock()
+            mock_retriever.search.return_value = []
+
+            with patch("pkg.db.async_session") as mock_session_ctx:
+                mock_session = AsyncMock()
+                mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+                mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+                with patch("pkg.services.retriever.RetrieverAgent", return_value=mock_retriever):
+                    result = await agentic_rag._tool_func(question="missing topic")
+                    assert "未找到" in result
+                    assert "检索轨迹" in result
+
+    @pytest.mark.asyncio
+    async def test_opens_best_note_and_summarizes_evidence(self):
+        with patch("pkg.services.action_agent.current_user_id") as mock_ctx:
+            mock_ctx.get.return_value = "test-user"
+
+            mock_result = MagicMock()
+            mock_result.type = "note"
+            mock_result.title = "Agentic RAG Note"
+            mock_result.id = "note-1"
+            mock_result.score = 0.91
+            mock_result.abstract = "Agentic retrieval uses search and open tools."
+            mock_result.content_preview = "Preview"
+
+            mock_retriever = AsyncMock()
+            mock_retriever.search.return_value = [mock_result]
+
+            mock_note = MagicMock()
+            mock_note.abstract = "Agentic retrieval uses search and open tools."
+            mock_note.content = "The harness searches, opens, and summarizes evidence."
+            mock_note.note_type = "concept"
+            mock_note.domains = ["AI"]
+            mock_note.tags = ["rag"]
+
+            with patch("pkg.db.async_session") as mock_session_ctx:
+                mock_session = AsyncMock()
+                mock_session.get.return_value = mock_note
+                mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+                mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+                with patch("pkg.services.retriever.RetrieverAgent", return_value=mock_retriever):
+                    result = await agentic_rag._tool_func(question="agentic retrieval", open_top_n=1)
+                    assert "Agentic RAG 证据简报" in result
+                    assert "note-1" in result
+                    assert "Agentic RAG Note" in result
+                    assert "证据片段" in result
 
 
 # ---------------------------------------------------------------------------

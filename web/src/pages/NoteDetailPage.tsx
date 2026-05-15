@@ -1,27 +1,15 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, useMemo, useRef } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
-import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { ArrowLeft, Download, Pencil, Save, X, Trash2, List, FileText, FileDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { MarkdownRenderer } from "@/components/markdown";
 import { notesApi, categoriesApi, downloadFile, type NoteUpdate } from "@/lib/api";
 import { CategorySelect } from "@/components/CategorySelect";
-
-const sanitizeSchema = {
-  ...defaultSchema,
-  attributes: {
-    ...defaultSchema.attributes,
-    code: [...(defaultSchema.attributes?.code || []), "className"],
-    span: [...(defaultSchema.attributes?.span || []), "className"],
-  },
-};
 
 const NOTE_TYPES = ["inbox", "architecture", "case-study", "concept", "how-to", "remember"] as const;
 
@@ -368,7 +356,7 @@ export function NoteDetailPage() {
                   </div>
                 )}
                 <div className="prose max-h-[70vh] overflow-y-auto">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight, [rehypeSanitize, sanitizeSchema]]}>{note.content || "*No content*"}</ReactMarkdown>
+                  <MarkdownRenderer>{note.content || "*No content*"}</MarkdownRenderer>
                 </div>
               </>
             ) : (
@@ -431,11 +419,11 @@ export function NoteDetailPage() {
                     <div className="p-4">
                       {hasSections && sections[selectedSection] ? (
                         <div className="prose text-sm">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight, [rehypeSanitize, sanitizeSchema]]}>{sections[selectedSection].content}</ReactMarkdown>
+                          <MarkdownRenderer>{sections[selectedSection].content}</MarkdownRenderer>
                         </div>
                       ) : (
                         <div className="prose text-sm">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight, [rehypeSanitize, sanitizeSchema]]}>{note.content || "*No content*"}</ReactMarkdown>
+                          <MarkdownRenderer>{note.content || "*No content*"}</MarkdownRenderer>
                         </div>
                       )}
                     </div>

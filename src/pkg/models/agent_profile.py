@@ -17,6 +17,7 @@ class AgentProfile(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_generate_profile_id)
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    agent_type: Mapped[str] = mapped_column(String(50), nullable=False, server_default="action")
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     system_prompt_append: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
@@ -30,5 +31,6 @@ class AgentProfile(Base):
 
     __table_args__ = (
         Index("ix_agent_profiles_user_id", "user_id"),
+        Index("idx_agent_profiles_type", "agent_type"),
         UniqueConstraint("user_id", "name", name="uq_agent_profiles_user_name"),
     )

@@ -1,21 +1,10 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
-import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
-
-const sanitizeSchema = {
-  ...defaultSchema,
-  attributes: {
-    ...defaultSchema.attributes,
-    code: [...(defaultSchema.attributes?.code || []), "className"],
-    span: [...(defaultSchema.attributes?.span || []), "className"],
-  },
-};
+import type { Components } from "react-markdown";
 import { cn } from "@/lib/utils";
 import { Bot, User, RotateCw, Brain, Check, FileText, StickyNote, Globe, FileOutput } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { MarkdownRenderer } from "@/components/markdown";
 import type { MessageMetadata, ReferenceInfo } from "@/lib/api";
 
 const CITATION_RE = /\[来源[：:]\s*((?:note|src|source)-[^\]]+)\]/g;
@@ -68,7 +57,7 @@ export function ChatMessage({
   const [newKnowledgeDone, setNewKnowledgeDone] = useState(false);
   const [rememberDone, setRememberDone] = useState(false);
 
-  const markdownComponents = {
+  const markdownComponents: Components = {
     a: ({ href, children, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { children?: React.ReactNode }) => {
       const isNoteCitation = href?.startsWith("/notes/");
       const isSourceCitation = href?.startsWith("/sources/");
@@ -158,17 +147,11 @@ export function ChatMessage({
         >
           {isUser ? (
             <div className="prose prose-sm">
-              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[[rehypeSanitize, sanitizeSchema]]}>{content}</ReactMarkdown>
+              <MarkdownRenderer enableHighlight={false}>{content}</MarkdownRenderer>
             </div>
           ) : (
             <div className="prose prose-sm">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                rehypePlugins={[rehypeHighlight, [rehypeSanitize, sanitizeSchema]]}
-                components={markdownComponents}
-              >
-                {linkifyCitations(content)}
-              </ReactMarkdown>
+              <MarkdownRenderer components={markdownComponents}>{linkifyCitations(content)}</MarkdownRenderer>
             </div>
           )}
 

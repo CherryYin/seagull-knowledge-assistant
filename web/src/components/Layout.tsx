@@ -17,6 +17,7 @@ import {
   Bot,
   Newspaper,
   Brain,
+  MonitorCog,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -39,6 +40,7 @@ const navItems = [
   { to: "/writing", icon: PenLine, label: "Writing" },
   { to: "/skills", icon: Zap, label: "Skills" },
   { to: "/profiles", icon: Bot, label: "Agents" },
+  { to: "/workspace", icon: MonitorCog, label: "Workspace" },
   { to: "/profile", icon: Brain, label: "My Profile" },
   { to: "/stats", icon: BarChart3, label: "Stats" },
 ];

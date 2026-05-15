@@ -17,6 +17,7 @@ from pkg.models.skill import Skill  # noqa: F401
 from pkg.models.user import User, UserMemory, UserSettings, ActivityLog  # noqa: F401
 from pkg.models.stats import KnowledgeStats  # noqa: F401
 from pkg.models.agent_profile import AgentProfile  # noqa: F401
+from pkg.models.agent_run import AgentRun, AgentRunEvent  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL_SYNC)

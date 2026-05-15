@@ -1,26 +1,14 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo, useRef, useEffect } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
-import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { ArrowLeft, Download, ExternalLink, Trash2, List, FileText, Pencil, Check, X, Rss, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { CategorySelect } from "@/components/CategorySelect";
+import { MarkdownRenderer } from "@/components/markdown";
 import { sourcesApi, categoriesApi, downloadFile, type Source, type SourceChunk, type SourceUpdate, type SourceList } from "@/lib/api";
-
-const sanitizeSchema = {
-  ...defaultSchema,
-  attributes: {
-    ...defaultSchema.attributes,
-    code: [...(defaultSchema.attributes?.code || []), "className"],
-    span: [...(defaultSchema.attributes?.span || []), "className"],
-  },
-};
 
 type ViewMode = "full" | "slices";
 
@@ -381,9 +369,7 @@ export function SourceDetailPage() {
         {viewMode === "full" ? (
           <div className="rounded-lg border border-border p-6 max-h-[70vh] overflow-y-auto">
             <div className="prose">
-              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight, [rehypeSanitize, sanitizeSchema]]}>
-                {source.raw_content || (source.file_path ? "*(Original file stored in MinIO)*" : "*No content*")}
-              </ReactMarkdown>
+              <MarkdownRenderer>{source.raw_content || (source.file_path ? "*(Original file stored in MinIO)*" : "*No content*")}</MarkdownRenderer>
             </div>
           </div>
         ) : (
@@ -438,7 +424,7 @@ export function SourceDetailPage() {
               <div className="p-4">
                 {hasChunks && chunks[selectedChunk] ? (
                   <div className="prose text-sm">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight, [rehypeSanitize, sanitizeSchema]]}>{chunks[selectedChunk].content}</ReactMarkdown>
+                    <MarkdownRenderer>{chunks[selectedChunk].content}</MarkdownRenderer>
                   </div>
                 ) : (
                   <p className="text-sm text-muted-foreground">Select a slice to view its content.</p>

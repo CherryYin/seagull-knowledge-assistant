@@ -39,6 +39,7 @@ from pkg.api.dashboard import router as dashboard_router
 from pkg.api.categories import router as categories_router
 from pkg.api.auth import router as auth_router
 from pkg.api.agent_profiles import router as agent_profiles_router
+from pkg.api.agent_runs import router as agent_runs_router
 
 # Configure root logger so all app loggers (pkg.*) output to console.
 # This is a no-op if logging is already configured (e.g. by pytest).
@@ -166,6 +167,7 @@ app.include_router(dashboard_router, prefix="/knowledge", tags=["dashboard"])
 app.include_router(categories_router, prefix="/categories", tags=["categories"])
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(agent_profiles_router, prefix="/agent-profiles", tags=["agent-profiles"])
+app.include_router(agent_runs_router, prefix="/agent-runs", tags=["agent-runs"])
 
 
 @app.get("/health")

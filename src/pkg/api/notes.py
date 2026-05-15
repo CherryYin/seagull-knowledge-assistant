@@ -16,7 +16,7 @@ from pkg.db import get_session
 from pkg.models.category import Category
 from pkg.models.note import Note, NoteEmbedding
 from pkg.models.user import User
-from pkg.schemas.note import NoteCreate, NoteList, NoteRead, NoteUpdate
+from pkg.schemas.note import DigestMergeRequest, NoteCreate, NoteList, NoteRead, NoteUpdate
 from pkg.services.embedding import get_embedding_service
 from pkg.services.storage import get_storage_service
 
@@ -36,6 +36,23 @@ def make_note_id(title: str, explicit_id: str | None = None) -> str:
     now = datetime.now(timezone.utc)
     suffix = uuid.uuid4().hex[:8]
     return f"note-{now.strftime('%Y%m%d')}-{title[:30].lower().replace(' ', '-')}-{suffix}"
+
+
+def _merge_unique(*values: list[str] | None) -> list[str]:
+    seen: set[str] = set()
+    merged: list[str] = []
+    for items in values:
+        for item in items or []:
+            if item and item not in seen:
+                seen.add(item)
+                merged.append(item)
+    return merged
+
+
+def _digest_entry(note: Note) -> str:
+    date = note.created_at.strftime("%Y-%m-%d") if note.created_at else "unknown date"
+    content = (note.content or "").strip() or "(empty digest)"
+    return f"## {date} · {note.title}\n\n{content}"
 
 
 async def put_note_markdown_oss(note_id: str, content: str, category_name: str | None = None) -> str:
@@ -183,6 +200,10 @@ async def list_notes(
     stmt = select(Note).where(Note.user_id == user.id)
     count_stmt = select(func.count()).select_from(Note).where(Note.user_id == user.id)
 
+    if note_type is None:
+        stmt = stmt.where(Note.note_type != "digest")
+        count_stmt = count_stmt.where(Note.note_type != "digest")
+
     if category_id is not None:
         stmt = stmt.where(Note.category_id == category_id)
         count_stmt = count_stmt.where(Note.category_id == category_id)
@@ -222,6 +243,73 @@ async def list_notes(
         result_items.append(read)
 
     return NoteList(items=result_items, total=total)
+
+
+@router.post("/{note_id}/merge-digest", response_model=NoteRead)
+async def merge_digest_notes(
+    note_id: str,
+    body: DigestMergeRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    target = await session.get(Note, note_id)
+    if not target or target.user_id != user.id or target.note_type != "digest":
+        raise HTTPException(status_code=404, detail="Digest note not found")
+
+    source_ids = [source_id for source_id in body.source_ids if source_id != note_id]
+    if not source_ids:
+        raise HTTPException(status_code=422, detail="Choose at least one different digest to merge")
+
+    rows = await session.execute(
+        select(Note).where(
+            Note.user_id == user.id,
+            Note.note_type == "digest",
+            Note.id.in_(source_ids),
+        )
+    )
+    sources = list(rows.scalars())
+    if len(sources) != len(set(source_ids)):
+        raise HTTPException(status_code=404, detail="One or more digest notes were not found")
+
+    merge_parts = [_digest_entry(target)] + [_digest_entry(note) for note in sources]
+    target.content = "\n\n---\n\n".join(merge_parts)
+    if not target.abstract and sources:
+        target.abstract = sources[0].abstract
+    target.tags = _merge_unique(target.tags, *[note.tags for note in sources], ["merged-digest"])
+    target.domains = _merge_unique(target.domains, *[note.domains for note in sources])
+    target.source_ids = _merge_unique(target.source_ids, *[note.source_ids for note in sources])
+    target.status = "kept"
+    target.word_count = len((target.content or "").split())
+
+    category = await session.get(Category, target.category_id)
+    category_name = category.name if category else None
+    target.file_path = await put_note_markdown_oss(target.id, target.content or "", category_name=category_name)
+
+    for source in sources:
+        emb = await session.get(NoteEmbedding, source.id)
+        if emb:
+            await session.delete(emb)
+        await session.delete(source)
+
+    try:
+        emb_svc = get_embedding_service()
+        emb_row = await session.get(NoteEmbedding, target.id)
+        title_vec = await emb_svc.embed_text(target.title)
+        abstract_vec = await emb_svc.embed_text(target.abstract or target.title)
+        if emb_row:
+            emb_row.title_vec = title_vec
+            emb_row.abstract_vec = abstract_vec
+        else:
+            session.add(NoteEmbedding(note_id=target.id, title_vec=title_vec, abstract_vec=abstract_vec))
+    except Exception:
+        logger.error("Embedding generation failed for merged digest %s", target.id, exc_info=True)
+
+    await session.commit()
+    await session.refresh(target)
+
+    read = NoteRead.model_validate(target)
+    read.category_name = category_name
+    return read
 
 
 @router.patch("/{note_id}", response_model=NoteRead)

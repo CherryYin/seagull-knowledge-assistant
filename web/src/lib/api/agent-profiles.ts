@@ -2,6 +2,7 @@ import { request } from "./client";
 
 export interface AgentProfile {
   id: string;
+  agent_type: string;
   name: string;
   description: string;
   system_prompt_append: string;
@@ -21,6 +22,7 @@ export interface AgentProfileList {
 
 export interface AgentProfileCreate {
   name: string;
+  agent_type?: string;
   description?: string;
   system_prompt_append?: string;
   model_id?: string | null;
@@ -32,6 +34,7 @@ export interface AgentProfileCreate {
 
 export interface AgentProfileUpdate {
   name?: string;
+  agent_type?: string;
   description?: string;
   system_prompt_append?: string;
   model_id?: string | null;
@@ -39,6 +42,14 @@ export interface AgentProfileUpdate {
   enabled_tools?: string[] | null;
   enabled_skills?: string[] | null;
   is_default?: boolean;
+}
+
+export interface AgentTypeInfo {
+  id: string;
+  name: string;
+  description: string;
+  default_tools: string[] | null;
+  default_skills: string[] | null;
 }
 
 export const agentProfilesApi = {
@@ -49,6 +60,10 @@ export const agentProfilesApi = {
     request<AgentProfile>("/agent-profiles", {
       method: "POST",
       body: JSON.stringify(body),
+    }),
+  createStoryWriterPreset: () =>
+    request<AgentProfile>("/agent-profiles/presets/story-writer", {
+      method: "POST",
     }),
   update: (id: string, body: AgentProfileUpdate) =>
     request<AgentProfile>(`/agent-profiles/${encodeURIComponent(id)}`, {
@@ -66,4 +81,5 @@ export const agentProfilesApi = {
     ),
   availableTools: () => request<string[]>("/agent-profiles/available-tools"),
   allowedModels: () => request<string[]>("/agent-profiles/allowed-models"),
+  types: () => request<AgentTypeInfo[]>("/agent-profiles/types"),
 };

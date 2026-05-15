@@ -112,11 +112,14 @@ class Settings(BaseSettings):
     CHUNK_MAX_TOKENS: int = 2048  # max tokens per chunk (tiktoken)
 
     # RSS feed settings
-    RSS_FETCH_INTERVAL_HOURS: int = 4
+    RSS_FETCH_INTERVAL_HOURS: int = 24
     RSS_SUMMARY_INTERVAL_HOURS: int = 24
     RSS_FETCH_TIMEOUT: int = 30
     RSS_MAX_ARTICLES_PER_FEED: int = 20
     RSS_RETENTION_DAYS: int = 30
+    RSS_SUMMARY_LLM_TIMEOUT: int = 180
+    RSS_SUMMARY_MAX_ARTICLES: int = 12
+    RSS_SUMMARY_MAX_CHARS_PER_ARTICLE: int = 1500
 
     @property
     def resolved_embedding_api_base(self) -> str:

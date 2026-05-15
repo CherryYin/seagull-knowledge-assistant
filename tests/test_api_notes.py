@@ -1,7 +1,7 @@
 """Tests for notes API endpoints (/notes/*)."""
 
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -53,6 +53,32 @@ class TestListNotes:
         assert data["total"] == 0
         assert data["items"] == []
 
+    def test_default_excludes_digest_notes(self, client, mock_session):
+        mock_count = MagicMock()
+        mock_count.scalar.return_value = 0
+        mock_rows = MagicMock()
+        mock_rows.scalars.return_value = []
+        mock_session.execute.side_effect = [mock_count, mock_rows]
+
+        resp = client.get("/notes")
+        assert resp.status_code == 200
+
+        first_stmt = mock_session.execute.await_args_list[0].args[0]
+        assert "notes.note_type !=" in str(first_stmt)
+
+    def test_explicit_digest_filter_allowed(self, client, mock_session):
+        mock_count = MagicMock()
+        mock_count.scalar.return_value = 0
+        mock_rows = MagicMock()
+        mock_rows.scalars.return_value = []
+        mock_session.execute.side_effect = [mock_count, mock_rows]
+
+        resp = client.get("/notes?note_type=digest")
+        assert resp.status_code == 200
+
+        first_stmt = mock_session.execute.await_args_list[0].args[0]
+        assert "notes.note_type !=" not in str(first_stmt)
+
 
 # ---------------------------------------------------------------------------
 # DELETE /notes/{note_id}
@@ -71,6 +97,66 @@ class TestDeleteNote:
         mock_session.get.return_value = None
 
         resp = client.delete("/notes/nonexistent")
+        assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# POST /notes/{note_id}/merge-digest
+# ---------------------------------------------------------------------------
+class TestMergeDigest:
+    @patch("pkg.api.notes.put_note_markdown_oss", new_callable=AsyncMock)
+    @patch("pkg.api.notes.get_embedding_service")
+    def test_success(self, mock_embedding_service, mock_put, client, mock_session, fake_user):
+        target = _make_note("digest-1", fake_user.id)
+        target.note_type = "digest"
+        target.status = "pending_review"
+        target.title = "RSS: AI - 2026-01-01"
+        target.content = "First digest"
+        target.tags = ["rss-summary"]
+        target.domains = ["rss"]
+        target.source_ids = ["src-1"]
+
+        source = _make_note("digest-2", fake_user.id)
+        source.note_type = "digest"
+        source.status = "pending_review"
+        source.title = "RSS: AI - 2026-01-02"
+        source.content = "Second digest"
+        source.tags = ["auto-generated"]
+        source.domains = ["rss", "ai"]
+        source.source_ids = ["src-2"]
+
+        rows = MagicMock()
+        rows.scalars.return_value = [source]
+        category = MagicMock()
+        category.name = "General"
+        emb = MagicMock()
+        mock_session.get.side_effect = [target, category, emb, emb]
+        mock_session.execute.return_value = rows
+        mock_put.return_value = "minio://notes/digest-1/note.md"
+        emb_svc = MagicMock()
+        emb_svc.embed_text = AsyncMock(return_value=[0.1, 0.2])
+        mock_embedding_service.return_value = emb_svc
+
+        resp = client.post("/notes/digest-1/merge-digest", json={"source_ids": ["digest-2"]})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["id"] == "digest-1"
+        assert data["status"] == "kept"
+        assert "merged-digest" in data["tags"]
+        assert "src-1" in data["source_ids"]
+        assert "src-2" in data["source_ids"]
+        assert "First digest" in target.content
+        assert "Second digest" in target.content
+        mock_session.delete.assert_awaited()
+        mock_session.commit.assert_awaited()
+
+    def test_target_must_be_digest(self, client, mock_session, fake_user):
+        target = _make_note("note-1", fake_user.id)
+        mock_session.get.return_value = target
+
+        resp = client.post("/notes/note-1/merge-digest", json={"source_ids": ["digest-2"]})
+
         assert resp.status_code == 404
 
 

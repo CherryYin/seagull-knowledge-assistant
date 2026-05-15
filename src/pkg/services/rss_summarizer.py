@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy import and_, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from pkg.config import settings
 from pkg.db import async_session
 from pkg.models.source import Source
 from pkg.services.embedding import get_embedding_service
@@ -19,7 +20,6 @@ from pkg.services.embedding import get_embedding_service
 logger = logging.getLogger(__name__)
 
 _MAX_LLM_RETRIES = 2
-_LLM_TIMEOUT = 120
 
 
 class TopicSummary(BaseModel):
@@ -85,6 +85,7 @@ async def summarize_rss_by_topic() -> list[str]:
         logger.info("No recent RSS articles to summarize")
         return []
 
+    articles = articles[:settings.RSS_SUMMARY_MAX_ARTICLES]
     logger.info("Summarizing %d RSS articles by topic", len(articles))
 
     parts: list[str] = []
@@ -92,7 +93,7 @@ async def summarize_rss_by_topic() -> list[str]:
         meta = article.metadata_ or {}
         published = meta.get("published_at") or meta.get("last_fetch_at", "unknown")
         url = meta.get("article_url") or article.url or ""
-        content = (article.raw_content or "")[:3000]
+        content = (article.raw_content or "")[:settings.RSS_SUMMARY_MAX_CHARS_PER_ARTICLE]
         parts.append(
             f"## {article.title}\n"
             f"发布时间: {published} | URL: {url}\n\n"
@@ -112,6 +113,7 @@ async def summarize_rss_by_topic() -> list[str]:
                     {"role": "system", "content": _SYSTEM_PROMPT},
                     {"role": "user", "content": combined},
                 ],
+                timeout=settings.RSS_SUMMARY_LLM_TIMEOUT,
             )
             raw = response.choices[0].message.content or ""
             topics = _parse_topics(raw)

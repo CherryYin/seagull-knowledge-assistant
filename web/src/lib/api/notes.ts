@@ -39,6 +39,10 @@ export interface NoteCreate {
   source_ids?: string[];
 }
 
+export interface DigestMergeRequest {
+  source_ids: string[];
+}
+
 export interface NoteUpdate {
   title?: string;
   category_id?: number;
@@ -87,6 +91,11 @@ export const notesApi = {
     }),
   delete: (id: string) =>
     request<void>(`/notes/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  mergeDigest: (targetId: string, body: DigestMergeRequest) =>
+    request<Note>(`/notes/${encodeURIComponent(targetId)}/merge-digest`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   exportPdf: (id: string, title?: string) =>
     downloadFile(`/notes/${encodeURIComponent(id)}/export/pdf`, `${title || "note"}.pdf`),
 };

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Bot, Plus, Star, Trash2, Pencil } from "lucide-react";
+import { BookOpen, Bot, Plus, Star, Trash2, Pencil } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
@@ -23,6 +23,7 @@ import {
 
 interface ProfileFormData {
   name: string;
+  agent_type: string;
   description: string;
   system_prompt_append: string;
   model_id: string;
@@ -34,6 +35,7 @@ interface ProfileFormData {
 
 const emptyForm: ProfileFormData = {
   name: "",
+  agent_type: "action",
   description: "",
   system_prompt_append: "",
   model_id: "",
@@ -46,6 +48,7 @@ const emptyForm: ProfileFormData = {
 function profileToForm(p: AgentProfile): ProfileFormData {
   return {
     name: p.name,
+    agent_type: p.agent_type,
     description: p.description,
     system_prompt_append: p.system_prompt_append,
     model_id: p.model_id ?? "",
@@ -59,6 +62,7 @@ function profileToForm(p: AgentProfile): ProfileFormData {
 function formToCreate(f: ProfileFormData): AgentProfileCreate {
   return {
     name: f.name,
+    agent_type: f.agent_type,
     description: f.description,
     system_prompt_append: f.system_prompt_append,
     model_id: f.model_id || null,
@@ -97,6 +101,11 @@ export function AgentProfilesPage() {
     queryFn: agentProfilesApi.allowedModels,
   });
 
+  const { data: agentTypes } = useQuery({
+    queryKey: ["agent-types"],
+    queryFn: agentProfilesApi.types,
+  });
+
   const { data: skills } = useQuery({
     queryKey: ["skills"],
     queryFn: skillsApi.list,
@@ -123,6 +132,11 @@ export function AgentProfilesPage() {
 
   const setDefaultMutation = useMutation({
     mutationFn: (id: string) => agentProfilesApi.setDefault(id),
+    onSuccess: invalidate,
+  });
+
+  const storyWriterPresetMutation = useMutation({
+    mutationFn: agentProfilesApi.createStoryWriterPreset,
     onSuccess: invalidate,
   });
 
@@ -173,10 +187,29 @@ export function AgentProfilesPage() {
               Create and manage custom agent configurations for different use cases.
             </p>
           </div>
-          <Button size="sm" onClick={openCreate}>
-            <Plus className="h-4 w-4 mr-1" /> New Profile
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => storyWriterPresetMutation.mutate()}
+              disabled={storyWriterPresetMutation.isPending}
+            >
+              <BookOpen className="h-4 w-4 mr-1" />
+              {storyWriterPresetMutation.isPending ? "Creating..." : "Story Agent"}
+            </Button>
+            <Button size="sm" onClick={openCreate}>
+              <Plus className="h-4 w-4 mr-1" /> New Profile
+            </Button>
+          </div>
         </div>
+
+        {storyWriterPresetMutation.error && (
+          <p className="mb-4 text-sm text-destructive">
+            {storyWriterPresetMutation.error instanceof Error
+              ? storyWriterPresetMutation.error.message
+              : "Failed to create story agent"}
+          </p>
+        )}
 
         {isLoading && <p className="text-sm text-muted-foreground">Loading...</p>}
 
@@ -195,6 +228,9 @@ export function AgentProfilesPage() {
                   <div className="flex items-center gap-2">
                     <Bot className="h-4 w-4 text-primary shrink-0" />
                     <CardTitle className="text-sm">{profile.name}</CardTitle>
+                    <Badge variant="outline" className="text-[10px]">
+                      {profile.agent_type === "story" ? "Story" : "Action"}
+                    </Badge>
                     {profile.is_default && (
                       <Badge variant="secondary" className="text-[10px] gap-1">
                         <Star className="h-3 w-3" /> Default
@@ -289,6 +325,27 @@ export function AgentProfilesPage() {
                   placeholder="e.g. Work Assistant"
                   required
                 />
+              </div>
+
+              {/* Agent Type */}
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">Agent Type</label>
+                <select
+                  value={form.agent_type}
+                  onChange={(e) => setForm({ ...form, agent_type: e.target.value })}
+                  className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+                >
+                  {(agentTypes ?? [
+                    { id: "action", name: "Action Agent", description: "", default_tools: null, default_skills: null },
+                    { id: "story", name: "Story Agent", description: "", default_tools: null, default_skills: null },
+                  ]).map((type) => (
+                    <option key={type.id} value={type.id}>{type.name}</option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  {agentTypes?.find((type) => type.id === form.agent_type)?.description ??
+                    "Choose the base behavior for this custom agent."}
+                </p>
               </div>
 
               {/* Description */}
