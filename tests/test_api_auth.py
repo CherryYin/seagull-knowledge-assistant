@@ -79,6 +79,54 @@ class TestLogin:
         assert resp.status_code == 403
         fake_user.is_active = True  # restore
 
+    def test_pending_user_cannot_login(self, auth_client, mock_session, fake_user):
+        fake_user.approval_status = "pending"
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = fake_user
+        mock_session.execute.return_value = mock_result
+
+        resp = auth_client.post("/auth/login", json={"username": "testuser", "password": "correct-password"})
+        assert resp.status_code == 403
+        assert "pending" in resp.json()["detail"]
+        fake_user.approval_status = "approved"
+
+
+# ---------------------------------------------------------------------------
+# POST /auth/register
+# ---------------------------------------------------------------------------
+class TestRegister:
+    def test_register_creates_pending_user(self, auth_client, mock_session):
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_session.execute.return_value = mock_result
+
+        resp = auth_client.post("/auth/register", json={
+            "username": "newuser",
+            "display_name": "New User",
+            "email": "new@example.com",
+            "password": "new-password",
+        })
+
+        assert resp.status_code == 201
+        assert resp.json()["approval_status"] == "pending"
+        created = mock_session.add.call_args.args[0]
+        assert created.username == "newuser"
+        assert created.approval_status == "pending"
+        mock_session.commit.assert_awaited()
+
+    def test_register_duplicate_username(self, auth_client, mock_session, fake_user):
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = fake_user
+        mock_session.execute.return_value = mock_result
+
+        resp = auth_client.post("/auth/register", json={
+            "username": "testuser",
+            "display_name": "Test User",
+            "password": "new-password",
+        })
+
+        assert resp.status_code == 409
+
 
 # ---------------------------------------------------------------------------
 # GET /auth/me

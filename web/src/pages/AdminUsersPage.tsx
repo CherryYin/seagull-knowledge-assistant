@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { authApi, type UserRecord, type UserCreateRequest } from "@/lib/api";
+import { authApi, type UserRecord, type UserCreateRequest, type UserUpdateRequest } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { Navigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -14,6 +14,19 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Plus } from "lucide-react";
+
+function statusLabel(user: UserRecord) {
+  if (user.approval_status === "pending") return "Pending review";
+  if (user.approval_status === "rejected") return "Rejected";
+  return user.is_active ? "Active" : "Disabled";
+}
+
+function statusClass(user: UserRecord) {
+  if (user.approval_status === "pending") return "bg-amber-500/10 text-amber-700";
+  if (user.approval_status === "rejected") return "bg-destructive/10 text-destructive";
+  if (user.is_active) return "bg-emerald-500/10 text-emerald-700";
+  return "bg-muted text-muted-foreground";
+}
 
 export function AdminUsersPage() {
   const { isAdmin } = useAuth();
@@ -33,9 +46,9 @@ export function AdminUsersPage() {
     },
   });
 
-  const toggleActiveMutation = useMutation({
-    mutationFn: ({ id, is_active }: { id: string; is_active: boolean }) =>
-      authApi.updateUser(id, { is_active }),
+  const updateUserMutation = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: UserUpdateRequest }) =>
+      authApi.updateUser(id, body),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin-users"] }),
   });
 
@@ -45,7 +58,10 @@ export function AdminUsersPage() {
     <div className="h-full overflow-y-auto p-6">
       <div className="mx-auto max-w-3xl space-y-4">
         <div className="flex items-center justify-between">
-          <h1 className="text-lg font-semibold">User Management</h1>
+          <div>
+            <h1 className="text-lg font-semibold">User Management</h1>
+            <p className="text-sm text-muted-foreground">Review new registrations before they can sign in.</p>
+          </div>
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogTrigger asChild>
               <Button size="sm">
@@ -73,9 +89,10 @@ export function AdminUsersPage() {
             <UserRow
               key={u.id}
               user={u}
-              onToggleActive={() =>
-                toggleActiveMutation.mutate({ id: u.id, is_active: !u.is_active })
-              }
+              loading={updateUserMutation.isPending}
+              onApprove={() => updateUserMutation.mutate({ id: u.id, body: { approval_status: "approved", is_active: true } })}
+              onReject={() => updateUserMutation.mutate({ id: u.id, body: { approval_status: "rejected", is_active: false } })}
+              onToggleActive={() => updateUserMutation.mutate({ id: u.id, body: { is_active: !u.is_active } })}
             />
           ))}
         </div>
@@ -86,31 +103,53 @@ export function AdminUsersPage() {
 
 function UserRow({
   user,
+  loading,
+  onApprove,
+  onReject,
   onToggleActive,
 }: {
   user: UserRecord;
+  loading: boolean;
+  onApprove: () => void;
+  onReject: () => void;
   onToggleActive: () => void;
 }) {
+  const isPending = user.approval_status === "pending";
+
   return (
     <Card>
-      <CardContent className="flex items-center justify-between p-4">
-        <div>
-          <p className="text-sm font-medium">
-            {user.display_name}
-            <span className="ml-2 text-xs text-muted-foreground">@{user.username}</span>
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {user.role} &middot; {user.is_active ? "Active" : "Disabled"} &middot;{" "}
-            {new Date(user.created_at).toLocaleDateString()}
+      <CardContent className="flex items-center justify-between gap-4 p-4">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-medium">
+              {user.display_name}
+              <span className="ml-2 text-xs text-muted-foreground">@{user.username}</span>
+            </p>
+            <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${statusClass(user)}`}>
+              {statusLabel(user)}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {user.role} &middot; {user.email || "No email"} &middot; {new Date(user.created_at).toLocaleDateString()}
           </p>
         </div>
-        <Button
-          variant={user.is_active ? "outline" : "default"}
-          size="sm"
-          onClick={onToggleActive}
-        >
-          {user.is_active ? "Disable" : "Enable"}
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          {isPending ? (
+            <>
+              <Button size="sm" onClick={onApprove} disabled={loading}>Approve</Button>
+              <Button size="sm" variant="outline" onClick={onReject} disabled={loading}>Reject</Button>
+            </>
+          ) : (
+            <Button
+              variant={user.is_active ? "outline" : "default"}
+              size="sm"
+              onClick={onToggleActive}
+              disabled={loading || user.approval_status === "rejected"}
+            >
+              {user.is_active ? "Disable" : "Enable"}
+            </Button>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
@@ -127,42 +166,32 @@ function CreateUserForm({
 }) {
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState("user");
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSubmit({ username, display_name: displayName, password, role });
+    onSubmit({ username, display_name: displayName, email: email || undefined, password, role });
   };
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3">
       <div className="space-y-1">
         <label className="text-sm font-medium">Username</label>
-        <Input
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          required
-          placeholder="johndoe"
-        />
+        <Input value={username} onChange={(e) => setUsername(e.target.value)} required placeholder="johndoe" />
       </div>
       <div className="space-y-1">
         <label className="text-sm font-medium">Display Name</label>
-        <Input
-          value={displayName}
-          onChange={(e) => setDisplayName(e.target.value)}
-          required
-          placeholder="John Doe"
-        />
+        <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} required placeholder="John Doe" />
+      </div>
+      <div className="space-y-1">
+        <label className="text-sm font-medium">Email</label>
+        <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="john@example.com" />
       </div>
       <div className="space-y-1">
         <label className="text-sm font-medium">Password</label>
-        <Input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-        />
+        <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
       </div>
       <div className="space-y-1">
         <label className="text-sm font-medium">Role</label>

@@ -6,6 +6,7 @@ export interface UserRecord {
   display_name: string;
   email?: string | null;
   role: string;
+  approval_status: "pending" | "approved" | "rejected" | string;
   is_active: boolean;
   created_at: string;
 }
@@ -22,7 +23,20 @@ export interface UserUpdateRequest {
   display_name?: string;
   email?: string;
   role?: string;
+  approval_status?: "pending" | "approved" | "rejected" | string;
   is_active?: boolean;
+}
+
+export interface RegisterRequest {
+  username: string;
+  display_name: string;
+  email?: string;
+  password: string;
+}
+
+export interface RegisterResponse {
+  detail: string;
+  approval_status: string;
 }
 
 export type UserProfileDepth = "beginner" | "intermediate" | "advanced" | string;
@@ -59,6 +73,11 @@ export interface GenerateUserProfileResponse {
 }
 
 export const authApi = {
+  register: (body: RegisterRequest) =>
+    request<RegisterResponse>("/auth/register", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   listUsers: () => request<UserRecord[]>("/auth/users"),
   createUser: (body: UserCreateRequest) =>
     request<UserRecord>("/auth/users", {

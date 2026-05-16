@@ -15,6 +15,18 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
+class RegisterRequest(BaseModel):
+    username: str
+    display_name: str
+    email: str | None = None
+    password: str
+
+
+class RegisterResponse(BaseModel):
+    detail: str
+    approval_status: str
+
+
 # --- User CRUD ---
 
 class UserCreate(BaseModel):
@@ -33,6 +45,7 @@ class UserRead(BaseModel):
     display_name: str
     email: str | None = None
     role: str
+    approval_status: str
     is_active: bool
     created_at: datetime
 
@@ -41,6 +54,7 @@ class UserUpdate(BaseModel):
     display_name: str | None = None
     email: str | None = None
     role: str | None = None
+    approval_status: str | None = None
     is_active: bool | None = None
 
 

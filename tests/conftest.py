@@ -19,6 +19,7 @@ def fake_user():
     user.email = "test@example.com"
     user.hashed_password = ""
     user.role = "user"
+    user.approval_status = "approved"
     user.is_active = True
     user.created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     user.updated_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -34,6 +35,7 @@ def fake_admin():
     user.email = "admin@example.com"
     user.hashed_password = ""
     user.role = "admin"
+    user.approval_status = "approved"
     user.is_active = True
     user.created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     user.updated_at = datetime(2026, 1, 1, tzinfo=timezone.utc)

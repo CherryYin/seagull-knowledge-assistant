@@ -13,6 +13,8 @@ from pkg.schemas.user import (
     LoginRequest,
     MemoryRead,
     MemoryWrite,
+    RegisterRequest,
+    RegisterResponse,
     SettingsRead,
     SettingsUpdate,
     TokenResponse,
@@ -23,6 +25,9 @@ from pkg.schemas.user import (
 from pkg.services.auth import create_access_token, hash_password, verify_password
 
 router = APIRouter()
+
+_ALLOWED_ROLES = {"user", "admin"}
+_ALLOWED_APPROVAL_STATUSES = {"pending", "approved", "rejected"}
 
 
 # --- Public ---
@@ -43,8 +48,42 @@ async def login(body: LoginRequest, session: AsyncSession = Depends(get_session)
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is disabled",
         )
+    if user.approval_status == "pending":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account registration is pending administrator approval",
+        )
+    if user.approval_status == "rejected":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account registration was rejected",
+        )
     token = create_access_token(user.id, user.role)
     return TokenResponse(access_token=token)
+
+
+@router.post("/register", response_model=RegisterResponse, status_code=201)
+async def register(body: RegisterRequest, session: AsyncSession = Depends(get_session)):
+    existing = await session.execute(select(User).where(User.username == body.username))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Username already exists")
+
+    user = User(
+        id=str(uuid.uuid4()),
+        username=body.username,
+        display_name=body.display_name,
+        email=body.email,
+        hashed_password=hash_password(body.password),
+        role="user",
+        approval_status="pending",
+        is_active=True,
+    )
+    session.add(user)
+    await session.commit()
+    return RegisterResponse(
+        detail="Registration submitted. Please wait for administrator approval before signing in.",
+        approval_status="pending",
+    )
 
 
 # --- Authenticated ---
@@ -98,6 +137,8 @@ async def create_user(
         email=body.email,
         hashed_password=hash_password(body.password),
         role=body.role,
+        approval_status="approved",
+        is_active=True,
     )
     session.add(user)
     await session.commit()
@@ -116,9 +157,13 @@ async def update_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     updates = body.model_dump(exclude_unset=True)
-    _ALLOWED_ROLES = {"user", "admin"}
     if "role" in updates and updates["role"] not in _ALLOWED_ROLES:
         raise HTTPException(status_code=422, detail=f"role must be one of: {', '.join(_ALLOWED_ROLES)}")
+    if "approval_status" in updates and updates["approval_status"] not in _ALLOWED_APPROVAL_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"approval_status must be one of: {', '.join(_ALLOWED_APPROVAL_STATUSES)}",
+        )
     for field, value in updates.items():
         setattr(user, field, value)
     await session.commit()

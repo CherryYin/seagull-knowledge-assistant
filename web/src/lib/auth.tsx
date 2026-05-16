@@ -16,6 +16,7 @@ export interface AuthUser {
   display_name: string;
   role: string;
   email?: string | null;
+  approval_status: string;
   is_active: boolean;
 }
 
