@@ -36,6 +36,23 @@ _HTTP_HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 _MIN_RSS_CONTENT_LEN = 200
+_TECH_KEYWORDS = (
+    "ai", "api", "llm", "gpt", "claude", "gemini", "deepseek", "qwen", "模型", "大模型",
+    "agent", "mcp", "rag", "embedding", "向量", "prompt", "提示词", "token", "推理",
+    "代码", "编程", "开发", "开源", "github", "repo", "仓库", "python", "javascript", "typescript",
+    "rust", "go", "java", "docker", "k8s", "linux", "wsl", "数据库", "postgres", "redis",
+    "算法", "架构", "系统", "部署", "服务器", "网络", "安全", "风控", "爬虫", "自动化",
+    "cursor", "codex", "antigravity", "vscode", "trae", "cherry", "cline", "opencode",
+)
+_LOW_VALUE_TITLE_KEYWORDS = (
+    "签到", "水贴", "水一贴", "灌水", "闲聊", "日常", "树洞", "吐槽", "表情包", "摸鱼",
+    "祝", "生日", "520", "99天", "垃圾桶", "寻宝", "交友", "相亲", "工资", "待遇",
+    "邀请码", "邀请", "求邀", "pt邀请", "邮箱", "hotmail", "gmail", "visa卡", "免费visa",
+    "社区", "版规", "管理", "删帖", "移除", "封禁", "等级", "升级", "个性化", "佬友",
+)
+_COMMUNITY_MAINTENANCE_KEYWORDS = (
+    "社区工作", "社区维护", "版规", "管理公告", "删帖", "移除", "封禁", "等级", "站务", "水区",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +121,35 @@ def _extract_published(entry: dict) -> str | None:
             except Exception:
                 pass
     return entry.get("published") or entry.get("updated")
+
+
+def _rss_filter_reason(title: str, content: str, metadata: dict | None = None) -> str | None:
+    """Return a low-value reason for RSS/web entries that should not become sources."""
+    if not settings.RSS_FILTER_LOW_VALUE:
+        return None
+    metadata = metadata or {}
+    text = f"{title}\n{content}".lower()
+    title_text = title.lower()
+
+    if metadata.get("rss_keep") is True:
+        return None
+
+    if any(keyword.lower() in text for keyword in _COMMUNITY_MAINTENANCE_KEYWORDS):
+        if not _has_tech_signal(text):
+            return "community_maintenance"
+
+    if any(keyword.lower() in title_text for keyword in _LOW_VALUE_TITLE_KEYWORDS):
+        if not _has_tech_signal(text):
+            return "non_technical_daily_topic"
+
+    if len(content.strip()) < 80 and not _has_tech_signal(text):
+        return "too_short_non_technical"
+
+    return None
+
+
+def _has_tech_signal(text: str) -> bool:
+    return any(keyword.lower() in text for keyword in _TECH_KEYWORDS)
 
 
 async def _fetch_article_content(url: str, client: httpx.AsyncClient) -> str | None:
@@ -233,6 +279,13 @@ async def _update_source_content(
             source.id, exc_info=True,
         )
 
+    try:
+        from pkg.services.source_memory import upsert_source_memory_node
+
+        await upsert_source_memory_node(session, source)
+    except Exception:
+        logger.error("Source memory generation failed for source %s", source.id, exc_info=True)
+
 
 async def fetch_single_feed(feed_source: Source, session: AsyncSession) -> int:
     """Fetch a single RSS feed and persist new articles. Returns count of new articles."""
@@ -361,6 +414,17 @@ async def fetch_single_feed(feed_source: Source, session: AsyncSession) -> int:
                 "content_source": content_source,
             }
 
+            filter_reason = _rss_filter_reason(title, raw_content, article_meta)
+            if filter_reason:
+                logger.info(
+                    "RSS article filtered: feed=%s reason=%s title=%s",
+                    feed_source.id,
+                    filter_reason,
+                    title,
+                )
+                meta["last_filtered_count"] = int(meta.get("last_filtered_count", 0)) + 1
+                continue
+
             body = SourceCreate(
                 title=title,
                 source_type="web",
@@ -392,6 +456,14 @@ async def fetch_single_feed(feed_source: Source, session: AsyncSession) -> int:
         meta["last_modified"] = resp.headers["last-modified"]
     feed_source.metadata_ = meta
     await session.commit()
+
+    if new_count:
+        try:
+            from pkg.services.discovery import generate_discovery_items
+
+            await generate_discovery_items(session, user_id=feed_source.user_id, providers=["rss"], limit=settings.RSS_MAX_ARTICLES_PER_FEED)
+        except Exception:
+            logger.error("RSS discovery item generation failed for feed=%s", feed_source.id, exc_info=True)
 
     elapsed = time.monotonic() - start
     logger.info(

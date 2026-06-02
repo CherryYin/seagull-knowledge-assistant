@@ -43,10 +43,11 @@ export interface SourceUpdate {
 }
 
 export const sourcesApi = {
-  list: (params?: { source_type?: string; category_id?: number; limit?: number; offset?: number }) => {
+  list: (params?: { source_type?: string; category_id?: number; feed_view?: string; limit?: number; offset?: number }) => {
     const q = new URLSearchParams();
     if (params?.source_type) q.set("source_type", params.source_type);
     if (params?.category_id) q.set("category_id", String(params.category_id));
+    if (params?.feed_view) q.set("feed_view", params.feed_view);
     if (params?.limit) q.set("limit", String(params.limit));
     if (params?.offset) q.set("offset", String(params.offset));
     return request<SourceList>(`/sources?${q}`);
@@ -64,6 +65,8 @@ export const sourcesApi = {
     }),
   delete: (id: string) =>
     request<void>(`/sources/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  keepImported: (id: string) =>
+    request<Source>(`/sources/${encodeURIComponent(id)}/review/keep`, { method: "POST" }),
   enableRss: (id: string) =>
     request<Source>(`/sources/${encodeURIComponent(id)}/rss/enable`, { method: "POST" }),
   disableRss: (id: string) =>

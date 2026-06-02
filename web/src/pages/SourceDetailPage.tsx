@@ -1,21 +1,25 @@
-import { useParams, useNavigate } from "react-router-dom";
+import { useLocation, useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo, useRef, useEffect } from "react";
-import { ArrowLeft, Download, ExternalLink, Trash2, List, FileText, Pencil, Check, X, Rss, RefreshCw } from "lucide-react";
+import { ArrowLeft, Download, ExternalLink, Trash2, List, FileText, Pencil, Check, X, Rss, RefreshCw, Bot, StickyNote } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { CategorySelect } from "@/components/CategorySelect";
 import { MarkdownRenderer } from "@/components/markdown";
-import { sourcesApi, categoriesApi, downloadFile, type Source, type SourceChunk, type SourceUpdate, type SourceList } from "@/lib/api";
+import { sourcesApi, notesApi, wikiApi, categoriesApi, downloadFile, type Source, type SourceChunk, type SourceUpdate, type SourceList } from "@/lib/api";
 
 type ViewMode = "full" | "slices";
 
 export function SourceDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
+  const locationState = location.state as { backTo?: string; backLabel?: string } | null;
+  const backTo = locationState?.backTo || "/sources";
+  const backLabel = locationState?.backLabel || "Back to Sources";
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("full");
   const [selectedChunk, setSelectedChunk] = useState(0);
@@ -54,7 +58,7 @@ export function SourceDetailPage() {
     mutationFn: () => sourcesApi.delete(id!),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["sources"] });
-      navigate("/sources");
+      navigate(backTo);
     },
   });
 
@@ -84,6 +88,8 @@ export function SourceDetailPage() {
   });
 
   const [fetchResult, setFetchResult] = useState<{ new_articles: number } | null>(null);
+  const [createdNoteId, setCreatedNoteId] = useState<string | null>(null);
+  const [queuedRefreshCount, setQueuedRefreshCount] = useState<number | null>(null);
 
   const fetchFeedMutation = useMutation({
     mutationFn: () => sourcesApi.fetchFeed(id!),
@@ -92,6 +98,61 @@ export function SourceDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["source-articles", id] });
     },
   });
+
+  const createNoteMutation = useMutation({
+    mutationFn: async () => {
+      if (!source) throw new Error("Source is not loaded");
+      const selectedContent = viewMode === "slices" && chunks?.[selectedChunk]?.content
+        ? chunks[selectedChunk].content
+        : source.raw_content || "";
+      return notesApi.create({
+        title: source.title,
+        category_id: source.category_id,
+        note_type: "inbox",
+        status: "seed",
+        confidence: "medium",
+        tags: ["from-source"],
+        abstract: source.raw_content ? source.raw_content.slice(0, 240) : undefined,
+        content: selectedContent || `# ${source.title}\n\n`,
+        source_ids: [source.id],
+      });
+    },
+    onSuccess: (note) => {
+      setCreatedNoteId(note.id);
+      queryClient.invalidateQueries({ queryKey: ["notes"] });
+    },
+  });
+
+  const queueWikiRefreshMutation = useMutation({
+    mutationFn: async () => {
+      if (!source) throw new Error("Source is not loaded");
+      return wikiApi.suggest({ trigger_type: "source", trigger_id: source.id, limit: 5 });
+    },
+    onSuccess: (suggestions) => {
+      setQueuedRefreshCount(suggestions.length);
+      queryClient.invalidateQueries({ queryKey: ["wiki-suggestions"] });
+      queryClient.invalidateQueries({ queryKey: ["wiki-pages"] });
+    },
+  });
+
+  function askAgentAboutSource() {
+    if (!source) return;
+    const chunk = viewMode === "slices" ? chunks?.[selectedChunk] : null;
+    navigate("/chat", {
+      state: {
+        objectRef: {
+          object_type: "source",
+          object_id: source.id,
+          title: source.title,
+          url: source.url ?? null,
+        },
+        workflowId: "summarize-source",
+        promptSeed: chunk
+          ? `Use source "${source.title}" (${source.id}) and this selected chunk to help me:\n\n${chunk.content.slice(0, 2000)}`
+          : `Use source "${source.title}" (${source.id}) to help me summarize, analyze, or turn it into durable knowledge.`,
+      },
+    });
+  }
 
   function startEdit() {
     if (!source) return;
@@ -146,8 +207,8 @@ export function SourceDetailPage() {
       <div className="max-w-7xl mx-auto px-6 py-8">
         {/* Header */}
         <div className="flex flex-wrap items-center gap-2 mb-4">
-          <Button variant="ghost" size="sm" onClick={() => navigate("/sources")}>
-            <ArrowLeft className="h-4 w-4" /> Back to Sources
+          <Button variant="ghost" size="sm" onClick={() => navigate(backTo)}>
+            <ArrowLeft className="h-4 w-4" /> {backLabel}
           </Button>
           {!editing && (
             <Button variant="outline" size="sm" onClick={startEdit}>
@@ -267,6 +328,60 @@ export function SourceDetailPage() {
           </div>
         </div>
 
+        {!editing && (
+          <div className="mb-6 rounded-lg border border-border bg-card p-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h2 className="text-sm font-medium">Actions</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Turn this source into a note, or ask the agent to work with it.
+                </p>
+                {createdNoteId && (
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/notes/${encodeURIComponent(createdNoteId)}`, { state: { backTo: `/sources/${encodeURIComponent(source.id)}`, backLabel: "Back to Source" } })}
+                    className="mt-2 text-xs text-primary hover:underline"
+                  >
+                    Created note from source. View note.
+                  </button>
+                )}
+                {createNoteMutation.isError && (
+                  <p className="mt-2 text-xs text-destructive">
+                    {createNoteMutation.error instanceof Error ? createNoteMutation.error.message : "Failed to create note"}
+                  </p>
+                )}
+                {queuedRefreshCount !== null && (
+                  <button
+                    type="button"
+                    onClick={() => navigate("/review/wiki-suggestions")}
+                    className="mt-2 block text-xs text-primary hover:underline"
+                  >
+                    {queuedRefreshCount > 0
+                      ? `Wiki refresh queued for ${queuedRefreshCount} page${queuedRefreshCount === 1 ? "" : "s"}. View queue.`
+                      : "No matching wiki pages found yet."}
+                  </button>
+                )}
+                {queueWikiRefreshMutation.isError && (
+                  <p className="mt-2 text-xs text-destructive">
+                    {queueWikiRefreshMutation.error instanceof Error ? queueWikiRefreshMutation.error.message : "Failed to queue wiki refresh"}
+                  </p>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" onClick={() => createNoteMutation.mutate()} disabled={createNoteMutation.isPending}>
+                  <StickyNote className="h-4 w-4" /> {createNoteMutation.isPending ? "Creating…" : "Create Note"}
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => queueWikiRefreshMutation.mutate()} disabled={queueWikiRefreshMutation.isPending}>
+                  <RefreshCw className={`h-4 w-4 ${queueWikiRefreshMutation.isPending ? "animate-spin" : ""}`} /> Queue Wiki Refresh
+                </Button>
+                <Button size="sm" variant="outline" onClick={askAgentAboutSource}>
+                  <Bot className="h-4 w-4" /> Ask Agent
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* RSS Section — only for web sources */}
         {source.source_type === "web" && (
           <div className="mb-6 rounded-lg border border-border p-4">
@@ -349,7 +464,7 @@ export function SourceDetailPage() {
                         <div
                           key={article.id}
                           className="flex items-center gap-2 text-sm cursor-pointer hover:bg-accent/50 rounded px-2 py-1 transition-colors"
-                          onClick={() => navigate(`/sources/${article.id}`)}
+                          onClick={() => navigate(`/sources/${article.id}`, { state: { backTo: `/sources/${encodeURIComponent(source.id)}`, backLabel: "Back to Feed Source" } })}
                         >
                           <span className="truncate flex-1">{article.title}</span>
                           <span className="text-xs text-muted-foreground shrink-0">

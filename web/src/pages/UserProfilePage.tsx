@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { SectionNav, settingsNavItems } from "@/components/SectionNav";
 
 const PROFILE_QUERY_KEY = ["user-profile"] as const;
 
@@ -58,10 +59,11 @@ export function UserProfilePage() {
   const hasProfile = Boolean(profile && Object.keys(profile).length > 0);
   const showEmptyState = !profileQuery.isLoading && (!hasProfile || isNotFound(profileQuery.error));
 
-  return (
-    <div className="h-full overflow-y-auto p-6">
-      <div className="mx-auto max-w-5xl space-y-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+	return (
+		<div className="h-full overflow-y-auto p-6">
+			<div className="mx-auto max-w-5xl space-y-6">
+				<SectionNav items={settingsNavItems} active="Profile" />
+				<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-xl font-semibold">User Profile</h1>
             <p className="mt-1 text-sm text-muted-foreground">

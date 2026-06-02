@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import { useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Bot, Cpu, History, MessageSquarePlus, Microscope, Send, Sparkles, Trash2, X } from "lucide-react";
+import { Bot, Cpu, History, MessageSquarePlus, Microscope, Send, Sparkles, Square, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -13,6 +13,8 @@ import {
   streamAction,
   chatSessionsApi,
   knowledgeApi,
+  notesApi,
+  categoriesApi,
   agentProfilesApi,
   type ChatSessionMessage,
   type SSEvent,
@@ -65,9 +67,13 @@ export function ChatPage() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const stopRequestedRef = useRef(false);
 
   useEffect(() => {
-    return () => { abortRef.current?.abort(); };
+    return () => {
+      stopRequestedRef.current = true;
+      abortRef.current?.abort();
+    };
   }, []);
 
   // Load sessions and skills from backend on mount
@@ -108,6 +114,12 @@ export function ChatPage() {
     queryFn: () => knowledgeApi.models(),
     staleTime: 60 * 60 * 1000,
   });
+
+  const { data: categoriesData } = useQuery({
+    queryKey: ["categories"],
+    queryFn: () => categoriesApi.list(),
+  });
+  const defaultCategoryId = categoriesData?.items[0]?.id;
 
   useEffect(() => {
     if (seedApplied) return;
@@ -195,6 +207,7 @@ export function ChatPage() {
     async (task: string, truncateAfterIndex?: number) => {
       if (!currentSession || streaming) return;
       setPendingQuestion(null);
+      stopRequestedRef.current = false;
       const sessionId = currentSession.id;
 
       // If retrying, truncate messages first
@@ -222,6 +235,7 @@ export function ChatPage() {
       setSteps([]);
 
       let fullResponse = "";
+      let stopped = false;
       const abortController = new AbortController();
       abortRef.current = abortController;
 
@@ -289,17 +303,20 @@ export function ChatPage() {
           }
         }
       } catch (err) {
+        stopped = stopRequestedRef.current || (err instanceof Error && err.name === "AbortError");
         updateSessionLocal(sessionId, (s) => {
-          const nextMessages = s.messages.map((m) =>
-            m.id === assistantMsg.id
-              ? {
-                  ...m,
-                  content:
-                    m.content ||
-                    `Error: ${err instanceof Error ? err.message : "Unknown error"}`,
-                }
-              : m
-          );
+          const nextMessages = s.messages.map((m) => {
+            if (m.id !== assistantMsg.id) return m;
+            if (stopped) {
+              return { ...m, content: m.content || "Stopped." };
+            }
+            return {
+              ...m,
+              content:
+                m.content ||
+                `Error: ${err instanceof Error ? err.message : "Unknown error"}`,
+            };
+          });
           return {
             ...s,
             messages: nextMessages,
@@ -312,7 +329,7 @@ export function ChatPage() {
         setStreaming(false);
         setSteps([]);
         // Fallback: if ask_human SSE didn't fire but content has the marker
-        if (fullResponse.includes("[WAITING_FOR_HUMAN]")) {
+        if (!stopped && fullResponse.includes("[WAITING_FOR_HUMAN]")) {
           setPendingQuestion((prev) => {
             if (prev) return prev; // SSE already set it
             const lines = fullResponse.split("[WAITING_FOR_HUMAN]").pop()?.trim() || "";
@@ -331,15 +348,19 @@ export function ChatPage() {
           }
           return prev;
         });
-        // Refresh session from backend to pick up server-populated metadata
-        try {
-          const refreshed = await chatSessionsApi.get(sessionId);
-          setSessions((prev) =>
-            prev.map((s) => (s.id === sessionId ? refreshed : s))
-          );
-        } catch {
-          // Non-critical: metadata just won't show until page reload
+        // Refresh session from backend to pick up server-populated metadata.
+        // Skip after Stop so a partially saved server response does not overwrite the local stopped state.
+        if (!stopped) {
+          try {
+            const refreshed = await chatSessionsApi.get(sessionId);
+            setSessions((prev) =>
+              prev.map((s) => (s.id === sessionId ? refreshed : s))
+            );
+          } catch {
+            // Non-critical: metadata just won't show until page reload
+          }
         }
+        stopRequestedRef.current = false;
       }
     },
     [currentSession, streaming, updateSessionLocal]
@@ -372,6 +393,13 @@ export function ChatPage() {
     setTimeout(() => textareaRef.current?.focus(), 0);
   }, []);
 
+  const handleStop = useCallback(() => {
+    stopRequestedRef.current = true;
+    abortRef.current?.abort();
+    setStreaming(false);
+    setSteps([]);
+  }, []);
+
   const handleRetry = useCallback(
     (userMsg: ChatSessionMessage, msgIndex: number) => {
       sendMessage(userMsg.content, msgIndex);
@@ -386,9 +414,27 @@ export function ChatPage() {
         message_content: assistantMsg.metadata?.document_content || assistantMsg.content,
         title: assistantMsg.metadata?.document_title,
         session_id: currentSession.id,
+        category_id: defaultCategoryId,
       });
     },
-    [currentSession]
+    [currentSession, defaultCategoryId]
+  );
+
+  const handleSaveAsNote = useCallback(
+    async (assistantMsg: ChatSessionMessage) => {
+      if (!defaultCategoryId) throw new Error("No category available for saved note");
+      await notesApi.create({
+        title: assistantMsg.metadata?.document_title || assistantMsg.content.split("\n")[0].replace(/^#+\s*/, "").slice(0, 80) || "Agent output",
+        category_id: defaultCategoryId,
+        note_type: "remember",
+        status: "kept",
+        confidence: "medium",
+        tags: ["from-agent"],
+        domains: ["agent-output"],
+        content: assistantMsg.content,
+      });
+    },
+    [defaultCategoryId]
   );
 
   const handleRemember = useCallback(
@@ -422,10 +468,10 @@ export function ChatPage() {
       <div className="mx-auto flex h-full w-full max-w-6xl flex-col">
         <div className="mb-4 flex items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold">Chat</h1>
-            <p className="text-sm text-muted-foreground">
-              Conversations are persisted to the server.
-            </p>
+					<h1 className="text-2xl font-bold">Agent Chat</h1>
+					<p className="text-sm text-muted-foreground">
+						Ask the knowledge task assistant to search, reason, write, and save useful outputs back into the system.
+					</p>
           </div>
           <Button variant="outline" size="sm" onClick={handleCreateNewSession} disabled={streaming}>
             <MessageSquarePlus className="h-4 w-4" /> New Session
@@ -522,9 +568,13 @@ export function ChatPage() {
                             : undefined
                         }
                         onNewKnowledge={
-                          msg.role === "assistant" &&
-                          msg.metadata?.has_generated_document
+                          msg.role === "assistant"
                             ? () => handleNewKnowledge(msg)
+                            : undefined
+                        }
+                        onSaveAsNote={
+                          msg.role === "assistant" && !streaming
+                            ? () => handleSaveAsNote(msg)
                             : undefined
                         }
                         onRemember={
@@ -645,9 +695,15 @@ export function ChatPage() {
                     className="min-h-[44px] max-h-[200px] resize-none"
                     rows={1}
                   />
-                  <Button size="icon" onClick={handleSubmit} disabled={!input.trim() || streaming}>
-                    <Send className="h-4 w-4" />
-                  </Button>
+                  {streaming ? (
+                    <Button size="icon" variant="destructive" onClick={handleStop} title="Stop generating">
+                      <Square className="h-4 w-4 fill-current" />
+                    </Button>
+                  ) : (
+                    <Button size="icon" onClick={handleSubmit} disabled={!input.trim()}>
+                      <Send className="h-4 w-4" />
+                    </Button>
+                  )}
                 </div>
                 <p className="mt-2 text-center text-[10px] text-muted-foreground">
                   Agent searches your knowledge base and reasons over it. Shift+Enter for new line.

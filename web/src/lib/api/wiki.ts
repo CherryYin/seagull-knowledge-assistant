@@ -1,0 +1,203 @@
+import { request } from "./client";
+
+export interface WikiPage {
+  id: string;
+  title: string;
+  page_type: string;
+  summary?: string | null;
+  content: string;
+  domains: string[];
+  tags: string[];
+  derived_from_notes: string[];
+  derived_from_sources: string[];
+  open_questions: string[];
+  confidence_score?: number | null;
+  needs_recompile: boolean;
+  stale_reason?: string | null;
+  stale_triggered_at?: string | null;
+  last_compiled_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WikiPageList {
+  items: WikiPage[];
+  total: number;
+}
+
+export interface WikiPageCreate {
+  id?: string;
+  title: string;
+  page_type?: string;
+  summary?: string | null;
+  content?: string;
+  domains?: string[];
+  tags?: string[];
+  derived_from_notes?: string[];
+  derived_from_sources?: string[];
+  open_questions?: string[];
+  confidence_score?: number | null;
+}
+
+export interface WikiPageUpdate {
+  title?: string;
+  page_type?: string;
+  summary?: string | null;
+  content?: string;
+  domains?: string[];
+  tags?: string[];
+  derived_from_notes?: string[];
+  derived_from_sources?: string[];
+  open_questions?: string[];
+  confidence_score?: number | null;
+  needs_recompile?: boolean;
+  stale_reason?: string | null;
+}
+
+export interface WikiPageSource {
+  id: number;
+  wiki_id: string;
+  source_id: string;
+  relevance_summary: string;
+  key_points?: Array<string | Record<string, unknown>> | null;
+  supporting_claims?: Array<string | Record<string, unknown>> | null;
+  cited_chunk_ids: number[];
+  confidence_score?: number | null;
+  last_refreshed_at: string;
+}
+
+export interface WikiPageSourceCreate {
+  source_id: string;
+  relevance_summary: string;
+  key_points?: Array<string | Record<string, unknown>>;
+  supporting_claims?: Array<string | Record<string, unknown>>;
+  cited_chunk_ids?: number[];
+  confidence_score?: number | null;
+}
+
+export interface WikiPageMemory {
+  id: number;
+  wiki_id: string;
+  memory_node_id: string;
+  relevance_summary: string;
+  key_points?: Array<string | Record<string, unknown>> | null;
+  supporting_claims?: Array<string | Record<string, unknown>> | null;
+  confidence_score?: number | null;
+  last_refreshed_at: string;
+}
+
+export interface WikiPageMemoryCreate {
+  memory_node_id: string;
+  relevance_summary: string;
+  key_points?: Array<string | Record<string, unknown>>;
+  supporting_claims?: Array<string | Record<string, unknown>>;
+  confidence_score?: number | null;
+}
+
+export interface WikiCompileRequest {
+  title: string;
+  page_type?: string;
+  note_ids?: string[];
+  source_ids?: string[];
+  instructions?: string | null;
+}
+
+export interface WikiFromMemoryRequest {
+  memory_node_id: string;
+  title?: string | null;
+  page_type?: string;
+  tags?: string[];
+}
+
+export interface WikiRecompileSuggestion {
+  id: number;
+  user_id: string;
+  wiki_id: string;
+  wiki_title?: string | null;
+  trigger_type: string;
+  trigger_id: string;
+  reason: string;
+  evidence_preview?: string | null;
+  status: "pending" | "accepted" | "rejected" | "dismissed" | "applied" | string;
+  metadata_?: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+  reviewed_at?: string | null;
+  applied_at?: string | null;
+  reviewer_note?: string | null;
+}
+
+export interface WikiRecompileSuggestionList {
+  items: WikiRecompileSuggestion[];
+  total: number;
+}
+
+export interface WikiSuggestRequest {
+  trigger_type: "source" | "note" | "memory";
+  trigger_id: string;
+  limit?: number;
+}
+
+export const wikiApi = {
+  list: (params?: {
+    page_type?: string;
+    domain?: string;
+    tag?: string;
+    needs_recompile?: boolean;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const q = new URLSearchParams();
+    if (params?.page_type) q.set("page_type", params.page_type);
+    if (params?.domain) q.set("domain", params.domain);
+    if (params?.tag) q.set("tag", params.tag);
+    if (params?.needs_recompile !== undefined) q.set("needs_recompile", String(params.needs_recompile));
+    if (params?.limit) q.set("limit", String(params.limit));
+    if (params?.offset) q.set("offset", String(params.offset));
+    return request<WikiPageList>(`/wiki?${q}`);
+  },
+  get: (id: string) => request<WikiPage>(`/wiki/${encodeURIComponent(id)}`),
+  create: (body: WikiPageCreate) =>
+    request<WikiPage>("/wiki", { method: "POST", body: JSON.stringify(body) }),
+  update: (id: string, body: WikiPageUpdate) =>
+    request<WikiPage>(`/wiki/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  delete: (id: string) =>
+    request<void>(`/wiki/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  sources: (id: string) => request<WikiPageSource[]>(`/wiki/${encodeURIComponent(id)}/sources`),
+  upsertSource: (id: string, body: WikiPageSourceCreate) =>
+    request<WikiPageSource>(`/wiki/${encodeURIComponent(id)}/sources`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  memories: (id: string) => request<WikiPageMemory[]>(`/wiki/${encodeURIComponent(id)}/memories`),
+  upsertMemory: (id: string, body: WikiPageMemoryCreate) =>
+    request<WikiPageMemory>(`/wiki/${encodeURIComponent(id)}/memories`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  compile: (body: WikiCompileRequest) =>
+    request<WikiPage>("/wiki/compile", { method: "POST", body: JSON.stringify(body) }),
+  createFromMemory: (body: WikiFromMemoryRequest) =>
+    request<WikiPage>("/wiki/from-memory", { method: "POST", body: JSON.stringify(body) }),
+  suggestions: (params?: { status?: string; wiki_id?: string; limit?: number; offset?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.status !== undefined) q.set("status", params.status);
+    if (params?.wiki_id) q.set("wiki_id", params.wiki_id);
+    if (params?.limit) q.set("limit", String(params.limit));
+    if (params?.offset) q.set("offset", String(params.offset));
+    return request<WikiRecompileSuggestionList>(`/wiki/suggestions?${q}`);
+  },
+  suggest: (body: WikiSuggestRequest) =>
+    request<WikiRecompileSuggestion[]>("/wiki/suggestions", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateSuggestion: (id: number, status: "pending" | "accepted" | "rejected" | "dismissed" | "applied", reviewer_note?: string | null) =>
+    request<WikiRecompileSuggestion>(`/wiki/suggestions/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status, reviewer_note }),
+    }),
+};

@@ -16,6 +16,7 @@ from pkg.models.chat_session import ChatSession
 from pkg.models.note import Note
 from pkg.models.source import Source
 from pkg.models.user import ActivityLog, User, UserMemory
+from pkg.services.memory_retriever import format_memory_context, retrieve_for_profile
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,7 @@ async def generate_user_profile(user_id: str) -> dict | None:
     note_stats = await _get_note_stats(user_id)
     source_stats = await _get_source_stats(user_id)
     chat_stats = await _get_chat_stats(user_id, days=30)
+    memory_context = await _get_profile_memory_context(user_id)
 
     # Check if we have enough data to generate a meaningful profile
     total_signals = (
@@ -72,13 +74,14 @@ async def generate_user_profile(user_id: str) -> dict | None:
         + len(activities.get("chat_topics", []))
         + note_stats.get("total", 0)
         + source_stats.get("total", 0)
+        + (1 if memory_context else 0)
     )
     if total_signals < 3:
         logger.info("User %s has insufficient data (%d signals) for profiling", user_id, total_signals)
         return None
 
     # 2. Format aggregated data as text for LLM
-    summary_text = _format_activity_summary(activities, note_stats, source_stats, chat_stats)
+    summary_text = _format_activity_summary(activities, note_stats, source_stats, chat_stats, memory_context=memory_context)
 
     # 3. Call LLM
     profile = await _llm_generate_profile(summary_text)
@@ -243,6 +246,13 @@ async def _get_chat_stats(user_id: str, days: int = 30) -> dict:
     }
 
 
+async def _get_profile_memory_context(user_id: str) -> str:
+    """Get compact Memory Tree context for profile generation."""
+    async with async_session() as session:
+        results = await retrieve_for_profile(session, user_id=user_id, limit=20)
+    return format_memory_context(results, max_chars_per_item=500)
+
+
 # ---------------------------------------------------------------------------
 # Formatting and LLM
 # ---------------------------------------------------------------------------
@@ -252,6 +262,8 @@ def _format_activity_summary(
     note_stats: dict,
     source_stats: dict,
     chat_stats: dict,
+    *,
+    memory_context: str = "",
 ) -> str:
     """Format collected data into a text summary for the LLM."""
     parts: list[str] = []
@@ -259,6 +271,10 @@ def _format_activity_summary(
     parts.append("## 活动概览")
     parts.append(f"- 最近30天总活动数: {activities['total_activities']}")
     parts.append(f"- 活跃时间段: {activities['active_period']}")
+
+    if memory_context:
+        parts.append("\n## Memory Tree 长期上下文")
+        parts.append(memory_context)
 
     if activities["search_queries"]:
         parts.append("\n## 搜索记录（最近）")

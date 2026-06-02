@@ -1,8 +1,9 @@
-from sqlalchemy import select, text, func, or_, any_
+from sqlalchemy import select, text, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pkg.models.note import Note, NoteEmbedding
-from pkg.models.source import Source, SourceEmbedding
+from pkg.models.memory import MemoryNode
+from pkg.models.note import Note
+from pkg.models.source import Source
 from pkg.schemas.note import SearchResult
 from pkg.services.embedding import get_embedding_service
 
@@ -80,7 +81,7 @@ class RetrieverAgent:
         # Search sources
         src_stmt = select(Source)
         if self.user_id:
-            src_stmt = src_stmt.where(or_(Source.user_id == self.user_id, Source.is_shared == True))
+            src_stmt = src_stmt.where(or_(Source.user_id == self.user_id, Source.is_shared))
         if query:
             like_pattern = f"%{_escape_like(query)}%"
             src_stmt = src_stmt.where(Source.title.ilike(like_pattern))
@@ -96,6 +97,36 @@ class RetrieverAgent:
                 type="source",
                 score=1.0,
                 content_preview=(src.raw_content or "")[:200],
+            ))
+
+        memory_stmt = select(MemoryNode)
+        if self.user_id:
+            memory_stmt = memory_stmt.where(MemoryNode.user_id == self.user_id)
+        if query:
+            like_pattern = f"%{_escape_like(query)}%"
+            memory_stmt = memory_stmt.where(
+                or_(
+                    MemoryNode.title.ilike(like_pattern),
+                    MemoryNode.summary.ilike(like_pattern),
+                    MemoryNode.content.ilike(like_pattern),
+                )
+            )
+        if filters:
+            if "node_type" in filters:
+                memory_stmt = memory_stmt.where(MemoryNode.node_type == filters["node_type"])
+            if "level" in filters:
+                memory_stmt = memory_stmt.where(MemoryNode.level == filters["level"])
+        memory_stmt = memory_stmt.limit(top_k)
+
+        rows = await self.session.execute(memory_stmt)
+        for node in rows.scalars():
+            results.append(SearchResult(
+                id=node.id,
+                title=node.title,
+                type="memory",
+                score=1.0,
+                abstract=node.summary,
+                content_preview=(node.content or "")[:200],
             ))
 
         return results[:top_k]
@@ -134,6 +165,58 @@ class RetrieverAgent:
                 type="note",
                 score=float(row.score),
                 abstract=row.abstract,
+                content_preview=(row.content or "")[:200],
+            ))
+
+        # Search wiki embeddings (L3 long-term knowledge pages)
+        wiki_user_clause = ""
+        if self.user_id:
+            wiki_user_clause = "WHERE w.user_id = :user_id"
+        wiki_stmt = text(f"""
+            SELECT we.wiki_id, w.title, w.summary, w.content,
+                   1 - (we.content_vec <=> CAST(:query_vec AS vector)) AS score
+            FROM wiki_embeddings we
+            JOIN wiki_pages w ON w.id = we.wiki_id
+            {wiki_user_clause}
+            ORDER BY we.content_vec <=> CAST(:query_vec AS vector)
+            LIMIT :top_k
+        """)
+        rows = await self.session.execute(
+            wiki_stmt, {"query_vec": query_vec_literal, "top_k": top_k, **user_params}
+        )
+        for row in rows:
+            results.append(SearchResult(
+                id=row.wiki_id,
+                title=row.title,
+                type="wiki",
+                score=float(row.score),
+                abstract=row.summary,
+                content_preview=(row.content or "")[:200],
+            ))
+
+        # Search memory embeddings (global/source/topic memory tree nodes)
+        memory_user_clause = ""
+        if self.user_id:
+            memory_user_clause = "WHERE m.user_id = :user_id"
+        memory_stmt = text(f"""
+            SELECT me.memory_node_id, m.title, m.summary, m.content, m.node_type, m.level,
+                   1 - (me.content_vec <=> CAST(:query_vec AS vector)) AS score
+            FROM memory_embeddings me
+            JOIN memory_nodes m ON m.id = me.memory_node_id
+            {memory_user_clause}
+            ORDER BY me.content_vec <=> CAST(:query_vec AS vector)
+            LIMIT :top_k
+        """)
+        rows = await self.session.execute(
+            memory_stmt, {"query_vec": query_vec_literal, "top_k": top_k, **user_params}
+        )
+        for row in rows:
+            results.append(SearchResult(
+                id=row.memory_node_id,
+                title=row.title,
+                type="memory",
+                score=float(row.score),
+                abstract=f"{row.node_type} / {row.level} · {row.summary or ''}".strip(),
                 content_preview=(row.content or "")[:200],
             ))
 

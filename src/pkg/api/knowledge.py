@@ -125,7 +125,7 @@ async def trigger_daily_summary(user: User = Depends(get_current_user)):
     """Manually trigger the daily temporary notes summarization."""
     from pkg.services.daily_summarizer import summarize_temporary_notes
 
-    note_id = await summarize_temporary_notes()
+    note_id = await summarize_temporary_notes(user.id)
     if note_id is None:
         return {"status": "skipped", "detail": "No temporary notes to summarize"}
     return {"status": "ok", "note_id": note_id}

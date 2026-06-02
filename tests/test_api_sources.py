@@ -99,3 +99,123 @@ def _make_source(source_id: str, user_id: str, is_shared: bool = False, file_pat
     source.created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     source.updated_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     return source
+
+# ---------------------------------------------------------------------------
+# RSS auto-discovery/list view helpers
+# ---------------------------------------------------------------------------
+class TestRssAutoDiscovery:
+    @pytest.mark.asyncio
+    async def test_maybe_enable_rss_for_source_marks_feed(self, mock_session):
+        from pkg.api.sources import maybe_enable_rss_for_source
+
+        source = _make_source("src-feed", "user-1")
+        source.source_type = "web"
+        source.url = "https://example.com"
+        source.metadata_ = {}
+
+        async def fake_discover(url):
+            assert url == "https://example.com"
+            return {
+                "feed": MagicMock(),
+                "feed_url": "https://example.com/feed",
+                "feed_title": "Example Feed",
+                "entries_available": 3,
+            }
+
+        from unittest.mock import patch, AsyncMock
+        with patch("pkg.api.sources.discover_rss_feed", new=AsyncMock(side_effect=fake_discover)):
+            enabled = await maybe_enable_rss_for_source(source, auto_fetch=False, session=mock_session)
+
+        assert enabled is True
+        assert source.url == "https://example.com/feed"
+        assert source.metadata_["rss_enabled"] == "true"
+        assert source.metadata_["feed_auto_detected"] is True
+
+    @pytest.mark.asyncio
+    async def test_maybe_enable_rss_for_source_records_not_found(self, mock_session):
+        from pkg.api.sources import maybe_enable_rss_for_source
+        from unittest.mock import patch, AsyncMock
+
+        source = _make_source("src-web", "user-1")
+        source.source_type = "web"
+        source.url = "https://example.com/page"
+        source.metadata_ = {}
+
+        with patch("pkg.api.sources.discover_rss_feed", new=AsyncMock(return_value=None)):
+            enabled = await maybe_enable_rss_for_source(source, auto_fetch=False, session=mock_session)
+
+        assert enabled is False
+        assert source.metadata_["rss_auto_discovery"] == "not_found"
+
+    @pytest.mark.asyncio
+    async def test_maybe_enable_rss_for_article_source_with_url(self, mock_session):
+        from pkg.api.sources import maybe_enable_rss_for_source
+        from unittest.mock import patch, AsyncMock
+
+        source = _make_source("src-article", "user-1")
+        source.source_type = "article"
+        source.url = "https://example.com/blog"
+        source.metadata_ = {}
+
+        with patch("pkg.api.sources.discover_rss_feed", new=AsyncMock(return_value={
+            "feed": MagicMock(),
+            "feed_url": "https://example.com/blog/feed",
+            "feed_title": "Blog Feed",
+            "entries_available": 2,
+        })):
+            enabled = await maybe_enable_rss_for_source(source, auto_fetch=False, session=mock_session)
+
+        assert enabled is True
+        assert source.metadata_["rss_enabled"] == "true"
+        assert source.url == "https://example.com/blog/feed"
+
+
+@pytest.mark.asyncio
+async def test_keep_imported_source_marks_reviewed_kept(mock_session, fake_user):
+    from pkg.api.sources import keep_imported_source
+
+    source = _make_source("src-imported", fake_user.id)
+    source.metadata_ = {"review_status": "imported_reviewable", "connector": "github"}
+    category = MagicMock()
+    category.name = "General"
+    mock_session.get.side_effect = [source, category]
+
+    result = await keep_imported_source("src-imported", user=fake_user, session=mock_session)
+
+    assert result.id == "src-imported"
+    assert result.category_name == "General"
+    assert source.metadata_["review_status"] == "reviewed_kept"
+    assert source.metadata_["retention"] == "permanent"
+    assert source.metadata_["reviewed_at"]
+    assert source.metadata_["kept_at"]
+    mock_session.commit.assert_awaited()
+    mock_session.refresh.assert_awaited_with(source)
+
+
+@pytest.mark.asyncio
+async def test_keep_imported_source_not_found_for_other_user(mock_session, fake_user):
+    from fastapi import HTTPException
+    from pkg.api.sources import keep_imported_source
+
+    source = _make_source("src-imported", "other-user")
+    mock_session.get.return_value = source
+
+    with pytest.raises(HTTPException) as exc:
+        await keep_imported_source("src-imported", user=fake_user, session=mock_session)
+
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_keep_imported_source_rejects_non_reviewable_source(mock_session, fake_user):
+    from fastapi import HTTPException
+    from pkg.api.sources import keep_imported_source
+
+    source = _make_source("src-normal", fake_user.id)
+    source.metadata_ = {"review_status": "reviewed_kept"}
+    mock_session.get.return_value = source
+
+    with pytest.raises(HTTPException) as exc:
+        await keep_imported_source("src-normal", user=fake_user, session=mock_session)
+
+    assert exc.value.status_code == 409

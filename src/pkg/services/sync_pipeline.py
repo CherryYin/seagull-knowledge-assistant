@@ -11,6 +11,7 @@ from pkg.models.note import Note, NoteEmbedding
 from pkg.models.source import Source, SourceChunk, SourceEmbedding
 from pkg.services.chunking import chunk_text
 from pkg.services.embedding import get_embedding_service
+from pkg.services.source_memory import upsert_source_memory_node
 
 
 def _content_hash(content: str) -> str:
@@ -200,7 +201,8 @@ async def sync_sources_from_directory(
             # Build per-file progress callback
             file_progress = None
             if progress_callback is not None:
-                file_progress = lambda cur, total, _f=src_file.name: progress_callback(_f, cur, total)
+                def file_progress(cur, total, filename=src_file.name):
+                    return progress_callback(filename, cur, total)
 
             try:
                 if suffix == ".pdf":
@@ -267,6 +269,14 @@ async def sync_sources_from_directory(
 
         # Generate chunks for long documents
         await _generate_chunks(session, emb, source_id, content)
+
+        try:
+            await upsert_source_memory_node(session, source)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Source memory generation failed for %s", source_id, exc_info=True
+            )
 
     await session.commit()
     return stats

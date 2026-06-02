@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote
 
@@ -19,9 +19,50 @@ from pkg.models.user import User
 from pkg.schemas.note import DigestMergeRequest, NoteCreate, NoteList, NoteRead, NoteUpdate
 from pkg.services.embedding import get_embedding_service
 from pkg.services.storage import get_storage_service
+from pkg.services.agent_memory import create_memory_from_note
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+DIGEST_TTL_DAYS = 7
+
+
+def digest_expires_at(now: datetime | None = None) -> datetime:
+    return (now or datetime.now(timezone.utc)) + timedelta(days=DIGEST_TTL_DAYS)
+
+
+def apply_digest_retention(note: Note, *, now: datetime | None = None) -> None:
+    if note.note_type != "digest":
+        return
+    if note.status == "pending_review":
+        note.kept_at = None
+        if getattr(note, "expires_at", None) is None:
+            note.expires_at = digest_expires_at(now)
+    else:
+        note.expires_at = None
+        if getattr(note, "kept_at", None) is None:
+            note.kept_at = now or datetime.now(timezone.utc)
+
+
+async def delete_expired_digest_notes(session: AsyncSession, *, user_id: str, now: datetime | None = None) -> None:
+    now = now or datetime.now(timezone.utc)
+    rows = await session.execute(
+        select(Note).where(
+            Note.user_id == user_id,
+            Note.note_type == "digest",
+            Note.status == "pending_review",
+            Note.expires_at.is_not(None),
+            Note.expires_at < now,
+        )
+    )
+    expired = list(rows.scalars())
+    for note in expired:
+        emb = await session.get(NoteEmbedding, note.id)
+        if emb:
+            await session.delete(emb)
+        await session.delete(note)
+    if expired:
+        await session.commit()
 
 
 def split_csv(value: str | None) -> list[str]:
@@ -93,6 +134,7 @@ async def persist_note(
         file_path=file_path,
         word_count=len(((content_override if content_override is not None else body.content) or "").split()),
     )
+    apply_digest_retention(note)
     session.add(note)
 
     try:
@@ -102,6 +144,9 @@ async def persist_note(
         session.add(NoteEmbedding(note_id=note_id, title_vec=title_vec, abstract_vec=abstract_vec))
     except Exception:
         logger.error("Embedding generation failed for note %s — saving without embeddings", note_id, exc_info=True)
+
+    if note.note_type == "digest" and note.status == "kept":
+        await create_memory_from_note(session, user_id=user_id, note_id=note.id, memory_kind="digest", confidence_score=0.7)
 
     await session.commit()
     await session.refresh(note)
@@ -197,6 +242,9 @@ async def list_notes(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
+    if note_type == "digest":
+        await delete_expired_digest_notes(session, user_id=user.id)
+
     stmt = select(Note).where(Note.user_id == user.id)
     count_stmt = select(func.count()).select_from(Note).where(Note.user_id == user.id)
 
@@ -279,6 +327,7 @@ async def merge_digest_notes(
     target.domains = _merge_unique(target.domains, *[note.domains for note in sources])
     target.source_ids = _merge_unique(target.source_ids, *[note.source_ids for note in sources])
     target.status = "kept"
+    apply_digest_retention(target)
     target.word_count = len((target.content or "").split())
 
     category = await session.get(Category, target.category_id)
@@ -304,6 +353,8 @@ async def merge_digest_notes(
     except Exception:
         logger.error("Embedding generation failed for merged digest %s", target.id, exc_info=True)
 
+    await create_memory_from_note(session, user_id=user.id, note_id=target.id, memory_kind="digest", confidence_score=0.7)
+
     await session.commit()
     await session.refresh(target)
 
@@ -328,9 +379,11 @@ async def update_note(
     if not patch:
         return note
 
+    previous_status = getattr(note, "status", None)
     for key, value in patch.items():
         setattr(note, key, value)
 
+    apply_digest_retention(note)
     note.word_count = len((note.content or "").split())
     # Look up category name for OSS path
     category = await session.get(Category, note.category_id)
@@ -352,6 +405,9 @@ async def update_note(
                 session.add(NoteEmbedding(note_id=note_id, title_vec=title_vec, abstract_vec=abstract_vec))
         except Exception:
             logger.error("Embedding update failed for note %s", note_id, exc_info=True)
+
+    if note.note_type == "digest" and note.status == "kept" and previous_status != "kept":
+        await create_memory_from_note(session, user_id=user.id, note_id=note.id, memory_kind="digest", confidence_score=0.7)
 
     await session.commit()
     await session.refresh(note)

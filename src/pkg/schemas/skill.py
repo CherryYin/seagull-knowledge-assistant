@@ -42,3 +42,13 @@ class SkillUpdate(BaseModel):
     args: list[SkillArgSchema] | None = None
     template: str | None = None
     tools_file: str | None = None
+
+
+class SkillFindRequest(BaseModel):
+    topic: str
+    max_results: int = 6
+
+
+class SkillFindResponse(BaseModel):
+    result: str
+    candidates: list[SkillCreate] = []

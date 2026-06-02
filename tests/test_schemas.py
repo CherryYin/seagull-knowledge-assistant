@@ -33,7 +33,7 @@ class TestSourceCreate:
             SourceCreate(title="Bad", source_type="invalid_type")
 
     def test_all_valid_source_types(self):
-        for st in ("pdf", "article", "conversation", "video", "web", "code"):
+        for st in ("pdf", "article", "conversation", "video", "web", "github", "code"):
             s = SourceCreate(title="t", source_type=st)
             assert s.source_type == st
 

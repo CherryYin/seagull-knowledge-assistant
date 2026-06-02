@@ -17,6 +17,7 @@ import asyncio
 import logging
 import time
 from contextvars import ContextVar
+from pathlib import Path
 from datetime import datetime
 
 from strands import Agent
@@ -28,21 +29,27 @@ from pkg.services.llm import create_model
 from pkg.services.tools import (
     agentic_rag,
     ask_human,
+    create_memory_from_conversation,
+    create_skill,
     knowledge_stats,
     list_notes,
+    list_related_memory,
     list_sources,
+    read_memory_node,
     read_note,
     read_source,
     search_knowledge,
+    search_memory,
 )
 from pkg.services.tools_document import process_document
-from pkg.services.tools_web import web_search
+from pkg.services.tools_web import find_skills, web_search
 
 logger = logging.getLogger(__name__)
 
 # ContextVar to pass user_id to agent tools without changing Strands function signatures.
 # Set by the API layer before invoking the agent; read by tools.py functions.
 current_user_id: ContextVar[str | None] = ContextVar("current_user_id", default=None)
+current_run_id: ContextVar[str | None] = ContextVar("current_run_id", default=None)
 
 # ---------------------------------------------------------------------------
 # Compaction prompt (inspired by pi-mono's structured summarization)
@@ -87,14 +94,20 @@ _SYSTEM_PROMPT_TEMPLATE = """\
 
 ## 你的能力
 你可以通过工具访问知识库：
-- **Agentic RAG** (agentic_rag): 对复杂/探索性问题进行多轮检索、打开高相关条目并汇总证据；这是宽泛问题和多跳问题的首选工具
-- **搜索知识** (search_knowledge): 语义搜索或结构化检索
+- **搜索记忆** (search_memory): 优先搜索已编译的长期 Memory Tree 节点；回答背景、项目、主题、历史结论类问题时先用它
+- **读取记忆** (read_memory_node): 读取 memory node 的完整内容和 evidence IDs
+- **相关记忆** (list_related_memory): 沿 memory edges 查看父子/证据相关节点
+- **创建对话记忆** (create_memory_from_conversation): 仅在用户明确要求记住时创建低置信、pending-review 的 conversation memory
+- **Agentic RAG** (agentic_rag): 对复杂/探索性问题进行多轮检索、打开高相关条目并汇总证据；当 memory 不足时再钻取原始证据
+- **搜索知识** (search_knowledge): 语义搜索或结构化检索，可包含 notes/sources/wiki/memory
 - **阅读笔记** (read_note): 读取笔记的完整内容
 - **阅读资料** (read_source): 读取原始资料的完整内容
 - **浏览笔记** (list_notes): 按领域/标签/项目浏览笔记
 - **浏览资料** (list_sources): 按类型浏览原始资料
 - **知识统计** (knowledge_stats): 了解知识库的规模和覆盖范围
 - **文档生成** (process_document): 将 markdown 内容保存为文件。**当用户要求撰写报告、分析、方案等文档时**，你先用 markdown 格式撰写内容，然后调用此工具保存为 md 文件（默认格式）。也支持 docx/xlsx/pptx 格式。
+- **创建技能** (create_skill): 当用户要求创建/添加一个可复用 skill 时，基于用户描述生成 Claude/Codex 风格 skill，并保存到 Skills 中供后续 /skill-name 调用。
+- **发现技能** (find_skills): 当用户想从外部寻找好用 skill、agent workflow、prompt template 或 GitHub 示例时，搜索并整理候选，再可结合 create_skill 创建本地 skill。
 - **网络搜索** (web_search): 搜索互联网获取实时信息。当知识库中没有足够信息，或用户需要最新资讯时使用。
 - **询问用户** (ask_human): 向用户提问并等待回复。当需要用户确认方向、选择选项或补充信息时使用。调用后必须停止当前回复，等待用户回答。
 
@@ -171,6 +184,42 @@ _stats_cache: dict = {"text": "", "expires": 0.0}
 _STATS_CACHE_TTL = 300  # 5 minutes
 
 
+
+
+def _resolve_workspace_profile_path(path: Path) -> Path:
+    if path.is_absolute():
+        return path
+    return Path.cwd() / path
+
+
+def _load_workspace_profile() -> str:
+    if not settings.AGENT_LOAD_WORKSPACE_PROFILE:
+        return ""
+
+    profile_path = _resolve_workspace_profile_path(settings.AGENT_WORKSPACE_PROFILE_PATH)
+    try:
+        content = profile_path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        logger.info("Workspace profile not found: %s", profile_path)
+        return ""
+    except OSError:
+        logger.warning("Failed to read workspace profile: %s", profile_path, exc_info=True)
+        return ""
+
+    if not content:
+        return ""
+
+    max_chars = max(0, settings.AGENT_WORKSPACE_PROFILE_MAX_CHARS)
+    if max_chars and len(content) > max_chars:
+        content = content[:max_chars].rstrip() + "\n\n...[truncated]"
+
+    return (
+        "\n\n## 当前工作区项目画像（Workspace Profile）\n"
+        f"来源: `{settings.AGENT_WORKSPACE_PROFILE_PATH}`\n\n"
+        "以下内容描述当前项目的能力、架构、约定和维护规则。回答与本项目相关的问题或执行项目维护任务时，应优先遵守它。\n\n"
+        f"{content}\n"
+    )
+
 async def _get_cached_kb_stats() -> str:
     """Return a one-line knowledge base summary, cached for 5 minutes."""
     now = time.time()
@@ -223,10 +272,11 @@ async def build_system_prompt(
         skills = [s for s in skills if s.name in enabled_skills]
     skills_section = format_skills_for_prompt(skills)
 
-    # Inject user memory if available
+    # Inject workspace profile and user memory if available
+    workspace_profile_section = _load_workspace_profile()
     user_memory_section = await _get_user_memory_section()
 
-    prompt = base + skills_section + user_memory_section
+    prompt = base + workspace_profile_section + skills_section + user_memory_section
 
     if custom_append and custom_append.strip():
         prompt += f"\n\n## 用户自定义指令\n{custom_append.strip()}\n"
@@ -246,20 +296,27 @@ async def _get_user_memory_section() -> str:
 
         from pkg.db import async_session
         from pkg.models.user import UserMemory
+        from pkg.services.memory_retriever import format_memory_context, retrieve_for_profile
 
         async with async_session() as session:
             result = await session.execute(
                 select(UserMemory).where(UserMemory.user_id == user_id)
             )
             memories = list(result.scalars())
+            memory_results = await retrieve_for_profile(session, user_id=user_id, limit=8)
 
-        if not memories:
+        if not memories and not memory_results:
             return ""
 
-        lines = ["\n\n## 用户记忆\n"]
-        for mem in memories:
-            val = json.dumps(mem.value, ensure_ascii=False) if isinstance(mem.value, dict) else str(mem.value)
-            lines.append(f"- **{mem.key}**: {val}")
+        lines = ["\n\n## 用户记忆与长期上下文\n"]
+        if memories:
+            lines.append("### User Profile / Preferences")
+            for mem in memories:
+                val = json.dumps(mem.value, ensure_ascii=False) if isinstance(mem.value, dict) else str(mem.value)
+                lines.append(f"- **{mem.key}**: {val}")
+        if memory_results:
+            lines.append("\n### Memory Tree Context")
+            lines.append(format_memory_context(memory_results, max_chars_per_item=420))
         return "\n".join(lines) + "\n"
     except Exception:
         logger.warning("Failed to load user memory for system prompt", exc_info=True)
@@ -270,6 +327,10 @@ async def _get_user_memory_section() -> str:
 # All tools available to the agent
 # ---------------------------------------------------------------------------
 _BASE_TOOLS = [
+    search_memory,
+    read_memory_node,
+    list_related_memory,
+    create_memory_from_conversation,
     agentic_rag,
     search_knowledge,
     read_note,
@@ -277,7 +338,9 @@ _BASE_TOOLS = [
     list_notes,
     list_sources,
     knowledge_stats,
+    create_skill,
     process_document,
+    find_skills,
     web_search,
     ask_human,
 ]

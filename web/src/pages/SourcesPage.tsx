@@ -1,16 +1,25 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
-import { Plus, FileText, Upload, ChevronDown, ChevronRight, FolderOpen, Rss } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { Plus, FileText, Upload, ChevronDown, ChevronRight, FolderOpen, Rss, Search, Github, BookOpen, RefreshCw, Download, BookmarkCheck, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CategorySelect } from "@/components/CategorySelect";
-import { sourcesApi, categoriesApi, type SourceCreate, type Source } from "@/lib/api";
+import { sourcesApi, categoriesApi, connectorsApi, type ArxivPaper, type GitHubRepo, type SourceCreate, type Source } from "@/lib/api";
+import { SectionNav, knowledgeNavItems } from "@/components/SectionNav";
 
-const SOURCE_TYPES = ["pdf", "article", "conversation", "video", "web", "code"];
+const SOURCE_TYPES = ["pdf", "article", "conversation", "video", "web", "github"];
+const FEED_VIEWS = [
+  { value: "parents", label: "Main Sources" },
+  { value: "feeds", label: "Feeds" },
+  { value: "articles", label: "Feed Articles" },
+  { value: "snapshots", label: "Web Snapshots" },
+  { value: "all", label: "All Items" },
+];
 
 const PDF_TYPES = [
   { value: "text", label: "一般文字型 (快速)" },
@@ -26,14 +35,23 @@ function isServerHeavyExtract(file: File) {
 
 export function SourcesPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
+  const reviewFilter = searchParams.get("review") === "imported" ? "imported" : "";
   const [typeFilter, setTypeFilter] = useState("");
+  const [feedView, setFeedView] = useState("parents");
   const [categoryFilter, setCategoryFilter] = useState<number | null>(null);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<SourceCreate>({ title: "", category_id: 1, source_type: "article" });
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [pdfType, setPdfType] = useState("text");
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+  const [arxivForm, setArxivForm] = useState({ query: "", author: "", category: "", paperId: "", maxResults: 5, categoryId: 1 });
+  const [githubForm, setGithubForm] = useState({ query: "", fullName: "", language: "", topic: "", minStars: "", maxResults: 5, categoryId: 1, fetchReadme: true });
+  const [arxivResults, setArxivResults] = useState<ArxivPaper[]>([]);
+  const [githubResults, setGithubResults] = useState<GitHubRepo[]>([]);
+  const [connectorMessage, setConnectorMessage] = useState<string | null>(null);
+  const [deleteReviewSource, setDeleteReviewSource] = useState<Source | null>(null);
 
   const { data: categoriesData } = useQuery({
     queryKey: ["categories"],
@@ -42,16 +60,29 @@ export function SourcesPage() {
   const categories = categoriesData?.items ?? [];
 
   const { data, isLoading } = useQuery({
-    queryKey: ["sources", typeFilter, categoryFilter],
-    queryFn: () => sourcesApi.list({ source_type: typeFilter || undefined, category_id: categoryFilter ?? undefined, limit: 100 }),
+    queryKey: ["sources", typeFilter, categoryFilter, feedView, reviewFilter],
+    queryFn: () => sourcesApi.list({
+      source_type: typeFilter || undefined,
+      category_id: categoryFilter ?? undefined,
+      feed_view: feedView,
+      limit: 100,
+    }),
   });
+
+  const visibleSources = useMemo(() => {
+    const items = data?.items ?? [];
+    if (reviewFilter === "imported") {
+      return items.filter((source) => source.metadata_?.review_status === "imported_reviewable");
+    }
+    return items;
+  }, [data?.items, reviewFilter]);
 
   // Group sources by category
   const groupedSources = useMemo(() => {
-    if (!data?.items) return [];
+    if (!visibleSources.length) return [];
     const groups = new Map<string, { categoryId: number; categoryName: string; displayName: string; sources: Source[] }>();
 
-    for (const source of data.items) {
+    for (const source of visibleSources) {
       const key = source.category_name || "general";
       if (!groups.has(key)) {
         const cat = categories.find((c) => c.name === key);
@@ -70,7 +101,7 @@ export function SourcesPage() {
       if (b.categoryName === "general") return -1;
       return a.displayName.localeCompare(b.displayName);
     });
-  }, [data?.items, categories]);
+  }, [visibleSources, categories]);
 
   const toggleCategory = (name: string) => {
     setCollapsedCategories((prev) => {
@@ -103,6 +134,86 @@ export function SourcesPage() {
     },
   });
 
+  const arxivSearchMutation = useMutation({
+    mutationFn: () => connectorsApi.searchArxiv({
+      query: arxivForm.query || undefined,
+      author: arxivForm.author || undefined,
+      category: arxivForm.category || undefined,
+      paper_id: arxivForm.paperId || undefined,
+      max_results: arxivForm.maxResults,
+    }),
+    onSuccess: (result) => {
+      setArxivResults(result.items);
+      setConnectorMessage(`Found ${result.total} arXiv paper(s). Unsaved results are cached for 7 days.`);
+    },
+  });
+
+  const arxivImportMutation = useMutation({
+    mutationFn: (paper: ArxivPaper) => connectorsApi.importArxiv({ paper, category_id: arxivForm.categoryId }),
+    onSuccess: (result, paper) => {
+      queryClient.invalidateQueries({ queryKey: ["sources"] });
+      queryClient.invalidateQueries({ queryKey: ["memory-nodes"] });
+      setArxivResults((items) => items.map((item) => item.arxiv_id === paper.arxiv_id ? { ...item, cache_status: "saved", cache_expires_at: null, source_id: result.source.id } : item));
+      setTypeFilter("article");
+      setFeedView("parents");
+      setConnectorMessage(`${result.created ? "Kept" : "Updated"} ${result.source.title}`);
+    },
+  });
+
+  const githubSearchMutation = useMutation({
+    mutationFn: () => connectorsApi.searchGitHub({
+      query: githubForm.query,
+      language: githubForm.language || undefined,
+      topic: githubForm.topic || undefined,
+      min_stars: githubForm.minStars ? Number(githubForm.minStars) : undefined,
+      max_results: githubForm.maxResults,
+    }),
+    onSuccess: (result) => {
+      setGithubResults(result.items);
+      setConnectorMessage(`Found ${result.total} GitHub repo(s). Unsaved results are cached for 7 days.`);
+    },
+  });
+
+  const githubImportMutation = useMutation({
+    mutationFn: (repo: GitHubRepo) => connectorsApi.importGitHub({ repo, category_id: githubForm.categoryId, fetch_readme: githubForm.fetchReadme }),
+    onSuccess: (result, repo) => {
+      queryClient.invalidateQueries({ queryKey: ["sources"] });
+      queryClient.invalidateQueries({ queryKey: ["memory-nodes"] });
+      setGithubResults((items) => items.map((item) => item.full_name === repo.full_name ? { ...item, cache_status: "saved", cache_expires_at: null, source_id: result.source.id } : item));
+      setTypeFilter("github");
+      setFeedView("parents");
+      setConnectorMessage(`${result.created ? "Kept" : "Updated"} ${result.source.title}`);
+    },
+  });
+
+  const githubDirectImportMutation = useMutation({
+    mutationFn: () => connectorsApi.importGitHub({ full_name: githubForm.fullName, category_id: githubForm.categoryId, fetch_readme: githubForm.fetchReadme }),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["sources"] });
+      queryClient.invalidateQueries({ queryKey: ["memory-nodes"] });
+      setTypeFilter("github");
+      setFeedView("parents");
+      setConnectorMessage(`${result.created ? "Kept" : "Updated"} ${result.source.title}`);
+    },
+  });
+
+  const keepImportedMutation = useMutation({
+    mutationFn: (id: string) => sourcesApi.keepImported(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["sources"] });
+      queryClient.invalidateQueries({ queryKey: ["review-summary"] });
+    },
+  });
+
+  const deleteSourceMutation = useMutation({
+    mutationFn: (id: string) => sourcesApi.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["sources"] });
+      queryClient.invalidateQueries({ queryKey: ["review-summary"] });
+      setDeleteReviewSource(null);
+    },
+  });
+
   function buildUploadPayload() {
     if (!uploadFile) return null;
     const payload = new FormData();
@@ -127,10 +238,24 @@ export function SourcesPage() {
   }
 
   const showGrouped = categoryFilter === null && groupedSources.length > 1;
+  const hasSources = visibleSources.length > 0;
+
+  const clearReviewFilter = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete("review");
+    setSearchParams(next, { replace: true });
+  };
+
+  const sourceDetailState = useMemo(() => ({
+    backTo: `/sources${searchParams.toString() ? `?${searchParams.toString()}` : ""}`,
+    backLabel: reviewFilter === "imported" ? "Back to Imported Review" : "Back to Sources",
+  }), [reviewFilter, searchParams]);
 
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-5xl mx-auto px-6 py-8">
+        <SectionNav items={knowledgeNavItems} active="Sources" />
+
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold">Sources</h1>
           <Dialog open={open} onOpenChange={setOpen}>
@@ -243,6 +368,12 @@ export function SourcesPage() {
 
         {/* Category filter */}
         <div className="flex gap-2 mb-2 flex-wrap">
+          {reviewFilter === "imported" && (
+            <div className="flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs text-amber-700 dark:text-amber-300">
+              Showing imported sources pending review
+              <button type="button" className="font-medium underline" onClick={clearReviewFilter}>Clear</button>
+            </div>
+          )}
           <button
             onClick={() => setCategoryFilter(null)}
             className={`px-3 py-1 rounded-md text-xs cursor-pointer transition-colors ${
@@ -265,9 +396,9 @@ export function SourcesPage() {
         </div>
 
         {/* Type filter */}
-        <div className="flex gap-2 mb-4 flex-wrap">
+        <div className="flex gap-2 mb-2 flex-wrap">
           <button
-            onClick={() => setTypeFilter("")}
+            onClick={() => { setTypeFilter(""); clearReviewFilter(); }}
             className={`px-3 py-1 rounded-md text-xs cursor-pointer transition-colors ${
               !typeFilter ? "bg-primary/20 text-primary font-medium" : "text-muted-foreground hover:bg-accent"
             }`}
@@ -277,7 +408,7 @@ export function SourcesPage() {
           {SOURCE_TYPES.map((t) => (
             <button
               key={t}
-              onClick={() => setTypeFilter(t)}
+              onClick={() => { setTypeFilter(t); clearReviewFilter(); }}
               className={`px-3 py-1 rounded-md text-xs cursor-pointer transition-colors ${
                 typeFilter === t ? "bg-primary/20 text-primary font-medium" : "text-muted-foreground hover:bg-accent"
               }`}
@@ -287,16 +418,64 @@ export function SourcesPage() {
           ))}
         </div>
 
+
+        {typeFilter === "article" && (
+          <ArxivConnectorPanel
+            categories={categories}
+            form={arxivForm}
+            setForm={setArxivForm}
+            results={arxivResults}
+            onSearch={() => arxivSearchMutation.mutate()}
+            onImport={(paper) => arxivImportMutation.mutate(paper)}
+            isSearching={arxivSearchMutation.isPending}
+            importingId={arxivImportMutation.variables?.arxiv_id ?? null}
+            error={arxivSearchMutation.error instanceof Error ? arxivSearchMutation.error.message : arxivImportMutation.error instanceof Error ? arxivImportMutation.error.message : null}
+            message={connectorMessage}
+          />
+        )}
+
+        {typeFilter === "github" && (
+          <GitHubConnectorPanel
+            categories={categories}
+            form={githubForm}
+            setForm={setGithubForm}
+            results={githubResults}
+            onSearch={() => githubSearchMutation.mutate()}
+            onImport={(repo) => githubImportMutation.mutate(repo)}
+            onDirectImport={() => githubDirectImportMutation.mutate()}
+            isSearching={githubSearchMutation.isPending}
+            isDirectImporting={githubDirectImportMutation.isPending}
+            importingName={githubImportMutation.variables?.full_name ?? null}
+            error={githubSearchMutation.error instanceof Error ? githubSearchMutation.error.message : githubImportMutation.error instanceof Error ? githubImportMutation.error.message : githubDirectImportMutation.error instanceof Error ? githubDirectImportMutation.error.message : null}
+            message={connectorMessage}
+          />
+        )}
+
+        {/* Feed view filter */}
+        <div className="flex gap-2 mb-4 flex-wrap">
+          {FEED_VIEWS.map((view) => (
+            <button
+              key={view.value}
+              onClick={() => setFeedView(view.value)}
+              className={`px-3 py-1 rounded-md text-xs cursor-pointer transition-colors ${
+                feedView === view.value ? "bg-orange-500/20 text-orange-600 font-medium" : "text-muted-foreground hover:bg-accent"
+              }`}
+            >
+              {view.label}
+            </button>
+          ))}
+        </div>
+
         {isLoading && <p className="text-sm text-muted-foreground">Loading...</p>}
 
-        {data && data.total === 0 && (
+        {data && !hasSources && (
           <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
             <FileText className="h-12 w-12 mb-3 opacity-30" />
-            <p>No sources yet. Add one to get started.</p>
+            <p>{reviewFilter === "imported" ? "No imported sources pending review." : "No sources yet. Add one to get started."}</p>
           </div>
         )}
 
-        {showGrouped ? (
+        {hasSources && (showGrouped ? (
           <div className="space-y-6">
             {groupedSources.map((group) => {
               const isCollapsed = collapsedCategories.has(group.categoryName);
@@ -318,7 +497,16 @@ export function SourcesPage() {
                   {!isCollapsed && (
                     <div className="space-y-1">
                       {group.sources.map((source) => (
-                        <SourceRow key={source.id} source={source} onClick={() => navigate(`/sources/${encodeURIComponent(source.id)}`)} />
+                        <SourceRow
+                          key={source.id}
+                          source={source}
+                          onClick={() => navigate(`/sources/${encodeURIComponent(source.id)}`, { state: sourceDetailState })}
+                          reviewMode={reviewFilter === "imported"}
+                          onKeep={() => keepImportedMutation.mutate(source.id)}
+                          onDelete={() => setDeleteReviewSource(source)}
+                          isKeeping={keepImportedMutation.isPending && keepImportedMutation.variables === source.id}
+                          isDeleting={deleteSourceMutation.isPending && deleteSourceMutation.variables === source.id}
+                        />
                       ))}
                     </div>
                   )}
@@ -328,24 +516,71 @@ export function SourcesPage() {
           </div>
         ) : (
           <div className="space-y-1">
-            {data?.items.map((source) => (
-              <SourceRow key={source.id} source={source} onClick={() => navigate(`/sources/${encodeURIComponent(source.id)}`)} />
+            {visibleSources.map((source) => (
+              <SourceRow
+                key={source.id}
+                source={source}
+                onClick={() => navigate(`/sources/${encodeURIComponent(source.id)}`, { state: sourceDetailState })}
+                reviewMode={reviewFilter === "imported"}
+                onKeep={() => keepImportedMutation.mutate(source.id)}
+                onDelete={() => setDeleteReviewSource(source)}
+                isKeeping={keepImportedMutation.isPending && keepImportedMutation.variables === source.id}
+                isDeleting={deleteSourceMutation.isPending && deleteSourceMutation.variables === source.id}
+              />
             ))}
           </div>
-        )}
+        ))}
       </div>
+
+        <Dialog open={Boolean(deleteReviewSource)} onOpenChange={(open) => !open && setDeleteReviewSource(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete Imported Source?</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-muted-foreground">
+              Delete <span className="font-medium text-foreground">{deleteReviewSource?.title}</span> from your sources. This cannot be undone.
+            </p>
+            {deleteSourceMutation.error && (
+              <p className="text-sm text-destructive">{deleteSourceMutation.error instanceof Error ? deleteSourceMutation.error.message : "Delete failed"}</p>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setDeleteReviewSource(null)} disabled={deleteSourceMutation.isPending}>Cancel</Button>
+              <Button variant="destructive" size="sm" onClick={() => deleteReviewSource && deleteSourceMutation.mutate(deleteReviewSource.id)} disabled={deleteSourceMutation.isPending}>
+                {deleteSourceMutation.isPending ? "Deleting..." : "Delete"}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
     </div>
   );
 }
 
-function SourceRow({ source, onClick }: { source: Source; onClick: () => void }) {
-  const isRss = source.source_type === "web" && source.metadata_?.rss_enabled === "true";
+function SourceRow({
+  source,
+  onClick,
+  reviewMode = false,
+  onKeep,
+  onDelete,
+  isKeeping = false,
+  isDeleting = false,
+}: {
+  source: Source;
+  onClick: () => void;
+  reviewMode?: boolean;
+  onKeep?: () => void;
+  onDelete?: () => void;
+  isKeeping?: boolean;
+  isDeleting?: boolean;
+}) {
+  const isRss = (source.source_type === "web" || source.source_type === "article") && source.metadata_?.rss_enabled === "true";
+  const isFeedArticle = Boolean(source.metadata_?.feed_source_id);
+  const label = isFeedArticle ? "feed article" : isRss ? "feed" : source.source_type === "web" ? "web snapshot" : source.source_type;
   return (
     <div
       className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-transparent hover:border-border hover:bg-accent/50 cursor-pointer transition-colors"
       onClick={onClick}
     >
-      <Badge variant="source" className="shrink-0">{source.source_type}</Badge>
+      <Badge variant="source" className="shrink-0">{label}</Badge>
       {isRss && <Rss className="h-3.5 w-3.5 text-orange-500 shrink-0" />}
       <span className="text-sm font-medium truncate flex-1">{source.title}</span>
       {source.url && (
@@ -354,6 +589,196 @@ function SourceRow({ source, onClick }: { source: Source; onClick: () => void })
       <span className="text-xs text-muted-foreground shrink-0">
         {new Date(source.ingested_at).toLocaleDateString()}
       </span>
+      {reviewMode && (
+        <div className="flex shrink-0 gap-2" onClick={(event) => event.stopPropagation()}>
+          <Button size="sm" variant="outline" onClick={onKeep} disabled={isKeeping || isDeleting}>
+            {isKeeping ? <RefreshCw className="mr-1 h-3.5 w-3.5 animate-spin" /> : <BookmarkCheck className="mr-1 h-3.5 w-3.5" />} Keep
+          </Button>
+          <Button size="sm" variant="destructive" onClick={onDelete} disabled={isKeeping || isDeleting}>
+            {isDeleting ? <RefreshCw className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Trash2 className="mr-1 h-3.5 w-3.5" />} Delete
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+type CategoryOption = Parameters<typeof CategorySelect>[0]["categories"][number];
+type ArxivForm = { query: string; author: string; category: string; paperId: string; maxResults: number; categoryId: number };
+type GitHubForm = { query: string; fullName: string; language: string; topic: string; minStars: string; maxResults: number; categoryId: number; fetchReadme: boolean };
+
+function ArxivConnectorPanel({
+  categories,
+  form,
+  setForm,
+  results,
+  onSearch,
+  onImport,
+  isSearching,
+  importingId,
+  error,
+  message,
+}: {
+  categories: CategoryOption[];
+  form: ArxivForm;
+  setForm: React.Dispatch<React.SetStateAction<ArxivForm>>;
+  results: ArxivPaper[];
+  onSearch: () => void;
+  onImport: (paper: ArxivPaper) => void;
+  isSearching: boolean;
+  importingId: string | null;
+  error: string | null;
+  message: string | null;
+}) {
+  return (
+    <div className="mb-4 rounded-xl border border-border bg-card p-4">
+      <div className="mb-3 flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 className="flex items-center gap-2 text-sm font-semibold"><BookOpen className="h-4 w-4" /> arXiv Article Search</h2>
+          <p className="text-xs text-muted-foreground">Search results are temporary for 7 days. Click Keep to save a paper as a permanent article source and generate memory.</p>
+        </div>
+        {message && <p className="text-xs text-muted-foreground">{message}</p>}
+      </div>
+      <div className="space-y-3">
+        <div className="grid gap-2 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
+          <Input placeholder="Query, e.g. agentic rag" value={form.query} onChange={(e) => setForm((current) => ({ ...current, query: e.target.value }))} />
+          <Input placeholder="Author" value={form.author} onChange={(e) => setForm((current) => ({ ...current, author: e.target.value }))} />
+          <Input placeholder="Category, e.g. cs.AI" value={form.category} onChange={(e) => setForm((current) => ({ ...current, category: e.target.value }))} />
+        </div>
+        <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_120px_minmax(180px,220px)_auto]">
+          <Input placeholder="Paper ID optional" value={form.paperId} onChange={(e) => setForm((current) => ({ ...current, paperId: e.target.value }))} />
+          <Input type="number" min={1} max={50} value={form.maxResults} onChange={(e) => setForm((current) => ({ ...current, maxResults: Number(e.target.value) || 5 }))} />
+          <CategorySelect categories={categories} value={form.categoryId} onChange={(id) => setForm((current) => ({ ...current, categoryId: id }))} />
+          <Button type="button" disabled={isSearching || (!form.query && !form.paperId && !form.author && !form.category)} onClick={onSearch}>
+            {isSearching ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} Search
+          </Button>
+        </div>
+        {error && <p className="text-xs text-destructive">{error}</p>}
+        <div className="space-y-2">
+          {results.map((paper) => (
+            <div key={paper.arxiv_id} className="rounded-lg border border-border p-3">
+              <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="source">article</Badge>
+                    <Badge variant="outline">{paper.arxiv_id}</Badge>
+                    {paper.categories.slice(0, 3).map((category) => <Badge key={category} variant="secondary">{category}</Badge>)}
+                  </div>
+                  <h3 className="mt-2 text-sm font-medium leading-5">{paper.title}</h3>
+                  <p className="mt-1 text-xs text-muted-foreground">{paper.authors.slice(0, 5).join(", ")}</p>
+                  <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">{paper.abstract}</p>
+                </div>
+                <div className="flex flex-col items-start gap-2 md:items-end">
+                  <ConnectorCacheStatus status={paper.cache_status} expiresAt={paper.cache_expires_at} sourceId={paper.source_id} />
+                  <Button type="button" size="sm" variant={paper.cache_status === "saved" ? "secondary" : "outline"} disabled={importingId === paper.arxiv_id || paper.cache_status === "saved"} onClick={() => onImport(paper)}>
+                    {importingId === paper.arxiv_id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <BookmarkCheck className="h-3.5 w-3.5" />} {paper.cache_status === "saved" ? "Kept" : "Keep"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConnectorCacheStatus({ status, expiresAt, sourceId }: { status?: string | null; expiresAt?: string | null; sourceId?: string | null }) {
+  if (status === "saved") {
+    return <span className="text-xs text-emerald-600">Kept permanently{sourceId ? ` · ${sourceId}` : ""}</span>;
+  }
+  if (expiresAt) {
+    return <span className="text-xs text-muted-foreground">Temporary · expires {new Date(expiresAt).toLocaleDateString()}</span>;
+  }
+  return <span className="text-xs text-muted-foreground">Temporary · 7 days</span>;
+}
+
+function GitHubConnectorPanel({
+  categories,
+  form,
+  setForm,
+  results,
+  onSearch,
+  onImport,
+  onDirectImport,
+  isSearching,
+  isDirectImporting,
+  importingName,
+  error,
+  message,
+}: {
+  categories: CategoryOption[];
+  form: GitHubForm;
+  setForm: React.Dispatch<React.SetStateAction<GitHubForm>>;
+  results: GitHubRepo[];
+  onSearch: () => void;
+  onImport: (repo: GitHubRepo) => void;
+  onDirectImport: () => void;
+  isSearching: boolean;
+  isDirectImporting: boolean;
+  importingName: string | null;
+  error: string | null;
+  message: string | null;
+}) {
+  return (
+    <div className="mb-4 rounded-xl border border-border bg-card p-4">
+      <div className="mb-3 flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 className="flex items-center gap-2 text-sm font-semibold"><Github className="h-4 w-4" /> GitHub Source Search</h2>
+          <p className="text-xs text-muted-foreground">Search results are temporary for 7 days. Click Keep to save a repository as a permanent github source.</p>
+        </div>
+        {message && <p className="text-xs text-muted-foreground">{message}</p>}
+      </div>
+      <div className="space-y-3">
+        <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto]">
+          <Input placeholder="Direct import owner/repo, e.g. openai/codex" value={form.fullName} onChange={(e) => setForm((current) => ({ ...current, fullName: e.target.value }))} />
+          <Button type="button" variant="outline" disabled={!form.fullName || isDirectImporting} onClick={onDirectImport}>
+            {isDirectImporting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Keep Repo
+          </Button>
+        </div>
+        <div className="grid gap-2 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
+          <Input placeholder="Search query, e.g. agent framework" value={form.query} onChange={(e) => setForm((current) => ({ ...current, query: e.target.value }))} />
+          <Input placeholder="Language" value={form.language} onChange={(e) => setForm((current) => ({ ...current, language: e.target.value }))} />
+          <Input placeholder="Topic" value={form.topic} onChange={(e) => setForm((current) => ({ ...current, topic: e.target.value }))} />
+        </div>
+        <div className="grid gap-2 md:grid-cols-[140px_120px_minmax(180px,220px)_auto]">
+          <Input placeholder="Min stars" type="number" min={0} value={form.minStars} onChange={(e) => setForm((current) => ({ ...current, minStars: e.target.value }))} />
+          <Input type="number" min={1} max={50} value={form.maxResults} onChange={(e) => setForm((current) => ({ ...current, maxResults: Number(e.target.value) || 5 }))} />
+          <CategorySelect categories={categories} value={form.categoryId} onChange={(id) => setForm((current) => ({ ...current, categoryId: id }))} />
+          <Button type="button" disabled={!form.query || isSearching} onClick={onSearch}>
+            {isSearching ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} Search
+          </Button>
+        </div>
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          <input type="checkbox" checked={form.fetchReadme} onChange={(e) => setForm((current) => ({ ...current, fetchReadme: e.target.checked }))} />
+          Fetch README on direct keep. Search result keeps create github sources from repo metadata first.
+        </label>
+        {error && <p className="text-xs text-destructive">{error}</p>}
+        <div className="space-y-2">
+          {results.map((repo) => (
+            <div key={repo.full_name} className="rounded-lg border border-border p-3">
+              <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="source">github</Badge>
+                    <Badge variant="outline">★ {repo.stars}</Badge>
+                    {repo.language && <Badge variant="secondary">{repo.language}</Badge>}
+                    {repo.topics.slice(0, 3).map((topic) => <Badge key={topic} variant="outline">{topic}</Badge>)}
+                  </div>
+                  <h3 className="mt-2 text-sm font-medium leading-5">{repo.full_name}</h3>
+                  <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{repo.description || "No description."}</p>
+                </div>
+                <div className="flex flex-col items-start gap-2 md:items-end">
+                  <ConnectorCacheStatus status={repo.cache_status} expiresAt={repo.cache_expires_at} sourceId={repo.source_id} />
+                  <Button type="button" size="sm" variant={repo.cache_status === "saved" ? "secondary" : "outline"} disabled={importingName === repo.full_name || repo.cache_status === "saved"} onClick={() => onImport(repo)}>
+                    {importingName === repo.full_name ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <BookmarkCheck className="h-3.5 w-3.5" />} {repo.cache_status === "saved" ? "Kept" : "Keep"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { SearchResultCard } from "@/components/SearchResultCard";
 import { searchApi, type SearchResult } from "@/lib/api";
+import { SectionNav, knowledgeNavItems } from "@/components/SectionNav";
 
 const MODES = ["auto", "vector", "sql", "hybrid"] as const;
 
@@ -24,12 +25,18 @@ export function SearchPage() {
     if (query.trim()) setSubmitted(query.trim());
   };
 
-  return (
-    <div className="h-full overflow-y-auto">
-      <div className="max-w-3xl mx-auto px-6 py-8">
-        <h1 className="text-2xl font-bold mb-6">Search Knowledge Base</h1>
+	return (
+		<div className="h-full overflow-y-auto">
+			<div className="max-w-3xl mx-auto px-6 py-8 space-y-6">
+				<SectionNav items={knowledgeNavItems} active="Search" />
+				<div>
+					<h1 className="text-2xl font-bold">Search Knowledge</h1>
+					<p className="mt-2 text-sm text-muted-foreground">
+						Search across saved sources, notes, documents, memory, and wiki knowledge from one Knowledge workspace.
+					</p>
+				</div>
 
-        <form onSubmit={handleSubmit} className="space-y-3">
+				<form onSubmit={handleSubmit} className="space-y-3">
           <div className="flex gap-2">
             <div className="relative flex-1">
               <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -65,7 +72,7 @@ export function SearchPage() {
         </form>
 
         {/* Results */}
-        <div className="mt-6 space-y-3">
+				<div className="space-y-3">
           {isLoading && (
             <p className="text-sm text-muted-foreground">Searching...</p>
           )}

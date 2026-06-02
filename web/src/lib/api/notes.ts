@@ -16,6 +16,8 @@ export interface Note {
   source_ids: string[];
   file_path?: string | null;
   word_count?: number | null;
+  expires_at?: string | null;
+  kept_at?: string | null;
   created_at: string;
   updated_at: string;
 }

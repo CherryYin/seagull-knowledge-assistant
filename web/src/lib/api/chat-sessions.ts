@@ -18,6 +18,7 @@ export interface MessageMetadata {
   has_generated_document?: boolean;
   document_content?: string;
   document_title?: string;
+  writing_note_id?: string;
 }
 
 export interface ChatSessionMessage {

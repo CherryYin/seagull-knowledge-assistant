@@ -7,7 +7,7 @@ class SourceCreate(BaseModel):
     id: str | None = None
     title: str
     category_id: int = 1
-    source_type: str = Field(pattern=r"^(pdf|article|conversation|video|web|code)$")
+    source_type: str = Field(pattern=r"^(pdf|article|conversation|video|web|github|code)$")
     url: str | None = None
     raw_content: str | None = None
     file_path: str | None = None
@@ -21,7 +21,7 @@ class SourceUpdate(BaseModel):
     category_id: int | None = None
     source_type: str | None = Field(
         default=None,
-        pattern=r"^(pdf|article|conversation|video|web|code)$",
+        pattern=r"^(pdf|article|conversation|video|web|github|code)$",
     )
     url: str | None = None
 

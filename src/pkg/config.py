@@ -92,6 +92,11 @@ class Settings(BaseSettings):
     COMPACTION_SUMMARY_RATIO: float = 0.4
     COMPACTION_PRESERVE_RECENT: int = 6
 
+    # Workspace profile injected into the default Action Agent system prompt.
+    AGENT_LOAD_WORKSPACE_PROFILE: bool = True
+    AGENT_WORKSPACE_PROFILE_PATH: Path = Path("AGENTS.md")
+    AGENT_WORKSPACE_PROFILE_MAX_CHARS: int = 12000
+
     # User profiler settings
     PROFILE_UPDATE_DAY: int = 0  # 0=Monday, 6=Sunday
 
@@ -112,6 +117,8 @@ class Settings(BaseSettings):
     CHUNK_MAX_TOKENS: int = 2048  # max tokens per chunk (tiktoken)
 
     # RSS feed settings
+    RSS_AUTO_FETCH_ENABLED: bool = False
+    RSS_AUTO_SUMMARY_ENABLED: bool = False
     RSS_FETCH_INTERVAL_HOURS: int = 24
     RSS_SUMMARY_INTERVAL_HOURS: int = 24
     RSS_FETCH_TIMEOUT: int = 30
@@ -120,6 +127,22 @@ class Settings(BaseSettings):
     RSS_SUMMARY_LLM_TIMEOUT: int = 180
     RSS_SUMMARY_MAX_ARTICLES: int = 12
     RSS_SUMMARY_MAX_CHARS_PER_ARTICLE: int = 1500
+    RSS_FILTER_LOW_VALUE: bool = True
+
+    # External connector trend discovery. Disabled by default so app startup does not fetch external sources.
+    ARXIV_USER_AGENT: str = "personal-knowledge-graph/0.1"
+    ARXIV_MIN_REQUEST_INTERVAL_SECONDS: float = 3.0
+    ARXIV_RETRY_INITIAL_DELAY_SECONDS: float = 5.0
+    ARXIV_RETRY_MAX_DELAY_SECONDS: float = 60.0
+    CONNECTOR_TRENDS_AUTO_ENABLED: bool = False
+    CONNECTOR_TRENDS_INTERVAL_HOURS: int = 24
+    CONNECTOR_TRENDS_USER_IDS: str = ""
+    CONNECTOR_TRENDS_ARXIV_QUERY: str = "artificial intelligence OR retrieval augmented generation OR agents"
+    CONNECTOR_TRENDS_ARXIV_CATEGORY: str = "cs.AI"
+    CONNECTOR_TRENDS_GITHUB_QUERY: str = "agent framework OR retrieval augmented generation OR knowledge graph"
+    CONNECTOR_TRENDS_GITHUB_LANGUAGE: str = ""
+    DISCOVERY_AUTO_GENERATE_ENABLED: bool = False
+    DISCOVERY_GENERATE_INTERVAL_HOURS: int = 24
 
     @property
     def resolved_embedding_api_base(self) -> str:

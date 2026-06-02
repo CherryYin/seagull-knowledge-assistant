@@ -39,6 +39,8 @@ class NoteRead(BaseModel):
     source_ids: list[str]
     file_path: str | None = None
     word_count: int | None = None
+    expires_at: datetime | None = None
+    kept_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -81,7 +83,7 @@ class SearchRequest(BaseModel):
 class SearchResult(BaseModel):
     id: str
     title: str
-    type: str  # "source" or "note"
+    type: str  # "source", "source_chunk", "note", "wiki", or "memory"
     score: float
     abstract: str | None = None
     content_preview: str | None = None

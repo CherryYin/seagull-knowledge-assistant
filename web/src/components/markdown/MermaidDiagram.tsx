@@ -79,11 +79,13 @@ export function MermaidDiagram({ chart }: MermaidDiagramProps) {
   const getDownloadableSvg = () => {
     const svgElement = diagramRef.current?.querySelector("svg");
     const clonedSvg = svgElement?.cloneNode(true) as SVGSVGElement | undefined;
-    clonedSvg?.querySelectorAll("image, script, iframe, foreignObject").forEach((node) => node.remove());
+    clonedSvg?.querySelectorAll("image, script, iframe").forEach((node) => node.remove());
     clonedSvg?.querySelectorAll("*").forEach((node) => {
       [...node.attributes].forEach((attribute) => {
+        const attributeName = attribute.name.toLowerCase();
         const value = attribute.value.trim();
-        if (/^https?:\/\//i.test(value)) {
+        const isRemoteUrlAttribute = ["href", "xlink:href", "src", "poster", "action"].includes(attributeName);
+        if (attributeName.startsWith("on") || (isRemoteUrlAttribute && /^https?:\/\//i.test(value))) {
           node.removeAttribute(attribute.name);
         }
       });
@@ -104,7 +106,7 @@ export function MermaidDiagram({ chart }: MermaidDiagramProps) {
       const exportStyle = document.createElementNS("http://www.w3.org/2000/svg", "style");
       exportStyle.textContent = `
         text, tspan { font-family: Arial, Helvetica, sans-serif; paint-order: stroke; }
-        .nodeLabel, .edgeLabel, .label, .labelText { font-family: Arial, Helvetica, sans-serif; }
+        .nodeLabel, .edgeLabel, .label, .labelText, .nodeLabel p, .edgeLabel p, .label p { font-family: Arial, Helvetica, sans-serif; }
       `;
       clonedSvg.insertBefore(exportStyle, clonedSvg.firstChild);
     }

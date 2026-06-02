@@ -37,6 +37,7 @@ interface Props {
   streaming?: boolean;
   onRetry?: () => void;
   onNewKnowledge?: () => void;
+  onSaveAsNote?: () => void;
   onRemember?: () => void;
 }
 
@@ -47,14 +48,17 @@ export function ChatMessage({
   streaming,
   onRetry,
   onNewKnowledge,
+  onSaveAsNote,
   onRemember,
 }: Props) {
   const isUser = role === "user";
   const navigate = useNavigate();
   const [retryLoading, setRetryLoading] = useState(false);
   const [newKnowledgeLoading, setNewKnowledgeLoading] = useState(false);
+  const [saveAsNoteLoading, setSaveAsNoteLoading] = useState(false);
   const [rememberLoading, setRememberLoading] = useState(false);
   const [newKnowledgeDone, setNewKnowledgeDone] = useState(false);
+  const [saveAsNoteDone, setSaveAsNoteDone] = useState(false);
   const [rememberDone, setRememberDone] = useState(false);
 
   const markdownComponents: Components = {
@@ -68,7 +72,7 @@ export function ChatMessage({
         return (
           <button
             type="button"
-            onClick={() => navigate(href)}
+            onClick={() => navigate(href, { state: { backTo: "/chat", backLabel: "Back to Chat" } })}
             className="inline-flex items-center gap-0.5 rounded bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary hover:bg-primary/20 transition-colors cursor-pointer no-underline align-baseline"
             title={rawId}
           >
@@ -116,6 +120,20 @@ export function ChatMessage({
       // Error handled by parent
     } finally {
       setRememberLoading(false);
+    }
+  };
+
+  const handleSaveAsNote = async () => {
+    if (!onSaveAsNote) return;
+    setSaveAsNoteLoading(true);
+    try {
+      await onSaveAsNote();
+      setSaveAsNoteDone(true);
+      setTimeout(() => setSaveAsNoteDone(false), 2000);
+    } catch {
+      // Error handled by parent
+    } finally {
+      setSaveAsNoteLoading(false);
     }
   };
 
@@ -179,7 +197,7 @@ export function ChatMessage({
                   <button
                     key={ref.id}
                     type="button"
-                    onClick={() => navigate(ref.type === "note" ? `/notes/${encodeURIComponent(ref.id)}` : `/sources/${encodeURIComponent(ref.id)}`)}
+                    onClick={() => navigate(ref.type === "note" ? `/notes/${encodeURIComponent(ref.id)}` : `/sources/${encodeURIComponent(ref.id)}`, { state: { backTo: "/chat", backLabel: "Back to Chat" } })}
                     className="inline-flex items-center gap-0.5 rounded bg-primary/10 px-1.5 py-0.5 text-xs text-primary hover:bg-primary/20 transition-colors cursor-pointer"
                     title={ref.id}
                   >
@@ -209,8 +227,25 @@ export function ChatMessage({
               </Button>
             )}
 
+            {!isUser && onSaveAsNote && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
+                onClick={handleSaveAsNote}
+                disabled={saveAsNoteLoading || saveAsNoteDone}
+              >
+                {saveAsNoteDone ? (
+                  <Check className="h-3 w-3 text-emerald-500" />
+                ) : (
+                  <StickyNote className={cn("h-3 w-3", saveAsNoteLoading && "animate-pulse")} />
+                )}
+                {saveAsNoteDone ? "Saved" : "Save as Note"}
+              </Button>
+            )}
+
             {/* Save to Writing button — on assistant messages with generated documents */}
-            {!isUser && metadata?.has_generated_document && onNewKnowledge && (
+            {!isUser && onNewKnowledge && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -223,7 +258,7 @@ export function ChatMessage({
                 ) : (
                   <FileOutput className={cn("h-3 w-3", newKnowledgeLoading && "animate-pulse")} />
                 )}
-                {newKnowledgeDone ? "Saved" : "Save doc"}
+                {newKnowledgeDone ? "Saved" : "Save as Source + Note"}
               </Button>
             )}
 

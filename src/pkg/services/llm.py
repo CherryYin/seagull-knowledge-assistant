@@ -32,6 +32,7 @@ async def discover_models(provider: LLMProviderConfig) -> list[dict]:
         return cached[0]
 
     models: list[dict] = []
+    started = time.monotonic()
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.get(
@@ -51,8 +52,33 @@ async def discover_models(provider: LLMProviderConfig) -> list[dict]:
                 if isinstance(m, dict) and "id" in m
             ]
             models.sort(key=lambda m: m["id"])
-    except Exception:
+        try:
+            from pkg.services.system_jobs import record_system_event
+
+            await record_system_event(
+                job_type="llm_model_discovery",
+                title=f"Discover models: {provider.display_name}",
+                status="completed",
+                metadata={"provider_id": provider.id, "model_count": len(models)},
+                duration_ms=round((time.monotonic() - started) * 1000, 2),
+            )
+        except Exception:
+            logger.debug("Failed to record model discovery event", exc_info=True)
+    except Exception as exc:
         logger.warning("Failed to discover models for provider %s", provider.id, exc_info=True)
+        try:
+            from pkg.services.system_jobs import record_system_event
+
+            await record_system_event(
+                job_type="llm_model_discovery",
+                title=f"Discover models: {provider.display_name}",
+                status="failed",
+                metadata={"provider_id": provider.id},
+                error_message=str(exc),
+                duration_ms=round((time.monotonic() - started) * 1000, 2),
+            )
+        except Exception:
+            logger.debug("Failed to record model discovery failure", exc_info=True)
 
     _MODEL_CACHE[provider.id] = (models, now)
     return models

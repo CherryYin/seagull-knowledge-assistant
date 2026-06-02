@@ -1,4 +1,4 @@
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import type { SearchResult } from "@/lib/api";
 
@@ -8,12 +8,21 @@ interface Props {
 
 export function SearchResultCard({ result }: Props) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const backState = {
+    backTo: `${location.pathname}${location.search}`,
+    backLabel: "Back to Search",
+  };
 
   const handleClick = () => {
     if (result.type === "note") {
-      navigate(`/notes/${encodeURIComponent(result.id)}`);
+      navigate(`/notes/${encodeURIComponent(result.id)}`, { state: backState });
+    } else if (result.type === "wiki") {
+      navigate(`/wiki/${encodeURIComponent(result.id)}`, { state: backState });
+    } else if (result.type === "memory") {
+      navigate(`/memory?node=${encodeURIComponent(result.id)}`);
     } else {
-      navigate(`/sources/${encodeURIComponent(result.id)}`);
+      navigate(`/sources/${encodeURIComponent(result.id)}`, { state: backState });
     }
   };
 
@@ -25,8 +34,8 @@ export function SearchResultCard({ result }: Props) {
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
-            <Badge variant={result.type === "note" ? "note" : "source"}>
-              {result.type === "note" ? "Note" : "Source"}
+            <Badge variant={result.type === "note" || result.type === "wiki" ? "note" : result.type === "memory" ? "default" : "source"}>
+              {result.type.replace("_", " ")}
             </Badge>
             <span className="text-xs text-muted-foreground">
               Score: {result.score.toFixed(2)}

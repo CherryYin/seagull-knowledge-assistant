@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Bot, Clock, ExternalLink, MessageSquare, RefreshCw, Timer } from "lucide-react";
+import { Bot, Clock, ExternalLink, MessageSquare, RefreshCw, ServerCog, Timer } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,11 +8,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import {
-  agentRunsApi,
-  type AgentRunEvent,
-  type AgentRunStatus,
-  type AgentRunStatusItem,
+	agentRunsApi,
+	type AgentRunEvent,
+	type AgentRunStatus,
+	type AgentRunStatusItem,
 } from "@/lib/api/agent-runs";
+import { systemJobsApi, type SystemJob } from "@/lib/api/system-jobs";
+import { SectionNav, settingsNavItems } from "@/components/SectionNav";
 
 const STATUS_STYLES: Record<AgentRunStatus, string> = {
   idle: "bg-muted text-muted-foreground border-border",
@@ -60,20 +62,28 @@ export function AgentWorkspacePage() {
     queryFn: agentRunsApi.status,
     refetchInterval: 10000,
   });
+  const { data: jobData, isLoading: jobsLoading, refetch: refetchJobs, isFetching: jobsFetching } = useQuery({
+    queryKey: ["system-jobs"],
+    queryFn: () => systemJobsApi.list({ limit: 20 }),
+    refetchInterval: 15000,
+  });
 
   const statuses = data ?? [];
+  const jobs = jobData?.items ?? [];
   const activeCount = statuses.filter((item) => ACTIVE_STATUSES.has(item.status)).length;
   const failedCount = statuses.filter((item) => item.status === "failed").length;
+  const failedJobCount = jobs.filter((item) => item.status === "failed").length;
 
-  return (
-    <div className="h-full overflow-y-auto">
-      <div className="max-w-6xl mx-auto px-6 py-8">
-        <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
+	return (
+		<div className="h-full overflow-y-auto">
+			<div className="max-w-6xl mx-auto px-6 py-8 space-y-6">
+				<SectionNav items={settingsNavItems} active="Workspace" />
+				<div className="flex flex-wrap items-start justify-between gap-4 mb-6">
           <div>
-            <h1 className="text-2xl font-bold">Agent Workspace</h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              Monitor agent status, recent tasks, and execution timelines.
-            </p>
+						<h1 className="text-2xl font-bold">Agent Workspace</h1>
+						<p className="text-sm text-muted-foreground mt-1">
+							Advanced agent run status, system jobs, and execution timelines live here outside the daily Agent Chat workflow.
+						</p>
           </div>
           <div className="flex items-center gap-2">
             <Badge variant="outline" className="gap-1">
@@ -81,12 +91,12 @@ export function AgentWorkspacePage() {
             </Badge>
             <Badge
               variant="secondary"
-              className={failedCount > 0 ? "bg-red-100 text-red-700" : undefined}
+              className={failedCount + failedJobCount > 0 ? "bg-red-100 text-red-700" : undefined}
             >
-              {failedCount} failed
+              {failedCount + failedJobCount} failed
             </Badge>
-            <Button size="sm" variant="outline" onClick={() => refetch()} disabled={isFetching}>
-              <RefreshCw className={cn("h-4 w-4 mr-1", isFetching && "animate-spin")} /> Refresh
+            <Button size="sm" variant="outline" onClick={() => { refetch(); refetchJobs(); }} disabled={isFetching || jobsFetching}>
+              <RefreshCw className={cn("h-4 w-4 mr-1", (isFetching || jobsFetching) && "animate-spin")} /> Refresh
             </Button>
           </div>
         </div>
@@ -110,9 +120,39 @@ export function AgentWorkspacePage() {
             />
           ))}
         </div>
+
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base"><ServerCog className="h-4 w-4" /> System Jobs</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {jobsLoading && <p className="text-sm text-muted-foreground">Loading system jobs...</p>}
+            {!jobsLoading && jobs.length === 0 && <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">No system jobs recorded yet.</p>}
+            {jobs.map((job) => <SystemJobRow key={job.id} job={job} />)}
+          </CardContent>
+        </Card>
       </div>
 
       <TimelineDialog runId={selectedRunId} onOpenChange={(open) => !open && setSelectedRunId(null)} />
+    </div>
+  );
+}
+
+function SystemJobRow({ job }: { job: SystemJob }) {
+  const failed = job.status === "failed";
+  return (
+    <div className="rounded-md border border-border p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="outline">{job.job_type}</Badge>
+          <Badge variant="secondary" className={failed ? "bg-red-100 text-red-700" : undefined}>{job.status}</Badge>
+          {typeof job.duration_ms === "number" && <span className="text-xs text-muted-foreground">{Math.round(job.duration_ms)} ms</span>}
+        </div>
+        <span className="text-xs text-muted-foreground">{formatTime(job.started_at)}</span>
+      </div>
+      <p className="mt-2 text-sm font-medium">{job.title}</p>
+      {job.error_message && <p className="mt-1 text-sm text-destructive">{job.error_message}</p>}
+      {job.metadata && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{JSON.stringify(job.metadata)}</p>}
     </div>
   );
 }

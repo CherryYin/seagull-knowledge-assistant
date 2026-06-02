@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -6,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from pkg.api.deps import get_current_user
@@ -17,7 +18,7 @@ from pkg.models.note import Note
 from pkg.models.source import Source
 from pkg.models.user import User
 from pkg.schemas.action import ActionRequest, ActionResponse
-from pkg.services.action_agent import create_action_agent, current_user_id
+from pkg.services.action_agent import create_action_agent, current_run_id, current_user_id
 from pkg.services.activity import log_activity
 from pkg.services.agent_runs import (
     add_run_event,
@@ -34,11 +35,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _DOWNLOAD_LINK_RE = re.compile(r"下载链接:\s*(https?://\S+)")
+_WRITING_NOTE_RE = re.compile(r"Writing ID:\s*(note-[^\s]+)")
 _REFERENCE_RE = re.compile(r"\[来源[：:]\s*((?:note|src|source)-[^\]]+)\]")
 _WEB_REF_RE = re.compile(r"\[网络[：:]\s*([^\]]+)\]\((https?://[^)]+)\)")
 
 
 def _status_for_tool(tool_name: str) -> tuple[str, str]:
+    if tool_name in {"search_memory", "list_related_memory"}:
+        return "searching", "memory_searched"
+    if tool_name == "read_memory_node":
+        return "reading", "memory_read"
+    if tool_name == "create_memory_from_conversation":
+        return "writing", "memory_created"
     if tool_name == "search_knowledge":
         return "searching", "knowledge_searched"
     if tool_name == "read_note":
@@ -132,7 +140,11 @@ def _extract_document_metadata(text: str) -> dict | None:
             "format": fmt,
             "filename": filename,
         })
-    return {"documents": documents}
+    metadata = {"documents": documents}
+    writing_match = _WRITING_NOTE_RE.search(text)
+    if writing_match:
+        metadata["writing_note_id"] = writing_match.group(1)
+    return metadata
 
 
 def _collect_tool_result_links(messages: list) -> str:
@@ -279,6 +291,7 @@ async def execute_action(body: ActionRequest, user: User = Depends(get_current_u
         agent_type=profile.agent_type if profile else "action",
         task=body.task,
     )
+    current_run_id.set(run.id)
     await add_run_event(run.id, user.id, "task_received", "Task received", detail=body.task)
     await add_run_event(
         run.id,
@@ -356,7 +369,7 @@ def _sse(event_type: str, data: dict | str) -> str:
 
 
 @router.post("/action/stream")
-async def execute_action_stream(body: ActionRequest, user: User = Depends(get_current_user)):
+async def execute_action_stream(body: ActionRequest, request: Request, user: User = Depends(get_current_user)):
     current_user_id.set(user.id)
     profile = await _load_profile(body.profile_id, user.id)
     task = await _try_expand_skill(body.task)
@@ -366,6 +379,7 @@ async def execute_action_stream(body: ActionRequest, user: User = Depends(get_cu
         agent_type=profile.agent_type if profile else "action",
         task=body.task,
     )
+    current_run_id.set(run.id)
     await add_run_event(run.id, user.id, "task_received", "Task received", detail=body.task)
     await add_run_event(
         run.id,
@@ -402,12 +416,18 @@ async def execute_action_stream(body: ActionRequest, user: User = Depends(get_cu
         current_tool: str | None = None
         ask_human_emitted = False
         failed = False
+        disconnected = False
         writing_started = False
         yield _sse("run", {"run_id": run.id})
         await update_run_status(run.id, "thinking")
         await add_run_event(run.id, user.id, "state_changed", "Thinking")
+        agent_stream = agent.stream_async(task)
         try:
-            async for event in agent.stream_async(task):
+            async for event in agent_stream:
+                if await request.is_disconnected():
+                    disconnected = True
+                    logger.info("Agent stream disconnected: run_id=%s", run.id)
+                    break
                 # Detect tool-use start from contentBlockStart
                 block_start = (
                     event.get("event", {})
@@ -474,11 +494,21 @@ async def execute_action_stream(body: ActionRequest, user: User = Depends(get_cu
                                 evt["options"] = options
                             yield _sse("ask_human", evt)
 
+        except asyncio.CancelledError:
+            disconnected = True
+            logger.info("Agent stream cancelled by client: run_id=%s", run.id)
+            raise
         except Exception:
             logger.exception("Agent stream failed")
             failed = True
             await fail_run(run.id, "Agent encountered an error. Please try again.")
             yield _sse("error", {"message": "Agent encountered an error. Please try again."})
+        finally:
+            await agent_stream.aclose()
+
+        if disconnected:
+            await fail_run(run.id, "Client disconnected before completion.")
+            return
 
         # Close last tool step
         if current_tool:
@@ -492,7 +522,7 @@ async def execute_action_stream(body: ActionRequest, user: User = Depends(get_cu
             )
 
         # Persist to DB before sending done so the frontend can refresh immediately
-        if session_id:
+        if session_id and not disconnected:
             full_response = "".join(collected_chunks)
             await _track_references(full_response)
             tool_links = _collect_tool_result_links(agent.messages)

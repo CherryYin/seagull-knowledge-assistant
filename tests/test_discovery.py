@@ -1,0 +1,389 @@
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from pkg.models.connector_cache import ConnectorSearchItem
+from pkg.models.discovery import DiscoveryItem
+from pkg.models.source import Source
+from pkg.models.user import UserMemory
+from pkg.services.discovery import apply_discovery_feedback, generate_discovery_items
+from pkg.services.user_profiler import PROFILE_MEMORY_KEY
+
+
+class _ScalarResult:
+    def __init__(self, items):
+        self._items = items
+
+    def scalars(self):
+        return iter(self._items)
+
+    def scalar_one_or_none(self):
+        return self._items[0] if self._items else None
+
+
+@pytest.mark.asyncio
+async def test_generate_discovery_items_scores_profile_match():
+    session = AsyncMock()
+    session.add = MagicMock()
+    profile = UserMemory(
+        user_id="user-1",
+        key=PROFILE_MEMORY_KEY,
+        value={"interests": [{"domain": "AI", "recent_focus": "RAG"}]},
+    )
+    cached = ConnectorSearchItem(
+        user_id="user-1",
+        provider="arxiv",
+        item_key="2401.00001",
+        title="RAG for AI Memory",
+        status="cached",
+        payload={
+            "arxiv_id": "2401.00001",
+            "title": "RAG for AI Memory",
+            "authors": ["A. Researcher"],
+            "abstract": "A paper about RAG systems for AI memory.",
+            "categories": ["cs.AI"],
+            "entry_url": "https://arxiv.org/abs/2401.00001",
+        },
+    )
+    cached.updated_at = datetime(2026, 5, 25, tzinfo=timezone.utc)
+    session.execute.side_effect = [
+        _ScalarResult([profile]),
+        _ScalarResult([cached]),
+        _ScalarResult([]),
+        _ScalarResult([cached]),
+        _ScalarResult([]),
+    ]
+
+    with patch("pkg.services.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
+        mock_memory.return_value = []
+        created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["arxiv"])
+
+    assert (created, updated, skipped) == (1, 0, 0)
+    item = session.add.call_args.args[0]
+    assert item.provider == "arxiv"
+    assert item.score > 20
+    assert any("Matches profile interests" in reason for reason in item.why)
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_generate_discovery_items_from_rss_source():
+    session = AsyncMock()
+    session.add = MagicMock()
+    rss_source = Source(
+        id="src-rss-1",
+        user_id="user-1",
+        category_id=1,
+        title="API architecture article",
+        source_type="web",
+        url="https://example.com/api",
+        raw_content="Detailed article about API architecture and caching.",
+        metadata={"feed_source_id": "feed-1", "published_at": "2026-05-25"},
+    )
+    session.execute.side_effect = [
+        _ScalarResult([]),
+        _ScalarResult([]),
+        _ScalarResult([]),
+        _ScalarResult([]),
+        _ScalarResult([rss_source]),
+        _ScalarResult([]),
+    ]
+
+    with patch("pkg.services.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
+        mock_memory.return_value = []
+        created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["rss"])
+
+    assert (created, updated, skipped) == (1, 0, 0)
+    item = session.add.call_args.args[0]
+    assert item.provider == "rss"
+    assert item.source_id == "src-rss-1"
+    assert "From a followed RSS feed" in item.why
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_generate_discovery_items_from_web_source_with_credibility_and_preferences():
+    session = AsyncMock()
+    session.add = MagicMock()
+    profile = UserMemory(user_id="user-1", key=PROFILE_MEMORY_KEY, value={"discovery_feedback": {"web": {"keep": 2, "dismiss": 0}}})
+    web_source = Source(
+        id="src-web-1",
+        user_id="user-1",
+        category_id=1,
+        title="Knowledge graph architecture guide",
+        source_type="web",
+        url="https://example.com/kg",
+        raw_content="A guide about knowledge graph architecture.",
+        metadata={},
+    )
+    session.execute.side_effect = [
+        _ScalarResult([profile]),
+        _ScalarResult([]),
+        _ScalarResult([]),
+        _ScalarResult([]),
+        _ScalarResult([web_source]),
+        _ScalarResult([]),
+    ]
+
+    with patch("pkg.services.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
+        mock_memory.return_value = []
+        created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["web"])
+
+    assert (created, updated, skipped) == (1, 0, 0)
+    item = session.add.call_args.args[0]
+    assert item.provider == "web"
+    assert "HTTPS source" in item.why
+    assert "Boosted by your keep/save history" in item.why
+
+
+@pytest.mark.asyncio
+async def test_generate_discovery_items_adds_memory_similarity_reason():
+    session = AsyncMock()
+    session.add = MagicMock()
+    cached = ConnectorSearchItem(
+        user_id="user-1",
+        provider="github",
+        item_key="owner/rag-tool",
+        title="owner/rag-tool",
+        status="cached",
+        payload={
+            "full_name": "owner/rag-tool",
+            "owner": "owner",
+            "name": "rag-tool",
+            "description": "RAG memory retrieval toolkit",
+            "topics": ["rag"],
+            "stars": 42,
+            "forks": 3,
+            "html_url": "https://github.com/owner/rag-tool",
+        },
+    )
+    cached.updated_at = datetime(2026, 5, 25, tzinfo=timezone.utc)
+    memory_node = MagicMock()
+    memory_node.title = "Memory retrieval architecture"
+    session.execute.side_effect = [_ScalarResult([]), _ScalarResult([cached]), _ScalarResult([]), _ScalarResult([cached]), _ScalarResult([])]
+
+    with patch("pkg.services.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
+        mock_memory.return_value = [MagicMock(node=memory_node)]
+        created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["github"])
+
+    assert (created, updated, skipped) == (1, 0, 0)
+    item = session.add.call_args.args[0]
+    assert any("Similar to memory" in reason for reason in item.why)
+
+
+@pytest.mark.asyncio
+async def test_dismiss_discovery_item_updates_profile_feedback():
+    session = AsyncMock()
+    item = DiscoveryItem(
+        user_id="user-1",
+        provider="github",
+        item_key="owner/repo",
+        title="owner/repo",
+        payload={"full_name": "owner/repo", "html_url": "https://github.com/owner/repo", "owner": "owner", "name": "repo", "topics": [], "stars": 1, "forks": 0},
+    )
+    profile = UserMemory(user_id="user-1", key=PROFILE_MEMORY_KEY, value={})
+    session.execute.return_value = _ScalarResult([profile])
+
+    source, created = await apply_discovery_feedback(session, item=item, action="dismiss")
+
+    assert source is None
+    assert created is None
+    assert item.status == "dismissed"
+    assert profile.value["discovery_feedback"]["github"]["dismiss"] == 1
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_keep_existing_source_does_not_reimport():
+    session = AsyncMock()
+    source = MagicMock(spec=Source)
+    source.id = "src-1"
+    session.get.return_value = source
+    session.execute.return_value = _ScalarResult([])
+    item = DiscoveryItem(
+        user_id="user-1",
+        provider="github",
+        item_key="owner/repo",
+        title="owner/repo",
+        payload={"full_name": "owner/repo", "html_url": "https://github.com/owner/repo", "owner": "owner", "name": "repo", "topics": [], "stars": 1, "forks": 0},
+        source_id="src-1",
+    )
+
+    with patch("pkg.services.discovery.import_github_repo") as mock_import:
+        result_source, created = await apply_discovery_feedback(session, item=item, action="keep")
+
+    assert result_source == source
+    assert created is False
+    assert item.status == "kept"
+    mock_import.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_web_discovery_ingest_scores_trusted_domain():
+    from pkg.services.discovery import ingest_web_discovery_results
+
+    session = AsyncMock()
+    session.add = MagicMock()
+    profile = UserMemory(user_id="user-1", key=PROFILE_MEMORY_KEY, value={})
+    session.execute.side_effect = [
+        _ScalarResult([profile]),
+        _ScalarResult([]),
+    ]
+
+    with patch("pkg.services.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
+        mock_memory.return_value = []
+        created, updated, skipped = await ingest_web_discovery_results(
+            session,
+            user_id="user-1",
+            query="knowledge graph",
+            items=[{"title": "OpenAI docs", "url": "https://openai.com/research", "summary": "Research update"}],
+        )
+
+    assert (created, updated, skipped) == (1, 0, 0)
+    item = session.add.call_args.args[0]
+    assert item.provider == "web"
+    assert item.payload["discovery_source"] == "external_web_search"
+    assert any("Trusted domain" in reason for reason in item.why)
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_feedback_updates_fine_grained_preferences():
+    session = AsyncMock()
+    item = DiscoveryItem(
+        user_id="user-1",
+        provider="web",
+        item_key="web:1",
+        title="OpenAI research",
+        url="https://openai.com/research",
+        payload={"url": "https://openai.com/research", "domain": "openai.com", "source_name": "search", "query": "ai research"},
+    )
+    profile = UserMemory(user_id="user-1", key=PROFILE_MEMORY_KEY, value={})
+    session.execute.return_value = _ScalarResult([profile])
+
+    source, created = await apply_discovery_feedback(session, item=item, action="dismiss")
+
+    assert source is None
+    assert created is None
+    assert profile.value["discovery_feedback"]["web"]["dismiss"] == 1
+    assert profile.value["discovery_preferences"]["domains"]["openai.com"]["dismiss"] == 1
+    assert profile.value["discovery_preferences"]["sources"]["search"]["dismiss"] == 1
+
+
+@pytest.mark.asyncio
+async def test_generate_discovery_items_uses_domain_preferences():
+    session = AsyncMock()
+    session.add = MagicMock()
+    profile = UserMemory(
+        user_id="user-1",
+        key=PROFILE_MEMORY_KEY,
+        value={"discovery_preferences": {"domains": {"openai.com": {"keep": 2}}}},
+    )
+    web_source = Source(
+        id="src-web-openai",
+        user_id="user-1",
+        category_id=1,
+        title="OpenAI guide",
+        source_type="web",
+        url="https://openai.com/guide",
+        raw_content="Guide about AI agents.",
+        metadata={},
+    )
+    session.execute.side_effect = [
+        _ScalarResult([profile]),
+        _ScalarResult([]),
+        _ScalarResult([]),
+        _ScalarResult([]),
+        _ScalarResult([web_source]),
+        _ScalarResult([]),
+    ]
+
+    with patch("pkg.services.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
+        mock_memory.return_value = []
+        created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["web"])
+
+    assert (created, updated, skipped) == (1, 0, 0)
+    item = session.add.call_args.args[0]
+    assert any("Trusted domain" in reason for reason in item.why)
+    assert any("Matches kept domain" in reason for reason in item.why)
+
+
+@pytest.mark.asyncio
+async def test_search_external_web_results_maps_tavily_response(monkeypatch):
+    from pkg.config import settings
+    from pkg.services.discovery import search_external_web_results
+
+    class FakeTavilyClient:
+        def __init__(self, api_key):
+            assert api_key == "test-key"
+
+        def search(self, **kwargs):
+            assert kwargs["query"] == "agent memory"
+            assert kwargs["max_results"] == 3
+            return {
+                "results": [
+                    {
+                        "title": "Agent memory guide",
+                        "url": "https://openai.com/agent-memory",
+                        "content": "A guide about agent memory.",
+                        "published_date": "2026-05-26",
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(settings, "TAVILY_API_KEY", "test-key")
+    import types
+    import sys
+
+    fake_module = types.SimpleNamespace(TavilyClient=FakeTavilyClient)
+    monkeypatch.setitem(sys.modules, "tavily", fake_module)
+
+    items = await search_external_web_results("agent memory", max_results=3)
+
+    assert items == [
+        {
+            "title": "Agent memory guide",
+            "url": "https://openai.com/agent-memory",
+            "summary": "A guide about agent memory.",
+            "source_name": "tavily",
+            "published_at": "2026-05-26",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ingest_web_discovery_results_rejects_non_http_url():
+    from pkg.services.discovery import ingest_web_discovery_results
+
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.execute.side_effect = [_ScalarResult([])]
+
+    created, updated, skipped = await ingest_web_discovery_results(
+        session,
+        user_id="user-1",
+        query="bad url",
+        items=[{"title": "Bad", "url": "javascript:alert(1)", "summary": "bad"}],
+    )
+
+    assert (created, updated, skipped) == (0, 0, 1)
+    session.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_import_web_discovery_item_rejects_non_http_url():
+    from pkg.services.discovery import apply_discovery_feedback
+
+    session = AsyncMock()
+    item = DiscoveryItem(
+        user_id="user-1",
+        provider="web",
+        item_key="web:bad",
+        title="Bad",
+        url="javascript:alert(1)",
+        payload={"url": "javascript:alert(1)"},
+    )
+
+    with pytest.raises(ValueError):
+        await apply_discovery_feedback(session, item=item, action="keep")

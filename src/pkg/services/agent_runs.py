@@ -112,6 +112,32 @@ async def complete_run(run_id: str, result_preview: str | None = None) -> AgentR
             title="Run completed",
             detail=_preview(result_preview),
         )
+        try:
+            from pkg.services.agent_memory import extract_pending_memory_from_agent_run
+
+            async with async_session() as db:
+                fresh_run = await db.get(AgentRun, run.id)
+                if fresh_run is not None:
+                    memory = await extract_pending_memory_from_agent_run(
+                        db,
+                        run=fresh_run,
+                        result_preview=result_preview,
+                    )
+                    if memory is not None:
+                        db.add(
+                            AgentRunEvent(
+                                run_id=run.id,
+                                user_id=run.user_id,
+                                event_type="memory_extracted",
+                                title="Pending memory extracted",
+                                detail=memory.title,
+                                metadata_={"memory_node_id": memory.id, "requires_review": True},
+                            )
+                        )
+                    await db.commit()
+        except Exception:
+            # Memory extraction must never make a completed agent run fail.
+            pass
     return run
 
 

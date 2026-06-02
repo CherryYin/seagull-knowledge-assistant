@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { notesApi, type Note } from "@/lib/api";
+import { SectionNav, reviewNavItems } from "@/components/SectionNav";
 
 type DigestTab = "pending" | "kept";
 
@@ -73,14 +74,15 @@ export function DigestPage() {
     mergeMutation.mutate({ targetId, sourceIds });
   }
 
-  return (
-    <div className="h-full overflow-y-auto">
-      <div className="max-w-5xl mx-auto px-6 py-8">
-        <div className="flex items-center justify-between mb-6">
+	return (
+		<div className="h-full overflow-y-auto">
+			<div className="max-w-5xl mx-auto px-6 py-8">
+				<SectionNav items={reviewNavItems} active="Digest" />
+				<div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold">Digest</h1>
             <p className="text-sm text-muted-foreground">
-              Review RSS topic summaries, keep useful digests, and merge recurring topics.
+              Review RSS topic summaries, keep useful digests, and merge recurring topics. Pending digests expire after 7 days unless kept.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -252,10 +254,20 @@ function DigestRow({
             </Badge>
           </div>
           <p className="text-xs text-muted-foreground line-clamp-2">{preview}</p>
-          <div className="flex items-center gap-3 mt-2">
+          <div className="flex items-center gap-3 mt-2 flex-wrap">
             <span className="text-[10px] text-muted-foreground">
               {new Date(note.created_at).toLocaleDateString()}
             </span>
+            {note.status === "pending_review" && note.expires_at && (
+              <span className="text-[10px] text-amber-600">
+                expires {new Date(note.expires_at).toLocaleDateString()}
+              </span>
+            )}
+            {note.status !== "pending_review" && note.kept_at && (
+              <span className="text-[10px] text-emerald-600">
+                kept {new Date(note.kept_at).toLocaleDateString()}
+              </span>
+            )}
             {sourceCount > 0 && (
               <span className="text-[10px] text-muted-foreground">
                 {sourceCount} sources

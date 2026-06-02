@@ -1,23 +1,25 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useState, useEffect, useRef } from "react";
 import {
-  MessageSquare,
-  Search,
-  StickyNote,
-  FileText,
-  Zap,
-  BarChart3,
-  PenLine,
-  RefreshCw,
-  ChevronLeft,
-  Palette,
-  LogOut,
-  Users,
-  User,
-  Bot,
-  Newspaper,
-  Brain,
-  MonitorCog,
+	MessageSquare,
+	Search,
+	StickyNote,
+	FileText,
+	BarChart3,
+	RefreshCw,
+	ChevronLeft,
+	Palette,
+	LogOut,
+	Users,
+	User,
+	Brain,
+	BookOpen,
+	CalendarDays,
+	CalendarCheck2,
+	Compass,
+	Bell,
+	Settings,
+	Home,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -31,18 +33,51 @@ import {
   type BackgroundPresetId,
 } from "@/lib/uiBackground";
 
-const navItems = [
-  { to: "/", icon: MessageSquare, label: "Chat" },
-  { to: "/search", icon: Search, label: "Search" },
-  { to: "/notes", icon: StickyNote, label: "Notes" },
-  { to: "/sources", icon: FileText, label: "Sources" },
-  { to: "/digest", icon: Newspaper, label: "Digest" },
-  { to: "/writing", icon: PenLine, label: "Writing" },
-  { to: "/skills", icon: Zap, label: "Skills" },
-  { to: "/profiles", icon: Bot, label: "Agents" },
-  { to: "/workspace", icon: MonitorCog, label: "Workspace" },
-  { to: "/profile", icon: Brain, label: "My Profile" },
-  { to: "/stats", icon: BarChart3, label: "Stats" },
+const navSections = [
+	{
+		label: "Home",
+		items: [
+			{ to: "/", icon: Home, label: "Home" },
+			{ to: "/calendar", icon: CalendarDays, label: "Calendar" },
+			{ to: "/completed", icon: CalendarCheck2, label: "Completed" },
+		],
+	},
+	{
+		label: "Knowledge",
+		items: [
+			{ to: "/search", icon: Search, label: "Search" },
+			{ to: "/sources", icon: FileText, label: "Sources" },
+			{ to: "/notes", icon: StickyNote, label: "Notes" },
+			{ to: "/documents", icon: BookOpen, label: "Documents" },
+			{ to: "/memory", icon: Brain, label: "Memory" },
+			{ to: "/wiki", icon: BookOpen, label: "Wiki" },
+		],
+	},
+	{
+		label: "Review",
+		items: [
+			{ to: "/review", icon: Bell, label: "Review" },
+		],
+	},
+	{
+		label: "Discover",
+		items: [
+			{ to: "/discover", icon: Compass, label: "Discover" },
+		],
+	},
+	{
+		label: "Agent",
+		items: [
+			{ to: "/chat", icon: MessageSquare, label: "Agent Chat" },
+		],
+	},
+	{
+		label: "Settings",
+		items: [
+			{ to: "/settings", icon: Settings, label: "Settings" },
+			{ to: "/stats", icon: BarChart3, label: "System Dashboard" },
+		],
+	},
 ];
 
 export function Layout() {
@@ -119,24 +154,36 @@ export function Layout() {
         </div>
 
         {/* Nav */}
-        <nav className="flex-1 py-3 space-y-1 px-2">
-          {navItems.map(({ to, icon: Icon, label }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={to === "/"}
-              className={({ isActive }) =>
-                cn(
-                  "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
-                  isActive
-                    ? "bg-primary/15 text-primary font-medium"
-                    : "text-muted-foreground hover:text-foreground hover:bg-accent"
-                )
-              }
-            >
-              <Icon className="h-4 w-4 shrink-0" />
-              {!collapsed && label}
-            </NavLink>
+        <nav className="flex-1 overflow-y-auto py-3 px-2">
+          {navSections.map((section) => (
+            <div key={section.label} className="mb-3">
+              {!collapsed && (
+                <p className="mb-1 px-3 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
+                  {section.label}
+                </p>
+              )}
+              <div className="space-y-1">
+                {section.items.map(({ to, icon: Icon, label }) => (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    end={to === "/"}
+                    title={collapsed ? label : undefined}
+                    className={({ isActive }) =>
+                      cn(
+                        "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
+                        isActive
+                          ? "bg-primary/15 text-primary font-medium"
+                          : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                      )
+                    }
+                  >
+                    <Icon className="h-4 w-4 shrink-0" />
+                    {!collapsed && label}
+                  </NavLink>
+                ))}
+              </div>
+            </div>
           ))}
         </nav>
 

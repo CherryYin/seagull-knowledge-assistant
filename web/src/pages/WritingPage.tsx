@@ -4,6 +4,7 @@ import { PenLine, ExternalLink, FileDown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { notesApi, type Note } from "@/lib/api";
+import { SectionNav, knowledgeNavItems } from "@/components/SectionNav";
 
 export function WritingPage() {
   const navigate = useNavigate();
@@ -16,8 +17,10 @@ export function WritingPage() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-5xl mx-auto px-6 py-8">
+        <SectionNav items={knowledgeNavItems} active="Documents" />
+
         <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-bold">Writing</h1>
+          <h1 className="text-2xl font-bold">Documents</h1>
         </div>
 
         {isLoading && <p className="text-sm text-muted-foreground">Loading...</p>}
@@ -25,7 +28,7 @@ export function WritingPage() {
         {data && data.total === 0 && (
           <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
             <PenLine className="h-12 w-12 mb-3 opacity-30" />
-            <p>No documents yet. Generate one in Chat to get started.</p>
+			<p>No documents yet. Generate one in Agent Chat to get started.</p>
           </div>
         )}
 

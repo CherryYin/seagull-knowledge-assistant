@@ -14,12 +14,13 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import {
-  agentProfilesApi,
-  skillsApi,
-  type AgentProfile,
-  type AgentProfileCreate,
-  type AgentProfileUpdate,
+	agentProfilesApi,
+	skillsApi,
+	type AgentProfile,
+	type AgentProfileCreate,
+	type AgentProfileUpdate,
 } from "@/lib/api";
+import { SectionNav, settingsNavItems } from "@/components/SectionNav";
 
 interface ProfileFormData {
   name: string;
@@ -177,10 +178,11 @@ export function AgentProfilesPage() {
 
   const mutationError = createMutation.error || updateMutation.error;
 
-  return (
-    <div className="h-full overflow-y-auto">
-      <div className="max-w-5xl mx-auto px-6 py-8">
-        <div className="flex items-center justify-between mb-6">
+	return (
+		<div className="h-full overflow-y-auto">
+			<div className="max-w-5xl mx-auto px-6 py-8 space-y-6">
+				<SectionNav items={settingsNavItems} active="Agents" />
+				<div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold">Agents</h1>
             <p className="text-sm text-muted-foreground mt-1">

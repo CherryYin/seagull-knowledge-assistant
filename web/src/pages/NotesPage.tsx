@@ -10,6 +10,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/com
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { CategorySelect } from "@/components/CategorySelect";
 import { notesApi, categoriesApi, type NoteCreate, type Note } from "@/lib/api";
+import { SectionNav, knowledgeNavItems } from "@/components/SectionNav";
 
 const NOTE_TYPES = ["inbox", "architecture", "case-study", "concept", "how-to", "remember"];
 
@@ -122,6 +123,8 @@ export function NotesPage() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-5xl mx-auto px-6 py-8">
+        <SectionNav items={knowledgeNavItems} active="Notes" />
+
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold">Notes</h1>
           <Dialog open={open} onOpenChange={setOpen}>

@@ -4,10 +4,11 @@ import logging
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.api.deps import get_current_user
@@ -19,6 +20,7 @@ from pkg.models.user import User
 from pkg.schemas.source import ChunkRead, SourceCreate, SourceList, SourceRead, SourceUpdate
 from pkg.services.chunking import chunk_text
 from pkg.services.embedding import get_embedding_service
+from pkg.services.source_memory import upsert_source_memory_node
 from pkg.services.storage import get_storage_service
 
 router = APIRouter()
@@ -40,6 +42,13 @@ TEXT_FILE_SUFFIXES = {
     ".yaml",
 }
 
+RSS_CANDIDATE_SUFFIXES = (".rss", ".xml", ".atom", "/feed")
+RSS_DISCOVERY_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
 
 def make_source_id(title: str, explicit_id: str | None = None) -> str:
     if explicit_id:
@@ -47,6 +56,70 @@ def make_source_id(title: str, explicit_id: str | None = None) -> str:
     now = datetime.now(timezone.utc)
     suffix = uuid.uuid4().hex[:8]
     return f"src-{now.strftime('%Y%m%d')}-{title[:30].lower().replace(' ', '-')}-{suffix}"
+
+
+def _rss_candidate_urls(url: str) -> list[str]:
+    base = url.rstrip("/")
+    candidates = [base]
+    if not base.endswith(RSS_CANDIDATE_SUFFIXES):
+        candidates.extend([base + ".rss", base + "/feed", base + ".xml", base + ".atom"])
+    return list(dict.fromkeys(candidates))
+
+
+async def discover_rss_feed(url: str) -> dict[str, Any] | None:
+    """Best-effort RSS discovery for a web URL."""
+    import feedparser
+    import httpx
+
+    async with httpx.AsyncClient(timeout=settings.RSS_FETCH_TIMEOUT, headers=RSS_DISCOVERY_HEADERS) as client:
+        for candidate in _rss_candidate_urls(url):
+            try:
+                resp = await client.get(candidate, follow_redirects=True)
+                resp.raise_for_status()
+            except httpx.HTTPError:
+                continue
+            parsed = feedparser.parse(resp.content)
+            if parsed.entries:
+                return {
+                    "feed": parsed,
+                    "feed_url": str(resp.url),
+                    "entries_available": len(parsed.entries),
+                    "feed_title": parsed.feed.get("title", ""),
+                }
+    return None
+
+
+def is_url_backed_source(source: Source) -> bool:
+    return source.source_type in {"web", "article"} and bool(source.url)
+
+
+async def maybe_enable_rss_for_source(source: Source, *, auto_fetch: bool, session: AsyncSession) -> bool:
+    if not is_url_backed_source(source):
+        return False
+    meta = dict(source.metadata_ or {})
+    if meta.get("rss_enabled") == "true" or meta.get("feed_source_id"):
+        return False
+
+    discovered = await discover_rss_feed(source.url)
+    if not discovered:
+        meta["rss_auto_discovery"] = "not_found"
+        source.metadata_ = meta
+        return False
+
+    meta["rss_enabled"] = "true"
+    meta["feed_title"] = discovered["feed_title"]
+    meta["feed_url"] = discovered["feed_url"]
+    meta["entries_available"] = discovered["entries_available"]
+    meta["feed_auto_detected"] = True
+    meta["rss_auto_discovery"] = "found"
+    source.url = discovered["feed_url"]
+    source.metadata_ = meta
+
+    if auto_fetch:
+        from pkg.services.rss_fetcher import fetch_single_feed
+
+        await fetch_single_feed(source, session)
+    return True
 
 
 async def extract_text_content(
@@ -119,29 +192,57 @@ async def persist_source(
     )
     session.add(source)
 
+    await upsert_source_embeddings(session, source)
+
+    try:
+        await upsert_source_memory_node(session, source)
+    except Exception:
+        logger.error("Source memory generation failed for source %s", source_id, exc_info=True)
+
+    try:
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    await session.refresh(source)
+    return source
+
+
+def source_embedding_text(source: Source) -> str:
+    metadata = source.metadata_ or {}
+    embedding_text = metadata.get("embedding_text")
+    if isinstance(embedding_text, str) and embedding_text.strip():
+        return embedding_text.strip()
+    return (source.raw_content or source.title or "").strip()
+
+
+async def upsert_source_embeddings(session: AsyncSession, source: Source) -> None:
     try:
         emb_svc = get_embedding_service()
         title_vec = await emb_svc.embed_text(source.title)
-        summary_vec = await emb_svc.embed_text(raw_content if raw_content else source.title)
-        session.add(SourceEmbedding(source_id=source_id, title_vec=title_vec, summary_vec=summary_vec))
+        text_for_embedding = source_embedding_text(source)
+        summary_vec = await emb_svc.embed_text(text_for_embedding or source.title)
+        existing = await session.get(SourceEmbedding, source.id)
+        if existing:
+            existing.title_vec = title_vec
+            existing.summary_vec = summary_vec
+        else:
+            session.add(SourceEmbedding(source_id=source.id, title_vec=title_vec, summary_vec=summary_vec))
 
-        if raw_content:
-            chunks = chunk_text(raw_content)
+        if text_for_embedding:
+            await session.execute(delete(SourceChunk).where(SourceChunk.source_id == source.id))
+            chunks = chunk_text(text_for_embedding)
             if chunks:
                 vectors = await emb_svc.embed_batch(chunks)
                 for idx, (chunk_content, vec) in enumerate(zip(chunks, vectors)):
                     session.add(SourceChunk(
-                        source_id=source_id,
+                        source_id=source.id,
                         chunk_index=idx,
                         content=chunk_content,
                         embedding=vec,
                     ))
     except Exception:
-        logger.error("Embedding generation failed for source %s — saving without embeddings", source_id, exc_info=True)
-
-    await session.commit()
-    await session.refresh(source)
-    return source
+        logger.error("Embedding generation failed for source %s — saving without embeddings", source.id, exc_info=True)
 
 
 @router.post("", response_model=SourceRead, status_code=201)
@@ -150,7 +251,15 @@ async def create_source(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    return await persist_source(session=session, body=body, user_id=user.id)
+    source = await persist_source(session=session, body=body, user_id=user.id)
+    if is_url_backed_source(source):
+        try:
+            await maybe_enable_rss_for_source(source, auto_fetch=True, session=session)
+            await session.commit()
+            await session.refresh(source)
+        except Exception:
+            logger.info("RSS auto-discovery failed for source %s", source.id, exc_info=True)
+    return source
 
 
 @router.post("/upload", response_model=SourceRead, status_code=201)
@@ -202,12 +311,13 @@ async def upload_source(
 async def list_sources(
     source_type: str | None = None,
     category_id: int | None = None,
+    feed_view: str = Query(default="parents", pattern=r"^(parents|all|articles|feeds|snapshots)$"),
     limit: int = Query(default=20, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    ownership = or_(Source.user_id == user.id, Source.is_shared == True)
+    ownership = or_(Source.user_id == user.id, Source.is_shared)
     stmt = select(Source).where(ownership)
     count_stmt = select(func.count()).select_from(Source).where(ownership)
 
@@ -217,6 +327,23 @@ async def list_sources(
     if source_type:
         stmt = stmt.where(Source.source_type == source_type)
         count_stmt = count_stmt.where(Source.source_type == source_type)
+
+    if feed_view == "parents":
+        no_parent = text("NOT (metadata ? 'feed_source_id')")
+        stmt = stmt.where(no_parent)
+        count_stmt = count_stmt.where(no_parent)
+    elif feed_view == "articles":
+        is_article = text("metadata ? 'feed_source_id'")
+        stmt = stmt.where(is_article)
+        count_stmt = count_stmt.where(is_article)
+    elif feed_view == "feeds":
+        is_feed = text("metadata->>'rss_enabled' = 'true'")
+        stmt = stmt.where(is_feed)
+        count_stmt = count_stmt.where(is_feed)
+    elif feed_view == "snapshots":
+        snapshot = text("NOT (metadata ? 'feed_source_id') AND COALESCE(metadata->>'rss_enabled', '') <> 'true'")
+        stmt = stmt.where(Source.source_type.in_(["web", "article"]), snapshot)
+        count_stmt = count_stmt.where(Source.source_type.in_(["web", "article"]), snapshot)
 
     stmt = stmt.order_by(Source.ingested_at.desc()).offset(offset).limit(limit)
 
@@ -314,6 +441,34 @@ async def get_source_chunks(
     return list(rows.scalars())
 
 
+@router.post("/{source_id}/review/keep", response_model=SourceRead)
+async def keep_imported_source(
+    source_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    source = await session.get(Source, source_id)
+    if not source or source.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    metadata = dict(source.metadata_ or {})
+    if metadata.get("review_status") != "imported_reviewable":
+        raise HTTPException(status_code=409, detail="Source is not pending imported-source review")
+    metadata["review_status"] = "reviewed_kept"
+    metadata["reviewed_at"] = datetime.now(timezone.utc).isoformat()
+    metadata["retention"] = "permanent"
+    metadata.setdefault("kept_at", metadata["reviewed_at"])
+    source.metadata_ = metadata
+
+    await session.commit()
+    await session.refresh(source)
+
+    category = await session.get(Category, source.category_id)
+    result = SourceRead.model_validate(source)
+    result.category_name = category.name if category else None
+    return result
+
+
 @router.delete("/{source_id}", status_code=204)
 async def delete_source(
     source_id: str,
@@ -383,56 +538,23 @@ async def enable_rss(
     source = await session.get(Source, source_id)
     if not source or source.user_id != user.id:
         raise HTTPException(status_code=404, detail="Source not found")
-    if source.source_type != "web":
-        raise HTTPException(status_code=422, detail="RSS can only be enabled on web sources")
+    if source.source_type not in {"web", "article"}:
+        raise HTTPException(status_code=422, detail="RSS can only be enabled on URL-backed web/article sources")
     if not source.url:
         raise HTTPException(status_code=422, detail="Source must have a URL to enable RSS")
 
-    import feedparser
-    import httpx
-
-    _headers = {
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-    }
-
-    url = source.url.rstrip("/")
-    # Build candidate URLs: original, .rss suffix, /feed
-    candidates = [url]
-    if not url.endswith((".rss", ".xml", ".atom", "/feed")):
-        candidates.append(url + ".rss")
-        candidates.append(url + "/feed")
-
-    feed = None
-    feed_url = url
-    last_error = None
-    async with httpx.AsyncClient(timeout=settings.RSS_FETCH_TIMEOUT, headers=_headers) as client:
-        for candidate in candidates:
-            try:
-                resp = await client.get(candidate, follow_redirects=True)
-                resp.raise_for_status()
-                parsed = feedparser.parse(resp.content)
-                if parsed.entries:
-                    feed = parsed
-                    feed_url = candidate
-                    break
-            except httpx.HTTPError as exc:
-                last_error = exc
-
-    if not feed or not feed.entries:
-        detail = f"Cannot find a valid RSS feed for this URL"
-        if last_error:
-            detail += f": {last_error}"
-        raise HTTPException(status_code=422, detail=detail)
+    discovered = await discover_rss_feed(source.url)
+    if not discovered:
+        raise HTTPException(status_code=422, detail="Cannot find a valid RSS feed for this URL")
 
     meta = dict(source.metadata_ or {})
     meta["rss_enabled"] = "true"
-    meta["feed_title"] = feed.feed.get("title", "")
-    meta["feed_url"] = feed_url
-    meta["entries_available"] = len(feed.entries)
-    if feed_url != source.url:
-        source.url = feed_url
+    meta["feed_title"] = discovered["feed_title"]
+    meta["feed_url"] = discovered["feed_url"]
+    meta["entries_available"] = discovered["entries_available"]
+    meta["feed_auto_detected"] = False
+    if discovered["feed_url"] != source.url:
+        source.url = discovered["feed_url"]
     source.metadata_ = meta
     await session.commit()
     await session.refresh(source)

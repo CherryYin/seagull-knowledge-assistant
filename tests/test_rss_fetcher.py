@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from pkg.services.rss_fetcher import _is_single_topic_feed, fetch_single_feed
+from pkg.services.rss_fetcher import _is_single_topic_feed, _rss_filter_reason, fetch_single_feed
 
 
 class TestFeedTypeDetection:
@@ -26,6 +26,21 @@ class TestFeedTypeDetection:
         ]
 
         assert _is_single_topic_feed(entries) is True
+
+
+class TestRssLowValueFilter:
+    def test_filters_non_technical_daily_topic(self):
+        reason = _rss_filter_reason("今天有佬友去垃圾桶寻宝么？", "纯日常闲聊，没有技术信息。")
+
+        assert reason == "non_technical_daily_topic"
+
+    def test_keeps_technical_topic_even_with_community_word(self):
+        reason = _rss_filter_reason(
+            "社区 API 风控怎么解决",
+            "讨论 API 调用、风控策略、自动化检测和服务端架构。",
+        )
+
+        assert reason is None
 
 
 class TestFetchSingleFeedMetadata:
@@ -115,3 +130,39 @@ class TestFetchSingleFeedMetadata:
         assert feed_source.metadata_["http_status"] == 503
         assert "last_fetch_at" in feed_source.metadata_
         session.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_filters_low_value_collection_entries_before_persist(self):
+        feed_source = MagicMock()
+        feed_source.id = "feed-1"
+        feed_source.url = "https://example.com/latest.rss"
+        feed_source.content_hash = ""
+        feed_source.category_id = 1
+        feed_source.user_id = "user-1"
+        feed_source.metadata_ = {"rss_enabled": "true"}
+
+        session = AsyncMock()
+        session.execute.return_value = []
+        feed_xml = """
+            <rss version="2.0"><channel><title>Example</title>
+            <item><title>今天有佬友去垃圾桶寻宝么？</title><link>https://example.com/a</link><guid>a</guid><description>纯日常闲聊，没有技术信息。</description></item>
+            <item><title>Python API 性能优化</title><link>https://example.com/b</link><guid>b</guid><description>讨论 Python API 架构、缓存和数据库优化。</description></item>
+            </channel></rss>
+            """
+        response = httpx.Response(
+            200,
+            content=feed_xml.encode("utf-8"),
+            request=httpx.Request("GET", feed_source.url),
+        )
+
+        with patch("pkg.services.rss_fetcher.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.get.return_value = response
+            mock_client_cls.return_value.__aenter__.return_value = mock_client
+            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            with patch("pkg.api.sources.persist_source", new_callable=AsyncMock) as mock_persist:
+                count = await fetch_single_feed(feed_source, session)
+
+        assert count == 1
+        assert feed_source.metadata_["last_filtered_count"] == 1
+        mock_persist.assert_awaited_once()

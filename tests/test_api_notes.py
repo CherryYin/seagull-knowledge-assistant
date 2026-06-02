@@ -1,6 +1,6 @@
 """Tests for notes API endpoints (/notes/*)."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -67,17 +67,39 @@ class TestListNotes:
         assert "notes.note_type !=" in str(first_stmt)
 
     def test_explicit_digest_filter_allowed(self, client, mock_session):
+        cleanup_rows = MagicMock()
+        cleanup_rows.scalars.return_value = []
         mock_count = MagicMock()
         mock_count.scalar.return_value = 0
         mock_rows = MagicMock()
         mock_rows.scalars.return_value = []
-        mock_session.execute.side_effect = [mock_count, mock_rows]
+        mock_session.execute.side_effect = [cleanup_rows, mock_count, mock_rows]
 
         resp = client.get("/notes?note_type=digest")
         assert resp.status_code == 200
 
-        first_stmt = mock_session.execute.await_args_list[0].args[0]
-        assert "notes.note_type !=" not in str(first_stmt)
+        count_stmt = mock_session.execute.await_args_list[1].args[0]
+        assert "notes.note_type !=" not in str(count_stmt)
+
+    def test_digest_cleanup_deletes_expired_pending_notes(self, client, mock_session, fake_user):
+        expired = _make_note("digest-expired", fake_user.id)
+        expired.note_type = "digest"
+        expired.status = "pending_review"
+        expired.expires_at = datetime.now(timezone.utc) - timedelta(days=1)
+        cleanup_rows = MagicMock()
+        cleanup_rows.scalars.return_value = [expired]
+        mock_count = MagicMock()
+        mock_count.scalar.return_value = 0
+        mock_rows = MagicMock()
+        mock_rows.scalars.return_value = []
+        mock_session.execute.side_effect = [cleanup_rows, mock_count, mock_rows]
+        mock_session.get.return_value = None
+
+        resp = client.get("/notes?note_type=digest")
+
+        assert resp.status_code == 200
+        mock_session.delete.assert_awaited_with(expired)
+        mock_session.commit.assert_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +203,8 @@ def _make_note(note_id: str, user_id: str, file_path: str | None = None):
     note.source_ids = []
     note.file_path = file_path
     note.word_count = 2
+    note.expires_at = None
+    note.kept_at = None
     note.created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     note.updated_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     return note

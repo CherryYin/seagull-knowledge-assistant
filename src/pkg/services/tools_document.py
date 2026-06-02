@@ -34,8 +34,8 @@ def _output_path(filename: str, fmt: str) -> tuple[Path, str]:
     return exports_dir / f"{filename}.{fmt}", filename
 
 
-async def _upload_to_oss(local_path: Path) -> str:
-    """Upload the generated file to MinIO under exports/ and return a presigned URL."""
+async def _upload_to_oss(local_path: Path) -> tuple[str, str]:
+    """Upload the generated file to MinIO under exports/ and return (storage_uri, presigned URL)."""
     storage = get_storage_service()
     object_key = f"exports/{local_path.name}"
     content_type = mimetypes.guess_type(local_path.name)[0] or "application/octet-stream"
@@ -45,7 +45,48 @@ async def _upload_to_oss(local_path: Path) -> str:
         data=data,
         content_type=content_type,
     )
-    return await storage.generate_download_url(storage_uri)
+    return storage_uri, await storage.generate_download_url(storage_uri)
+
+
+async def _save_to_writing(content: str, title: str, storage_uri: str) -> str | None:
+    """Persist generated markdown as a Writing note for the current agent user."""
+    try:
+        from pkg.api.categories import get_default_category_id
+        from pkg.api.notes import make_note_id, persist_note
+        from pkg.db import async_session
+        from pkg.schemas.note import NoteCreate
+        from pkg.services.action_agent import current_user_id
+        from pkg.services.agent_memory import create_memory_from_note
+
+        user_id = current_user_id.get()
+        if not user_id:
+            return None
+
+        async with async_session() as session:
+            category_id = await get_default_category_id(session)
+            note_title = title.strip() or "Generated Document"
+            note_id = make_note_id(note_title)
+            note = await persist_note(
+                session=session,
+                body=NoteCreate(
+                    id=note_id,
+                    title=note_title,
+                    category_id=category_id,
+                    note_type="concept",
+                    content=content,
+                    status="seed",
+                    tags=["from-document", "auto-saved"],
+                ),
+                user_id=user_id,
+                file_path=storage_uri,
+                content_override=content,
+            )
+            await create_memory_from_note(session, user_id=user_id, note_id=note.id, memory_kind="document", confidence_score=0.65)
+            await session.commit()
+            return note.id
+    except Exception:
+        logger.exception("Failed to save generated document to Writing")
+        return None
 
 
 def _md_to_docx(content: str, path: Path) -> None:
@@ -195,7 +236,7 @@ async def process_document(content: str, format: str = "md", filename: str = "")
             docx_path = path.with_suffix(".docx")
             _md_to_docx(content, docx_path)
             try:
-                download_url = await _upload_to_oss(docx_path)
+                storage_uri, download_url = await _upload_to_oss(docx_path)
             except Exception as exc:
                 logger.exception("Failed to upload DOCX to OSS")
                 return (
@@ -204,20 +245,25 @@ async def process_document(content: str, format: str = "md", filename: str = "")
                     f"OSS 上传失败: {exc}"
                 )
             docx_path.unlink(missing_ok=True)
+            writing_note_id = await _save_to_writing(content, base_name, storage_uri)
+            writing_line = f"\nWriting ID: {writing_note_id}" if writing_note_id else ""
             return (
                 f"已生成 DOCX 文件并上传至 OSS。\n"
                 f"（PDF 直接转换暂不支持，已生成 DOCX 替代）\n"
                 f"下载链接: {download_url}"
+                f"{writing_line}"
             )
     except Exception as exc:
         logger.exception("Failed to convert to %s", fmt)
         return f"文档转换失败: {exc}"
 
     try:
-        download_url = await _upload_to_oss(path)
+        storage_uri, download_url = await _upload_to_oss(path)
     except Exception as exc:
         logger.exception("Failed to upload to OSS")
         return f"已生成文件: {path}（OSS 上传失败: {exc}）"
 
+    writing_note_id = await _save_to_writing(content, base_name, storage_uri)
     path.unlink(missing_ok=True)
-    return f"已生成文件并上传至 OSS。\n下载链接: {download_url}"
+    writing_line = f"\nWriting ID: {writing_note_id}" if writing_note_id else ""
+    return f"已生成文件并上传至 OSS。\n下载链接: {download_url}{writing_line}"

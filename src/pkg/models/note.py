@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -27,6 +27,8 @@ class Note(Base):
     source_ids: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
     file_path: Mapped[str | None] = mapped_column(Text)
     word_count: Mapped[int | None] = mapped_column()
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    kept_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
 
@@ -36,6 +38,7 @@ class Note(Base):
         Index("idx_notes_sources", "source_ids", postgresql_using="gin"),
         Index("idx_notes_category", "category_id"),
         Index("idx_notes_user_id", "user_id"),
+        Index("idx_notes_expires_at", "expires_at"),
     )
 
 

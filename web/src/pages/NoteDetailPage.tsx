@@ -1,14 +1,14 @@
-import { useParams, useNavigate } from "react-router-dom";
+import { useLocation, useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, useMemo, useRef } from "react";
-import { ArrowLeft, Download, Pencil, Save, X, Trash2, List, FileText, FileDown } from "lucide-react";
+import { ArrowLeft, Download, Pencil, Save, X, Trash2, List, FileText, FileDown, Bot, RefreshCw, LinkIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { MarkdownRenderer } from "@/components/markdown";
-import { notesApi, categoriesApi, downloadFile, type NoteUpdate } from "@/lib/api";
+import { notesApi, categoriesApi, wikiApi, downloadFile, type NoteUpdate } from "@/lib/api";
 import { CategorySelect } from "@/components/CategorySelect";
 
 const NOTE_TYPES = ["inbox", "architecture", "case-study", "concept", "how-to", "remember"] as const;
@@ -61,12 +61,18 @@ function noteToDraft(note: {
 export function NoteDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
+  const locationState = location.state as { backTo?: string; backLabel?: string } | null;
+  const backTo = locationState?.backTo || "/notes";
+  const backLabel = locationState?.backLabel || "Back to Notes";
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<ReturnType<typeof noteToDraft> | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("full");
   const [selectedSection, setSelectedSection] = useState(0);
+  const [sourceIdInput, setSourceIdInput] = useState("");
+  const [queuedRefreshCount, setQueuedRefreshCount] = useState<number | null>(null);
   const previewRef = useRef<HTMLDivElement>(null);
 
   const { data: note, isLoading, error } = useQuery({
@@ -121,9 +127,49 @@ export function NoteDetailPage() {
     mutationFn: () => notesApi.delete(id!),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notes"] });
-      navigate("/notes");
+      navigate(backTo);
     },
   });
+
+  const attachSourceMutation = useMutation({
+    mutationFn: async (sourceId: string) => {
+      if (!note) throw new Error("Note is not loaded");
+      const source_ids = Array.from(new Set([...(note.source_ids || []), sourceId.trim()])).filter(Boolean);
+      return notesApi.update(note.id, { source_ids });
+    },
+    onSuccess: () => {
+      setSourceIdInput("");
+      queryClient.invalidateQueries({ queryKey: ["note", id] });
+      queryClient.invalidateQueries({ queryKey: ["notes"] });
+    },
+  });
+
+  const queueWikiRefreshMutation = useMutation({
+    mutationFn: async () => {
+      if (!note) throw new Error("Note is not loaded");
+      return wikiApi.suggest({ trigger_type: "note", trigger_id: note.id, limit: 5 });
+    },
+    onSuccess: (suggestions) => {
+      setQueuedRefreshCount(suggestions.length);
+      queryClient.invalidateQueries({ queryKey: ["wiki-suggestions"] });
+      queryClient.invalidateQueries({ queryKey: ["wiki-pages"] });
+    },
+  });
+
+  function askAgentAboutNote() {
+    if (!note) return;
+    navigate("/chat", {
+      state: {
+        objectRef: {
+          object_type: "note",
+          object_id: note.id,
+          title: note.title,
+        },
+        workflowId: "organize-recent-imports",
+        promptSeed: `Use note "${note.title}" (${note.id}) to help me summarize, refine, or connect it to durable knowledge.`,
+      },
+    });
+  }
 
   function buildUpdatePayload(): NoteUpdate | null {
     if (!draft || !note) return null;
@@ -183,8 +229,8 @@ export function NoteDetailPage() {
     <div className="h-full overflow-y-auto">
       <div className="max-w-7xl mx-auto px-6 py-8">
         <div className="flex flex-wrap items-center gap-2 mb-4">
-          <Button variant="ghost" size="sm" onClick={() => navigate("/notes")}>
-            <ArrowLeft className="h-4 w-4" /> Back to Notes
+          <Button variant="ghost" size="sm" onClick={() => navigate(backTo)}>
+            <ArrowLeft className="h-4 w-4" /> {backLabel}
           </Button>
           {!editing ? (
             <>
@@ -236,6 +282,63 @@ export function NoteDetailPage() {
 
         <div className="flex flex-col lg:flex-row gap-8">
           <div className="flex-1 min-w-0">
+            {!editing && (
+              <div className="mb-6 rounded-lg border border-border bg-card p-4">
+                <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                  <div className="min-w-0">
+                    <h2 className="text-sm font-medium">Actions</h2>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Attach sources or queue a wiki refresh if this note may affect stable knowledge.
+                    </p>
+                    {queuedRefreshCount !== null && (
+                      <button
+                        type="button"
+                        onClick={() => navigate("/review/wiki-suggestions")}
+                        className="mt-2 text-xs text-primary hover:underline"
+                      >
+                        {queuedRefreshCount > 0
+                          ? `Wiki refresh queued for ${queuedRefreshCount} page${queuedRefreshCount === 1 ? "" : "s"}. View queue.`
+                          : "No matching wiki pages found yet."}
+                      </button>
+                    )}
+                    {queueWikiRefreshMutation.isError && (
+                      <p className="mt-2 text-xs text-destructive">
+                        {queueWikiRefreshMutation.error instanceof Error ? queueWikiRefreshMutation.error.message : "Failed to queue wiki refresh"}
+                      </p>
+                    )}
+                    {attachSourceMutation.isError && (
+                      <p className="mt-2 text-xs text-destructive">
+                        {attachSourceMutation.error instanceof Error ? attachSourceMutation.error.message : "Failed to attach source"}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+                    <div className="flex min-w-64 gap-2">
+                      <Input
+                        value={sourceIdInput}
+                        onChange={(event) => setSourceIdInput(event.target.value)}
+                        placeholder="src-..."
+                        className="h-9"
+                      />
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => attachSourceMutation.mutate(sourceIdInput)}
+                        disabled={!sourceIdInput.trim() || attachSourceMutation.isPending}
+                      >
+                        <LinkIcon className="h-4 w-4" /> Attach Source
+                      </Button>
+                    </div>
+                    <Button size="sm" onClick={() => queueWikiRefreshMutation.mutate()} disabled={queueWikiRefreshMutation.isPending}>
+                      <RefreshCw className={`h-4 w-4 ${queueWikiRefreshMutation.isPending ? "animate-spin" : ""}`} /> Queue Wiki Refresh
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={askAgentAboutNote}>
+                      <Bot className="h-4 w-4" /> Ask Agent
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
             {editing && draft ? (
               <div className="space-y-4">
                 <div>
@@ -519,7 +622,7 @@ export function NoteDetailPage() {
                         <button
                           key={sid}
                           type="button"
-                          onClick={() => navigate(`/sources/${encodeURIComponent(sid)}`)}
+                          onClick={() => navigate(`/sources/${encodeURIComponent(sid)}`, { state: { backTo: `/notes/${encodeURIComponent(note.id)}`, backLabel: "Back to Note" } })}
                           className="block text-xs text-primary hover:underline cursor-pointer"
                         >
                           {sid}

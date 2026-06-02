@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { knowledgeApi, type KnowledgeStatsItem, type DashboardData } from "@/lib/api";
+import { SectionNav, settingsNavItems } from "@/components/SectionNav";
 import {
   BarChart,
   Bar,
@@ -76,10 +77,16 @@ export function StatsPage() {
     setPage(0);
   }
 
-  return (
-    <div className="h-full overflow-y-auto">
-      <div className="max-w-6xl mx-auto px-6 py-8">
-        <h1 className="text-2xl font-bold mb-6">Dashboard</h1>
+	return (
+		<div className="h-full overflow-y-auto">
+			<div className="max-w-6xl mx-auto px-6 py-8">
+				<SectionNav items={settingsNavItems} active="Dashboard" />
+				<div className="mb-6 mt-6">
+					<h1 className="text-2xl font-bold">System Dashboard</h1>
+					<p className="mt-2 text-sm text-muted-foreground">
+						Operational stats and rankings live in Settings so Home can stay focused on daily next actions.
+					</p>
+				</div>
 
         {/* Overview cards */}
         {dashboard && <OverviewCards counts={dashboard.counts} />}
