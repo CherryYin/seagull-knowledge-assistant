@@ -1,6 +1,7 @@
 import { useRef, useState, useEffect, useCallback } from "react";
+import { useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Bot, Cpu, History, MessageSquarePlus, Microscope, Send, Sparkles, Trash2 } from "lucide-react";
+import { Bot, Cpu, History, MessageSquarePlus, Microscope, Send, Sparkles, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -25,8 +26,24 @@ import {
   deleteSession,
   type ChatSessionRecord,
 } from "@/lib/chatSessions";
+import {
+  AGENT_WORKFLOW_SAVE_TARGET_LABELS,
+  AGENT_WORKFLOW_TEMPLATES,
+  findAgentWorkflowTemplate,
+  inferAgentWorkflowId,
+  renderAgentWorkflowPrompt,
+  type AgentWorkflowContext,
+  type AgentWorkflowTemplate,
+} from "@/lib/agent-workflows";
+
+type ChatLocationState = {
+  promptSeed?: string;
+  workflowId?: string;
+  objectRef?: AgentWorkflowContext["objectRef"];
+} | null;
 
 export function ChatPage() {
+  const location = useLocation();
   const [sessions, setSessions] = useState<ChatSessionRecord[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [selectedHistorySessionId, setSelectedHistorySessionId] = useState<string | null>(null);
@@ -42,6 +59,9 @@ export function ChatPage() {
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
   const [activeModel, setActiveModel] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [seedApplied, setSeedApplied] = useState(false);
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
+  const [workflowContext, setWorkflowContext] = useState<AgentWorkflowContext>({});
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -90,6 +110,30 @@ export function ChatPage() {
   });
 
   useEffect(() => {
+    if (seedApplied) return;
+    const state = location.state as ChatLocationState;
+    if (!state?.promptSeed && !state?.workflowId) return;
+    const nextWorkflowId =
+      state.workflowId ?? inferAgentWorkflowId(state.objectRef?.object_type, state.promptSeed);
+    const nextContext = { objectRef: state.objectRef, promptSeed: state.promptSeed };
+    const workflow = findAgentWorkflowTemplate(nextWorkflowId);
+
+    setWorkflowContext(nextContext);
+    setSelectedWorkflowId(workflow?.id ?? null);
+    if (workflow) {
+      setInput(renderAgentWorkflowPrompt(workflow, nextContext));
+    } else if (state.promptSeed) {
+      const prefix = state.objectRef?.title
+        ? `Context: ${state.objectRef.object_type || "object"} ${state.objectRef.title}\n\n`
+        : "";
+      setInput(`${prefix}${state.promptSeed}`);
+    }
+    setTab("chat");
+    setSeedApplied(true);
+    setTimeout(() => textareaRef.current?.focus(), 0);
+  }, [location.state, seedApplied]);
+
+  useEffect(() => {
     if (profiles.length > 0 && activeProfileId === null) {
       const def = profiles.find((p) => p.is_default);
       if (def) setActiveProfileId(def.id);
@@ -105,6 +149,7 @@ export function ChatPage() {
     historySessions.find((s) => s.id === selectedHistorySessionId) ??
     historySessions[0] ??
     null;
+  const selectedWorkflow = findAgentWorkflowTemplate(selectedWorkflowId);
 
   const scrollToBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -128,6 +173,8 @@ export function ChatPage() {
       setActiveSessionId(next.id);
       setSelectedHistorySessionId(next.id);
       setInput("");
+      setSelectedWorkflowId(null);
+      setWorkflowContext({});
       setTab("chat");
       textareaRef.current?.focus();
     } catch (err) {
@@ -302,9 +349,28 @@ export function ChatPage() {
     const raw = input.trim();
     if (!raw || streaming) return;
     setInput("");
+    setSelectedWorkflowId(null);
     const task = deepResearch ? `/deep-research ${raw}` : raw;
     sendMessage(task);
   };
+
+  const handleSelectWorkflow = useCallback(
+    (workflow: AgentWorkflowTemplate) => {
+      const currentInput = input.trim();
+      const userInput = selectedWorkflowId ? undefined : currentInput || undefined;
+      setSelectedWorkflowId(workflow.id);
+      setInput(renderAgentWorkflowPrompt(workflow, { ...workflowContext, userInput }));
+      setTab("chat");
+      setTimeout(() => textareaRef.current?.focus(), 0);
+    },
+    [input, selectedWorkflowId, workflowContext]
+  );
+
+  const handleClearWorkflow = useCallback(() => {
+    setSelectedWorkflowId(null);
+    setInput((value) => value.trim());
+    setTimeout(() => textareaRef.current?.focus(), 0);
+  }, []);
 
   const handleRetry = useCallback(
     (userMsg: ChatSessionMessage, msgIndex: number) => {
@@ -400,22 +466,41 @@ export function ChatPage() {
                         - all grounded in your personal knowledge base.
                       </p>
                     </div>
-                    <div className="mt-4 grid max-w-lg grid-cols-2 gap-2">
-                      {[
-                        "What do I know about knowledge mining?",
-                        "Draft a summary of my architecture designs",
-                        "Compare deterministic vs model-driven orchestration",
-                        "Help me plan the next phase of this project",
-                      ].map((q) => (
+                    <div className="mt-4 grid w-full max-w-3xl gap-3 md:grid-cols-2">
+                      {AGENT_WORKFLOW_TEMPLATES.map((workflow) => (
                         <button
-                          key={q}
-                          onClick={() => {
-                            setInput(q);
-                            textareaRef.current?.focus();
-                          }}
-                          className="cursor-pointer rounded-lg border border-border px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                          key={workflow.id}
+                          type="button"
+                          onClick={() => handleSelectWorkflow(workflow)}
+                          className={cn(
+                            "cursor-pointer rounded-xl border px-4 py-3 text-left transition-colors hover:bg-accent",
+                            selectedWorkflowId === workflow.id
+                              ? "border-primary/50 bg-primary/5"
+                              : "border-border"
+                          )}
                         >
-                          {q}
+                          <div className="mb-1 flex items-center justify-between gap-3">
+                            <h3 className="text-sm font-semibold text-foreground">{workflow.title}</h3>
+                            <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+                              {workflow.outputSections.length} sections
+                            </span>
+                          </div>
+                          <p className="mb-2 text-xs text-muted-foreground">{workflow.description}</p>
+                          {workflow.requiredInput && (
+                            <p className="mb-2 text-[10px] text-muted-foreground">
+                              Input: {workflow.requiredInput}
+                            </p>
+                          )}
+                          <div className="flex flex-wrap gap-1">
+                            {workflow.saveTargets.map((target) => (
+                              <span
+                                key={target}
+                                className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground"
+                              >
+                                {AGENT_WORKFLOW_SAVE_TARGET_LABELS[target]}
+                              </span>
+                            ))}
+                          </div>
                         </button>
                       ))}
                     </div>
@@ -468,6 +553,29 @@ export function ChatPage() {
                 />
               ) : (
               <div className="border-t border-border bg-card/50 px-6 py-4">
+                {selectedWorkflow && (
+                  <div className="mx-auto mb-2 flex max-w-3xl flex-wrap items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs">
+                    <span className="font-medium text-primary">Workflow: {selectedWorkflow.title}</span>
+                    <span className="text-muted-foreground">Editable prompt · no automatic writes</span>
+                    <div className="flex flex-wrap gap-1">
+                      {selectedWorkflow.saveTargets.map((target) => (
+                        <span
+                          key={target}
+                          className="rounded-full bg-background px-2 py-0.5 text-[10px] text-muted-foreground"
+                        >
+                          {AGENT_WORKFLOW_SAVE_TARGET_LABELS[target]}
+                        </span>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleClearWorkflow}
+                      className="ml-auto inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-background hover:text-foreground"
+                    >
+                      <X className="h-3 w-3" /> Clear
+                    </button>
+                  </div>
+                )}
                 <div className="mx-auto flex max-w-3xl items-center gap-2 mb-2">
                   <button
                     type="button"
