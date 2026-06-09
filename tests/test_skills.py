@@ -1,11 +1,11 @@
-"""Tests for pkg.services.skills — skill loading, parsing, expansion."""
+"""Tests for pkg.services.cross_cutting.skills — skill loading, parsing, expansion."""
 
 import textwrap
 from pathlib import Path
 
 import pytest
 
-from pkg.services.skills import (
+from pkg.services.cross_cutting.skills import (
     SkillDef,
     SkillArg,
     _parse_skill_file,
@@ -62,6 +62,17 @@ class TestExpandSkill:
         result = expand_skill(skill, ["quantum", "computing"])
         assert result == "Research: quantum computing"
 
+    def test_deep_research_style_topic_uses_all_args(self):
+        skill = SkillDef(
+            name="deep-research",
+            description="Deep research",
+            template="请对「$@」进行研究。",
+        )
+        result = expand_skill(skill, ["Anthropic", "发布的博客介绍", "dynamic workflows"])
+
+        assert "Anthropic 发布的博客介绍 dynamic workflows" in result
+        assert "「Anthropic」" not in result
+
     def test_missing_args_removed(self):
         skill = SkillDef(name="test", description="", template="$1 and $2 and $3")
         result = expand_skill(skill, ["a", "b"])
@@ -104,6 +115,15 @@ class TestLoadSkillsFromDir:
         assert len(skills) > 0
         names = [s.name for s in skills]
         assert "deep-research" in names
+
+    def test_deep_research_skill_uses_full_invocation_topic(self):
+        skills = load_skills_from_dir(Path("./skills"))
+        skill = next(s for s in skills if s.name == "deep-research")
+
+        result = expand_skill(skill, ["Anthropic", "发布的博客介绍", "dynamic workflows"])
+
+        assert "Anthropic 发布的博客介绍 dynamic workflows" in result
+        assert "请对「Anthropic」" not in result
 
     def test_parse_skill_file(self, tmp_path):
         md = tmp_path / "test-skill.md"

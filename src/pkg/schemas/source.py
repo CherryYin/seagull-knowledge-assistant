@@ -4,6 +4,12 @@ from pydantic import BaseModel, Field
 
 
 class SourceCreate(BaseModel):
+    """Create an external evidence record kept with provenance.
+
+    Sources are imported or captured materials from outside the user, such as
+    web pages, PDFs, RSS articles, repositories, and documents.
+    """
+
     id: str | None = None
     title: str
     category_id: int = 1
@@ -15,7 +21,7 @@ class SourceCreate(BaseModel):
 
 
 class SourceUpdate(BaseModel):
-    """Partial update; only set fields are applied."""
+    """Partial update for an external evidence record."""
 
     title: str | None = None
     category_id: int | None = None
@@ -27,6 +33,8 @@ class SourceUpdate(BaseModel):
 
 
 class SourceRead(BaseModel):
+    """External evidence returned to clients."""
+
     model_config = {"from_attributes": True}
 
     id: str

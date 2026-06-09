@@ -29,7 +29,9 @@ export interface SaveDocumentRequest {
 }
 
 export interface SaveDocumentResponse {
+  // `source_id` is the backing stored artifact record for the generated document.
   source_id: string;
+  // `note_id` is the user-visible writing note.
   note_id: string;
 }
 

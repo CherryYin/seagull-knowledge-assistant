@@ -14,12 +14,12 @@ from pkg.api.deps import get_current_user
 from pkg.config import settings
 from pkg.db import get_session
 from pkg.models.category import Category
-from pkg.models.note import Note, NoteEmbedding
+from pkg.models.foundation.note import Note, NoteEmbedding
 from pkg.models.user import User
 from pkg.schemas.note import DigestMergeRequest, NoteCreate, NoteList, NoteRead, NoteUpdate
-from pkg.services.embedding import get_embedding_service
-from pkg.services.storage import get_storage_service
-from pkg.services.agent_memory import create_memory_from_note
+from pkg.services.cross_cutting.embedding import get_embedding_service
+from pkg.services.cross_cutting.storage import get_storage_service
+from pkg.services.orchestration.agent_memory import create_memory_from_note
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -115,6 +115,10 @@ async def persist_note(
     file_path: str | None = None,
     content_override: str | None = None,
 ) -> Note:
+    tags = list(body.tags or [])
+    if "from-agent" in tags and "agent-output" not in body.domains:
+        body = body.model_copy(update={"domains": [*(body.domains or []), "agent-output"]})
+
     note_id = make_note_id(body.title, body.id)
 
     note = Note(

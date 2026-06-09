@@ -1,10 +1,11 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from pkg.schemas.connector import ArxivPaper, GitHubRepo
-from pkg.services.connector_trends import score_arxiv_paper, score_github_repo, collect_arxiv_trends_for_user, collect_github_trends_for_user
+from pkg.services.foundation.connector_trends import score_arxiv_paper, score_github_repo, collect_arxiv_trends_for_user, collect_github_trends_for_user
 
 
 def test_arxiv_score_uses_citations_and_recency():
@@ -53,9 +54,9 @@ async def test_collect_arxiv_trends_imports_top_ranked_items():
     rows.scalar_one_or_none.return_value = None
     session.execute.return_value = rows
 
-    with patch("pkg.services.connector_trends.search_arxiv", new_callable=AsyncMock, return_value=[paper_b, paper_a]) as mock_search, \
-         patch("pkg.services.connector_trends.fetch_arxiv_citation_count", new_callable=AsyncMock, side_effect=[50]), \
-         patch("pkg.services.connector_trends.import_arxiv_paper", new_callable=AsyncMock, return_value=(source, True, "arxiv:2401.1")):
+    with patch("pkg.services.foundation.connector_trends.search_arxiv", new_callable=AsyncMock, return_value=[paper_b, paper_a]) as mock_search, \
+         patch("pkg.services.foundation.connector_trends.fetch_arxiv_citation_count", new_callable=AsyncMock, side_effect=[50]), \
+         patch("pkg.services.foundation.connector_trends.import_arxiv_paper", new_callable=AsyncMock, return_value=(source, True, "arxiv:2401.1")):
         items = await collect_arxiv_trends_for_user(session, user_id="user-1", trend_date="2026-05-22", top_k=1)
 
     assert mock_search.await_args.kwargs["date_from"]
@@ -64,6 +65,21 @@ async def test_collect_arxiv_trends_imports_top_ranked_items():
     assert items[0].provider == "arxiv"
     assert items[0].rank == 1
     assert items[0].metadata_["citation_count"] == 50
+
+
+@pytest.mark.asyncio
+async def test_collect_arxiv_trends_skips_timeout_without_importing():
+    session = AsyncMock()
+
+    with patch(
+        "pkg.services.foundation.connector_trends.search_arxiv",
+        new_callable=AsyncMock,
+        side_effect=httpx.ReadTimeout("arXiv read timed out"),
+    ), patch("pkg.services.foundation.connector_trends.import_arxiv_paper", new_callable=AsyncMock) as mock_import:
+        items = await collect_arxiv_trends_for_user(session, user_id="user-1", trend_date="2026-05-22")
+
+    assert items == []
+    mock_import.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -81,9 +97,9 @@ async def test_collect_github_trends_uses_growth_snapshot():
     source = MagicMock()
     source.id = "src-github-owner-repo"
 
-    with patch("pkg.services.connector_trends.search_github_repos", new_callable=AsyncMock, return_value=[repo]) as mock_search, \
-         patch("pkg.services.connector_trends.get_github_repo", new_callable=AsyncMock, return_value=repo), \
-         patch("pkg.services.connector_trends.import_github_repo", new_callable=AsyncMock, return_value=(source, True, "github:owner/repo")):
+    with patch("pkg.services.foundation.connector_trends.search_github_repos", new_callable=AsyncMock, return_value=[repo]) as mock_search, \
+         patch("pkg.services.foundation.connector_trends.get_github_repo", new_callable=AsyncMock, return_value=repo), \
+         patch("pkg.services.foundation.connector_trends.import_github_repo", new_callable=AsyncMock, return_value=(source, True, "github:owner/repo")):
         items = await collect_github_trends_for_user(session, user_id="user-1", trend_date="2026-05-22", top_k=1)
 
     assert mock_search.await_args.kwargs["pushed_after"]
@@ -108,8 +124,8 @@ async def test_collect_github_trends_filters_old_repositories():
         pushed_at=datetime.now(timezone.utc) - timedelta(days=500),
     )
 
-    with patch("pkg.services.connector_trends.search_github_repos", new_callable=AsyncMock, return_value=[old_repo]), \
-         patch("pkg.services.connector_trends.import_github_repo", new_callable=AsyncMock) as mock_import:
+    with patch("pkg.services.foundation.connector_trends.search_github_repos", new_callable=AsyncMock, return_value=[old_repo]), \
+         patch("pkg.services.foundation.connector_trends.import_github_repo", new_callable=AsyncMock) as mock_import:
         items = await collect_github_trends_for_user(session, user_id="user-1", trend_date="2026-05-22", top_k=1)
 
     assert items == []

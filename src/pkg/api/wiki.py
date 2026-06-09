@@ -4,18 +4,36 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.api.deps import get_current_user
 from pkg.db import get_session
-from pkg.models.note import Note
-from pkg.models.memory import MemoryNode
-from pkg.models.source import Source
+from pkg.models.foundation.note import Note
+from pkg.models.foundation.memory import MemoryNode
+from pkg.models.foundation.source import Source
 from pkg.models.user import User
-from pkg.models.wiki import WikiEmbedding, WikiPage, WikiPageMemory, WikiPageSource, WikiRecompileSuggestion
+from pkg.models.foundation.wiki import (
+    WikiArticleDraft,
+    WikiEmbedding,
+    WikiInsightCandidate,
+    WikiPage,
+    WikiPageMemory,
+    WikiPageSource,
+    WikiRecompileSuggestion,
+)
 from pkg.schemas.wiki import (
+    WikiArticleDraftStatusUpdate,
+    WikiCandidateMergeAction,
+    WikiCandidateNoteConversionRead,
+    WikiCloneDraftRequest,
     WikiCompileRequest,
     WikiFromMemoryRequest,
+    WikiInsightCandidateRead,
+    WikiInsightCandidateStatusUpdate,
+    WikiMiningRunCreate,
+    WikiMiningRunDetail,
+    WikiMiningRunList,
     WikiPageCreate,
     WikiPageList,
     WikiPageMemoryCreate,
@@ -28,14 +46,186 @@ from pkg.schemas.wiki import (
     WikiRecompileSuggestionRead,
     WikiSuggestionStatusUpdate,
     WikiSuggestRequest,
+    WikiArticleDraftRead,
 )
-from pkg.services.embedding import get_embedding_service
-from pkg.services.llm import create_async_client
-from pkg.services.memory_retriever import format_memory_context, retrieve_for_wiki
-from pkg.services.wiki_recompile import suggest_wiki_recompile_for_trigger
+from pkg.schemas.reference import ReferenceRead, ReferenceResolveRequest, ReferenceResolveResponse
+from pkg.services.cross_cutting.embedding import get_embedding_service
+from pkg.services.cross_cutting.llm import create_async_client
+from pkg.services.foundation.memory_retriever import format_memory_context, retrieve_for_wiki
+from pkg.services.foundation.wiki_lifecycle import get_wiki_role
+from pkg.services.foundation.wiki_mining import get_wiki_mining_run_detail, list_wiki_mining_runs, run_wiki_mining
+from pkg.services.foundation.wiki_recompile import suggest_wiki_recompile_for_trigger
+from pkg.services.foundation.wiki_templates import build_wiki_template
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+@router.post("/mining/runs", response_model=WikiMiningRunDetail, status_code=201)
+async def create_wiki_mining_run(
+    body: WikiMiningRunCreate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    result = await run_wiki_mining(
+        session,
+        user_id=user.id,
+        window_days=body.window_days,
+        max_new_items=body.max_new_items,
+        max_related_items=body.max_related_items,
+    )
+    return WikiMiningRunDetail(run=result.run, insights=result.insights, articles=result.articles)
+
+
+@router.get("/mining/runs", response_model=WikiMiningRunList)
+async def get_wiki_mining_runs(
+    limit: int = Query(default=20, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    items, total = await list_wiki_mining_runs(session, user_id=user.id, limit=limit, offset=offset)
+    return WikiMiningRunList(items=items, total=total)
+
+
+@router.get("/mining/runs/{run_id}", response_model=WikiMiningRunDetail)
+async def get_wiki_mining_run(
+    run_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    run, insights, articles = await get_wiki_mining_run_detail(session, user_id=user.id, run_id=run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Wiki mining run not found")
+    return WikiMiningRunDetail(run=run, insights=insights, articles=articles)
+
+
+@router.post("/references/resolve", response_model=ReferenceResolveResponse)
+async def resolve_wiki_references(
+    body: ReferenceResolveRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    items: list[ReferenceRead] = []
+    for ref in body.refs:
+        ref_type = str(ref.get("ref_type") or ref.get("type") or "").strip().lower()
+        ref_id = str(ref.get("ref_id") or ref.get("id") or "").strip()
+        excerpt = ref.get("excerpt") if isinstance(ref.get("excerpt"), str) else None
+        if not ref_type or not ref_id:
+            continue
+
+        resolved = await _resolve_reference(session=session, user_id=user.id, ref_type=ref_type, ref_id=ref_id, excerpt=excerpt)
+        if resolved:
+            items.append(resolved)
+    return ReferenceResolveResponse(items=items)
+
+
+@router.patch("/mining/insights/{insight_id}", response_model=WikiInsightCandidateRead)
+async def update_wiki_insight_candidate_status(
+    insight_id: int,
+    body: WikiInsightCandidateStatusUpdate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    insight = await session.get(WikiInsightCandidate, insight_id)
+    if not insight or insight.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Wiki insight candidate not found")
+    insight.status = body.status
+    insight.reviewer_note = body.reviewer_note
+    await session.commit()
+    await session.refresh(insight)
+    return insight
+
+
+@router.patch("/mining/articles/{article_id}", response_model=WikiArticleDraftRead)
+async def update_wiki_article_draft_status(
+    article_id: int,
+    body: WikiArticleDraftStatusUpdate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    article = await session.get(WikiArticleDraft, article_id)
+    if not article or article.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Wiki article draft not found")
+
+    article.status = body.status
+    article.reviewer_note = body.reviewer_note
+
+    if body.status == "accepted":
+        tags = ["wiki-draft", "from-mining-candidate"]
+        evidence_refs = article.evidence_refs or []
+        source_ids = [ref.get("ref_id") for ref in evidence_refs if ref.get("ref_type") == "source" and ref.get("ref_id")]
+        note_ids = [ref.get("ref_id") for ref in evidence_refs if ref.get("ref_type") == "note" and ref.get("ref_id")]
+        wiki = await persist_wiki_page(
+            session=session,
+            body=WikiPageCreate(
+                title=body.wiki_title or article.title,
+                page_type=body.page_type or article.page_type,
+                summary=article.summary,
+                content=article.content,
+                derived_from_sources=_merge_unique(source_ids),
+                derived_from_notes=_merge_unique(note_ids),
+                tags=tags,
+                open_questions=["Review generated from wiki mining candidate article before stabilizing."],
+            ),
+            user_id=user.id,
+        )
+        article.status = "accepted"
+        metadata = dict(article.metadata_ or {})
+        metadata["accepted_wiki_id"] = wiki.id
+        article.metadata_ = metadata
+    else:
+        await session.commit()
+
+    await session.refresh(article)
+    return article
+
+
+@router.post("/mining/articles/{article_id}/merge", response_model=WikiArticleDraftRead)
+async def merge_wiki_article_candidate(
+    article_id: int,
+    body: WikiCandidateMergeAction,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    article = await session.get(WikiArticleDraft, article_id)
+    if not article or article.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Wiki article draft not found")
+
+    metadata = dict(article.metadata_ or {})
+    metadata["merge_target_wiki_id"] = body.target_wiki_id
+    metadata["merge_placeholder"] = True
+    article.metadata_ = metadata
+    article.status = "merged"
+    article.reviewer_note = body.reviewer_note
+    await session.commit()
+    await session.refresh(article)
+    return article
+
+
+@router.post("/mining/articles/{article_id}/convert-to-note", response_model=WikiCandidateNoteConversionRead)
+async def convert_wiki_article_candidate_to_note(
+    article_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    article = await session.get(WikiArticleDraft, article_id)
+    if not article or article.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Wiki article draft not found")
+
+    metadata = dict(article.metadata_ or {})
+    metadata["converted_to_note_placeholder"] = True
+    article.metadata_ = metadata
+    article.reviewer_note = (article.reviewer_note or "").strip() or "Converted to note placeholder"
+    await session.commit()
+    await session.refresh(article)
+    return WikiCandidateNoteConversionRead(
+        article_id=article.id,
+        status="placeholder",
+        note_title=article.title,
+        note_content=article.content,
+        metadata_=article.metadata_,
+    )
 
 
 def make_wiki_id(title: str, explicit_id: str | None = None) -> str:
@@ -70,13 +260,14 @@ async def _upsert_wiki_embedding(session: AsyncSession, wiki: WikiPage) -> None:
 
 async def persist_wiki_page(*, session: AsyncSession, body: WikiPageCreate, user_id: str) -> WikiPage:
     wiki_id = make_wiki_id(body.title, body.id)
+    content = body.content or build_wiki_template(body.title, body.page_type)
     wiki = WikiPage(
         id=wiki_id,
         user_id=user_id,
         title=body.title,
         page_type=body.page_type,
         summary=body.summary,
-        content=body.content,
+        content=content,
         domains=body.domains,
         tags=body.tags,
         derived_from_notes=body.derived_from_notes,
@@ -201,14 +392,32 @@ async def update_wiki_suggestion_status(
     if not suggestion or suggestion.user_id != user.id:
         raise HTTPException(status_code=404, detail="Wiki suggestion not found")
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    suggestion.status = "rejected" if body.status == "dismissed" else body.status
+    target_status = body.status
+    if target_status != suggestion.status:
+        duplicate_stmt = select(WikiRecompileSuggestion.id).where(
+            WikiRecompileSuggestion.user_id == user.id,
+            WikiRecompileSuggestion.wiki_id == suggestion.wiki_id,
+            WikiRecompileSuggestion.trigger_type == suggestion.trigger_type,
+            WikiRecompileSuggestion.trigger_id == suggestion.trigger_id,
+            WikiRecompileSuggestion.status == target_status,
+            WikiRecompileSuggestion.id != suggestion.id,
+        )
+        duplicate_id = (await session.execute(duplicate_stmt)).scalar_one_or_none()
+        if duplicate_id is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Another wiki review item already has status '{target_status}' for the same trigger. Refresh the queue and use the existing item instead.",
+            )
+
+    suggestion.status = target_status
     suggestion.reviewer_note = body.reviewer_note
-    if suggestion.status in {"accepted", "rejected", "applied"}:
+    if suggestion.status in {"accepted", "rejected", "dismissed", "applied"}:
         suggestion.reviewed_at = now
     if suggestion.status == "applied":
         suggestion.applied_at = now
 
-    wiki = await session.get(WikiPage, suggestion.wiki_id)
+    with session.no_autoflush:
+        wiki = await session.get(WikiPage, suggestion.wiki_id)
     if wiki and wiki.user_id == user.id:
         if suggestion.status == "accepted":
             wiki.needs_recompile = True
@@ -219,7 +428,14 @@ async def update_wiki_suggestion_status(
             wiki.stale_reason = None
             wiki.stale_triggered_at = None
             wiki.last_compiled_at = now
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="This wiki review item conflicted with another item for the same trigger and status. Refresh the queue and try again.",
+        ) from exc
     await session.refresh(suggestion)
     return suggestion
 
@@ -249,6 +465,10 @@ async def update_wiki_page(
         raise HTTPException(status_code=404, detail="Wiki page not found")
 
     data = body.model_dump(exclude_unset=True)
+    if get_wiki_role(wiki) == "stable":
+        tags = list(wiki.tags or [])
+        if "edited-stable" not in tags:
+            wiki.tags = [*tags, "edited-stable"]
     for field, value in data.items():
         setattr(wiki, field, value)
     if any(field in data for field in ("title", "summary", "content")):
@@ -256,6 +476,41 @@ async def update_wiki_page(
     await session.commit()
     await session.refresh(wiki)
     return wiki
+
+
+@router.post("/{wiki_id}/clone-draft", response_model=WikiPageRead, status_code=201)
+async def clone_wiki_page_as_draft(
+    wiki_id: str,
+    body: WikiCloneDraftRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    wiki = await session.get(WikiPage, wiki_id)
+    if not wiki or wiki.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Wiki page not found")
+
+    title = body.title or f"{wiki.title} Draft"
+    tags = _merge_unique([*(wiki.tags or []), "wiki-draft", "from-stable-wiki"])
+    if "wiki-stable" in tags:
+        tags.remove("wiki-stable")
+
+    draft = await persist_wiki_page(
+        session=session,
+        body=WikiPageCreate(
+            title=title,
+            page_type=wiki.page_type,
+            summary=wiki.summary,
+            content=wiki.content,
+            domains=wiki.domains,
+            tags=tags,
+            derived_from_notes=wiki.derived_from_notes,
+            derived_from_sources=wiki.derived_from_sources,
+            open_questions=wiki.open_questions,
+            confidence_score=wiki.confidence_score,
+        ),
+        user_id=user.id,
+    )
+    return draft
 
 
 @router.delete("/{wiki_id}", status_code=204)
@@ -477,7 +732,7 @@ async def compile_wiki_page(
             content=content,
             derived_from_notes=[note.id for note in notes],
             derived_from_sources=[source.id for source in sources],
-            tags=["compiled"],
+            tags=["wiki-compiled"],
             open_questions=[f"Memory context used: {result.node.id}" for result in memory_results[:5]],
         ),
         user_id=user.id,
@@ -491,6 +746,12 @@ async def create_wiki_draft_from_memory(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
+    """Create a wiki draft from topic memory.
+
+    This is a draft/stable-knowledge handoff from compiled memory, not a raw
+    summary step and not an automatic overwrite of an existing stable wiki.
+    """
+
     memory = await session.get(MemoryNode, body.memory_node_id)
     if not memory or memory.user_id != user.id:
         raise HTTPException(status_code=404, detail="Memory node not found")
@@ -498,7 +759,7 @@ async def create_wiki_draft_from_memory(
         raise HTTPException(status_code=422, detail="Only topic memory can be converted into a wiki draft")
 
     title = body.title or _wiki_title_from_memory(memory)
-    tags = _merge_unique([*body.tags, "draft", "from-memory", "topic-memory"])
+    tags = _merge_unique([*body.tags, "wiki-draft", "from-memory", "topic-memory"])
     content = _wiki_draft_content_from_memory(memory)
     wiki = await persist_wiki_page(
         session=session,
@@ -545,3 +806,70 @@ def _merge_unique(values: list[str]) -> list[str]:
             seen.add(value)
             merged.append(value)
     return merged
+
+
+async def _resolve_reference(
+    *,
+    session: AsyncSession,
+    user_id: str,
+    ref_type: str,
+    ref_id: str,
+    excerpt: str | None = None,
+) -> ReferenceRead | None:
+    if ref_type == "source":
+        source = await session.get(Source, ref_id)
+        if not source or (source.user_id != user_id and not source.is_shared):
+            return None
+        return ReferenceRead(
+            ref_type="source",
+            ref_id=source.id,
+            title=source.title,
+            subtitle=source.source_type,
+            href=f"/sources/{source.id}",
+            excerpt=excerpt,
+            metadata_={"url": source.url},
+        )
+    if ref_type == "note":
+        note = await session.get(Note, ref_id)
+        if not note or note.user_id != user_id:
+            return None
+        return ReferenceRead(
+            ref_type="note",
+            ref_id=note.id,
+            title=note.title,
+            subtitle=note.note_type,
+            href=f"/notes/{note.id}",
+            excerpt=excerpt,
+        )
+    if ref_type == "memory":
+        memory = await session.get(MemoryNode, ref_id)
+        if not memory or memory.user_id != user_id:
+            return None
+        return ReferenceRead(
+            ref_type="memory",
+            ref_id=memory.id,
+            title=memory.title,
+            subtitle=memory.level,
+            href=f"/memory?node={memory.id}",
+            excerpt=excerpt,
+        )
+    if ref_type == "wiki":
+        wiki = await session.get(WikiPage, ref_id)
+        if not wiki or wiki.user_id != user_id:
+            return None
+        return ReferenceRead(
+            ref_type="wiki",
+            ref_id=wiki.id,
+            title=wiki.title,
+            subtitle=wiki.page_type,
+            href=f"/wiki/{wiki.id}",
+            excerpt=excerpt,
+            status=get_wiki_role(wiki),
+        )
+    return ReferenceRead(
+        ref_type=ref_type,
+        ref_id=ref_id,
+        title=ref_id,
+        href=None,
+        excerpt=excerpt,
+    )

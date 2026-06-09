@@ -6,10 +6,10 @@ from pkg.config import settings
 from pkg.db import get_session
 from pkg.models.user import User
 from pkg.schemas.note import SearchRequest, SearchResult
-from pkg.services.activity import log_activity
-from pkg.services.retriever import RetrieverAgent
-from pkg.services.stats import increment_stats
-from pkg.services.sync_pipeline import sync_notes_from_directory, sync_sources_from_directory
+from pkg.services.cross_cutting.activity import log_activity
+from pkg.services.foundation.retriever import RetrieverAgent
+from pkg.services.cross_cutting.stats import increment_stats
+from pkg.services.foundation.sync_pipeline import sync_notes_from_directory, sync_sources_from_directory
 
 router = APIRouter()
 

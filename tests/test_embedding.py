@@ -1,10 +1,10 @@
-"""Tests for pkg.services.embedding — embedding service (mocked AsyncOpenAI)."""
+"""Tests for pkg.services.cross_cutting.embedding — embedding service (mocked AsyncOpenAI)."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pkg.services.embedding import EmbeddingService
+from pkg.services.cross_cutting.embedding import EmbeddingService
 
 
 @pytest.fixture

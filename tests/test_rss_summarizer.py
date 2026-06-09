@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pkg.config import settings
-from pkg.services.rss_summarizer import summarize_rss_by_topic
+from pkg.services.foundation.rss_summarizer import summarize_rss_by_topic
 
 
 class _AsyncSessionFactory:
@@ -52,8 +52,8 @@ class TestSummarizeRssByTopic:
 
         persisted_note = SimpleNamespace(id="note-1")
 
-        with patch("pkg.services.rss_summarizer.async_session", _AsyncSessionFactory(read_session, write_session)):
-            with patch("pkg.services.llm.create_async_client", return_value=(client, "qwen-plus")):
+        with patch("pkg.services.foundation.rss_summarizer.async_session", _AsyncSessionFactory(read_session, write_session)):
+            with patch("pkg.services.cross_cutting.llm.create_async_client", return_value=(client, "qwen-plus")):
                 with patch("pkg.api.categories.get_default_category_id", new_callable=AsyncMock, return_value=1):
                     with patch("pkg.api.notes.put_note_markdown_oss", new_callable=AsyncMock, return_value="minio://note"):
                         with patch("pkg.api.notes.persist_note", new_callable=AsyncMock, return_value=persisted_note):

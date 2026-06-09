@@ -1,11 +1,11 @@
-"""Tests for pkg.services.storage — MinIO storage service (mocked boto3)."""
+"""Tests for pkg.services.cross_cutting.storage — MinIO storage service (mocked boto3)."""
 
 from unittest.mock import MagicMock, patch
 
 import pytest
 from botocore.exceptions import ClientError
 
-from pkg.services.storage import StorageService
+from pkg.services.cross_cutting.storage import StorageService
 
 
 @pytest.fixture
@@ -15,7 +15,7 @@ def mock_s3_client():
 
 @pytest.fixture
 def storage(mock_s3_client):
-    with patch("pkg.services.storage.boto3") as mock_boto3:
+    with patch("pkg.services.cross_cutting.storage.boto3") as mock_boto3:
         mock_boto3.client.return_value = mock_s3_client
         svc = StorageService()
     return svc

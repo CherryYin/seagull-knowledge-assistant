@@ -5,8 +5,8 @@ import pytest
 from pkg.models.memory import MemoryNode
 from pkg.models.review import ReviewSuggestion
 from pkg.models.user import UserMemory
-from pkg.services.review_suggestions import apply_review_suggestion, ensure_phase_b_review_suggestions
-from pkg.services.user_profiler import PROFILE_MEMORY_KEY
+from pkg.services.foundation.review_suggestions import apply_review_suggestion, ensure_review_suggestions
+from pkg.services.cross_cutting.user_profiler import PROFILE_MEMORY_KEY
 
 
 class _ScalarResult:
@@ -42,7 +42,7 @@ async def test_generates_low_confidence_fact_suggestion():
     node.metadata_ = {}
     session.execute.side_effect = [_ScalarResult([node]), _ScalarResult([])]
 
-    created, skipped = await ensure_phase_b_review_suggestions(
+    created, skipped = await ensure_review_suggestions(
         session,
         user_id="user-1",
         include_profile_suggestions=False,
@@ -64,7 +64,7 @@ async def test_generates_profile_suggestion_for_missing_interests():
     profile = UserMemory(user_id="user-1", key=PROFILE_MEMORY_KEY, value={"behavior": {}, "summary": "short"})
     session.execute.side_effect = [_ScalarResult([profile]), _ScalarResult([])]
 
-    created, skipped = await ensure_phase_b_review_suggestions(
+    created, skipped = await ensure_review_suggestions(
         session,
         user_id="user-1",
         include_low_confidence_facts=False,
@@ -96,7 +96,7 @@ async def test_apply_low_confidence_fact_confirms_memory():
 
     await apply_review_suggestion(session, suggestion)
 
-    assert node.metadata_["status"] == "active"
+    assert "status" not in node.metadata_
     assert node.confidence_score == 0.55
 
 

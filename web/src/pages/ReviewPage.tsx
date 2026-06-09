@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { memoryApi, notesApi, reviewApi, sourcesApi, wikiApi } from "@/lib/api";
+import { SUMMARY_LAYER_DESCRIPTION } from "@/lib/summaryLayer";
 import { SectionNav, reviewNavItems } from "@/components/SectionNav";
 
 export function ReviewPage() {
@@ -15,6 +16,10 @@ export function ReviewPage() {
   const { data: suggestionData, isLoading: suggestionsLoading } = useQuery({
     queryKey: ["review-wiki-suggestions"],
     queryFn: () => wikiApi.suggestions({ status: "pending", limit: 5 }),
+  });
+  const { data: miningRunsData, isLoading: miningRunsLoading } = useQuery({
+    queryKey: ["review-wiki-mining-runs"],
+    queryFn: () => wikiApi.miningRuns({ limit: 5 }),
   });
   const { data: sourceData, isLoading: sourcesLoading } = useQuery({
     queryKey: ["review-source-imported"],
@@ -35,6 +40,10 @@ export function ReviewPage() {
 
   const reviewableSources = (sourceData?.items ?? []).filter((source) => source.metadata_?.review_status === "imported_reviewable").slice(0, 5);
   const sourceReviewCount = (sourceData?.items ?? []).filter((source) => source.metadata_?.review_status === "imported_reviewable").length;
+  const pendingMiningRuns = (miningRunsData?.items ?? []).filter((run) => {
+    const summary = run.metadata_?.input_summary as Record<string, number> | undefined;
+    return run.status === "completed" && !!summary;
+  });
 
   return (
     <div className="h-full overflow-y-auto">
@@ -45,8 +54,11 @@ export function ReviewPage() {
             <div className="rounded-xl bg-primary/10 p-3 text-primary"><Bell className="h-6 w-6" /></div>
             <div>
               <h1 className="text-3xl font-semibold tracking-tight">Review Center</h1>
-				<p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-					Review only collects items that need your confirmation before they change durable knowledge, memory, wiki, profile, or source state.
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+					Review is the unified queue for items that need your confirmation before they become durable knowledge or change source, memory, wiki, or profile state.
+				</p>
+				<p className="mt-2 max-w-2xl text-xs leading-5 text-muted-foreground">
+					{SUMMARY_LAYER_DESCRIPTION}
 				</p>
             </div>
           </div>
@@ -63,8 +75,8 @@ export function ReviewPage() {
             items={(digestData?.items ?? []).map((item) => ({ title: item.title, meta: item.expires_at ? `expires ${new Date(item.expires_at).toLocaleDateString()}` : "pending" }))}
           />
           <ReviewQueueCard
-            title="Wiki Suggestions"
-            description="Memory/source-triggered suggestions for updating stable wiki pages."
+            title="Wiki Refresh Review"
+            description="Review reminders for stable wiki pages that may need updates after new source, note, or memory changes."
             to="/review/wiki-suggestions"
             icon={BookOpenCheck}
             count={suggestionData?.total ?? 0}
@@ -72,8 +84,25 @@ export function ReviewPage() {
             items={(suggestionData?.items ?? []).map((item) => ({ title: item.wiki_title || item.wiki_id, meta: item.reason }))}
           />
           <ReviewQueueCard
-            title="Imported Sources"
-            description="Saved connector sources that are marked reviewable before deeper memory/wiki use."
+            title="Wiki Mining Candidates"
+            description="Recent wiki mining runs with candidate insights and draft articles waiting for review or conversion into draft wiki pages."
+            to="/review/wiki-suggestions"
+            icon={Sparkles}
+            count={pendingMiningRuns.length}
+            loading={miningRunsLoading}
+            items={pendingMiningRuns.map((run) => {
+              const summary = (run.metadata_?.input_summary as Record<string, number> | undefined) ?? {};
+              const newCount = (summary.new_sources ?? 0) + (summary.new_notes ?? 0) + (summary.new_memory_nodes ?? 0);
+              const relatedCount = (summary.related_sources ?? 0) + (summary.related_notes ?? 0) + (summary.related_memory_nodes ?? 0) + (summary.related_wiki_pages ?? 0);
+              return {
+                title: `Mining run #${run.id}`,
+                meta: `${newCount} new inputs · ${relatedCount} related items`,
+              };
+            })}
+          />
+          <ReviewQueueCard
+            title="Imported Source Review"
+            description="Imported external evidence waiting for keep or discard before deeper memory and wiki use."
             to="/sources?review=imported"
             icon={GitPullRequestArrow}
             count={sourceReviewCount}
@@ -81,8 +110,8 @@ export function ReviewPage() {
             items={reviewableSources.map((source) => ({ title: source.title, meta: source.source_type }))}
           />
           <ReviewQueueCard
-            title="Conversation Memory"
-            description="Agent-created personal assumptions waiting for accept, archive, or merge."
+            title="Knowledge Tree Review"
+            description="Agent-created knowledge tree candidates waiting for accept, archive, or merge."
             to="/memory?status=pending_review"
             icon={Brain}
             count={memoryData?.total ?? 0}
@@ -90,8 +119,8 @@ export function ReviewPage() {
             items={(memoryData?.items ?? []).map((item) => ({ title: item.title, meta: item.summary || item.level }))}
           />
           <ReviewQueueCard
-            title="Low-Confidence Facts"
-            description="Memory facts with weak confidence that need confirmation before being trusted."
+            title="Low-Confidence Fact Review"
+            description="Memory facts with weak confidence that need confirmation before they should be trusted."
             to="/review/suggestions?type=low_confidence_fact"
             icon={Sparkles}
             count={lowConfidenceData?.total ?? 0}
@@ -99,8 +128,8 @@ export function ReviewPage() {
             items={(lowConfidenceData?.items ?? []).map((item) => ({ title: item.title, meta: item.summary || item.target_id }))}
           />
           <ReviewQueueCard
-            title="Profile Suggestions"
-            description="Generated user-profile quality checks that can improve personalization."
+            title="Profile Update Review"
+            description="Generated profile updates and quality checks that may improve personalization."
             to="/review/suggestions?type=profile_update"
             icon={UserRoundCheck}
             count={profileSuggestionData?.total ?? 0}

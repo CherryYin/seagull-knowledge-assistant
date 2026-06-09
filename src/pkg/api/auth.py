@@ -22,7 +22,7 @@ from pkg.schemas.user import (
     UserRead,
     UserUpdate,
 )
-from pkg.services.auth import create_access_token, hash_password, verify_password
+from pkg.services.cross_cutting.auth import create_access_token, hash_password, verify_password
 
 router = APIRouter()
 
@@ -275,7 +275,7 @@ async def update_settings(
 
 @router.post("/me/profile/generate")
 async def generate_profile(user: User = Depends(get_current_user)):
-    from pkg.services.user_profiler import generate_user_profile
+    from pkg.services.cross_cutting.user_profiler import generate_user_profile
 
     profile = await generate_user_profile(user.id)
     if profile is None:

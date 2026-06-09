@@ -1,7 +1,7 @@
 """Tests for sources API endpoints (/sources/*)."""
 
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -55,6 +55,127 @@ class TestListSources:
 
 
 # ---------------------------------------------------------------------------
+# POST /sources
+# ---------------------------------------------------------------------------
+class TestCreateSource:
+    def test_make_source_id_slugifies_url_title(self):
+        from pkg.api.sources import make_source_id
+
+        source_id = make_source_id("https://claude.com/blog/introducing-dynamic-workflows-in-claude-code")
+
+        assert source_id.startswith("src-")
+        assert ":" not in source_id
+        assert "/" not in source_id
+        assert "claude-com-blog-introducing" in source_id
+
+    @pytest.mark.asyncio
+    async def test_web_url_without_content_fetches_page(self, mock_session, fake_user):
+        from pkg.api.sources import create_source
+        from pkg.schemas.source import SourceCreate
+        from pkg.services.foundation.web_extractor import WebPageFetchResult
+
+        fetched = WebPageFetchResult(
+            url="https://claude.com/blog/introducing-dynamic-workflows-in-claude-code",
+            final_url="https://claude.com/blog/introducing-dynamic-workflows-in-claude-code",
+            title="Introducing dynamic workflows in Claude Code",
+            text="Dynamic workflows article content",
+            metadata={"web_fetch_status": "fetched", "web_fetch_extractor": "trafilatura"},
+        )
+
+        async def fake_persist_source(*, body, user_id, **_kwargs):
+            source = _make_source("src-web", user_id)
+            source.title = body.title
+            source.source_type = body.source_type
+            source.url = body.url
+            source.raw_content = body.raw_content
+            source.metadata_ = body.metadata
+            return source
+
+        with (
+            patch("pkg.api.sources.fetch_web_page", new=AsyncMock(return_value=fetched)) as fetch_mock,
+            patch("pkg.api.sources.persist_source", new=AsyncMock(side_effect=fake_persist_source)),
+            patch("pkg.api.sources.maybe_enable_rss_for_source", new=AsyncMock(return_value=False)),
+        ):
+            source = await create_source(
+                SourceCreate(
+                    title="Claude blog",
+                    category_id=1,
+                    source_type="web",
+                    url="https://claude.com/blog/introducing-dynamic-workflows-in-claude-code",
+                ),
+                user=fake_user,
+                session=mock_session,
+            )
+
+        fetch_mock.assert_awaited_once()
+        assert source.raw_content == "Dynamic workflows article content"
+        assert source.metadata_["web_fetch_status"] == "fetched"
+
+    @pytest.mark.asyncio
+    async def test_web_url_title_is_replaced_with_page_title(self, mock_session, fake_user):
+        from pkg.api.sources import create_source
+        from pkg.schemas.source import SourceCreate
+        from pkg.services.foundation.web_extractor import WebPageFetchResult
+
+        url = "https://claude.com/blog/introducing-dynamic-workflows-in-claude-code"
+        fetched = WebPageFetchResult(
+            url=url,
+            final_url=url,
+            title="Introducing dynamic workflows in Claude Code",
+            text="Dynamic workflows article content",
+            metadata={"web_fetch_status": "fetched"},
+        )
+
+        async def fake_persist_source(*, body, user_id, **_kwargs):
+            source = _make_source("src-web", user_id)
+            source.title = body.title
+            source.source_type = body.source_type
+            source.url = body.url
+            source.raw_content = body.raw_content
+            source.metadata_ = body.metadata
+            return source
+
+        with (
+            patch("pkg.api.sources.fetch_web_page", new=AsyncMock(return_value=fetched)),
+            patch("pkg.api.sources.persist_source", new=AsyncMock(side_effect=fake_persist_source)),
+            patch("pkg.api.sources.maybe_enable_rss_for_source", new=AsyncMock(return_value=False)),
+        ):
+            source = await create_source(
+                SourceCreate(title=url, category_id=1, source_type="web", url=url),
+                user=fake_user,
+                session=mock_session,
+            )
+
+        assert source.title == "Introducing dynamic workflows in Claude Code"
+
+    @pytest.mark.asyncio
+    async def test_web_url_fetch_failure_returns_422(self, mock_session, fake_user):
+        from fastapi import HTTPException
+        from pkg.api.sources import create_source
+        from pkg.schemas.source import SourceCreate
+        from pkg.services.foundation.web_extractor import WebPageFetchError
+
+        with patch(
+            "pkg.api.sources.fetch_web_page",
+            new=AsyncMock(side_effect=WebPageFetchError("Could not extract readable text from the web page")),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await create_source(
+                    SourceCreate(
+                        title="Claude blog",
+                        category_id=1,
+                        source_type="web",
+                        url="https://claude.com/blog/introducing-dynamic-workflows-in-claude-code",
+                    ),
+                    user=fake_user,
+                    session=mock_session,
+                )
+
+        assert exc_info.value.status_code == 422
+        assert "Could not extract readable text" in exc_info.value.detail
+
+
+# ---------------------------------------------------------------------------
 # DELETE /sources/{source_id}
 # ---------------------------------------------------------------------------
 class TestDeleteSource:
@@ -76,6 +197,24 @@ class TestDeleteSource:
 
         resp = client.delete("/sources/nonexistent")
         assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_delete_legacy_path_id(self, mock_session, fake_user):
+        from pkg.api.sources import delete_source_by_id
+        from pkg.models.source import Source
+
+        legacy_id = "src-20260603-https://claude.com/blog/introd-5e073745"
+        source = _make_source(legacy_id, fake_user.id)
+        mock_session.get.side_effect = [source, None]
+        mock_chunks = MagicMock()
+        mock_chunks.scalars.return_value = []
+        mock_session.execute.return_value = mock_chunks
+
+        await delete_source_by_id(legacy_id, user=fake_user, session=mock_session)
+
+        assert mock_session.get.await_args_list[0].args == (Source, legacy_id)
+        mock_session.delete.assert_awaited_with(source)
+        mock_session.commit.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -219,3 +358,28 @@ async def test_keep_imported_source_rejects_non_reviewable_source(mock_session, 
         await keep_imported_source("src-normal", user=fake_user, session=mock_session)
 
     assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_list_feed_articles_filters_child_ownership(mock_session, fake_user):
+    from pkg.api.sources import list_feed_articles
+
+    parent = _make_source("feed-1", fake_user.id)
+    parent.source_type = "web"
+    mock_session.get.return_value = parent
+
+    count_rows = MagicMock()
+    count_rows.scalar.return_value = 1
+    child = _make_source("article-1", fake_user.id)
+    child.metadata_ = {"feed_source_id": "feed-1"}
+    item_rows = MagicMock()
+    item_rows.scalars.return_value = [child]
+    mock_session.execute.side_effect = [count_rows, item_rows]
+
+    result = await list_feed_articles("feed-1", limit=20, offset=0, user=fake_user, session=mock_session)
+
+    assert result.total == 1
+    assert len(result.items) == 1
+    assert result.items[0].id == "article-1"
+    executed_sql = [str(call.args[0]) for call in mock_session.execute.await_args_list]
+    assert all("sources.user_id" in stmt and "sources.is_shared" in stmt for stmt in executed_sql)

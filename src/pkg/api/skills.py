@@ -11,7 +11,7 @@ from pkg.api.deps import get_current_user
 from pkg.models.skill import Skill
 from pkg.models.user import User
 from pkg.schemas.skill import SkillCreate, SkillFindRequest, SkillFindResponse, SkillList, SkillRead, SkillUpdate
-from pkg.services.skills import load_skills_merged
+from pkg.services.cross_cutting.skills import load_skills_merged
 
 router = APIRouter()
 
@@ -175,7 +175,7 @@ async def _create_skill_record(body: SkillCreate, db: AsyncSession) -> Skill:
     if existing:
         raise HTTPException(status_code=409, detail=f"Skill '{body.name}' already exists")
 
-    from pkg.services.storage import get_storage_service
+    from pkg.services.cross_cutting.storage import get_storage_service
 
     storage = get_storage_service()
     object_key = storage.build_object_key("skills", skill_id, f"{body.name}.md")

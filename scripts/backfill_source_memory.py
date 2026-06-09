@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from pkg.db import async_session
 from pkg.models.memory import MemoryNode
 from pkg.models.source import Source
-from pkg.services.source_memory import (
+from pkg.services.foundation.source_memory import (
     source_batch_memory_node_id,
     source_memory_node_id,
     upsert_source_batch_memory_node,

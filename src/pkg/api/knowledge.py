@@ -18,7 +18,7 @@ from pkg.schemas.knowledge import (
 from pkg.schemas.note import NoteCreate, NoteRead
 from pkg.schemas.source import SourceCreate
 from pkg.models.user import User
-from pkg.services.storage import get_storage_service
+from pkg.services.cross_cutting.storage import get_storage_service
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,13 @@ async def save_document(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    """Save a generated document as MD — creates a Source + Note pair."""
+    """Save a generated writing document as Markdown.
+
+    The current implementation persists a supporting Source plus a Note so the
+    document remains searchable and traceable in today's data model. Product
+    semantics should treat this as a writing/export artifact, not as a raw
+    external source.
+    """
     storage = get_storage_service()
     category_id = body.category_id or await get_default_category_id(session)
 
@@ -74,7 +80,7 @@ async def save_document(
         content=raw_content,
         source_ids=[source.id],
         status="seed",
-        tags=["from-document"],
+        tags=["from-document", "writing-artifact"],
     )
     note_id = make_note_id(title)
     note_storage_uri = await put_note_markdown_oss(note_id, raw_content)
@@ -123,7 +129,7 @@ async def remember_knowledge(
 @router.post("/summarize-daily")
 async def trigger_daily_summary(user: User = Depends(get_current_user)):
     """Manually trigger the daily temporary notes summarization."""
-    from pkg.services.daily_summarizer import summarize_temporary_notes
+    from pkg.services.foundation.daily_summarizer import summarize_temporary_notes
 
     note_id = await summarize_temporary_notes(user.id)
     if note_id is None:

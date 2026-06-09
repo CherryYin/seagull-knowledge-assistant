@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pkg.models.agent_run import AgentRun
-from pkg.services.agent_memory import (
+from pkg.services.orchestration.agent_memory import (
     create_memory_from_note,
     create_pending_conversation_memory,
     extract_pending_memory_from_agent_run,
@@ -23,7 +23,7 @@ async def test_record_agent_memory_use_writes_event_and_edges():
     rows.scalars.return_value = [node]
     mock_session.execute.return_value = rows
 
-    with patch("pkg.services.agent_memory.upsert_memory_edge", new_callable=AsyncMock) as mock_edge:
+    with patch("pkg.services.orchestration.agent_memory.upsert_memory_edge", new_callable=AsyncMock) as mock_edge:
         await record_agent_memory_use(
             mock_session,
             user_id="user-1",
@@ -50,7 +50,7 @@ async def test_create_pending_conversation_memory_caps_confidence_and_requires_r
     mock_session.add = MagicMock()
     mock_session.flush = AsyncMock()
 
-    with patch("pkg.services.agent_memory.upsert_memory_embedding", new_callable=AsyncMock), patch("pkg.services.agent_memory.upsert_memory_edge", new_callable=AsyncMock):
+    with patch("pkg.services.orchestration.agent_memory.upsert_memory_embedding", new_callable=AsyncMock), patch("pkg.services.orchestration.agent_memory.upsert_memory_edge", new_callable=AsyncMock):
         node = await create_pending_conversation_memory(
             mock_session,
             user_id="user-12345678",
@@ -84,7 +84,7 @@ async def test_extract_pending_memory_from_agent_run_creates_for_memory_intent()
     mock_session = AsyncMock()
     mock_node = MagicMock()
 
-    with patch("pkg.services.agent_memory.create_pending_conversation_memory", new_callable=AsyncMock, return_value=mock_node) as mock_create:
+    with patch("pkg.services.orchestration.agent_memory.create_pending_conversation_memory", new_callable=AsyncMock, return_value=mock_node) as mock_create:
         result = await extract_pending_memory_from_agent_run(
             mock_session,
             run=run,
@@ -111,7 +111,7 @@ async def test_create_memory_from_note_creates_active_document_memory():
     mock_session.get.side_effect = [note, None]
     mock_session.add = MagicMock()
 
-    with patch("pkg.services.agent_memory.upsert_memory_embedding", new_callable=AsyncMock), patch("pkg.services.agent_memory.upsert_memory_edge", new_callable=AsyncMock) as mock_edge:
+    with patch("pkg.services.orchestration.agent_memory.upsert_memory_embedding", new_callable=AsyncMock), patch("pkg.services.orchestration.agent_memory.upsert_memory_edge", new_callable=AsyncMock) as mock_edge:
         node = await create_memory_from_note(
             mock_session,
             user_id="user-1",

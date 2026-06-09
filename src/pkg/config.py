@@ -134,6 +134,13 @@ class Settings(BaseSettings):
     ARXIV_MIN_REQUEST_INTERVAL_SECONDS: float = 3.0
     ARXIV_RETRY_INITIAL_DELAY_SECONDS: float = 5.0
     ARXIV_RETRY_MAX_DELAY_SECONDS: float = 60.0
+    SEMANTIC_SCHOLAR_API_URL: str = "https://api.semanticscholar.org/graph/v1"
+    SEMANTIC_SCHOLAR_API_KEY: str = ""
+    SEMANTIC_SCHOLAR_USER_AGENT: str = "personal-knowledge-graph/0.1"
+    SEMANTIC_SCHOLAR_MIN_REQUEST_INTERVAL_SECONDS: float = 1.0
+    SEMANTIC_SCHOLAR_TIMEOUT_SECONDS: float = 20.0
+    SEMANTIC_SCHOLAR_RETRY_INITIAL_DELAY_SECONDS: float = 2.0
+    SEMANTIC_SCHOLAR_RETRY_MAX_DELAY_SECONDS: float = 30.0
     CONNECTOR_TRENDS_AUTO_ENABLED: bool = False
     CONNECTOR_TRENDS_INTERVAL_HOURS: int = 24
     CONNECTOR_TRENDS_USER_IDS: str = ""
@@ -143,7 +150,10 @@ class Settings(BaseSettings):
     CONNECTOR_TRENDS_GITHUB_LANGUAGE: str = ""
     DISCOVERY_AUTO_GENERATE_ENABLED: bool = False
     DISCOVERY_GENERATE_INTERVAL_HOURS: int = 24
-
+    PAPER_DISCOVERY_AUTO_ENABLED: bool = False
+    PAPER_DISCOVERY_INTERVAL_HOURS: int = 24
+    OPENALEX_API_KEY: str = ""
+    
     @property
     def resolved_embedding_api_base(self) -> str:
         return self.EMBEDDING_API_BASE or self.QWEN_API_BASE

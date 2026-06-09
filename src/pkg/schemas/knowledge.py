@@ -14,6 +14,12 @@ class SaveDocumentRequest(BaseModel):
 
 
 class SaveDocumentResponse(BaseModel):
+    """Saved writing document artifact identifiers.
+
+    `source_id` currently points to the backing stored artifact record, while
+    `note_id` points to the user-visible writing note.
+    """
+
     source_id: str
     note_id: str
 

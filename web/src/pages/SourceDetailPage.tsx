@@ -1,7 +1,7 @@
 import { useLocation, useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo, useRef, useEffect } from "react";
-import { ArrowLeft, Download, ExternalLink, Trash2, List, FileText, Pencil, Check, X, Rss, RefreshCw, Bot, StickyNote } from "lucide-react";
+import { ArrowLeft, Download, ExternalLink, Trash2, List, FileText, Pencil, Check, X, Rss, RefreshCw, Bot, StickyNote, BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -9,6 +9,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { CategorySelect } from "@/components/CategorySelect";
 import { MarkdownRenderer } from "@/components/markdown";
 import { sourcesApi, notesApi, wikiApi, categoriesApi, downloadFile, type Source, type SourceChunk, type SourceUpdate, type SourceList } from "@/lib/api";
+import { buildAssetHandoffState } from "@/lib/asset-handoff";
+import { getSourceProcessingState, getSourceProcessingSteps } from "@/lib/sourceProcessingStatus";
 
 type ViewMode = "full" | "slices";
 
@@ -63,11 +65,12 @@ export function SourceDetailPage() {
   });
 
   const isRssEnabled = source?.metadata_?.rss_enabled === "true";
+  const isWebDirectoryEnabled = source?.metadata_?.web_directory_enabled === true;
 
   const { data: articlesData } = useQuery({
     queryKey: ["source-articles", id],
     queryFn: () => sourcesApi.listArticles(id!, { limit: 10 }),
-    enabled: !!id && source?.source_type === "web" && isRssEnabled,
+    enabled: !!id && source?.source_type === "web" && (isRssEnabled || isWebDirectoryEnabled),
   });
 
   const enableRssMutation = useMutation({
@@ -88,6 +91,7 @@ export function SourceDetailPage() {
   });
 
   const [fetchResult, setFetchResult] = useState<{ new_articles: number } | null>(null);
+  const [webDiscoverResult, setWebDiscoverResult] = useState<{ discovered: number; imported: number; updated: number; skipped: number } | null>(null);
   const [createdNoteId, setCreatedNoteId] = useState<string | null>(null);
   const [queuedRefreshCount, setQueuedRefreshCount] = useState<number | null>(null);
 
@@ -96,6 +100,16 @@ export function SourceDetailPage() {
     onSuccess: (result) => {
       setFetchResult(result);
       queryClient.invalidateQueries({ queryKey: ["source-articles", id] });
+    },
+  });
+
+  const discoverWebArticlesMutation = useMutation({
+    mutationFn: () => sourcesApi.discoverWebArticles(id!, { limit: 50 }),
+    onSuccess: (result) => {
+      setWebDiscoverResult(result);
+      queryClient.invalidateQueries({ queryKey: ["source", id] });
+      queryClient.invalidateQueries({ queryKey: ["source-articles", id] });
+      queryClient.invalidateQueries({ queryKey: ["sources"] });
     },
   });
 
@@ -135,6 +149,24 @@ export function SourceDetailPage() {
     },
   });
 
+  const createWikiDraftMutation = useMutation({
+    mutationFn: async () => {
+      if (!source) throw new Error("Source is not loaded");
+      return wikiApi.compile({
+        title: source.title,
+        page_type: "topic",
+        source_ids: [source.id],
+        instructions: `Create a draft canonical wiki page from source ${source.id}. Keep it reviewable and evidence-backed.`,
+      });
+    },
+    onSuccess: (page) => {
+      queryClient.invalidateQueries({ queryKey: ["wiki-pages"] });
+      navigate(`/wiki/${encodeURIComponent(page.id)}`, {
+        state: { backTo: `/sources/${encodeURIComponent(source?.id || id!)}`, backLabel: "Back to Source" },
+      });
+    },
+  });
+
   function askAgentAboutSource() {
     if (!source) return;
     const chunk = viewMode === "slices" ? chunks?.[selectedChunk] : null;
@@ -149,7 +181,7 @@ export function SourceDetailPage() {
         workflowId: "summarize-source",
         promptSeed: chunk
           ? `Use source "${source.title}" (${source.id}) and this selected chunk to help me:\n\n${chunk.content.slice(0, 2000)}`
-          : `Use source "${source.title}" (${source.id}) to help me summarize, analyze, or turn it into durable knowledge.`,
+          : `Use source "${source.title}" (${source.id}) to help me summarize, analyze, or turn it into a summary draft, note, memory, or wiki candidate.`,
       },
     });
   }
@@ -198,9 +230,23 @@ export function SourceDetailPage() {
   }, [highlightRange]);
 
   if (isLoading) return <div className="p-8 text-muted-foreground">Loading...</div>;
-  if (error || !source) return <div className="p-8 text-destructive">Source not found.</div>;
+  if (error || !source) {
+    return (
+      <div className="p-8 space-y-3">
+        <p className="text-destructive">Source not found.</p>
+        <p className="text-sm text-muted-foreground">
+          This source may have been deleted, or the list may still contain stale cached data.
+        </p>
+        <Button variant="outline" size="sm" onClick={() => navigate(backTo)}>
+          <ArrowLeft className="h-4 w-4" /> {backLabel}
+        </Button>
+      </div>
+    );
+  }
 
   const hasChunks = chunks && chunks.length > 0;
+  const processing = getSourceProcessingState(source, { chunkCount: chunks?.length ?? null });
+  const processingSteps = getSourceProcessingSteps(source, { chunkCount: chunks?.length ?? null });
 
   return (
     <div className="h-full overflow-y-auto">
@@ -299,11 +345,18 @@ export function SourceDetailPage() {
             <>
               <div className="flex items-center gap-2 mb-2">
                 <Badge variant="source">{source.source_type}</Badge>
+                <Badge variant="outline">{processing.label}</Badge>
                 {source.category_name && source.category_name !== "general" && (
                   <Badge variant="secondary">{source.category_name}</Badge>
                 )}
               </div>
               <h1 className="text-2xl font-bold">{source.title}</h1>
+              <p className="mt-1 text-sm text-muted-foreground">
+                External evidence with provenance. Use this as raw material, then create notes, memory, or wiki knowledge from it.
+              </p>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Processing status: {processing.detail}
+              </p>
               {source.url && (
                 <a href={source.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-sm text-primary hover:underline mt-1">
                   {source.url} <ExternalLink className="h-3 w-3" />
@@ -330,11 +383,40 @@ export function SourceDetailPage() {
 
         {!editing && (
           <div className="mb-6 rounded-lg border border-border bg-card p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-sm font-medium">Processing Timeline</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Track whether this source has readable content, chunks, summaries, and review status.
+                </p>
+              </div>
+              <Badge variant="outline">{processing.label}</Badge>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-5">
+              {processingSteps.map((step) => (
+                <div key={step.key} className="rounded-lg border p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{step.label}</p>
+                    <Badge
+                      variant={step.state === "done" ? "secondary" : "outline"}
+                    >
+                      {step.state}
+                    </Badge>
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground">{step.detail}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {!editing && (
+          <div className="mb-6 rounded-lg border border-border bg-card p-4">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
                 <h2 className="text-sm font-medium">Actions</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Turn this source into a note, or ask the agent to work with it.
+                  Turn this external evidence into your own note, or ask the agent to work with it.
                 </p>
                 {createdNoteId && (
                   <button
@@ -342,7 +424,7 @@ export function SourceDetailPage() {
                     onClick={() => navigate(`/notes/${encodeURIComponent(createdNoteId)}`, { state: { backTo: `/sources/${encodeURIComponent(source.id)}`, backLabel: "Back to Source" } })}
                     className="mt-2 text-xs text-primary hover:underline"
                   >
-                    Created note from source. View note.
+                    Created your note from this source. View note.
                   </button>
                 )}
                 {createNoteMutation.isError && (
@@ -369,10 +451,28 @@ export function SourceDetailPage() {
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button size="sm" onClick={() => createNoteMutation.mutate()} disabled={createNoteMutation.isPending}>
-                  <StickyNote className="h-4 w-4" /> {createNoteMutation.isPending ? "Creating…" : "Create Note"}
+                  <StickyNote className="h-4 w-4" /> {createNoteMutation.isPending ? "Creating…" : "Create Note From Source"}
                 </Button>
                 <Button size="sm" variant="outline" onClick={() => queueWikiRefreshMutation.mutate()} disabled={queueWikiRefreshMutation.isPending}>
                   <RefreshCw className={`h-4 w-4 ${queueWikiRefreshMutation.isPending ? "animate-spin" : ""}`} /> Queue Wiki Refresh
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => createWikiDraftMutation.mutate()} disabled={createWikiDraftMutation.isPending}>
+                  <BookOpen className="h-4 w-4" /> {createWikiDraftMutation.isPending ? "Creating…" : "Create Wiki Draft"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => source && navigate("/assets", {
+                    state: {
+                      assetHandoff: buildAssetHandoffState({
+                        title: source.title,
+                        brief: `Create a blog asset from source: ${source.title}`,
+                        source_refs: [source.id],
+                      }),
+                    },
+                  })}
+                >
+                  <FileText className="h-4 w-4" /> Create Asset
                 </Button>
                 <Button size="sm" variant="outline" onClick={askAgentAboutSource}>
                   <Bot className="h-4 w-4" /> Ask Agent
@@ -464,7 +564,7 @@ export function SourceDetailPage() {
                         <div
                           key={article.id}
                           className="flex items-center gap-2 text-sm cursor-pointer hover:bg-accent/50 rounded px-2 py-1 transition-colors"
-                          onClick={() => navigate(`/sources/${article.id}`, { state: { backTo: `/sources/${encodeURIComponent(source.id)}`, backLabel: "Back to Feed Source" } })}
+                          onClick={() => navigate(`/sources/${encodeURIComponent(article.id)}`, { state: { backTo: `/sources/${encodeURIComponent(source.id)}`, backLabel: "Back to Feed Source" } })}
                         >
                           <span className="truncate flex-1">{article.title}</span>
                           <span className="text-xs text-muted-foreground shrink-0">
@@ -475,6 +575,54 @@ export function SourceDetailPage() {
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {source.source_type === "web" && source.url && !isRssEnabled && (
+          <div className="mb-6 rounded-lg border border-border p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <List className="h-4 w-4 text-blue-500" />
+              <span className="text-sm font-medium">Web Directory</span>
+            </div>
+            <p className="text-sm text-muted-foreground mb-3">
+              Discover same-site article links under this URL, then import each article as a child web source.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => { setWebDiscoverResult(null); discoverWebArticlesMutation.mutate(); }}
+              disabled={discoverWebArticlesMutation.isPending}
+            >
+              <RefreshCw className={`h-4 w-4 ${discoverWebArticlesMutation.isPending ? "animate-spin" : ""}`} />
+              {discoverWebArticlesMutation.isPending ? "Discovering..." : "Discover Articles"}
+            </Button>
+            {webDiscoverResult && (
+              <p className="text-sm text-muted-foreground mt-2">
+                Discovered {webDiscoverResult.discovered}, imported {webDiscoverResult.imported}, updated {webDiscoverResult.updated}, skipped {webDiscoverResult.skipped}.
+              </p>
+            )}
+            {discoverWebArticlesMutation.isError && (
+              <p className="text-sm text-destructive mt-2">
+                {discoverWebArticlesMutation.error instanceof Error ? discoverWebArticlesMutation.error.message : "Discovery failed"}
+              </p>
+            )}
+            {articlesData && articlesData.items.length > 0 && (
+              <div className="mt-3">
+                <p className="text-xs font-medium text-muted-foreground mb-1">Discovered Articles ({articlesData.total} total)</p>
+                <div className="space-y-1">
+                  {articlesData.items.map((article) => (
+                    <div
+                      key={article.id}
+                      className="flex items-center gap-2 text-sm cursor-pointer hover:bg-accent/50 rounded px-2 py-1 transition-colors"
+                      onClick={() => navigate(`/sources/${encodeURIComponent(article.id)}`, { state: { backTo: `/sources/${encodeURIComponent(source.id)}`, backLabel: "Back to Directory Source" } })}
+                    >
+                      <span className="truncate flex-1">{article.title}</span>
+                      <span className="text-xs text-muted-foreground shrink-0">{new Date(article.ingested_at).toLocaleDateString()}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>

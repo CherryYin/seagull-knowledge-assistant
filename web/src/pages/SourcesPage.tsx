@@ -9,7 +9,12 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CategorySelect } from "@/components/CategorySelect";
+import { PaperDetailDialog, type PaperDetailData } from "@/components/PaperDetailDialog";
+import { toPaperResult } from "@/lib/discovery-detail";
+import { getSourceProcessingState } from "@/lib/sourceProcessingStatus";
 import { sourcesApi, categoriesApi, connectorsApi, type ArxivPaper, type GitHubRepo, type SourceCreate, type Source } from "@/lib/api";
+import { discoveryApi, type DiscoveryItem } from "@/lib/api";
+import { paperDiscoveryApi } from "@/lib/api/paper-discovery";
 import { SectionNav, knowledgeNavItems } from "@/components/SectionNav";
 
 const SOURCE_TYPES = ["pdf", "article", "conversation", "video", "web", "github"];
@@ -46,12 +51,14 @@ export function SourcesPage() {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [pdfType, setPdfType] = useState("text");
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
-  const [arxivForm, setArxivForm] = useState({ query: "", author: "", category: "", paperId: "", maxResults: 5, categoryId: 1 });
+  const [paperForm, setPaperForm] = useState({ query: "", author: "", category: "", paperId: "", maxResults: 5, categoryId: 1 });
   const [githubForm, setGithubForm] = useState({ query: "", fullName: "", language: "", topic: "", minStars: "", maxResults: 5, categoryId: 1, fetchReadme: true });
-  const [arxivResults, setArxivResults] = useState<ArxivPaper[]>([]);
+  const [paperResults, setPaperResults] = useState<ArxivPaper[]>([]);
+  const [paperDiscoveryItems, setPaperDiscoveryItems] = useState<DiscoveryItem[]>([]);
   const [githubResults, setGithubResults] = useState<GitHubRepo[]>([]);
   const [connectorMessage, setConnectorMessage] = useState<string | null>(null);
   const [deleteReviewSource, setDeleteReviewSource] = useState<Source | null>(null);
+  const [activePaper, setActivePaper] = useState<PaperDetailData | null>(null);
 
   const { data: categoriesData } = useQuery({
     queryKey: ["categories"],
@@ -134,29 +141,64 @@ export function SourcesPage() {
     },
   });
 
-  const arxivSearchMutation = useMutation({
-    mutationFn: () => connectorsApi.searchArxiv({
-      query: arxivForm.query || undefined,
-      author: arxivForm.author || undefined,
-      category: arxivForm.category || undefined,
-      paper_id: arxivForm.paperId || undefined,
-      max_results: arxivForm.maxResults,
-    }),
+  const paperSearchMutation = useMutation({
+    mutationFn: async () => {
+      const baseName = `Paper search: ${paperForm.query || paperForm.paperId || "manual"}`;
+      let profile;
+      try {
+        profile = await paperDiscoveryApi.createProfile({
+          name: baseName,
+          goal_prompt: paperForm.query || paperForm.paperId || "paper search",
+          mode: "query",
+          provider: "openalex",
+          schedule: "manual",
+          max_results: paperForm.maxResults,
+          include_terms: [paperForm.query].filter(Boolean),
+          preferred_authors: [paperForm.author].filter(Boolean),
+          preferred_arxiv_categories: [paperForm.category].filter(Boolean),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!message.includes("409")) {
+          throw error;
+        }
+        const profiles = await paperDiscoveryApi.listProfiles();
+        profile = profiles.items.find((item) => item.name === baseName);
+        if (!profile) {
+          throw error;
+        }
+      }
+      await paperDiscoveryApi.runProfile(profile.id, { limit: paperForm.maxResults });
+      return paperDiscoveryApi.listCandidates(profile.id, paperForm.maxResults);
+    },
     onSuccess: (result) => {
-      setArxivResults(result.items);
-      setConnectorMessage(`Found ${result.total} arXiv paper(s). Unsaved results are cached for 7 days.`);
+      setPaperDiscoveryItems(result.items);
+      const items = result.items.map(toPaperResult);
+      setPaperResults(items);
+      setConnectorMessage(`Found ${result.total} paper(s) via OpenAlex.`);
     },
   });
 
-  const arxivImportMutation = useMutation({
-    mutationFn: (paper: ArxivPaper) => connectorsApi.importArxiv({ paper, category_id: arxivForm.categoryId }),
+  const paperImportMutation = useMutation({
+    mutationFn: async (paper: ArxivPaper) => {
+      const discoveryItem = paperDiscoveryItems.find((item) => String(item.payload?.arxiv_id || item.item_key) === paper.arxiv_id);
+      if (discoveryItem) {
+        return discoveryApi.feedback(discoveryItem.id, "save");
+      }
+      const result = await connectorsApi.importArxiv({ paper, category_id: paperForm.categoryId });
+      return { item: null, source: result.source, created: result.created };
+    },
     onSuccess: (result, paper) => {
       queryClient.invalidateQueries({ queryKey: ["sources"] });
       queryClient.invalidateQueries({ queryKey: ["memory-nodes"] });
-      setArxivResults((items) => items.map((item) => item.arxiv_id === paper.arxiv_id ? { ...item, cache_status: "saved", cache_expires_at: null, source_id: result.source.id } : item));
+      queryClient.invalidateQueries({ queryKey: ["paper-discovery-candidates"] });
+      setPaperResults((items) => items.map((item) => item.arxiv_id === paper.arxiv_id ? { ...item, cache_status: "saved", cache_expires_at: null, source_id: result.source?.id ?? item.source_id } : item));
+      if (result.item) {
+        setPaperDiscoveryItems((items) => items.map((item) => item.id === result.item!.id ? result.item! : item));
+      }
       setTypeFilter("article");
       setFeedView("parents");
-      setConnectorMessage(`${result.created ? "Kept" : "Updated"} ${result.source.title}`);
+      setConnectorMessage(`${result.created ? "Imported" : "Updated"} ${result.source?.title ?? paper.title}`);
     },
   });
 
@@ -252,6 +294,7 @@ export function SourcesPage() {
   }), [reviewFilter, searchParams]);
 
   return (
+    <>
     <div className="h-full overflow-y-auto">
       <div className="max-w-5xl mx-auto px-6 py-8">
         <SectionNav items={knowledgeNavItems} active="Sources" />
@@ -265,6 +308,12 @@ export function SourcesPage() {
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Add Source</DialogTitle>
+                <p className="text-sm text-muted-foreground">
+                  Sources are external evidence you want to keep with provenance, such as web pages, PDFs, RSS articles, GitHub repos, and imported documents.
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  If this is your own writing or an agent response, save it as a note or writing document instead.
+                </p>
               </DialogHeader>
               <div className="space-y-3">
                 <Input
@@ -293,11 +342,16 @@ export function SourcesPage() {
                   />
                 </div>
                 <Textarea
-                  placeholder="Content"
+                  placeholder={form.source_type === "web" && form.url ? "Content (optional: leave empty to fetch readable page text from URL)" : "Content"}
                   rows={8}
                   value={form.raw_content || ""}
                   onChange={(e) => setForm({ ...form, raw_content: e.target.value })}
                 />
+                {form.source_type === "web" && form.url && !form.raw_content && (
+                  <p className="text-xs text-muted-foreground">
+                    Web sources with an empty content field will fetch and extract readable page text from the URL.
+                  </p>
+                )}
                 <div className="space-y-2 rounded-md border border-dashed border-border p-3">
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Upload className="h-4 w-4" />
@@ -422,14 +476,25 @@ export function SourcesPage() {
         {typeFilter === "article" && (
           <ArxivConnectorPanel
             categories={categories}
-            form={arxivForm}
-            setForm={setArxivForm}
-            results={arxivResults}
-            onSearch={() => arxivSearchMutation.mutate()}
-            onImport={(paper) => arxivImportMutation.mutate(paper)}
-            isSearching={arxivSearchMutation.isPending}
-            importingId={arxivImportMutation.variables?.arxiv_id ?? null}
-            error={arxivSearchMutation.error instanceof Error ? arxivSearchMutation.error.message : arxivImportMutation.error instanceof Error ? arxivImportMutation.error.message : null}
+            form={paperForm}
+            setForm={setPaperForm}
+            results={paperResults}
+            onSearch={() => paperSearchMutation.mutate()}
+            onImport={(paper) => paperImportMutation.mutate(paper)}
+            onOpenDetail={(paper) => setActivePaper({
+              title: paper.title,
+              authors: paper.authors,
+              abstract: paper.abstract,
+              url: paper.entry_url,
+              pdf_url: paper.pdf_url,
+              doi: paper.doi,
+              arxiv_id: paper.arxiv_id,
+              categories: paper.categories,
+              provider: "openalex",
+            })}
+            isSearching={paperSearchMutation.isPending}
+            importingId={paperImportMutation.variables?.arxiv_id ?? null}
+            error={paperSearchMutation.error instanceof Error ? paperSearchMutation.error.message : paperImportMutation.error instanceof Error ? paperImportMutation.error.message : null}
             message={connectorMessage}
           />
         )}
@@ -471,7 +536,7 @@ export function SourcesPage() {
         {data && !hasSources && (
           <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
             <FileText className="h-12 w-12 mb-3 opacity-30" />
-            <p>{reviewFilter === "imported" ? "No imported sources pending review." : "No sources yet. Add one to get started."}</p>
+            <p>{reviewFilter === "imported" ? "No imported sources pending review." : "No sources yet. Add external material here when you want to keep it as evidence with provenance."}</p>
           </div>
         )}
 
@@ -552,6 +617,8 @@ export function SourcesPage() {
           </DialogContent>
         </Dialog>
     </div>
+    <PaperDetailDialog open={Boolean(activePaper)} onOpenChange={(open) => { if (!open) setActivePaper(null); }} paper={activePaper} />
+    </>
   );
 }
 
@@ -575,12 +642,14 @@ function SourceRow({
   const isRss = (source.source_type === "web" || source.source_type === "article") && source.metadata_?.rss_enabled === "true";
   const isFeedArticle = Boolean(source.metadata_?.feed_source_id);
   const label = isFeedArticle ? "feed article" : isRss ? "feed" : source.source_type === "web" ? "web snapshot" : source.source_type;
+  const processing = getSourceProcessingState(source);
   return (
     <div
       className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-transparent hover:border-border hover:bg-accent/50 cursor-pointer transition-colors"
       onClick={onClick}
     >
       <Badge variant="source" className="shrink-0">{label}</Badge>
+      <Badge variant="outline" className="shrink-0">{processing.label}</Badge>
       {isRss && <Rss className="h-3.5 w-3.5 text-orange-500 shrink-0" />}
       <span className="text-sm font-medium truncate flex-1">{source.title}</span>
       {source.url && (
@@ -614,6 +683,7 @@ function ArxivConnectorPanel({
   results,
   onSearch,
   onImport,
+  onOpenDetail,
   isSearching,
   importingId,
   error,
@@ -625,6 +695,7 @@ function ArxivConnectorPanel({
   results: ArxivPaper[];
   onSearch: () => void;
   onImport: (paper: ArxivPaper) => void;
+  onOpenDetail: (paper: ArxivPaper) => void;
   isSearching: boolean;
   importingId: string | null;
   error: string | null;
@@ -634,8 +705,8 @@ function ArxivConnectorPanel({
     <div className="mb-4 rounded-xl border border-border bg-card p-4">
       <div className="mb-3 flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
         <div>
-          <h2 className="flex items-center gap-2 text-sm font-semibold"><BookOpen className="h-4 w-4" /> arXiv Article Search</h2>
-          <p className="text-xs text-muted-foreground">Search results are temporary for 7 days. Click Keep to save a paper as a permanent article source and generate memory.</p>
+          <h2 className="flex items-center gap-2 text-sm font-semibold"><BookOpen className="h-4 w-4" /> Paper Search</h2>
+          <p className="text-xs text-muted-foreground">Paper search runs through OpenAlex. Click Keep to save a paper as a permanent article source and generate memory.</p>
         </div>
         {message && <p className="text-xs text-muted-foreground">{message}</p>}
       </div>
@@ -643,10 +714,10 @@ function ArxivConnectorPanel({
         <div className="grid gap-2 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
           <Input placeholder="Query, e.g. agentic rag" value={form.query} onChange={(e) => setForm((current) => ({ ...current, query: e.target.value }))} />
           <Input placeholder="Author" value={form.author} onChange={(e) => setForm((current) => ({ ...current, author: e.target.value }))} />
-          <Input placeholder="Category, e.g. cs.AI" value={form.category} onChange={(e) => setForm((current) => ({ ...current, category: e.target.value }))} />
+          <Input placeholder="Field/category, e.g. agents or cs.AI" value={form.category} onChange={(e) => setForm((current) => ({ ...current, category: e.target.value }))} />
         </div>
         <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_120px_minmax(180px,220px)_auto]">
-          <Input placeholder="Paper ID optional" value={form.paperId} onChange={(e) => setForm((current) => ({ ...current, paperId: e.target.value }))} />
+          <Input placeholder="Paper ID optional (arXiv id supported)" value={form.paperId} onChange={(e) => setForm((current) => ({ ...current, paperId: e.target.value }))} />
           <Input type="number" min={1} max={50} value={form.maxResults} onChange={(e) => setForm((current) => ({ ...current, maxResults: Number(e.target.value) || 5 }))} />
           <CategorySelect categories={categories} value={form.categoryId} onChange={(id) => setForm((current) => ({ ...current, categoryId: id }))} />
           <Button type="button" disabled={isSearching || (!form.query && !form.paperId && !form.author && !form.category)} onClick={onSearch}>
@@ -656,7 +727,12 @@ function ArxivConnectorPanel({
         {error && <p className="text-xs text-destructive">{error}</p>}
         <div className="space-y-2">
           {results.map((paper) => (
-            <div key={paper.arxiv_id} className="rounded-lg border border-border p-3">
+            <button
+              key={paper.arxiv_id}
+              type="button"
+              className="w-full rounded-lg border border-border p-3 text-left transition-colors hover:border-primary/40 hover:bg-accent/30"
+              onClick={() => onOpenDetail(paper)}
+            >
               <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
@@ -664,18 +740,18 @@ function ArxivConnectorPanel({
                     <Badge variant="outline">{paper.arxiv_id}</Badge>
                     {paper.categories.slice(0, 3).map((category) => <Badge key={category} variant="secondary">{category}</Badge>)}
                   </div>
-                  <h3 className="mt-2 text-sm font-medium leading-5">{paper.title}</h3>
+                  <div className="mt-2 text-sm font-medium leading-5 hover:text-primary">{paper.title}</div>
                   <p className="mt-1 text-xs text-muted-foreground">{paper.authors.slice(0, 5).join(", ")}</p>
                   <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">{paper.abstract}</p>
                 </div>
                 <div className="flex flex-col items-start gap-2 md:items-end">
                   <ConnectorCacheStatus status={paper.cache_status} expiresAt={paper.cache_expires_at} sourceId={paper.source_id} />
-                  <Button type="button" size="sm" variant={paper.cache_status === "saved" ? "secondary" : "outline"} disabled={importingId === paper.arxiv_id || paper.cache_status === "saved"} onClick={() => onImport(paper)}>
+                  <Button type="button" size="sm" variant={paper.cache_status === "saved" ? "secondary" : "outline"} disabled={importingId === paper.arxiv_id || paper.cache_status === "saved"} onClick={(event) => { event.stopPropagation(); onImport(paper); }}>
                     {importingId === paper.arxiv_id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <BookmarkCheck className="h-3.5 w-3.5" />} {paper.cache_status === "saved" ? "Kept" : "Keep"}
                   </Button>
                 </div>
               </div>
-            </div>
+            </button>
           ))}
         </div>
       </div>

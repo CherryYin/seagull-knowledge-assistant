@@ -9,6 +9,6 @@ router = APIRouter()
 @router.get("/models")
 async def list_models(user: User = Depends(get_current_user)):
     """Return available models from all configured LLM providers."""
-    from pkg.services.llm import list_all_models
+    from pkg.services.cross_cutting.llm import list_all_models
 
     return await list_all_models()

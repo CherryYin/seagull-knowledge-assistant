@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { BarChart3, Bot, Brain, MonitorCog, Settings, Shield, Zap } from "lucide-react";
+import { BarChart3, Bot, Brain, DatabaseZap, MonitorCog, Settings, Shield, Zap } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
@@ -12,6 +12,7 @@ export function SettingsPage() {
 		{ title: "Agent Profiles", description: "Configure how agents operate.", to: "/settings/agents", icon: Bot },
 		{ title: "Skills", description: "Manage reusable chat skills.", to: "/settings/skills", icon: Zap },
 		{ title: "Agent Workspace", description: "Inspect advanced agent runs and workspace data.", to: "/settings/workspace", icon: MonitorCog },
+		{ title: "System Jobs", description: "Inspect background work, failed jobs, and stuck processing with next-step guidance.", to: "/settings/jobs", icon: DatabaseZap },
 		{ title: "System Dashboard", description: "Inspect operational stats and knowledge rankings outside the daily Home workflow.", to: "/stats", icon: BarChart3 },
 		...(isAdmin ? [{ title: "Admin Users", description: "Manage user approvals and roles.", to: "/admin/users", icon: Shield }] : []),
 	];

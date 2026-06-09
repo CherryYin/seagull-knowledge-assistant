@@ -18,14 +18,14 @@ from pkg.schemas.discovery import (
     DiscoveryItemList,
     DiscoveryItemRead,
 )
-from pkg.services.discovery import apply_discovery_feedback, generate_discovery_items, ingest_web_discovery_results, search_external_web_results
+from pkg.services.foundation.discovery import apply_discovery_feedback, generate_discovery_items, ingest_web_discovery_results, search_external_web_results
 
 router = APIRouter()
 
 
 @router.get("", response_model=DiscoveryItemList)
 async def list_discovery_items(
-    provider: str | None = Query(default=None, pattern=r"^(arxiv|github|rss|web)$"),
+    provider: str | None = Query(default=None, pattern=r"^(arxiv|github|rss|web|openalex|crossref|semantic_scholar)$"),
     status: str | None = Query(default="recommended", pattern=r"^(recommended|kept|saved|dismissed)$"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),

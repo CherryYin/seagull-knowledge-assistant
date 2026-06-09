@@ -127,6 +127,10 @@ export interface WikiRecompileSuggestion {
   reviewer_note?: string | null;
 }
 
+export interface WikiCloneDraftRequest {
+  title?: string;
+}
+
 export interface WikiRecompileSuggestionList {
   items: WikiRecompileSuggestion[];
   total: number;
@@ -136,6 +140,92 @@ export interface WikiSuggestRequest {
   trigger_type: "source" | "note" | "memory";
   trigger_id: string;
   limit?: number;
+}
+
+export interface WikiEvidenceRef {
+  ref_type: string;
+  ref_id: string;
+  title: string;
+  excerpt?: string | null;
+}
+
+export interface ReferenceResolveInput {
+  ref_type?: string;
+  ref_id?: string;
+  type?: string;
+  id?: string;
+  title?: string;
+  excerpt?: string | null;
+}
+
+export interface WikiInsightCandidate {
+  id: number;
+  run_id: number;
+  user_id: string;
+  insight_type: "pending" | "accepted" | "rejected" | "converted_to_draft" | string;
+  title: string;
+  summary: string;
+  evidence_refs: WikiEvidenceRef[];
+  metadata_?: Record<string, unknown> | null;
+  status: "pending" | "accepted" | "rejected" | "converted_to_draft" | string;
+  reviewer_note?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WikiArticleDraft {
+  id: number;
+  run_id: number;
+  user_id: string;
+  title: string;
+  page_type: string;
+  summary?: string | null;
+  content: string;
+  evidence_refs: WikiEvidenceRef[];
+  metadata_?: Record<string, unknown> | null;
+  status: "candidate" | "draft" | "in_review" | "accepted" | "rejected" | "merged" | string;
+  reviewer_note?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WikiMiningRun {
+  id: number;
+  user_id: string;
+  status: string;
+  window_start?: string | null;
+  window_end?: string | null;
+  metadata_?: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WikiMiningRunList {
+  items: WikiMiningRun[];
+  total: number;
+}
+
+export interface WikiMiningRunDetail {
+  run: WikiMiningRun;
+  insights: WikiInsightCandidate[];
+  articles: WikiArticleDraft[];
+}
+
+export interface WikiMiningRunCreate {
+  window_days?: number;
+  max_new_items?: number;
+  max_related_items?: number;
+}
+
+export interface ReferenceRead {
+  ref_type: string;
+  ref_id: string;
+  title: string;
+  subtitle?: string | null;
+  href?: string | null;
+  excerpt?: string | null;
+  status?: string | null;
+  metadata_?: Record<string, unknown> | null;
 }
 
 export const wikiApi = {
@@ -164,6 +254,11 @@ export const wikiApi = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+  cloneDraft: (id: string, body?: WikiCloneDraftRequest) =>
+    request<WikiPage>(`/wiki/${encodeURIComponent(id)}/clone-draft`, {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    }),
   delete: (id: string) =>
     request<void>(`/wiki/${encodeURIComponent(id)}`, { method: "DELETE" }),
   sources: (id: string) => request<WikiPageSource[]>(`/wiki/${encodeURIComponent(id)}/sources`),
@@ -180,6 +275,7 @@ export const wikiApi = {
     }),
   compile: (body: WikiCompileRequest) =>
     request<WikiPage>("/wiki/compile", { method: "POST", body: JSON.stringify(body) }),
+  // Creates a wiki draft from compiled topic memory.
   createFromMemory: (body: WikiFromMemoryRequest) =>
     request<WikiPage>("/wiki/from-memory", { method: "POST", body: JSON.stringify(body) }),
   suggestions: (params?: { status?: string; wiki_id?: string; limit?: number; offset?: number }) => {
@@ -199,5 +295,44 @@ export const wikiApi = {
     request<WikiRecompileSuggestion>(`/wiki/suggestions/${id}`, {
       method: "PATCH",
       body: JSON.stringify({ status, reviewer_note }),
+    }),
+  miningRuns: (params?: { limit?: number; offset?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.limit) q.set("limit", String(params.limit));
+    if (params?.offset) q.set("offset", String(params.offset));
+    return request<WikiMiningRunList>(`/wiki/mining/runs?${q}`);
+  },
+  miningRun: (id: number) => request<WikiMiningRunDetail>(`/wiki/mining/runs/${id}`),
+  createMiningRun: (body?: WikiMiningRunCreate) =>
+    request<WikiMiningRunDetail>("/wiki/mining/runs", {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    }),
+  updateMiningInsight: (id: number, status: "pending" | "accepted" | "rejected" | "converted_to_draft", reviewer_note?: string | null) =>
+    request<WikiInsightCandidate>(`/wiki/mining/insights/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status, reviewer_note }),
+    }),
+  updateMiningArticle: (
+    id: number,
+    body: { status: "candidate" | "draft" | "in_review" | "accepted" | "rejected" | "merged"; reviewer_note?: string | null; wiki_title?: string | null; page_type?: string | null }
+  ) =>
+    request<WikiArticleDraft>(`/wiki/mining/articles/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  mergeMiningArticle: (id: number, body?: { target_wiki_id?: string | null; reviewer_note?: string | null }) =>
+    request<WikiArticleDraft>(`/wiki/mining/articles/${id}/merge`, {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    }),
+  convertMiningArticleToNote: (id: number) =>
+    request<{ article_id: number; status: string; note_title: string; note_content: string; metadata_?: Record<string, unknown> | null }>(`/wiki/mining/articles/${id}/convert-to-note`, {
+      method: "POST",
+    }),
+  resolveReferences: (refs: ReferenceResolveInput[]) =>
+    request<{ items: ReferenceRead[] }>("/wiki/references/resolve", {
+      method: "POST",
+      body: JSON.stringify({ refs }),
     }),
 };

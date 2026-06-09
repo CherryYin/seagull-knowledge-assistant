@@ -17,3 +17,4 @@ export * from "./api/calendar-reminders";
 export * from "./api/review";
 export * from "./api/discovery";
 export * from "./api/system-jobs";
+export * from "./api/assets";

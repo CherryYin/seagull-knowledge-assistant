@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 
 from pkg.api.wiki import create_wiki_draft_from_memory, list_wiki_page_memories, upsert_wiki_page_memory
 from pkg.models.memory import MemoryNode
@@ -40,6 +41,28 @@ class TestGetWikiPage:
         resp = client.get("/wiki/wiki-1")
 
         assert resp.status_code == 200
+
+
+class TestCloneWikiDraft:
+    @pytest.mark.asyncio
+    async def test_clone_stable_wiki_as_draft(self, mock_session, fake_user):
+        from pkg.api.wiki import clone_wiki_page_as_draft
+        from pkg.schemas.wiki import WikiCloneDraftRequest
+
+        wiki = _make_wiki("wiki-1", fake_user.id)
+        wiki.tags = ["wiki-stable"]
+        mock_session.get.return_value = wiki
+
+        result = await clone_wiki_page_as_draft(
+            "wiki-1",
+            WikiCloneDraftRequest(),
+            user=fake_user,
+            session=mock_session,
+        )
+
+        assert result.title == "Personal Knowledge Graph Draft"
+        assert "wiki-draft" in result.tags
+        assert "from-stable-wiki" in result.tags
         assert resp.json()["id"] == "wiki-1"
 
     def test_not_found_for_other_user(self, client, mock_session):
@@ -249,6 +272,9 @@ class TestWikiSuggestionStatusFlow:
         )
         wiki = _make_wiki("wiki-1", fake_user.id)
         mock_session.get.side_effect = [suggestion, wiki]
+        execute_result = MagicMock()
+        execute_result.scalar_one_or_none.return_value = None
+        mock_session.execute.return_value = execute_result
 
         result = await update_wiki_suggestion_status(
             1,
@@ -287,6 +313,9 @@ class TestWikiSuggestionStatusFlow:
         wiki.stale_reason = "Memory changed"
         wiki.stale_triggered_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
         mock_session.get.side_effect = [suggestion, wiki]
+        execute_result = MagicMock()
+        execute_result.scalar_one_or_none.return_value = None
+        mock_session.execute.return_value = execute_result
 
         result = await update_wiki_suggestion_status(
             1,
@@ -300,6 +329,77 @@ class TestWikiSuggestionStatusFlow:
         assert wiki.needs_recompile is False
         assert wiki.stale_reason is None
         assert wiki.stale_triggered_at is None
+
+    @pytest.mark.asyncio
+    async def test_dismiss_keeps_distinct_status(self, mock_session, fake_user):
+        from pkg.api.wiki import update_wiki_suggestion_status
+        from pkg.models.wiki import WikiRecompileSuggestion
+        from pkg.schemas.wiki import WikiSuggestionStatusUpdate
+
+        suggestion = WikiRecompileSuggestion(
+            id=1,
+            user_id=fake_user.id,
+            wiki_id="wiki-1",
+            trigger_type="memory",
+            trigger_id="mem-1",
+            reason="Memory changed",
+            evidence_preview="preview",
+            status="pending",
+            metadata_={},
+            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        wiki = _make_wiki("wiki-1", fake_user.id)
+        mock_session.get.side_effect = [suggestion, wiki]
+        execute_result = MagicMock()
+        execute_result.scalar_one_or_none.return_value = None
+        mock_session.execute.return_value = execute_result
+
+        result = await update_wiki_suggestion_status(
+            1,
+            WikiSuggestionStatusUpdate(status="dismissed"),
+            user=fake_user,
+            session=mock_session,
+        )
+
+        assert result.status == "dismissed"
+        assert result.reviewed_at is not None
+        assert wiki.needs_recompile is False
+
+    @pytest.mark.asyncio
+    async def test_conflicting_target_status_returns_409(self, mock_session, fake_user):
+        from pkg.api.wiki import update_wiki_suggestion_status
+        from pkg.models.wiki import WikiRecompileSuggestion
+        from pkg.schemas.wiki import WikiSuggestionStatusUpdate
+
+        suggestion = WikiRecompileSuggestion(
+            id=48,
+            user_id=fake_user.id,
+            wiki_id="wiki-1",
+            trigger_type="memory",
+            trigger_id="mem-1",
+            reason="Memory changed",
+            evidence_preview="preview",
+            status="pending",
+            metadata_={},
+            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        mock_session.get.return_value = suggestion
+        execute_result = MagicMock()
+        execute_result.scalar_one_or_none.return_value = 99
+        mock_session.execute.return_value = execute_result
+
+        with pytest.raises(HTTPException) as exc_info:
+            await update_wiki_suggestion_status(
+                48,
+                WikiSuggestionStatusUpdate(status="rejected"),
+                user=fake_user,
+                session=mock_session,
+            )
+
+        assert exc_info.value.status_code == 409
+        assert "same trigger" in exc_info.value.detail
 
 
 def _make_wiki(wiki_id: str, user_id: str):

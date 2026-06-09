@@ -5,7 +5,7 @@ import pytest
 
 from pkg.models.memory import MemoryNode
 from pkg.models.wiki import WikiPage
-from pkg.services.wiki_recompile import suggest_wiki_recompile_for_trigger
+from pkg.services.foundation.wiki_recompile import suggest_wiki_recompile_for_trigger
 
 
 @pytest.mark.asyncio

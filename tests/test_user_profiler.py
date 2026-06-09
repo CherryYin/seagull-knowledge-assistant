@@ -1,4 +1,4 @@
-"""Tests for pkg.services.user_profiler — user profile generation (mocked DB + LLM)."""
+"""Tests for pkg.services.cross_cutting.user_profiler — user profile generation (mocked DB + LLM)."""
 
 import json
 from datetime import datetime, timezone
@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pkg.services.user_profiler import (
+from pkg.services.cross_cutting.user_profiler import (
     PROFILE_MEMORY_KEY,
     _format_activity_summary,
     _get_profile_memory_context,
@@ -74,13 +74,13 @@ class TestFormatActivitySummary:
 class TestGetProfileMemoryContext:
     @pytest.mark.asyncio
     async def test_formats_retrieved_memories(self):
-        with patch("pkg.services.user_profiler.async_session") as mock_session_factory:
+        with patch("pkg.services.cross_cutting.user_profiler.async_session") as mock_session_factory:
             mock_session = AsyncMock()
             mock_session_factory.return_value.__aenter__.return_value = mock_session
 
-            with patch("pkg.services.user_profiler.retrieve_for_profile", new_callable=AsyncMock) as mock_retrieve:
+            with patch("pkg.services.cross_cutting.user_profiler.retrieve_for_profile", new_callable=AsyncMock) as mock_retrieve:
                 mock_retrieve.return_value = [MagicMock()]
-                with patch("pkg.services.user_profiler.format_memory_context") as mock_format:
+                with patch("pkg.services.cross_cutting.user_profiler.format_memory_context") as mock_format:
                     mock_format.return_value = "memory context"
 
                     result = await _get_profile_memory_context("user-1")
@@ -110,7 +110,7 @@ class TestGetRecentActivities:
         chat_log.created_at = datetime(2026, 1, 1, 20, 0, tzinfo=timezone.utc)
         mock_logs.append(chat_log)
 
-        with patch("pkg.services.user_profiler.async_session") as mock_session_ctx:
+        with patch("pkg.services.cross_cutting.user_profiler.async_session") as mock_session_ctx:
             mock_session = AsyncMock()
             mock_result = MagicMock()
             mock_result.scalars.return_value = mock_logs
@@ -126,7 +126,7 @@ class TestGetRecentActivities:
 
     @pytest.mark.asyncio
     async def test_empty_logs(self):
-        with patch("pkg.services.user_profiler.async_session") as mock_session_ctx:
+        with patch("pkg.services.cross_cutting.user_profiler.async_session") as mock_session_ctx:
             mock_session = AsyncMock()
             mock_result = MagicMock()
             mock_result.scalars.return_value = []
@@ -142,7 +142,7 @@ class TestGetRecentActivities:
 
     @pytest.mark.asyncio
     async def test_uses_naive_datetime_cutoff(self):
-        with patch("pkg.services.user_profiler.async_session") as mock_session_ctx:
+        with patch("pkg.services.cross_cutting.user_profiler.async_session") as mock_session_ctx:
             mock_session = AsyncMock()
             mock_result = MagicMock()
             mock_result.scalars.return_value = []
@@ -160,7 +160,7 @@ class TestGetRecentActivities:
 class TestGetChatStats:
     @pytest.mark.asyncio
     async def test_uses_naive_datetime_cutoff(self):
-        with patch("pkg.services.user_profiler.async_session") as mock_session_ctx:
+        with patch("pkg.services.cross_cutting.user_profiler.async_session") as mock_session_ctx:
             mock_session = AsyncMock()
             mock_result = MagicMock()
             mock_result.scalars.return_value = []
@@ -191,7 +191,7 @@ class TestGetNoteStats:
         note2.domains = ["AI"]
         note2.tags = ["tutorial"]
 
-        with patch("pkg.services.user_profiler.async_session") as mock_session_ctx:
+        with patch("pkg.services.cross_cutting.user_profiler.async_session") as mock_session_ctx:
             mock_session = AsyncMock()
             mock_result = MagicMock()
             mock_result.scalars.return_value = [note1, note2]
@@ -212,15 +212,15 @@ class TestGetNoteStats:
 class TestGenerateUserProfile:
     @pytest.mark.asyncio
     async def test_insufficient_data(self):
-        with patch("pkg.services.user_profiler._get_recent_activities") as mock_act:
+        with patch("pkg.services.cross_cutting.user_profiler._get_recent_activities") as mock_act:
             mock_act.return_value = {"search_queries": [], "chat_topics": [], "active_period": "unknown", "total_activities": 0}
-            with patch("pkg.services.user_profiler._get_note_stats") as mock_notes:
+            with patch("pkg.services.cross_cutting.user_profiler._get_note_stats") as mock_notes:
                 mock_notes.return_value = {"total": 0, "domains": {}, "tags": {}, "types": {}}
-                with patch("pkg.services.user_profiler._get_source_stats") as mock_src:
+                with patch("pkg.services.cross_cutting.user_profiler._get_source_stats") as mock_src:
                     mock_src.return_value = {"total": 0, "types": {}, "titles": []}
-                    with patch("pkg.services.user_profiler._get_chat_stats") as mock_chat:
+                    with patch("pkg.services.cross_cutting.user_profiler._get_chat_stats") as mock_chat:
                         mock_chat.return_value = {"total": 0, "titles": []}
-                        with patch("pkg.services.user_profiler._get_profile_memory_context") as mock_memory:
+                        with patch("pkg.services.cross_cutting.user_profiler._get_profile_memory_context") as mock_memory:
                             mock_memory.return_value = ""
 
                             result = await generate_user_profile("user-1")
@@ -240,24 +240,24 @@ class TestGenerateUserProfile:
             "summary": "AI researcher",
         })
 
-        with patch("pkg.services.user_profiler._get_recent_activities") as mock_act:
+        with patch("pkg.services.cross_cutting.user_profiler._get_recent_activities") as mock_act:
             mock_act.return_value = {
                 "search_queries": ["LLM", "transformer", "attention"],
                 "chat_topics": ["explain attention"],
                 "active_period": "evening",
                 "total_activities": 10,
             }
-            with patch("pkg.services.user_profiler._get_note_stats") as mock_notes:
+            with patch("pkg.services.cross_cutting.user_profiler._get_note_stats") as mock_notes:
                 mock_notes.return_value = {"total": 5, "domains": {"AI": 5}, "tags": {}, "types": {}}
-                with patch("pkg.services.user_profiler._get_source_stats") as mock_src:
+                with patch("pkg.services.cross_cutting.user_profiler._get_source_stats") as mock_src:
                     mock_src.return_value = {"total": 3, "types": {"pdf": 3}, "titles": []}
-                    with patch("pkg.services.user_profiler._get_chat_stats") as mock_chat:
+                    with patch("pkg.services.cross_cutting.user_profiler._get_chat_stats") as mock_chat:
                         mock_chat.return_value = {"total": 2, "titles": ["AI讨论"]}
-                        with patch("pkg.services.user_profiler._get_profile_memory_context") as mock_memory:
+                        with patch("pkg.services.cross_cutting.user_profiler._get_profile_memory_context") as mock_memory:
                             mock_memory.return_value = "Relevant long-term memory:\nAI research focus"
-                            with patch("pkg.services.user_profiler._llm_generate_profile") as mock_llm:
+                            with patch("pkg.services.cross_cutting.user_profiler._llm_generate_profile") as mock_llm:
                                 mock_llm.return_value = json.loads(profile_json)
-                                with patch("pkg.services.user_profiler._upsert_user_memory") as mock_store:
+                                with patch("pkg.services.cross_cutting.user_profiler._upsert_user_memory") as mock_store:
                                     result = await generate_user_profile("user-1")
 
                                     assert result is not None

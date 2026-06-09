@@ -16,9 +16,11 @@ The core product goal is a durable personal knowledge graph with deterministic r
 - Offer frontend Agent workflow templates for common tasks such as source summarization, recent import organization, topic research, and wiki refresh drafting.
 - Inject this workspace profile into the default in-app Action Agent prompt when `AGENT_LOAD_WORKSPACE_PROFILE=true`.
 - Import or discover external knowledge from RSS, web pages, GitHub repositories, and arXiv papers.
+- Create `web` sources from a direct URL by fetching and extracting readable page text when content is left empty.
+- Discover article links from a `web` directory source such as a blog index and import each article as a child web source.
 - Maintain memory nodes and memory edges for topic organization and semantic retrieval.
 - Generate review suggestions, discovery items, wiki pages, summaries, and temporary/permanent knowledge artifacts.
-- Support persistent conversations, model/provider selection, skills, background jobs, and user profiling.
+- Support persistent conversations, model/provider selection, skills, observable background jobs, and user profiling.
 
 ## Key Architecture
 
@@ -31,9 +33,11 @@ The core product goal is a durable personal knowledge graph with deterministic r
 - `web/src/pages/`: React application pages.
 - `web/src/lib/api/`: frontend API clients.
 - `web/src/lib/agent-workflows.ts`: frontend-only Agent workflow catalog and prompt rendering helpers.
+- `web/src/lib/status.ts`, `web/src/components/StatusBadge.tsx`, `web/src/components/StateMessage.tsx`: user-facing status and empty/error state presentation helpers.
 - `web/src/components/`: reusable UI components.
 - `scripts/`: operational/backfill/import helper scripts.
 - `skills/`: reusable prompt/workflow skills loaded by the app.
+- `docs/`: all project documentation. Do not add new top-level `architectures/` documents; organize docs under `docs/` by topic folder, such as `docs/architecture/<topic>/`, `docs/plans/<topic>/`, `docs/roadmaps/<topic>/`, and `docs/reference/<topic>/`. Within a topic folder, prefer stable filenames like `architecture.md`, `plan.md`, `implementation-plan.md`, `progress.md`, and `roadmap.md`.
 
 ## Important Backend Areas
 
@@ -47,6 +51,8 @@ The core product goal is a durable personal knowledge graph with deterministic r
 - `src/pkg/services/connector_trends.py`: daily GitHub/arXiv trend collection.
 - `src/pkg/services/rss_fetcher.py`, `src/pkg/services/rss_discovery.py`, `src/pkg/services/rss_summarizer.py`: RSS ingestion and summarization.
 - `src/pkg/services/discovery.py`, `src/pkg/services/review_suggestions.py`, `src/pkg/services/wiki_recompile.py`: discovery/review/wiki workflows.
+- `src/pkg/services/system_jobs.py` and `web/src/pages/SystemJobsPage.tsx`: background job observability, failure inspection, and troubleshooting entry points.
+- System jobs are user-scoped when attached to a user; global jobs are for admin/system inspection and must not leak to ordinary users.
 
 ## Agent Capabilities In This Project
 
@@ -65,6 +71,8 @@ When changing tool names, tool behavior, workflow templates, skill loading, stre
 
 ## External Connectors
 
+- Direct web URL capture for `web` sources lives in `src/pkg/services/web_extractor.py` and is invoked by `src/pkg/api/sources.py` before persistence when `raw_content` is empty.
+- Web directory article discovery lives in `src/pkg/services/web_directory.py` and uses `metadata.feed_source_id` to link imported child articles to the parent directory source.
 - arXiv search/import lives in `src/pkg/services/connectors.py` and `src/pkg/api/connectors.py`.
 - GitHub search/import lives in `src/pkg/services/connectors.py` and `src/pkg/api/connectors.py`.
 - Connector search results are cached temporarily before being kept as permanent sources.
@@ -83,6 +91,7 @@ Use the project virtual environment when available.
 - Start infrastructure: `docker compose up -d`
 - Start API: `pkg serve` or the project-specific documented command.
 - Disable workspace profile injection: set `AGENT_LOAD_WORKSPACE_PROFILE=false`.
+- Set strong `JWT_SECRET_KEY` and `ADMIN_INIT_PASSWORD`; weak or missing admin initialization password blocks normal app startup.
 - Frontend dependencies/build commands are in `package.json`; inspect scripts before running.
 
 ## Coding Guidelines
@@ -95,6 +104,7 @@ Use the project virtual environment when available.
 - Avoid broad exception swallowing. Preserve meaningful statuses such as authentication failures, validation errors, and external rate limits.
 - Avoid unrelated cleanup in large dirty working trees; many files may already be modified or untracked.
 - Do not commit changes unless explicitly asked.
+- When creating or moving documentation, keep it under `docs/` in a topic-based subfolder rather than adding flat files at the repository root or under a separate `architectures/` tree.
 
 ## Testing Guidelines
 

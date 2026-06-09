@@ -16,6 +16,8 @@ const StatsPage = lazy(() => import("./pages/StatsPage").then((m) => ({ default:
 const CalendarPage = lazy(() => import("./pages/CalendarPage").then((m) => ({ default: m.CalendarPage })));
 const CompletedTodosPage = lazy(() => import("./pages/CompletedTodosPage").then((m) => ({ default: m.CompletedTodosPage })));
 const WritingPage = lazy(() => import("./pages/WritingPage").then((m) => ({ default: m.WritingPage })));
+const AssetsPage = lazy(() => import("./pages/AssetsPage").then((m) => ({ default: m.AssetsPage })));
+const AssetDetailPage = lazy(() => import("./pages/AssetDetailPage").then((m) => ({ default: m.AssetDetailPage })));
 const DigestPage = lazy(() => import("./pages/DigestPage").then((m) => ({ default: m.DigestPage })));
 const WikiPage = lazy(() => import("./pages/WikiPage").then((m) => ({ default: m.WikiPage })));
 const WikiDetailPage = lazy(() => import("./pages/WikiDetailPage").then((m) => ({ default: m.WikiDetailPage })));
@@ -30,6 +32,7 @@ const DiscoverPage = lazy(() => import("./pages/DiscoverPage").then((m) => ({ de
 const ReviewPage = lazy(() => import("./pages/ReviewPage").then((m) => ({ default: m.ReviewPage })));
 const ReviewSuggestionsPage = lazy(() => import("./pages/ReviewSuggestionsPage").then((m) => ({ default: m.ReviewSuggestionsPage })));
 const SettingsPage = lazy(() => import("./pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
+const SystemJobsPage = lazy(() => import("./pages/SystemJobsPage").then((m) => ({ default: m.SystemJobsPage })));
 
 function PageLoader() {
   return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Loading...</div>;
@@ -102,6 +105,7 @@ export default function App() {
             <Route path="/settings/skills" element={<LazyPage><SkillsPage /></LazyPage>} />
             <Route path="/settings/agents" element={<LazyPage><AgentProfilesPage /></LazyPage>} />
             <Route path="/settings/workspace" element={<LazyPage><AgentWorkspacePage /></LazyPage>} />
+            <Route path="/settings/jobs" element={<LazyPage><SystemJobsPage /></LazyPage>} />
             <Route path="/settings/profile" element={<LazyPage><UserProfilePage /></LazyPage>} />
             <Route path="/skills" element={<Navigate to="/settings/skills" replace />} />
             <Route path="/profiles" element={<Navigate to="/settings/agents" replace />} />
@@ -112,6 +116,8 @@ export default function App() {
             <Route path="/wiki/:id" element={<LazyPage><WikiDetailPage /></LazyPage>} />
             <Route path="/review/digest" element={<LazyPage><DigestPage /></LazyPage>} />
             <Route path="/documents" element={<LazyPage><WritingPage /></LazyPage>} />
+            <Route path="/assets" element={<LazyPage><AssetsPage /></LazyPage>} />
+            <Route path="/assets/:id" element={<LazyPage><AssetDetailPage /></LazyPage>} />
             <Route path="/review/wiki-suggestions" element={<LazyPage><WikiSuggestionsPage /></LazyPage>} />
             <Route path="/review/suggestions" element={<LazyPage><ReviewSuggestionsPage /></LazyPage>} />
             <Route path="/wiki/rules" element={<LazyPage><WikiRulesPage /></LazyPage>} />

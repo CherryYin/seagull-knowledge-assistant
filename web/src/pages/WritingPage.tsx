@@ -11,8 +11,12 @@ export function WritingPage() {
 
   const { data, isLoading } = useQuery({
     queryKey: ["writing"],
-    queryFn: () => notesApi.list({ tag: "from-document", limit: 100 }),
+    queryFn: () => notesApi.list({ limit: 100 }),
   });
+
+  const writingItems = (data?.items ?? []).filter((note) =>
+    (note.tags ?? []).includes("from-document") || (note.tags ?? []).includes("writing-artifact")
+  );
 
   return (
     <div className="h-full overflow-y-auto">
@@ -20,20 +24,25 @@ export function WritingPage() {
         <SectionNav items={knowledgeNavItems} active="Documents" />
 
         <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-bold">Documents</h1>
+          <div>
+            <h1 className="text-2xl font-bold">Documents</h1>
+            <p className="text-sm text-muted-foreground">
+              Note-based document outputs and exports. These are working drafts and generated deliverables, not durable knowledge assets or raw external evidence.
+            </p>
+          </div>
         </div>
 
         {isLoading && <p className="text-sm text-muted-foreground">Loading...</p>}
 
-        {data && data.total === 0 && (
+        {data && writingItems.length === 0 && (
           <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
             <PenLine className="h-12 w-12 mb-3 opacity-30" />
-			<p>No documents yet. Generate one in Agent Chat to get started.</p>
+			<p>No document outputs yet. Generate one in Agent Chat to get started.</p>
           </div>
         )}
 
         <div className="grid gap-3 md:grid-cols-2">
-          {data?.items.map((note) => (
+          {writingItems.map((note) => (
             <WritingCard
               key={note.id}
               note={note}

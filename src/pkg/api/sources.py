@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,16 +16,19 @@ from pkg.api.deps import get_current_user
 from pkg.config import settings
 from pkg.db import get_session
 from pkg.models.category import Category
-from pkg.models.source import Source, SourceChunk, SourceEmbedding
+from pkg.models.foundation.source import Source, SourceChunk, SourceEmbedding
 from pkg.models.user import User
 from pkg.schemas.source import ChunkRead, SourceCreate, SourceList, SourceRead, SourceUpdate
-from pkg.services.chunking import chunk_text
-from pkg.services.embedding import get_embedding_service
-from pkg.services.source_memory import upsert_source_memory_node
-from pkg.services.storage import get_storage_service
+from pkg.services.foundation.chunking import chunk_text
+from pkg.services.cross_cutting.embedding import get_embedding_service
+from pkg.services.foundation.source_memory import upsert_source_memory_node
+from pkg.services.cross_cutting.storage import get_storage_service
+from pkg.services.foundation.web_extractor import WebPageFetchError, fetch_web_page
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+SOURCE_LIKE_TAGS_DISALLOWED = {"from-agent", "agent-output"}
 
 TEXT_FILE_SUFFIXES = {
     ".md",
@@ -55,7 +59,26 @@ def make_source_id(title: str, explicit_id: str | None = None) -> str:
         return explicit_id
     now = datetime.now(timezone.utc)
     suffix = uuid.uuid4().hex[:8]
-    return f"src-{now.strftime('%Y%m%d')}-{title[:30].lower().replace(' ', '-')}-{suffix}"
+    slug = re.sub(r"[^a-z0-9]+", "-", title[:80].lower()).strip("-") or "source"
+    return f"src-{now.strftime('%Y%m%d')}-{slug[:40]}-{suffix}"
+
+
+def _is_placeholder_or_url_title(title: str) -> bool:
+    normalized = title.strip().lower()
+    return normalized in {"untitled", "new source", "web"} or normalized.startswith(("http://", "https://"))
+
+
+def _looks_like_user_authored_note(body: SourceCreate) -> bool:
+    metadata = body.metadata or {}
+    tags = metadata.get("tags") if isinstance(metadata.get("tags"), list) else []
+    markers = {str(item).strip().lower() for item in tags if item}
+    title = (body.title or "").strip().lower()
+    raw_content = (body.raw_content or "").strip().lower()
+    if markers & SOURCE_LIKE_TAGS_DISALLOWED:
+        return True
+    if title in {"agent output", "assistant output", "chat output"}:
+        return True
+    return body.source_type == "conversation" and not body.url and raw_content.startswith(("# ", "## ", "总结", "summary"))
 
 
 def _rss_candidate_urls(url: str) -> list[str]:
@@ -116,7 +139,7 @@ async def maybe_enable_rss_for_source(source: Source, *, auto_fetch: bool, sessi
     source.metadata_ = meta
 
     if auto_fetch:
-        from pkg.services.rss_fetcher import fetch_single_feed
+        from pkg.services.foundation.rss_fetcher import fetch_single_feed
 
         await fetch_single_feed(source, session)
     return True
@@ -145,19 +168,19 @@ async def extract_text_content(
 
     # Text-based PDF — fast path via PyMuPDF (no OCR)
     if pdf_type == "text" and suffix == ".pdf":
-        from pkg.services.document_extractor import extract_content_pymupdf
+        from pkg.services.foundation.document_extractor import extract_content_pymupdf
 
         return await asyncio.to_thread(extract_content_pymupdf, payload, fname)
 
     # Unclear/low-quality PDF — vision LLM page-by-page
     if pdf_type == "vlm" and suffix == ".pdf":
-        from pkg.services.document_extractor import extract_content_vlm_from_bytes
+        from pkg.services.foundation.document_extractor import extract_content_vlm_from_bytes
 
         return await extract_content_vlm_from_bytes(payload, fname)
 
     # Binary documents — use Docling
     # For scanned/image PDFs, force full-page OCR to bypass broken text layers
-    from pkg.services.document_extractor import extract_content
+    from pkg.services.foundation.document_extractor import extract_content
 
     force_ocr = pdf_type == "ocr" and suffix == ".pdf"
     return await asyncio.to_thread(extract_content, payload, fname, force_full_page_ocr=force_ocr)
@@ -251,6 +274,26 @@ async def create_source(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
+    if _looks_like_user_authored_note(body):
+        raise HTTPException(
+            status_code=422,
+            detail="This content looks like user-authored or agent-authored writing. Save it as a Note or Writing document instead of a Source.",
+        )
+
+    if body.source_type == "web" and body.url and not (body.raw_content or "").strip():
+        try:
+            page = await fetch_web_page(body.url)
+        except WebPageFetchError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        metadata = dict(body.metadata or {})
+        metadata.update(page.metadata)
+        body.raw_content = page.text
+        body.url = page.final_url
+        if page.title and _is_placeholder_or_url_title(body.title):
+            body.title = page.title
+        body.metadata = metadata
+
     source = await persist_source(session=session, body=body, user_id=user.id)
     if is_url_backed_source(source):
         try:
@@ -367,12 +410,11 @@ async def list_sources(
     return SourceList(items=result_items, total=total)
 
 
-@router.get("/{source_id}", response_model=SourceRead)
-async def get_source(
+async def read_source_by_id(
     source_id: str,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
-):
+) -> SourceRead:
     source = await session.get(Source, source_id)
     if not source or (source.user_id != user.id and not source.is_shared):
         raise HTTPException(status_code=404, detail="Source not found")
@@ -380,6 +422,15 @@ async def get_source(
     result = SourceRead.model_validate(source)
     result.category_name = category.name if category else None
     return result
+
+
+@router.get("/{source_id}", response_model=SourceRead)
+async def get_source(
+    source_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await read_source_by_id(source_id, user=user, session=session)
 
 
 @router.patch("/{source_id}", response_model=SourceRead)
@@ -469,12 +520,11 @@ async def keep_imported_source(
     return result
 
 
-@router.delete("/{source_id}", status_code=204)
-async def delete_source(
+async def delete_source_by_id(
     source_id: str,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
-):
+) -> None:
     source = await session.get(Source, source_id)
     if not source or source.user_id != user.id:
         raise HTTPException(status_code=404, detail="Source not found")
@@ -500,6 +550,15 @@ async def delete_source(
 
     await session.delete(source)
     await session.commit()
+
+
+@router.delete("/{source_id}", status_code=204)
+async def delete_source(
+    source_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await delete_source_by_id(source_id, user=user, session=session)
 
 
 @router.get("/{source_id}/file")
@@ -595,10 +654,40 @@ async def fetch_rss_now(
     if meta.get("rss_enabled") != "true":
         raise HTTPException(status_code=422, detail="RSS is not enabled for this source")
 
-    from pkg.services.rss_fetcher import fetch_single_feed
+    from pkg.services.foundation.rss_fetcher import fetch_single_feed
 
     new_count = await fetch_single_feed(source, session)
     return {"new_articles": new_count}
+
+
+@router.post("/{source_id}/web/discover")
+async def discover_web_articles_now(
+    source_id: str,
+    limit: int = Query(default=50, ge=1, le=200),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Discover same-directory article links from a web directory source and import them."""
+    source = await session.get(Source, source_id)
+    if not source or source.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Source not found")
+    if source.source_type != "web" or not source.url:
+        raise HTTPException(status_code=422, detail="Web discovery requires a URL-backed web source")
+
+    from pkg.services.foundation.web_directory import import_web_directory_articles
+
+    result = await import_web_directory_articles(session, source, limit=limit)
+    meta = dict(source.metadata_ or {})
+    meta["web_directory_enabled"] = True
+    meta["web_directory_last_discovered"] = result.discovered
+    meta["web_directory_last_imported"] = result.imported
+    meta["web_directory_last_updated"] = result.updated
+    meta["web_directory_last_skipped"] = result.skipped
+    meta["web_directory_last_fetch_at"] = datetime.now(timezone.utc).isoformat()
+    source.metadata_ = meta
+    await session.commit()
+    await session.refresh(source)
+    return {"discovered": result.discovered, "imported": result.imported, "updated": result.updated, "skipped": result.skipped}
 
 
 @router.get("/{source_id}/articles", response_model=SourceList)
@@ -617,17 +706,18 @@ async def list_feed_articles(
     from sqlalchemy import text as sql_text
 
     base_filter = sql_text("metadata->>'feed_source_id' = :feed_id")
+    ownership = or_(Source.user_id == user.id, Source.is_shared)
 
     count_stmt = (
         select(func.count())
         .select_from(Source)
-        .where(base_filter.bindparams(feed_id=source_id))
+        .where(ownership, base_filter.bindparams(feed_id=source_id))
     )
     total = (await session.execute(count_stmt)).scalar() or 0
 
     stmt = (
         select(Source)
-        .where(base_filter.bindparams(feed_id=source_id))
+        .where(ownership, base_filter.bindparams(feed_id=source_id))
         .order_by(Source.ingested_at.desc())
         .offset(offset)
         .limit(limit)
@@ -641,7 +731,27 @@ async def list_feed_articles(
 @router.post("/rss/summarize")
 async def trigger_rss_summary(user: User = Depends(get_current_user)):
     """Manually trigger RSS topic summarization."""
-    from pkg.services.rss_summarizer import summarize_rss_by_topic
+    from pkg.services.foundation.rss_summarizer import summarize_rss_by_topic
 
     note_ids = await summarize_rss_by_topic()
     return {"note_ids": note_ids, "count": len(note_ids)}
+
+
+@router.get("/{source_id:path}", response_model=SourceRead)
+async def get_source_legacy_path_id(
+    source_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Read legacy sources whose ids accidentally contain slash characters."""
+    return await read_source_by_id(source_id, user=user, session=session)
+
+
+@router.delete("/{source_id:path}", status_code=204)
+async def delete_source_legacy_path_id(
+    source_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Delete legacy sources whose ids accidentally contain slash characters."""
+    await delete_source_by_id(source_id, user=user, session=session)

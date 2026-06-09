@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { Components } from "react-markdown";
 import { cn } from "@/lib/utils";
-import { Bot, User, RotateCw, Brain, Check, FileText, StickyNote, Globe, FileOutput } from "lucide-react";
+import { Bot, User, RotateCw, Brain, Check, FileText, StickyNote, Globe, FileOutput, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MarkdownRenderer } from "@/components/markdown";
 import type { MessageMetadata, ReferenceInfo } from "@/lib/api";
@@ -60,6 +60,7 @@ export function ChatMessage({
   const [newKnowledgeDone, setNewKnowledgeDone] = useState(false);
   const [saveAsNoteDone, setSaveAsNoteDone] = useState(false);
   const [rememberDone, setRememberDone] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const markdownComponents: Components = {
     a: ({ href, children, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { children?: React.ReactNode }) => {
@@ -98,12 +99,13 @@ export function ChatMessage({
   const handleNewKnowledge = async () => {
     if (!onNewKnowledge) return;
     setNewKnowledgeLoading(true);
+    setActionError(null);
     try {
       await onNewKnowledge();
       setNewKnowledgeDone(true);
       setTimeout(() => setNewKnowledgeDone(false), 2000);
-    } catch {
-      // Error handled by parent
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Could not save as Source + Note. Try again or inspect the source details.");
     } finally {
       setNewKnowledgeLoading(false);
     }
@@ -112,12 +114,13 @@ export function ChatMessage({
   const handleRemember = async () => {
     if (!onRemember) return;
     setRememberLoading(true);
+    setActionError(null);
     try {
       await onRemember();
       setRememberDone(true);
       setTimeout(() => setRememberDone(false), 2000);
-    } catch {
-      // Error handled by parent
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Could not remember this output. Try again or inspect Agent settings.");
     } finally {
       setRememberLoading(false);
     }
@@ -126,12 +129,13 @@ export function ChatMessage({
   const handleSaveAsNote = async () => {
     if (!onSaveAsNote) return;
     setSaveAsNoteLoading(true);
+    setActionError(null);
     try {
       await onSaveAsNote();
       setSaveAsNoteDone(true);
       setTimeout(() => setSaveAsNoteDone(false), 2000);
-    } catch {
-      // Error handled by parent
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Could not save as Note. Check categories and try again.");
     } finally {
       setSaveAsNoteLoading(false);
     }
@@ -208,6 +212,12 @@ export function ChatMessage({
               })}
             </div>
           )}
+          {!isUser && content.length > 200 && (!metadata?.references || metadata.references.length === 0) && (
+            <div className="mt-2 flex items-start gap-1.5 border-t border-border/50 pt-2 text-[10px] text-muted-foreground">
+              <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+              No explicit Source/Note/Memory/Wiki references were attached. Verify important claims before saving durable knowledge.
+            </div>
+          )}
         </div>
 
         {/* Action buttons */}
@@ -240,7 +250,7 @@ export function ChatMessage({
                 ) : (
                   <StickyNote className={cn("h-3 w-3", saveAsNoteLoading && "animate-pulse")} />
                 )}
-                {saveAsNoteDone ? "Saved" : "Save as Note"}
+                {saveAsNoteDone ? "Saved" : "Save as Personal Note"}
               </Button>
             )}
 
@@ -258,7 +268,7 @@ export function ChatMessage({
                 ) : (
                   <FileOutput className={cn("h-3 w-3", newKnowledgeLoading && "animate-pulse")} />
                 )}
-                {newKnowledgeDone ? "Saved" : "Save as Source + Note"}
+                {newKnowledgeDone ? "Saved" : "Save as Writing Document"}
               </Button>
             )}
 
@@ -279,6 +289,15 @@ export function ChatMessage({
                 Remember
               </Button>
             )}
+          </div>
+        )}
+        {actionError && (
+          <div className="mt-2 flex max-w-xl items-start gap-1.5 rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2 text-xs text-red-700">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <div>
+              <p className="font-medium">Action failed</p>
+              <p>{actionError}</p>
+            </div>
           </div>
         )}
       </div>

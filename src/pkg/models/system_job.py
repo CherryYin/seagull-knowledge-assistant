@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Float, Index, Integer, String, Text, func
+from sqlalchemy import Float, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -11,6 +11,7 @@ class SystemJob(Base):
     __tablename__ = "system_jobs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
     job_type: Mapped[str] = mapped_column(String(80), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="running")
     title: Mapped[str] = mapped_column(Text, nullable=False)
@@ -25,6 +26,7 @@ class SystemJob(Base):
 
     __table_args__ = (
         Index("idx_system_jobs_type", "job_type"),
+        Index("idx_system_jobs_user_id", "user_id"),
         Index("idx_system_jobs_status", "status"),
         Index("idx_system_jobs_started_at", "started_at"),
     )

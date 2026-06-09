@@ -11,7 +11,7 @@ from pkg.schemas.agent_run import (
     AgentRunRead,
     AgentRunStatusRead,
 )
-from pkg.services.agent_runs import get_workspace_status, list_run_events, list_runs
+from pkg.services.cross_cutting.agent_runs import get_workspace_status, list_run_events, list_runs
 
 router = APIRouter()
 

@@ -22,6 +22,9 @@ export interface ReviewSuggestion {
   reviewer_note?: string | null;
 }
 
+// General review suggestions are distinct from wiki refresh reminders for now.
+// The product UI treats both as part of the broader Review surface.
+
 export interface ReviewSuggestionList {
   items: ReviewSuggestion[];
   total: number;

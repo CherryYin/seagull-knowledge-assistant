@@ -14,21 +14,21 @@ from pkg.api.deps import get_current_user
 from pkg.config import settings
 from pkg.db import async_session
 from pkg.models.chat_session import ChatSession
-from pkg.models.note import Note
-from pkg.models.source import Source
+from pkg.models.foundation.note import Note
+from pkg.models.foundation.source import Source
 from pkg.models.user import User
 from pkg.schemas.action import ActionRequest, ActionResponse
-from pkg.services.action_agent import create_action_agent, current_run_id, current_user_id
-from pkg.services.activity import log_activity
-from pkg.services.agent_runs import (
+from pkg.services.orchestration.action_agent import create_action_agent, current_run_id, current_user_id
+from pkg.services.cross_cutting.activity import log_activity
+from pkg.services.cross_cutting.agent_runs import (
     add_run_event,
     complete_run,
     fail_run,
     start_run,
     update_run_status,
 )
-from pkg.services.skills import expand_skill, load_skills_merged, parse_skill_invocation
-from pkg.services.stats import increment_stats_mixed
+from pkg.services.cross_cutting.skills import expand_skill, load_skills_merged, parse_skill_invocation
+from pkg.services.cross_cutting.stats import increment_stats_mixed
 
 logger = logging.getLogger(__name__)
 

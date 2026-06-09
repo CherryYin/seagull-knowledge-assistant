@@ -4,8 +4,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pkg.api.deps import get_current_user
 from pkg.db import get_session
 from pkg.models.user import User
-from pkg.services.connector_cache import connector_cache_key, mark_connector_item_saved, upsert_connector_search_items
-from pkg.services.discovery import generate_discovery_items
+from pkg.services.foundation.connector_cache import connector_cache_key, mark_connector_item_saved, upsert_connector_search_items
+from pkg.services.foundation.discovery import generate_discovery_items
 from pkg.schemas.connector import (
     ArxivImportRequest,
     ArxivSearchRequest,
@@ -15,7 +15,7 @@ from pkg.schemas.connector import (
     GitHubRepoSearchRequest,
     GitHubRepoSearchResponse,
 )
-from pkg.services.connectors import (
+from pkg.services.foundation.connectors import (
     get_github_repo,
     import_arxiv_paper,
     import_github_repo,
@@ -42,6 +42,7 @@ async def search_arxiv_connector(
             date_from=body.date_from,
             date_to=body.date_to,
             max_results=body.max_results,
+            retries=0,
         )
     except ArxivRateLimitError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
@@ -71,7 +72,7 @@ async def import_arxiv_connector(
         if not body.paper_id:
             raise HTTPException(status_code=422, detail="paper or paper_id is required")
         try:
-            matches = await search_arxiv(paper_id=body.paper_id, max_results=1)
+            matches = await search_arxiv(paper_id=body.paper_id, max_results=1, retries=0)
         except ArxivRateLimitError as exc:
             raise HTTPException(status_code=429, detail=str(exc)) from exc
         except Exception as exc:

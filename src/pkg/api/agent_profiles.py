@@ -71,7 +71,7 @@ AGENT_TYPES = [
 
 
 def _get_available_tool_names() -> list[str]:
-    from pkg.services.action_agent import _BASE_TOOLS
+    from pkg.services.orchestration.action_agent import _BASE_TOOLS
 
     names = []
     for t in _BASE_TOOLS:
@@ -123,7 +123,7 @@ async def available_tools(_user: User = Depends(get_current_user)) -> list[str]:
 
 @router.get("/allowed-models")
 async def allowed_models(_user: User = Depends(get_current_user)) -> list[str]:
-    from pkg.services.llm import list_all_models
+    from pkg.services.cross_cutting.llm import list_all_models
 
     models = await list_all_models()
     if models:

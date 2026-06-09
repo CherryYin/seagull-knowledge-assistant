@@ -43,14 +43,20 @@ const navSections = [
 		],
 	},
 	{
-		label: "Knowledge",
+		label: "Knowledge Foundation",
 		items: [
 			{ to: "/search", icon: Search, label: "Search" },
 			{ to: "/sources", icon: FileText, label: "Sources" },
 			{ to: "/notes", icon: StickyNote, label: "Notes" },
-			{ to: "/documents", icon: BookOpen, label: "Documents" },
-			{ to: "/memory", icon: Brain, label: "Memory" },
+			{ to: "/memory", icon: Brain, label: "Knowledge Tree" },
 			{ to: "/wiki", icon: BookOpen, label: "Wiki" },
+		],
+	},
+	{
+		label: "Assets & Consumption",
+		items: [
+			{ to: "/assets", icon: FileText, label: "Assets" },
+			{ to: "/documents", icon: BookOpen, label: "Documents (Legacy)" },
 		],
 	},
 	{

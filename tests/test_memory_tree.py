@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pkg.models.memory import MemoryNode
-from pkg.services.memory_tree import (
+from pkg.services.foundation.memory_tree import (
     compile_topic_memory_node,
     preview_topic_memory_candidates,
     topic_memory_node_id,
@@ -12,11 +12,11 @@ from pkg.services.memory_tree import (
 
 
 @pytest.mark.asyncio
-@patch("pkg.services.memory_tree._load_semantic_seed_candidates", new_callable=AsyncMock, return_value=[])
-@patch("pkg.services.memory_tree.suggest_wiki_recompile_for_trigger", new_callable=AsyncMock)
-@patch("pkg.services.memory_tree.sync_memory_edges_for_node", new_callable=AsyncMock)
-@patch("pkg.services.memory_tree.upsert_memory_embedding", new_callable=AsyncMock)
-@patch("pkg.services.llm.create_async_client")
+@patch("pkg.services.foundation.memory_tree._load_semantic_seed_candidates", new_callable=AsyncMock, return_value=[])
+@patch("pkg.services.foundation.memory_tree.suggest_wiki_recompile_for_trigger", new_callable=AsyncMock)
+@patch("pkg.services.foundation.memory_tree.sync_memory_edges_for_node", new_callable=AsyncMock)
+@patch("pkg.services.foundation.memory_tree.upsert_memory_embedding", new_callable=AsyncMock)
+@patch("pkg.services.cross_cutting.llm.create_async_client")
 async def test_compile_topic_memory_node_creates_topic_node(
     mock_llm_client, mock_embedding, mock_sync_edges, mock_suggest, _mock_semantic
 ):
@@ -73,7 +73,7 @@ async def test_compile_topic_memory_node_creates_topic_node(
 
 
 @pytest.mark.asyncio
-@patch("pkg.services.memory_tree._load_semantic_seed_candidates", new_callable=AsyncMock, return_value=[])
+@patch("pkg.services.foundation.memory_tree._load_semantic_seed_candidates", new_callable=AsyncMock, return_value=[])
 async def test_compile_topic_memory_node_requires_seed_nodes(_mock_semantic):
     execute_result = MagicMock()
     execute_result.scalars.return_value = []
@@ -85,7 +85,7 @@ async def test_compile_topic_memory_node_requires_seed_nodes(_mock_semantic):
 
 
 @pytest.mark.asyncio
-@patch("pkg.services.memory_tree._load_semantic_seed_candidates", new_callable=AsyncMock, return_value=[])
+@patch("pkg.services.foundation.memory_tree._load_semantic_seed_candidates", new_callable=AsyncMock, return_value=[])
 async def test_preview_topic_memory_candidates_returns_reasons(_mock_semantic):
     seed = MemoryNode(
         id="mem-source-src-1",
@@ -114,7 +114,7 @@ async def test_preview_topic_memory_candidates_returns_reasons(_mock_semantic):
 
 
 @pytest.mark.asyncio
-@patch("pkg.services.memory_tree.get_embedding_service")
+@patch("pkg.services.foundation.memory_tree.get_embedding_service")
 async def test_preview_topic_memory_candidates_uses_semantic_search(mock_embedding_service):
     seed = MemoryNode(
         id="mem-source-src-1",
@@ -150,7 +150,7 @@ async def test_preview_topic_memory_candidates_uses_semantic_search(mock_embeddi
 
 
 @pytest.mark.asyncio
-@patch("pkg.services.memory_tree.get_embedding_service")
+@patch("pkg.services.foundation.memory_tree.get_embedding_service")
 async def test_upsert_memory_embedding_flushes_node_before_embedding(mock_embedding_service):
     node = MemoryNode(
         id="mem-source-src-1",

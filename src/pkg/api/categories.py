@@ -6,8 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.db import get_session
 from pkg.models.category import Category
-from pkg.models.note import Note
-from pkg.models.source import Source
+from pkg.models.foundation.note import Note
+from pkg.models.foundation.source import Source
 from pkg.schemas.category import CategoryCreate, CategoryList, CategoryRead, CategoryUpdate
 
 router = APIRouter()

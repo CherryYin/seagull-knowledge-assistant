@@ -1,8 +1,8 @@
-"""Tests for pkg.services.chunking — markdown-aware text chunking."""
+"""Tests for pkg.services.foundation.chunking — markdown-aware text chunking."""
 
 import pytest
 
-from pkg.services.chunking import (
+from pkg.services.foundation.chunking import (
     _count_tokens,
     _split_blocks,
     _split_sections,

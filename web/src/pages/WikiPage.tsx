@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BookOpen, Lightbulb, Plus, Settings2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -9,6 +9,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { wikiApi, type WikiPageCreate } from "@/lib/api";
+import { getWikiOrigin, getWikiRole } from "@/lib/wikiLifecycle";
+import { buildWikiTemplate, wikiTemplates } from "@/lib/wikiTemplates";
 import { SectionNav, knowledgeNavItems } from "@/components/SectionNav";
 
 const PAGE_TYPES = ["topic", "entity", "concept", "project", "comparison"];
@@ -19,6 +21,7 @@ function splitCsv(value: string) {
 
 export function WikiPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<WikiPageCreate>({
@@ -31,6 +34,24 @@ export function WikiPage() {
   });
   const [domainsCsv, setDomainsCsv] = useState("");
   const [tagsCsv, setTagsCsv] = useState("");
+
+  useEffect(() => {
+    const state = location.state as { wikiPrefill?: Partial<WikiPageCreate> } | null;
+    if (!state?.wikiPrefill) return;
+    const prefill = state.wikiPrefill;
+    setForm((prev) => ({
+      ...prev,
+      ...prefill,
+      title: prefill.title ?? prev.title,
+      summary: prefill.summary ?? prev.summary,
+      content: prefill.content ?? prev.content,
+      page_type: prefill.page_type ?? prev.page_type,
+      derived_from_sources: prefill.derived_from_sources ?? prev.derived_from_sources,
+      derived_from_notes: prefill.derived_from_notes ?? prev.derived_from_notes,
+    }));
+    setOpen(true);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.pathname, location.state, navigate]);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["wiki-pages"],
@@ -52,7 +73,7 @@ export function WikiPage() {
   function submitWikiPage() {
     createMutation.mutate({
       ...form,
-      content: form.content || `# ${form.title}\n\n## 当前理解\n\n## 关键结论\n\n## Source Evidence\n\n## 我的笔记与洞察\n\n## 开放问题\n`,
+      content: form.content || buildWikiTemplate(form.title, form.page_type || "topic"),
       domains: splitCsv(domainsCsv),
       tags: splitCsv(tagsCsv),
     });
@@ -72,9 +93,12 @@ export function WikiPage() {
                 <BookOpen className="h-6 w-6" />
               </div>
               <div>
-                <h1 className="text-2xl font-semibold tracking-tight">Stable Knowledge</h1>
+                <h1 className="text-2xl font-semibold tracking-tight">Canonical Knowledge Pages</h1>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-                  L3 wiki pages turn notes and sources into stable, source-backed long-term knowledge.
+                  Canonical wiki pages turn notes and sources into stable, source-backed long-term knowledge.
+                </p>
+                <p className="mt-2 max-w-2xl text-xs leading-5 text-muted-foreground">
+                  Wiki pages are above summary drafts and memory compiles. They should stay reviewable and stable rather than acting like another temporary summary layer.
                 </p>
               </div>
             </div>
@@ -91,7 +115,7 @@ export function WikiPage() {
                 </DialogTrigger>
                 <DialogContent className="max-w-2xl">
                   <DialogHeader>
-                    <DialogTitle>Create Wiki Page</DialogTitle>
+                    <DialogTitle>Create Canonical Wiki Page</DialogTitle>
                   </DialogHeader>
                   <div className="space-y-4">
                     <div>
@@ -108,7 +132,11 @@ export function WikiPage() {
                         <label className="text-xs font-medium text-muted-foreground">Type</label>
                         <select
                           value={form.page_type}
-                          onChange={(event) => setForm((prev) => ({ ...prev, page_type: event.target.value }))}
+                          onChange={(event) => setForm((prev) => ({
+                            ...prev,
+                            page_type: event.target.value,
+                            content: prev.content || (prev.title ? buildWikiTemplate(prev.title, event.target.value) : ""),
+                          }))}
                           className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
                         >
                           {PAGE_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
@@ -141,6 +169,9 @@ export function WikiPage() {
                         placeholder="Leave empty to create a default wiki template."
                         className="mt-1 font-mono text-sm"
                       />
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        {wikiTemplates[form.page_type || "topic"]?.description}
+                      </p>
                     </div>
                     {createMutation.error && <p className="text-sm text-destructive">{createMutation.error.message}</p>}
                     <div className="flex justify-end gap-2">
@@ -184,9 +215,13 @@ export function WikiPage() {
                             {page.stale_reason || page.summary || page.content || "No summary yet."}
                           </p>
                         </div>
-                        <Badge variant="outline">{page.page_type}</Badge>
+                        <div className="flex flex-col items-end gap-2">
+                          <Badge variant="outline">{page.page_type}</Badge>
+                          <Badge variant="outline">{getWikiRole(page)}</Badge>
+                        </div>
                       </div>
                       <div className="mt-3 flex flex-wrap gap-2">
+                        {getWikiOrigin(page) && <Badge variant="outline">{getWikiOrigin(page)}</Badge>}
                         {page.tags.slice(0, 4).map((tag) => <Badge key={tag} variant="secondary">{tag}</Badge>)}
                         {page.needs_recompile && <Badge>Needs recompile</Badge>}
                         {page.stale_triggered_at && <Badge variant="outline">Stale</Badge>}
@@ -208,7 +243,7 @@ export function WikiPage() {
           <CardContent className="grid gap-3 text-sm text-muted-foreground md:grid-cols-3">
             <div className="rounded-lg bg-muted/50 p-3">
               <p className="font-medium text-foreground">L3 pages</p>
-              <p className="mt-1">Wiki pages are stable knowledge pages above notes and sources.</p>
+              <p className="mt-1">Wiki pages are stable knowledge pages above notes and sources. Draft-style wiki pages should be reviewed before being treated as stable.</p>
             </div>
             <div className="rounded-lg bg-muted/50 p-3">
               <p className="font-medium text-foreground">Source evidence</p>
@@ -216,7 +251,7 @@ export function WikiPage() {
             </div>
             <div className="rounded-lg bg-muted/50 p-3">
               <p className="font-medium text-foreground">Agent-ready</p>
-              <p className="mt-1">Manual pages now; compiler and Memory Tree automation can feed this layer later.</p>
+              <p className="mt-1">Manual pages now; compiler and Knowledge Tree automation can feed this layer later.</p>
             </div>
           </CardContent>
         </Card>

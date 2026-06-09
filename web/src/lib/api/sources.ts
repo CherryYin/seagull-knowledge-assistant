@@ -73,6 +73,11 @@ export const sourcesApi = {
     request<Source>(`/sources/${encodeURIComponent(id)}/rss/disable`, { method: "POST" }),
   fetchFeed: (id: string) =>
     request<{ new_articles: number }>(`/sources/${encodeURIComponent(id)}/rss/fetch`, { method: "POST" }),
+  discoverWebArticles: (id: string, params?: { limit?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.limit) q.set("limit", String(params.limit));
+    return request<{ discovered: number; imported: number; updated: number; skipped: number }>(`/sources/${encodeURIComponent(id)}/web/discover?${q}`, { method: "POST" });
+  },
   listArticles: (id: string, params?: { limit?: number; offset?: number }) => {
     const q = new URLSearchParams();
     if (params?.limit) q.set("limit", String(params.limit));

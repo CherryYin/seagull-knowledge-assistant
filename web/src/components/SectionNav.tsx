@@ -30,14 +30,14 @@ export const knowledgeNavItems: SectionNavItem[] = [
 	{ label: "Sources", to: "/sources" },
 	{ label: "Notes", to: "/notes" },
 	{ label: "Documents", to: "/documents" },
-	{ label: "Memory", to: "/memory" },
+	{ label: "Knowledge Tree", to: "/memory" },
 	{ label: "Wiki", to: "/wiki" },
 ];
 
 export const reviewNavItems: SectionNavItem[] = [
 	{ label: "Review", to: "/review" },
 	{ label: "Digest", to: "/review/digest" },
-	{ label: "Wiki Refresh", to: "/review/wiki-suggestions" },
+	{ label: "Wiki Review", to: "/review/wiki-suggestions" },
 	{ label: "Suggestions", to: "/review/suggestions" },
 ];
 
@@ -51,5 +51,6 @@ export const settingsNavItems: SectionNavItem[] = [
 	{ label: "Agents", to: "/settings/agents" },
 	{ label: "Skills", to: "/settings/skills" },
 	{ label: "Workspace", to: "/settings/workspace" },
+	{ label: "Jobs", to: "/settings/jobs" },
 	{ label: "Dashboard", to: "/stats" },
 ];

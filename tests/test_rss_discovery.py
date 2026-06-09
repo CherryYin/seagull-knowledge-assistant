@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pkg.services.rss_discovery import discover_rss_for_web_sources
+from pkg.services.foundation.rss_discovery import discover_rss_for_web_sources
 
 
 @pytest.mark.asyncio

@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from pkg.db import async_session
-from pkg.services.connectors import get_github_repo, import_github_repo, search_github_repos
+from pkg.services.foundation.connectors import get_github_repo, import_github_repo, search_github_repos
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)

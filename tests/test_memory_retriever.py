@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pkg.services.memory_retriever import format_memory_context, retrieve_for_query
+from pkg.services.foundation.memory_retriever import format_memory_context, retrieve_for_query
 
 
 @pytest.mark.asyncio
@@ -32,7 +32,7 @@ async def test_retrieve_for_query_merges_semantic_and_keyword_results():
     keyword_scalars.scalars.return_value = [keyword_node]
     session.execute.side_effect = [semantic_rows, MagicMock(scalars=MagicMock(return_value=[semantic_node])), keyword_scalars]
 
-    with patch("pkg.services.memory_retriever.get_embedding_service") as mock_embedding:
+    with patch("pkg.services.foundation.memory_retriever.get_embedding_service") as mock_embedding:
         mock_embedding.return_value.embed_text = AsyncMock(return_value=[0.1, 0.2])
         results = await retrieve_for_query(session, user_id="user-1", query="memory topic", limit=5)
 

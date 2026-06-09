@@ -38,7 +38,9 @@ def upgrade() -> None:
     # 2. Seed default admin user
     from bcrypt import hashpw, gensalt
 
-    admin_password = os.environ.get("ADMIN_INIT_PASSWORD", "admin123")
+    admin_password = os.environ.get("ADMIN_INIT_PASSWORD")
+    if not admin_password or admin_password in {"admin123", "password"} or len(admin_password) < 12:
+        raise RuntimeError("ADMIN_INIT_PASSWORD must be set to a strong password before running this migration")
     hashed = hashpw(admin_password.encode(), gensalt()).decode()
     admin_id = str(uuid.uuid4())
     op.execute(

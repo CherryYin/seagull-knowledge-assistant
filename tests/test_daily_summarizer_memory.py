@@ -3,14 +3,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pkg.services.daily_summarizer import _memory_node_id, _note_id, summarize_temporary_notes
+from pkg.services.foundation.daily_summarizer import _memory_node_id, _note_id, summarize_temporary_notes
 
 
 @pytest.mark.asyncio
-@patch("pkg.services.daily_summarizer.get_storage_service")
-@patch("pkg.services.daily_summarizer.get_embedding_service")
-@patch("pkg.services.daily_summarizer.upsert_memory_embedding", new_callable=AsyncMock)
-@patch("pkg.services.llm.create_async_client")
+@patch("pkg.services.foundation.daily_summarizer.get_storage_service")
+@patch("pkg.services.foundation.daily_summarizer.get_embedding_service")
+@patch("pkg.services.foundation.daily_summarizer.upsert_memory_embedding", new_callable=AsyncMock)
+@patch("pkg.services.cross_cutting.llm.create_async_client")
 async def test_daily_summary_writes_memory_node(
     mock_llm_client, mock_memory_embedding, mock_embedding_service, mock_storage
 ):
@@ -49,7 +49,7 @@ async def test_daily_summary_writes_memory_node(
     client.chat.completions.create = AsyncMock(return_value=response)
     mock_llm_client.return_value = (client, "test-model")
 
-    with patch("pkg.services.daily_summarizer.async_session", return_value=session_cm):
+    with patch("pkg.services.foundation.daily_summarizer.async_session", return_value=session_cm):
         note_id = await summarize_temporary_notes("user-12345678")
 
     assert note_id == _note_id("user-12345678", datetime.now(timezone.utc).strftime("%Y-%m-%d"))

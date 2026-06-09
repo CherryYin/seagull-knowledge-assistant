@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from pkg.services.auth import hash_password
+from pkg.services.cross_cutting.auth import hash_password
 
 
 @pytest.fixture

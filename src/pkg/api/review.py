@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.api.deps import get_current_user
 from pkg.db import get_session
-from pkg.models.review import ReviewSuggestion
+from pkg.models.foundation.review import ReviewSuggestion
 from pkg.models.user import User
 from pkg.schemas.review import (
     ReviewSuggestionGenerateRequest,
@@ -15,7 +15,7 @@ from pkg.schemas.review import (
     ReviewSuggestionRead,
     ReviewSuggestionUpdate,
 )
-from pkg.services.review_suggestions import apply_review_suggestion, ensure_phase_b_review_suggestions
+from pkg.services.foundation.review_suggestions import apply_review_suggestion, ensure_review_suggestions
 
 router = APIRouter()
 
@@ -52,7 +52,7 @@ async def generate_review_suggestions(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    created, skipped = await ensure_phase_b_review_suggestions(
+    created, skipped = await ensure_review_suggestions(
         session,
         user_id=user.id,
         include_low_confidence_facts=body.include_low_confidence_facts,
@@ -74,9 +74,9 @@ async def update_review_suggestion(
         raise HTTPException(status_code=404, detail="Review suggestion not found")
 
     now = _utc_now_naive()
-    suggestion.status = "rejected" if body.status == "dismissed" else body.status
+    suggestion.status = body.status
     suggestion.reviewer_note = body.reviewer_note
-    if suggestion.status in {"accepted", "rejected", "applied"}:
+    if suggestion.status in {"accepted", "rejected", "dismissed", "applied"}:
         suggestion.reviewed_at = now
     if suggestion.status == "applied":
         await apply_review_suggestion(session, suggestion)

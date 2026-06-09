@@ -5,7 +5,7 @@ import pytest
 
 from pkg.models.memory import MemoryNode
 from pkg.models.wiki import WikiPageMemory
-from pkg.services.memory_edges import sync_memory_edges_for_node
+from pkg.services.foundation.memory_edges import sync_memory_edges_for_node
 
 
 @pytest.mark.asyncio

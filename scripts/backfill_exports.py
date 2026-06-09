@@ -19,8 +19,8 @@ async def main():
     from pkg.db import async_session
     from pkg.models.note import Note, NoteEmbedding
     from pkg.models.source import Source
-    from pkg.services.embedding import get_embedding_service
-    from pkg.services.storage import get_storage_service
+    from pkg.services.cross_cutting.embedding import get_embedding_service
+    from pkg.services.cross_cutting.storage import get_storage_service
 
     storage = get_storage_service()
     emb_svc = get_embedding_service()

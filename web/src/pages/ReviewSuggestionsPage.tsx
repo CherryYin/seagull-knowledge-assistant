@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { reviewApi, ReviewSuggestion, ReviewSuggestionType } from "@/lib/api";
+import { getReviewConflictMessage, getReviewStatusLabel } from "@/lib/reviewStatus";
 import { SectionNav, reviewNavItems } from "@/components/SectionNav";
 
 const titles: Record<ReviewSuggestionType, string> = {
@@ -29,8 +30,9 @@ export function ReviewSuggestionsPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["review-suggestions", type] }),
   });
   const updateMutation = useMutation({
-    mutationFn: ({ id, status }: { id: number; status: "rejected" | "applied" }) => reviewApi.updateSuggestion(id, status),
+    mutationFn: ({ id, status }: { id: number; status: "dismissed" | "applied" }) => reviewApi.updateSuggestion(id, status),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["review-suggestions", type] }),
+    onError: () => queryClient.invalidateQueries({ queryKey: ["review-suggestions", type] }),
   });
 
   const suggestions = data?.items ?? [];
@@ -72,6 +74,11 @@ export function ReviewSuggestionsPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             {error instanceof Error && <p className="text-sm text-destructive">Failed to load suggestions: {error.message}</p>}
+            {updateMutation.isError && (
+              <p className="text-sm text-destructive">
+                {getReviewConflictMessage(updateMutation.error, "Failed to update review item.")}
+              </p>
+            )}
             {generateMutation.data && (
               <p className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
                 Scan complete: created {generateMutation.data.created}, skipped {generateMutation.data.skipped}.
@@ -87,7 +94,7 @@ export function ReviewSuggestionsPage() {
                 key={suggestion.id}
                 suggestion={suggestion}
                 isUpdating={updateMutation.isPending}
-                onReject={() => updateMutation.mutate({ id: suggestion.id, status: "rejected" })}
+                onReject={() => updateMutation.mutate({ id: suggestion.id, status: "dismissed" })}
                 onApply={() => updateMutation.mutate({ id: suggestion.id, status: "applied" })}
               />
             ))}
@@ -115,7 +122,7 @@ function ReviewSuggestionCard({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <Badge>{suggestion.suggestion_type.replace(/_/g, " ")}</Badge>
-            <Badge variant="outline">{suggestion.status}</Badge>
+            <Badge variant="outline">{getReviewStatusLabel(suggestion.status)}</Badge>
             {typeof suggestion.evidence?.confidence_score === "number" && (
               <span className="text-xs text-muted-foreground">confidence {suggestion.evidence.confidence_score}</span>
             )}
@@ -127,8 +134,8 @@ function ReviewSuggestionCard({
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
-          <Button size="sm" variant="outline" onClick={onReject} disabled={isUpdating}>
-            <XCircle className="mr-1 h-4 w-4" /> Reject
+            <Button size="sm" variant="outline" onClick={onReject} disabled={isUpdating}>
+            <XCircle className="mr-1 h-4 w-4" /> Dismiss
           </Button>
           <Button size="sm" onClick={onApply} disabled={isUpdating}>
             <CheckCircle2 className="mr-1 h-4 w-4" /> Apply

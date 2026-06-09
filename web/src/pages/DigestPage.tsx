@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { notesApi, type Note } from "@/lib/api";
+import { getReviewStatusLabel } from "@/lib/reviewStatus";
 import { SectionNav, reviewNavItems } from "@/components/SectionNav";
 
 type DigestTab = "pending" | "kept";
@@ -82,7 +83,10 @@ export function DigestPage() {
           <div>
             <h1 className="text-2xl font-bold">Digest</h1>
             <p className="text-sm text-muted-foreground">
-              Review RSS topic summaries, keep useful digests, and merge recurring topics. Pending digests expire after 7 days unless kept.
+              Review auto-generated RSS topic summary drafts, keep useful digests, and merge recurring topics. Pending digests expire after 7 days unless kept.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Digest items are review-layer summaries. They are not stable knowledge until you keep, merge, or further compile them into notes, memory, or wiki work.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -250,7 +254,7 @@ function DigestRow({
           <div className="flex items-center gap-2 mb-1">
             <h3 className="text-sm font-medium truncate">{note.title}</h3>
             <Badge variant={note.status === "pending_review" ? "secondary" : "outline"} className="text-[10px]">
-              {note.status === "pending_review" ? "pending" : note.status}
+              {getReviewStatusLabel(note.status === "pending_review" ? "pending_review" : note.status)}
             </Badge>
           </div>
           <p className="text-xs text-muted-foreground line-clamp-2">{preview}</p>
@@ -309,6 +313,7 @@ function DigestRow({
             disabled={keeping || dismissing}
           >
             <X className="h-3 w-3" />
+            Dismiss
           </Button>
         </div>
       </div>

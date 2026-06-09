@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from pkg.db import async_session
-from pkg.services.connectors import import_arxiv_paper, search_arxiv
+from pkg.services.foundation.connectors import import_arxiv_paper, search_arxiv
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)

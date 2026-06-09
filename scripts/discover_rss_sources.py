@@ -17,7 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from pkg.db import async_session
-from pkg.services.rss_discovery import discover_rss_for_web_sources
+from pkg.services.foundation.rss_discovery import discover_rss_for_web_sources
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)

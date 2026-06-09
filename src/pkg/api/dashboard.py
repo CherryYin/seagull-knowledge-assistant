@@ -9,8 +9,8 @@ from pkg.db import get_session
 from pkg.api.deps import get_current_user
 from pkg.models.category import Category
 from pkg.models.chat_session import ChatSession
-from pkg.models.note import Note
-from pkg.models.source import Source
+from pkg.models.foundation.note import Note
+from pkg.models.foundation.source import Source
 from pkg.schemas.knowledge import (
     DashboardCounts,
     DashboardResponse,
@@ -155,7 +155,7 @@ async def get_knowledge_stats(
     user: User = Depends(get_current_user),
 ):
     """Get knowledge usage statistics ranked by search/retrieval/reference counts."""
-    from pkg.services.stats import get_knowledge_rankings
+    from pkg.services.cross_cutting.stats import get_knowledge_rankings
 
     items, total = await get_knowledge_rankings(
         user_id=user.id,

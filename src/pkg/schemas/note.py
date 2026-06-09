@@ -4,6 +4,13 @@ from pydantic import BaseModel, Field
 
 
 class NoteCreate(BaseModel):
+    """Create a user-authored note.
+
+    Notes represent the user's own writing, synthesis, drafts, or confirmed
+    takeaways. They may reference sources, but they are not the external
+    evidence objects themselves.
+    """
+
     id: str | None = None
     title: str
     category_id: int = 1
@@ -22,6 +29,8 @@ class NoteCreate(BaseModel):
 
 
 class NoteRead(BaseModel):
+    """User-authored note returned to clients."""
+
     model_config = {"from_attributes": True}
 
     id: str
@@ -51,7 +60,7 @@ class NoteList(BaseModel):
 
 
 class NoteUpdate(BaseModel):
-    """Partial update; only set fields are applied."""
+    """Partial update for a user-authored note."""
 
     title: str | None = None
     category_id: int | None = None
@@ -84,6 +93,7 @@ class SearchResult(BaseModel):
     id: str
     title: str
     type: str  # "source", "source_chunk", "note", "wiki", or "memory"
+    layer: str | None = None
     score: float
     abstract: str | None = None
     content_preview: str | None = None

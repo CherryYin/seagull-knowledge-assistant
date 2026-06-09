@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ExternalLink, Pencil, Plus, Save, Trash2, X } from "lucide-react";
+import { ArrowLeft, Bot, Copy, ExternalLink, Pencil, Plus, Save, Trash2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,6 +10,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { MarkdownRenderer } from "@/components/markdown";
 import { wikiApi, type WikiPage, type WikiPageMemoryCreate, type WikiPageSourceCreate, type WikiPageUpdate } from "@/lib/api";
+import { getWikiOrigin, getWikiRole } from "@/lib/wikiLifecycle";
+import { buildAssetHandoffState } from "@/lib/asset-handoff";
 
 const PAGE_TYPES = ["topic", "entity", "concept", "project", "comparison"];
 
@@ -112,6 +114,14 @@ export function WikiDetailPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["wiki-pages"] });
       navigate(backTo);
+    },
+  });
+
+  const cloneDraftMutation = useMutation({
+    mutationFn: () => wikiApi.cloneDraft(id!),
+    onSuccess: (draftPage) => {
+      queryClient.invalidateQueries({ queryKey: ["wiki-pages"] });
+      navigate(`/wiki/${encodeURIComponent(draftPage.id)}`, { state: { backTo: `/wiki/${encodeURIComponent(page?.id || id!)}`, backLabel: "Back to Wiki" } });
     },
   });
 
@@ -218,6 +228,45 @@ export function WikiDetailPage() {
               <Button variant="outline" size="sm" onClick={startEdit}>
                 <Pencil className="h-4 w-4" /> Edit
               </Button>
+              {getWikiRole(page) === "stable" && (
+                <Button variant="outline" size="sm" onClick={() => cloneDraftMutation.mutate()} disabled={cloneDraftMutation.isPending}>
+                  <Copy className="h-4 w-4" /> {cloneDraftMutation.isPending ? "Cloning…" : "Clone as Draft"}
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate("/chat", {
+                  state: {
+                    objectRef: {
+                      object_type: "wiki",
+                      object_id: page.id,
+                      title: page.title,
+                    },
+                    workflowId: "draft-wiki-refresh",
+                    promptSeed: `Use wiki page "${page.title}" (${page.id}) to help me review its current canonical knowledge, inspect gaps, and propose the next draft/update/action without auto-applying changes.`,
+                  },
+                })}
+              >
+                <Bot className="h-4 w-4" /> Ask Agent
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate("/assets", {
+                  state: {
+                    assetHandoff: buildAssetHandoffState({
+                      title: page.title,
+                      brief: `Create a blog asset from wiki: ${page.title}`,
+                      wiki_refs: [page.id],
+                      source_refs: page.derived_from_sources,
+                      note_refs: page.derived_from_notes,
+                    }),
+                  },
+                })}
+              >
+                <ExternalLink className="h-4 w-4" /> Create Asset
+              </Button>
               <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" onClick={() => setDeleteOpen(true)}>
                 <Trash2 className="h-4 w-4" /> Delete
               </Button>
@@ -240,6 +289,11 @@ export function WikiDetailPage() {
               <Card>
                 <CardHeader>
                   <CardTitle>Edit Wiki Page</CardTitle>
+                  {getWikiRole(page) === "stable" && (
+                    <p className="text-sm text-muted-foreground">
+                      You are editing a stable wiki page directly. Prefer reviewable draft-style updates when possible, and double-check evidence before saving.
+                    </p>
+                  )}
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div>
@@ -292,6 +346,8 @@ export function WikiDetailPage() {
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge variant="outline">{page.page_type}</Badge>
+                    <Badge variant="outline">{getWikiRole(page)}</Badge>
+                    {getWikiOrigin(page) && <Badge variant="outline">{getWikiOrigin(page)}</Badge>}
                     {page.needs_recompile && <Badge>Needs recompile</Badge>}
                     {page.stale_triggered_at && <Badge variant="outline">Stale</Badge>}
                     {page.confidence_score != null && <Badge variant="secondary">confidence {page.confidence_score}</Badge>}

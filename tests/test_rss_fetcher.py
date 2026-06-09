@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from pkg.services.rss_fetcher import _is_single_topic_feed, _rss_filter_reason, fetch_single_feed
+from pkg.services.foundation.rss_fetcher import _is_single_topic_feed, _rss_filter_reason, fetch_single_feed
 
 
 class TestFeedTypeDetection:
@@ -71,7 +71,7 @@ class TestFetchSingleFeedMetadata:
             request=httpx.Request("GET", feed_source.url),
         )
 
-        with patch("pkg.services.rss_fetcher.httpx.AsyncClient") as mock_client_cls:
+        with patch("pkg.services.foundation.rss_fetcher.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.get.return_value = response
             mock_client_cls.return_value.__aenter__.return_value = mock_client
@@ -93,7 +93,7 @@ class TestFetchSingleFeedMetadata:
         session = AsyncMock()
         response = httpx.Response(304, request=httpx.Request("GET", feed_source.url))
 
-        with patch("pkg.services.rss_fetcher.httpx.AsyncClient") as mock_client_cls:
+        with patch("pkg.services.foundation.rss_fetcher.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.get.return_value = response
             mock_client_cls.return_value.__aenter__.return_value = mock_client
@@ -117,7 +117,7 @@ class TestFetchSingleFeedMetadata:
         session = AsyncMock()
         response = httpx.Response(503, request=httpx.Request("GET", feed_source.url))
 
-        with patch("pkg.services.rss_fetcher.httpx.AsyncClient") as mock_client_cls:
+        with patch("pkg.services.foundation.rss_fetcher.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.get.return_value = response
             mock_client_cls.return_value.__aenter__.return_value = mock_client
@@ -155,7 +155,7 @@ class TestFetchSingleFeedMetadata:
             request=httpx.Request("GET", feed_source.url),
         )
 
-        with patch("pkg.services.rss_fetcher.httpx.AsyncClient") as mock_client_cls:
+        with patch("pkg.services.foundation.rss_fetcher.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.get.return_value = response
             mock_client_cls.return_value.__aenter__.return_value = mock_client

@@ -90,3 +90,24 @@ class ConnectorImportResponse(BaseModel):
     source: SourceRead
     created: bool
     dedupe_key: str
+
+
+class ExternalPaper(BaseModel):
+    provider: str
+    provider_id: str
+    title: str
+    abstract: str | None = None
+    authors: list[str] = []
+    published_at: datetime | None = None
+    updated_at: datetime | None = None
+    url: str | None = None
+    pdf_url: str | None = None
+    doi: str | None = None
+    arxiv_id: str | None = None
+    fields_of_study: list[str] = []
+    citation_count: int | None = None
+    reference_count: int | None = None
+    venue: str | None = None
+    year: int | None = None
+    keywords: list[str] = []
+    metadata: dict | None = None

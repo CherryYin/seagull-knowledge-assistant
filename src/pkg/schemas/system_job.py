@@ -7,6 +7,7 @@ class SystemJobRead(BaseModel):
     model_config = {"from_attributes": True}
 
     id: int
+    user_id: str | None = None
     job_type: str
     status: str
     title: str

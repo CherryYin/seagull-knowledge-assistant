@@ -100,7 +100,11 @@ function toQuery(params: MemoryListParams | TopicMemoryCandidateParams = {}) {
 
 export const memoryApi = {
   list: (params?: MemoryListParams) => request<MemoryNodeList>(`/memory${toQuery(params)}`),
+  roots: (params?: { node_type?: string; q?: string; status?: MemoryListParams["status"]; limit?: number; offset?: number }) =>
+    request<MemoryNodeList>(`/memory/roots${toQuery(params ?? {})}`),
   get: (id: string) => request<MemoryNode>(`/memory/${encodeURIComponent(id)}`),
+  children: (id: string) => request<MemoryNodeList>(`/memory/${encodeURIComponent(id)}/children`),
+  path: (id: string) => request<MemoryNodeList>(`/memory/${encodeURIComponent(id)}/path`),
   update: (id: string, body: MemoryNodeUpdate) =>
     request<MemoryNode>(`/memory/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(body) }),
   edges: (id: string, params?: { direction?: "in" | "out" | "both"; limit?: number; refresh?: boolean }) => {

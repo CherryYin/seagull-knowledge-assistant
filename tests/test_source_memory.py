@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pkg.services.source_memory import (
+from pkg.services.foundation.source_memory import (
     source_batch_memory_node_id,
     source_memory_node_id,
     upsert_source_batch_memory_node,
@@ -11,10 +11,10 @@ from pkg.services.source_memory import (
 
 
 @pytest.mark.asyncio
-@patch("pkg.services.source_memory.suggest_wiki_recompile_for_trigger", new_callable=AsyncMock)
-@patch("pkg.services.source_memory.sync_memory_edges_for_node", new_callable=AsyncMock)
-@patch("pkg.services.source_memory.upsert_memory_embedding", new_callable=AsyncMock)
-@patch("pkg.services.llm.create_async_client")
+@patch("pkg.services.foundation.source_memory.suggest_wiki_recompile_for_trigger", new_callable=AsyncMock)
+@patch("pkg.services.foundation.source_memory.sync_memory_edges_for_node", new_callable=AsyncMock)
+@patch("pkg.services.foundation.source_memory.upsert_memory_embedding", new_callable=AsyncMock)
+@patch("pkg.services.cross_cutting.llm.create_async_client")
 async def test_upsert_source_memory_node_creates_node(mock_llm_client, mock_embedding, mock_sync_edges, mock_suggest):
     source = _make_source()
     session = AsyncMock()
@@ -48,10 +48,10 @@ async def test_upsert_source_memory_node_creates_node(mock_llm_client, mock_embe
 
 
 @pytest.mark.asyncio
-@patch("pkg.services.source_memory.suggest_wiki_recompile_for_trigger", new_callable=AsyncMock)
-@patch("pkg.services.source_memory.sync_memory_edges_for_node", new_callable=AsyncMock)
-@patch("pkg.services.source_memory.upsert_memory_embedding", new_callable=AsyncMock)
-@patch("pkg.services.llm.create_async_client")
+@patch("pkg.services.foundation.source_memory.suggest_wiki_recompile_for_trigger", new_callable=AsyncMock)
+@patch("pkg.services.foundation.source_memory.sync_memory_edges_for_node", new_callable=AsyncMock)
+@patch("pkg.services.foundation.source_memory.upsert_memory_embedding", new_callable=AsyncMock)
+@patch("pkg.services.cross_cutting.llm.create_async_client")
 async def test_upsert_source_memory_node_fallback_on_llm_error(mock_llm_client, mock_embedding, mock_sync_edges, mock_suggest):
     source = _make_source()
     session = AsyncMock()
@@ -70,10 +70,10 @@ async def test_upsert_source_memory_node_fallback_on_llm_error(mock_llm_client, 
 
 
 @pytest.mark.asyncio
-@patch("pkg.services.source_memory.suggest_wiki_recompile_for_trigger", new_callable=AsyncMock)
-@patch("pkg.services.source_memory.sync_memory_edges_for_node", new_callable=AsyncMock)
-@patch("pkg.services.source_memory.upsert_memory_embedding", new_callable=AsyncMock)
-@patch("pkg.services.llm.create_async_client")
+@patch("pkg.services.foundation.source_memory.suggest_wiki_recompile_for_trigger", new_callable=AsyncMock)
+@patch("pkg.services.foundation.source_memory.sync_memory_edges_for_node", new_callable=AsyncMock)
+@patch("pkg.services.foundation.source_memory.upsert_memory_embedding", new_callable=AsyncMock)
+@patch("pkg.services.cross_cutting.llm.create_async_client")
 async def test_github_source_memory_uses_repo_summary_input(mock_llm_client, mock_embedding, mock_sync_edges, mock_suggest):
     source = _make_source(source_id="src-github-openai-codex", title="openai/codex")
     source.source_type = "github"
@@ -104,10 +104,10 @@ async def test_github_source_memory_uses_repo_summary_input(mock_llm_client, moc
 
 
 @pytest.mark.asyncio
-@patch("pkg.services.source_memory.suggest_wiki_recompile_for_trigger", new_callable=AsyncMock)
-@patch("pkg.services.source_memory.sync_memory_edges_for_node", new_callable=AsyncMock)
-@patch("pkg.services.source_memory.upsert_memory_embedding", new_callable=AsyncMock)
-@patch("pkg.services.llm.create_async_client")
+@patch("pkg.services.foundation.source_memory.suggest_wiki_recompile_for_trigger", new_callable=AsyncMock)
+@patch("pkg.services.foundation.source_memory.sync_memory_edges_for_node", new_callable=AsyncMock)
+@patch("pkg.services.foundation.source_memory.upsert_memory_embedding", new_callable=AsyncMock)
+@patch("pkg.services.cross_cutting.llm.create_async_client")
 async def test_upsert_source_batch_memory_node_creates_batch(mock_llm_client, mock_embedding, mock_sync_edges, mock_suggest):
     sources = [_make_source(source_id="src-1"), _make_source(source_id="src-2", title="Second Source")]
     session = AsyncMock()

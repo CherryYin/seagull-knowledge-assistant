@@ -22,8 +22,8 @@ def sync():
 
     async def _sync():
         from pkg.db import async_session
-        from pkg.services.skills import sync_skills_from_directory
-        from pkg.services.sync_pipeline import (
+        from pkg.services.cross_cutting.skills import sync_skills_from_directory
+        from pkg.services.foundation.sync_pipeline import (
             sync_notes_from_directory,
             sync_sources_from_directory,
         )
@@ -86,7 +86,7 @@ def search(
 
     async def _search():
         from pkg.db import async_session
-        from pkg.services.retriever import RetrieverAgent
+        from pkg.services.foundation.retriever import RetrieverAgent
 
         async with async_session() as session:
             retriever = RetrieverAgent(session)
@@ -131,8 +131,8 @@ def add_note(
     async def _add():
         from datetime import datetime, timezone
         from pkg.db import async_session
-        from pkg.models.note import Note, NoteEmbedding
-        from pkg.services.embedding import get_embedding_service
+        from pkg.models.foundation.note import Note, NoteEmbedding
+        from pkg.services.cross_cutting.embedding import get_embedding_service
 
         async with async_session() as session:
             now = datetime.now(timezone.utc)
@@ -176,8 +176,8 @@ def add_source(
         import hashlib
         from datetime import datetime, timezone
         from pkg.db import async_session
-        from pkg.models.source import Source, SourceEmbedding
-        from pkg.services.embedding import get_embedding_service
+        from pkg.models.foundation.source import Source, SourceEmbedding
+        from pkg.services.cross_cutting.embedding import get_embedding_service
 
         async with async_session() as session:
             now = datetime.now(timezone.utc)
@@ -213,8 +213,8 @@ def stats():
     async def _stats():
         from sqlalchemy import func, select
         from pkg.db import async_session
-        from pkg.models.note import Note
-        from pkg.models.source import Source
+        from pkg.models.foundation.note import Note
+        from pkg.models.foundation.source import Source
 
         async with async_session() as session:
             note_count = (await session.execute(select(func.count()).select_from(Note))).scalar() or 0
@@ -257,8 +257,8 @@ def ask(
       pkg ask "Help me plan the next phase of my knowledge graph project"
       pkg ask "/summarize-topic AI"
     """
-    from pkg.services.action_agent import create_action_agent_sync
-    from pkg.services.skills import expand_skill, load_skills, parse_skill_invocation
+    from pkg.services.orchestration.action_agent import create_action_agent_sync
+    from pkg.services.cross_cutting.skills import expand_skill, load_skills, parse_skill_invocation
 
     # Expand skill invocation if applicable
     expanded = task
@@ -287,8 +287,8 @@ def chat():
     Multi-turn conversation where the agent remembers context.
     Type 'exit' or 'quit' to end the session.
     """
-    from pkg.services.action_agent import create_action_agent_sync
-    from pkg.services.skills import expand_skill, load_skills, parse_skill_invocation
+    from pkg.services.orchestration.action_agent import create_action_agent_sync
+    from pkg.services.cross_cutting.skills import expand_skill, load_skills, parse_skill_invocation
 
     console.print("[bold]Interactive Knowledge Chat[/bold]")
     console.print("[dim]Type 'exit' or 'quit' to end. Use /skill-name to invoke skills.[/dim]\n")
@@ -329,7 +329,7 @@ def chat():
 @app.command()
 def skills():
     """List all available skills (local + DB)."""
-    from pkg.services.skills import load_skills_merged
+    from pkg.services.cross_cutting.skills import load_skills_merged
 
     async def _list():
         return await load_skills_merged(settings.skills_dir)
@@ -376,8 +376,8 @@ def fetch_feeds(
     async def _fetch():
         if source_id:
             from pkg.db import async_session
-            from pkg.models.source import Source
-            from pkg.services.rss_fetcher import fetch_single_feed
+            from pkg.models.foundation.source import Source
+            from pkg.services.foundation.rss_fetcher import fetch_single_feed
 
             async with async_session() as session:
                 feed = await session.get(Source, source_id)
@@ -387,7 +387,7 @@ def fetch_feeds(
                 count = await fetch_single_feed(feed, session)
                 console.print(f"[green]Fetched {count} new articles from {feed.title}[/green]")
         else:
-            from pkg.services.rss_fetcher import fetch_all_feeds
+            from pkg.services.foundation.rss_fetcher import fetch_all_feeds
 
             stats = await fetch_all_feeds()
             console.print(f"[green]RSS fetch complete:[/green] {stats}")
@@ -400,7 +400,7 @@ def summarize_rss():
     """Generate topic summaries from recent RSS articles."""
 
     async def _summarize():
-        from pkg.services.rss_summarizer import summarize_rss_by_topic
+        from pkg.services.foundation.rss_summarizer import summarize_rss_by_topic
 
         note_ids = await summarize_rss_by_topic()
         if note_ids:
@@ -425,7 +425,7 @@ def cleanup_rss(
             original = settings.RSS_RETENTION_DAYS
             settings.RSS_RETENTION_DAYS = days
 
-        from pkg.services.rss_fetcher import cleanup_old_rss_articles
+        from pkg.services.foundation.rss_fetcher import cleanup_old_rss_articles
 
         deleted = await cleanup_old_rss_articles()
         console.print(f"[green]Cleaned up {deleted} old RSS articles.[/green]")

@@ -7,8 +7,8 @@ from pkg.models.connector_cache import ConnectorSearchItem
 from pkg.models.discovery import DiscoveryItem
 from pkg.models.source import Source
 from pkg.models.user import UserMemory
-from pkg.services.discovery import apply_discovery_feedback, generate_discovery_items
-from pkg.services.user_profiler import PROFILE_MEMORY_KEY
+from pkg.services.foundation.discovery import apply_discovery_feedback, generate_discovery_items
+from pkg.services.cross_cutting.user_profiler import PROFILE_MEMORY_KEY
 
 
 class _ScalarResult:
@@ -53,9 +53,10 @@ async def test_generate_discovery_items_scores_profile_match():
         _ScalarResult([]),
         _ScalarResult([cached]),
         _ScalarResult([]),
+        _ScalarResult([]),
     ]
 
-    with patch("pkg.services.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
+    with patch("pkg.services.foundation.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
         mock_memory.return_value = []
         created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["arxiv"])
 
@@ -88,9 +89,10 @@ async def test_generate_discovery_items_from_rss_source():
         _ScalarResult([]),
         _ScalarResult([rss_source]),
         _ScalarResult([]),
+        _ScalarResult([]),
     ]
 
-    with patch("pkg.services.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
+    with patch("pkg.services.foundation.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
         mock_memory.return_value = []
         created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["rss"])
 
@@ -124,17 +126,18 @@ async def test_generate_discovery_items_from_web_source_with_credibility_and_pre
         _ScalarResult([]),
         _ScalarResult([web_source]),
         _ScalarResult([]),
+        _ScalarResult([]),
     ]
 
-    with patch("pkg.services.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
+    with patch("pkg.services.foundation.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
         mock_memory.return_value = []
         created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["web"])
 
     assert (created, updated, skipped) == (1, 0, 0)
     item = session.add.call_args.args[0]
     assert item.provider == "web"
-    assert "HTTPS source" in item.why
-    assert "Boosted by your keep/save history" in item.why
+    assert any("HTTPS source" in reason for reason in item.why)
+    assert any("Boosted by your keep/save history" in reason for reason in item.why)
 
 
 @pytest.mark.asyncio
@@ -161,9 +164,9 @@ async def test_generate_discovery_items_adds_memory_similarity_reason():
     cached.updated_at = datetime(2026, 5, 25, tzinfo=timezone.utc)
     memory_node = MagicMock()
     memory_node.title = "Memory retrieval architecture"
-    session.execute.side_effect = [_ScalarResult([]), _ScalarResult([cached]), _ScalarResult([]), _ScalarResult([cached]), _ScalarResult([])]
+    session.execute.side_effect = [_ScalarResult([]), _ScalarResult([cached]), _ScalarResult([]), _ScalarResult([cached]), _ScalarResult([]), _ScalarResult([])]
 
-    with patch("pkg.services.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
+    with patch("pkg.services.foundation.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
         mock_memory.return_value = [MagicMock(node=memory_node)]
         created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["github"])
 
@@ -210,7 +213,7 @@ async def test_keep_existing_source_does_not_reimport():
         source_id="src-1",
     )
 
-    with patch("pkg.services.discovery.import_github_repo") as mock_import:
+    with patch("pkg.services.foundation.discovery.import_github_repo") as mock_import:
         result_source, created = await apply_discovery_feedback(session, item=item, action="keep")
 
     assert result_source == source
@@ -220,8 +223,72 @@ async def test_keep_existing_source_does_not_reimport():
 
 
 @pytest.mark.asyncio
+async def test_keep_without_existing_source_does_not_import():
+    session = AsyncMock()
+    session.execute.return_value = _ScalarResult([])
+    item = DiscoveryItem(
+        user_id="user-1",
+        provider="github",
+        item_key="owner/repo",
+        title="owner/repo",
+        payload={"full_name": "owner/repo", "html_url": "https://github.com/owner/repo", "owner": "owner", "name": "repo", "topics": [], "stars": 1, "forks": 0},
+    )
+
+    with patch("pkg.services.foundation.discovery.import_github_repo") as mock_import:
+        result_source, created = await apply_discovery_feedback(session, item=item, action="keep")
+
+    assert result_source is None
+    assert created is None
+    assert item.status == "kept"
+    assert item.source_id is None
+    mock_import.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_save_openalex_discovery_item_imports_article_source():
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.get.return_value = None
+    session.execute.return_value = _ScalarResult([])
+    item = DiscoveryItem(
+        id=7,
+        user_id="user-1",
+        provider="openalex",
+        item_key="openalex:W123",
+        title="Agent Memory Systems",
+        url="https://openalex.org/W123",
+        summary="A paper about agent memory.",
+        payload={
+            "paper_provider_id": "https://openalex.org/W123",
+            "authors": ["Alice"],
+            "abstract": "A paper about agent memory.",
+            "fields_of_study": ["Computer Science"],
+            "venue": "Conference",
+            "year": 2026,
+            "citation_count": 12,
+            "doi": "10.1234/example",
+            "url": "https://openalex.org/W123",
+        },
+    )
+
+    with patch("pkg.services.foundation.discovery.upsert_source_memory_node", new_callable=AsyncMock) as mock_upsert:
+        source, created = await apply_discovery_feedback(session, item=item, action="save")
+
+    assert created is True
+    assert source.id.startswith("src-paper-")
+    assert source.source_type == "article"
+    assert source.metadata_["connector"] == "openalex"
+    assert source.metadata_["doi"] == "10.1234/example"
+    assert "## Abstract" in source.raw_content
+    assert item.status == "saved"
+    assert item.source_id == source.id
+    session.add.assert_called_once_with(source)
+    mock_upsert.assert_awaited_once_with(session, source)
+
+
+@pytest.mark.asyncio
 async def test_web_discovery_ingest_scores_trusted_domain():
-    from pkg.services.discovery import ingest_web_discovery_results
+    from pkg.services.foundation.discovery import ingest_web_discovery_results
 
     session = AsyncMock()
     session.add = MagicMock()
@@ -231,7 +298,7 @@ async def test_web_discovery_ingest_scores_trusted_domain():
         _ScalarResult([]),
     ]
 
-    with patch("pkg.services.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
+    with patch("pkg.services.foundation.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
         mock_memory.return_value = []
         created, updated, skipped = await ingest_web_discovery_results(
             session,
@@ -297,22 +364,23 @@ async def test_generate_discovery_items_uses_domain_preferences():
         _ScalarResult([]),
         _ScalarResult([web_source]),
         _ScalarResult([]),
+        _ScalarResult([]),
     ]
 
-    with patch("pkg.services.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
+    with patch("pkg.services.foundation.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
         mock_memory.return_value = []
         created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["web"])
 
     assert (created, updated, skipped) == (1, 0, 0)
     item = session.add.call_args.args[0]
     assert any("Trusted domain" in reason for reason in item.why)
-    assert any("Matches kept domain" in reason for reason in item.why)
+    assert any("domain preference" in reason.lower() or "kept domain" in reason.lower() for reason in item.why)
 
 
 @pytest.mark.asyncio
 async def test_search_external_web_results_maps_tavily_response(monkeypatch):
     from pkg.config import settings
-    from pkg.services.discovery import search_external_web_results
+    from pkg.services.foundation.discovery import search_external_web_results
 
     class FakeTavilyClient:
         def __init__(self, api_key):
@@ -354,7 +422,7 @@ async def test_search_external_web_results_maps_tavily_response(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_ingest_web_discovery_results_rejects_non_http_url():
-    from pkg.services.discovery import ingest_web_discovery_results
+    from pkg.services.foundation.discovery import ingest_web_discovery_results
 
     session = AsyncMock()
     session.add = MagicMock()
@@ -373,9 +441,10 @@ async def test_ingest_web_discovery_results_rejects_non_http_url():
 
 @pytest.mark.asyncio
 async def test_import_web_discovery_item_rejects_non_http_url():
-    from pkg.services.discovery import apply_discovery_feedback
+    from pkg.services.foundation.discovery import apply_discovery_feedback
 
     session = AsyncMock()
+    session.execute.return_value = _ScalarResult([])
     item = DiscoveryItem(
         user_id="user-1",
         provider="web",
@@ -386,4 +455,4 @@ async def test_import_web_discovery_item_rejects_non_http_url():
     )
 
     with pytest.raises(ValueError):
-        await apply_discovery_feedback(session, item=item, action="keep")
+        await apply_discovery_feedback(session, item=item, action="save")

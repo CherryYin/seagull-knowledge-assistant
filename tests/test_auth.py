@@ -1,11 +1,11 @@
-"""Tests for pkg.services.auth — pure crypto functions."""
+"""Tests for pkg.services.cross_cutting.auth — pure crypto functions."""
 
 import time
 
 import pytest
 from jose import jwt
 
-from pkg.services.auth import (
+from pkg.services.cross_cutting.auth import (
     create_access_token,
     decode_token,
     hash_password,

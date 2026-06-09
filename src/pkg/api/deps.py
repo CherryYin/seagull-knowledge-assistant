@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.db import get_session
 from pkg.models.user import User
-from pkg.services.auth import decode_token
+from pkg.services.cross_cutting.auth import decode_token
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 

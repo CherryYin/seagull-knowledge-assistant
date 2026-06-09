@@ -37,6 +37,7 @@ import {
   type MemoryNode,
   type WikiPage,
 } from "@/lib/api";
+import { getSourceProcessingState } from "@/lib/sourceProcessingStatus";
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
@@ -126,6 +127,10 @@ export function HomePage() {
   const reviewSuggestionCount = reviewSuggestions?.total ?? 0;
   const reviewableSources = sources.filter((source) => source.metadata_?.review_status === "imported_reviewable");
   const failedSourceItems = sources.filter((source) => isFailedSource(source));
+  const unprocessedSources = sources.filter((source) => {
+    const state = getSourceProcessingState(source);
+    return state.stage === "raw" || state.status === "waiting";
+  });
   const digestPending = counts?.digest_pending ?? 0;
   const pendingNotesCount = pendingNoteData?.total ?? 0;
   const pendingMemoryCount = pendingMemory?.total ?? 0;
@@ -154,7 +159,8 @@ export function HomePage() {
     reviewSuggestionCount > 0 && card("review-suggestions", "Review Suggestions", "Profile or knowledge suggestions need confirmation.", "Pending review suggestions", "/review/suggestions", "Open Suggestions", "medium", Bell, reviewSuggestionCount),
     reviewableSources.length > 0 && card("review-sources", "Imported Sources", "Connector imports are saved but still need review.", "Imported reviewable sources", "/sources?review=imported", "Review Sources", "medium", BookOpen, reviewableSources.length),
     pendingNotesCount > 0 && card("pending-notes", "Pending Notes", "Generated notes need confirmation before becoming stable knowledge.", "Notes with pending_review status", "/notes?status=pending_review", "Review Notes", "medium", FileText, pendingNotesCount),
-    pendingMemoryCount > 0 && card("pending-memory", "Pending Memory", "Memory candidates need confirmation before becoming active context.", "Memory pending review", "/memory?status=pending_review", "Review Memory", "medium", Brain, pendingMemoryCount),
+    pendingMemoryCount > 0 && card("pending-memory", "Pending Knowledge Tree", "Knowledge tree candidates need confirmation before becoming active context.", "Knowledge Tree pending review", "/memory?status=pending_review", "Review Knowledge Tree", "medium", Brain, pendingMemoryCount),
+    unprocessedSources.length > 0 && card("unprocessed-sources", "Unprocessed Sources", "Some sources are still raw and need extraction, chunking, or summarization before they become easy to use.", "Source processing still incomplete", "/sources", "Open Sources", "medium", BookOpen, unprocessedSources.length),
   ].filter(Boolean) as TodayCardData[];
 
   const recentSources = sources.slice(0, 5);
@@ -289,7 +295,7 @@ function buildFocusCards({
 }) {
   const cards: TodayCardData[] = [];
   if (failedJobs.length || failedSources.length) {
-    cards.push(card("focus-failures", "System attention needed", "Some jobs or source processing steps failed.", "Processing failed", "/settings/workspace", "Open System Jobs", "high", AlertTriangle, failedJobs.length + failedSources.length));
+    cards.push(card("focus-failures", "System attention needed", "Some jobs or source processing steps failed.", "Processing failed", "/settings/jobs", "Open System Jobs", "high", AlertTriangle, failedJobs.length + failedSources.length));
   }
   if (pendingWikiCount) {
     cards.push(card("focus-wiki-refresh", "Wiki pages may need refresh", "New materials may affect stable wiki pages.", "Pending Wiki Refresh Queue", "/review/wiki-suggestions", "Open Wiki Refresh Queue", "high", RefreshCw, pendingWikiCount));
@@ -302,7 +308,7 @@ function buildFocusCards({
   }
   const recentSource = sources[0];
   if (recentSource) {
-    cards.push(card(`focus-source-${recentSource.id}`, "Turn a recent source into knowledge", recentSource.title, "Recently imported source", `/sources/${encodeURIComponent(recentSource.id)}`, "Open Source", "medium", BookOpen, undefined, recentSource.ingested_at));
+    cards.push(card(`focus-source-${recentSource.id}`, "Turn a recent source into your own note", recentSource.title, "Recently imported external evidence", `/sources/${encodeURIComponent(recentSource.id)}`, "Open Source", "medium", BookOpen, undefined, recentSource.ingested_at));
   }
   const recentSession = sessions[0];
   if (recentSession) {
@@ -312,11 +318,11 @@ function buildFocusCards({
 }
 
 function sourceCard(source: Source): TodayCardData {
-  return card(`source-${source.id}`, source.title, source.source_type, "Recent source", `/sources/${encodeURIComponent(source.id)}`, "Open Source", "medium", BookOpen, undefined, source.ingested_at);
+  return card(`source-${source.id}`, source.title, source.source_type, "Recent external evidence", `/sources/${encodeURIComponent(source.id)}`, "Open Source", "medium", BookOpen, undefined, source.ingested_at);
 }
 
 function noteCard(note: Note): TodayCardData {
-  return card(`note-${note.id}`, note.title, note.abstract || note.note_type, "Recent note", `/notes/${encodeURIComponent(note.id)}`, "Open Note", "medium", FileText, undefined, note.updated_at || note.created_at);
+  return card(`note-${note.id}`, note.title, note.abstract || note.note_type, "Recent personal note", `/notes/${encodeURIComponent(note.id)}`, "Open Note", "medium", FileText, undefined, note.updated_at || note.created_at);
 }
 
 function discoveryCard(item: DiscoveryItem, title: string, reason: string): TodayCardData {
@@ -332,7 +338,7 @@ function wikiCard(wiki: WikiPage): TodayCardData {
 }
 
 function systemJobCard(job: SystemJob, priority: Priority): TodayCardData {
-  return card(`job-${job.id}`, job.title || job.job_type, job.error_message || job.detail || job.status, `System job ${job.status}`, "/settings/workspace", "Open System Jobs", priority, AlertTriangle, undefined, job.updated_at);
+  return card(`job-${job.id}`, job.title || job.job_type, job.error_message || job.detail || job.status, `System job ${job.status}`, "/settings/jobs", "Open System Jobs", priority, AlertTriangle, undefined, job.updated_at);
 }
 
 function failedSourceCard(source: Source): TodayCardData {

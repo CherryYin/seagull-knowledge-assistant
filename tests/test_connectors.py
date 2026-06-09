@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pkg.schemas.connector import ArxivPaper, GitHubRepo
-from pkg.services.connectors import (
+from pkg.services.foundation.connectors import (
     ArxivRateLimitError,
     arxiv_source_id,
     build_arxiv_query,
@@ -90,8 +90,8 @@ async def test_search_arxiv_defaults_to_past_year(monkeypatch):
             captured["params"] = params
             return Response()
 
-    monkeypatch.setattr("pkg.services.connectors.one_year_ago_date", lambda: "2025-05-28")
-    monkeypatch.setattr("pkg.services.connectors.httpx.AsyncClient", Client)
+    monkeypatch.setattr("pkg.services.foundation.connectors.one_year_ago_date", lambda: "2025-05-28")
+    monkeypatch.setattr("pkg.services.foundation.connectors.httpx.AsyncClient", Client)
 
     await search_arxiv(query="agentic rag")
 
@@ -126,7 +126,7 @@ async def test_search_arxiv_raises_rate_limit_after_retries(monkeypatch):
             calls += 1
             return Response()
 
-    monkeypatch.setattr("pkg.services.connectors.httpx.AsyncClient", Client)
+    monkeypatch.setattr("pkg.services.foundation.connectors.httpx.AsyncClient", Client)
 
     with pytest.raises(ArxivRateLimitError, match="arXiv rate limit exceeded"):
         await search_arxiv(query="agentic rag", retries=0)
@@ -168,8 +168,8 @@ async def test_search_arxiv_retries_429_with_retry_after(monkeypatch):
     async def fake_sleep(delay):
         sleeps.append(delay)
 
-    monkeypatch.setattr("pkg.services.connectors.httpx.AsyncClient", Client)
-    monkeypatch.setattr("pkg.services.connectors.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("pkg.services.foundation.connectors.httpx.AsyncClient", Client)
+    monkeypatch.setattr("pkg.services.foundation.connectors.asyncio.sleep", fake_sleep)
 
     papers = await search_arxiv(query="agentic rag", retries=1)
 
@@ -209,8 +209,8 @@ async def test_search_arxiv_does_not_retry_429_without_retry_after(monkeypatch):
     async def fake_sleep(delay):
         sleeps.append(delay)
 
-    monkeypatch.setattr("pkg.services.connectors.httpx.AsyncClient", Client)
-    monkeypatch.setattr("pkg.services.connectors.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("pkg.services.foundation.connectors.httpx.AsyncClient", Client)
+    monkeypatch.setattr("pkg.services.foundation.connectors.asyncio.sleep", fake_sleep)
 
     with pytest.raises(ArxivRateLimitError, match="arXiv rate limit exceeded"):
         await search_arxiv(query="agentic rag", retries=2)
@@ -244,8 +244,8 @@ async def test_search_arxiv_uses_configured_user_agent(monkeypatch):
         async def get(self, url, params):
             return Response()
 
-    monkeypatch.setattr("pkg.services.connectors.httpx.AsyncClient", Client)
-    monkeypatch.setattr("pkg.services.connectors.settings.ARXIV_USER_AGENT", "pkg-test/1.0")
+    monkeypatch.setattr("pkg.services.foundation.connectors.httpx.AsyncClient", Client)
+    monkeypatch.setattr("pkg.services.foundation.connectors.settings.ARXIV_USER_AGENT", "pkg-test/1.0")
 
     await search_arxiv(query="agentic rag")
 
@@ -277,8 +277,8 @@ async def test_search_github_defaults_to_past_year(monkeypatch):
             captured["params"] = params
             return Response()
 
-    monkeypatch.setattr("pkg.services.connectors.one_year_ago_date", lambda: "2025-05-28")
-    monkeypatch.setattr("pkg.services.connectors.httpx.AsyncClient", Client)
+    monkeypatch.setattr("pkg.services.foundation.connectors.one_year_ago_date", lambda: "2025-05-28")
+    monkeypatch.setattr("pkg.services.foundation.connectors.httpx.AsyncClient", Client)
 
     await search_github_repos(query="agent framework")
 
@@ -304,7 +304,7 @@ async def test_import_arxiv_paper_creates_source_with_metadata():
     mock_source = MagicMock()
     mock_source.id = "src-arxiv-2401.12345v1"
 
-    with patch("pkg.services.connectors.persist_source", new_callable=AsyncMock, return_value=mock_source) as mock_persist:
+    with patch("pkg.services.foundation.connectors.persist_source", new_callable=AsyncMock, return_value=mock_source) as mock_persist:
         source, created, dedupe_key = await import_arxiv_paper(mock_session, user_id="user-1", paper=paper)
 
     assert source is mock_source
@@ -342,8 +342,8 @@ async def test_import_github_repo_updates_existing_source():
     )
 
     with (
-        patch("pkg.services.connectors.upsert_source_memory_node", new_callable=AsyncMock) as mock_memory,
-        patch("pkg.services.connectors.upsert_source_embeddings", new_callable=AsyncMock) as mock_embeddings,
+        patch("pkg.services.foundation.connectors.upsert_source_memory_node", new_callable=AsyncMock) as mock_memory,
+        patch("pkg.services.foundation.connectors.upsert_source_embeddings", new_callable=AsyncMock) as mock_embeddings,
     ):
         source, created, dedupe_key = await import_github_repo(mock_session, user_id="user-1", repo=repo)
 
@@ -361,3 +361,83 @@ async def test_import_github_repo_updates_existing_source():
     assert "Topics: agents" in existing.metadata_["embedding_text"]
     mock_embeddings.assert_awaited_once_with(mock_session, existing)
     mock_memory.assert_awaited_once_with(mock_session, existing)
+
+
+@pytest.mark.asyncio
+async def test_arxiv_search_api_uses_no_retry_for_manual_search(fake_user, mock_session, monkeypatch):
+    from pkg.api import connectors as connectors_api
+    from pkg.schemas.connector import ArxivSearchRequest
+
+    captured = {}
+
+    async def fake_search_arxiv(**kwargs):
+        captured.update(kwargs)
+        return []
+
+    async def fake_upsert_connector_search_items(*args, **kwargs):
+        return {}
+
+    async def fake_generate_discovery_items(*args, **kwargs):
+        return 0, 0, 0
+
+    monkeypatch.setattr(connectors_api, "search_arxiv", fake_search_arxiv)
+    monkeypatch.setattr(connectors_api, "upsert_connector_search_items", fake_upsert_connector_search_items)
+    monkeypatch.setattr(connectors_api, "generate_discovery_items", fake_generate_discovery_items)
+
+    response = await connectors_api.search_arxiv_connector(
+        ArxivSearchRequest(query="agentic rag", max_results=3),
+        user=fake_user,
+        session=mock_session,
+    )
+
+    assert response.total == 0
+    assert captured["retries"] == 0
+    assert captured["query"] == "agentic rag"
+    assert captured["max_results"] == 3
+
+
+@pytest.mark.asyncio
+async def test_arxiv_import_lookup_uses_no_retry_for_manual_paper_id(fake_user, mock_session, monkeypatch):
+    from pkg.api import connectors as connectors_api
+    from pkg.schemas.connector import ArxivImportRequest
+
+    captured = {}
+    paper = ArxivPaper(arxiv_id="2401.12345v1", title="Test", abstract="Abstract", authors=[], categories=[])
+    from pkg.models.source import Source
+
+    source = Source(
+        id="src-arxiv-2401.12345v1",
+        user_id="test-user-001",
+        category_id=1,
+        title="Test",
+        source_type="article",
+        url="https://arxiv.org/abs/2401.12345v1",
+        raw_content="Abstract",
+        metadata_={},
+        ingested_at=datetime.now(timezone.utc),
+    )
+
+    async def fake_search_arxiv(**kwargs):
+        captured.update(kwargs)
+        return [paper]
+
+    async def fake_import_arxiv_paper(*args, **kwargs):
+        return source, True, "arxiv:2401.12345v1"
+
+    async def fake_mark_connector_item_saved(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(connectors_api, "search_arxiv", fake_search_arxiv)
+    monkeypatch.setattr(connectors_api, "import_arxiv_paper", fake_import_arxiv_paper)
+    monkeypatch.setattr(connectors_api, "mark_connector_item_saved", fake_mark_connector_item_saved)
+
+    response = await connectors_api.import_arxiv_connector(
+        ArxivImportRequest(paper_id="2401.12345v1"),
+        user=fake_user,
+        session=mock_session,
+    )
+
+    assert response.created is True
+    assert captured["retries"] == 0
+    assert captured["paper_id"] == "2401.12345v1"
+    assert captured["max_results"] == 1

@@ -134,6 +134,9 @@ export function NotesPage() {
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Create Note</DialogTitle>
+                <p className="text-sm text-muted-foreground">
+                  Notes are your own writing: observations, summaries, drafts, and confirmed personal knowledge. Attach sources when a note refers to external evidence.
+                </p>
               </DialogHeader>
               <div className="space-y-3">
                 <Input
@@ -263,7 +266,7 @@ export function NotesPage() {
         {data && data.total === 0 && (
           <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
             <StickyNote className="h-12 w-12 mb-3 opacity-30" />
-            <p>No notes yet. Create one to get started.</p>
+            <p>No notes yet. Create one when you want to save your own writing, synthesis, or confirmed takeaways.</p>
           </div>
         )}
 
