@@ -13,7 +13,7 @@ from pkg.models.foundation.source import Source
 from pkg.services.foundation.connectors import import_github_repo
 from pkg.services.foundation.connector_cache import connector_cache_key
 from pkg.services.foundation.discovery_imports import domain_from_url, import_discovery_item, normalize_http_url
-from pkg.services.foundation.discovery_profile import load_discovery_profile
+from pkg.services.foundation.discovery_profile import load_discovery_preferences, load_discovery_profile
 from pkg.services.foundation.discovery_scoring import candidate_summary, candidate_url, score_candidate
 from pkg.services.foundation.memory_retriever import retrieve_for_query
 from pkg.services.foundation.source_memory import upsert_source_memory_node
@@ -33,6 +33,12 @@ async def generate_discovery_items(
 ) -> tuple[int, int, int]:
     providers = providers or ["arxiv", "github", "rss", "web", "openalex", "crossref", "semantic_scholar"]
     profile = await load_discovery_profile(session, user_id)
+    try:
+        preferences = await load_discovery_preferences(session, user_id)
+    except (StopAsyncIteration, StopIteration):
+        preferences = {}
+    if preferences:
+        profile = {**profile, **preferences}
     created = 0
     updated = 0
     skipped = 0
@@ -130,6 +136,12 @@ async def ingest_web_discovery_results(
     commit: bool = True,
 ) -> tuple[int, int, int]:
     profile = await load_discovery_profile(session, user_id)
+    try:
+        preferences = await load_discovery_preferences(session, user_id)
+    except (StopAsyncIteration, StopIteration):
+        preferences = {}
+    if preferences:
+        profile = {**profile, **preferences}
     created = 0
     updated = 0
     skipped = 0

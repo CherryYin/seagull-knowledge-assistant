@@ -9,6 +9,7 @@ from pkg.models.source import Source
 from pkg.models.user import UserMemory
 from pkg.services.foundation.discovery import apply_discovery_feedback, generate_discovery_items
 from pkg.services.cross_cutting.user_profiler import PROFILE_MEMORY_KEY
+from pkg.services.foundation.discovery_profile import DISCOVERY_PREFERENCES_MEMORY_KEY, load_discovery_preferences, load_discovery_profile
 
 
 class _ScalarResult:
@@ -20,6 +21,28 @@ class _ScalarResult:
 
     def scalar_one_or_none(self):
         return self._items[0] if self._items else None
+
+
+def _select_router(*, profile=None, preferences=None, cached=None, sources=None, discovery_items=None):
+    async def _execute(stmt, *args, **kwargs):
+        sql = str(stmt)
+        if 'FROM user_memories' in sql and f"key = :key_1" in sql:
+            params = stmt.compile().params
+            key = params.get("key_1")
+            if key == PROFILE_MEMORY_KEY:
+                return _ScalarResult([profile] if profile else [])
+            if key == DISCOVERY_PREFERENCES_MEMORY_KEY:
+                return _ScalarResult([preferences] if preferences else [])
+            return _ScalarResult([])
+        if 'FROM connector_search_items' in sql:
+            return _ScalarResult(cached or [])
+        if 'FROM sources' in sql:
+            return _ScalarResult(sources or [])
+        if 'FROM discovery_items' in sql:
+            return _ScalarResult(discovery_items or [])
+        return _ScalarResult([])
+
+    return _execute
 
 
 @pytest.mark.asyncio
@@ -47,14 +70,7 @@ async def test_generate_discovery_items_scores_profile_match():
         },
     )
     cached.updated_at = datetime(2026, 5, 25, tzinfo=timezone.utc)
-    session.execute.side_effect = [
-        _ScalarResult([profile]),
-        _ScalarResult([cached]),
-        _ScalarResult([]),
-        _ScalarResult([cached]),
-        _ScalarResult([]),
-        _ScalarResult([]),
-    ]
+    session.execute.side_effect = _select_router(profile=profile, cached=[cached])
 
     with patch("pkg.services.foundation.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
         mock_memory.return_value = []
@@ -82,15 +98,7 @@ async def test_generate_discovery_items_from_rss_source():
         raw_content="Detailed article about API architecture and caching.",
         metadata={"feed_source_id": "feed-1", "published_at": "2026-05-25"},
     )
-    session.execute.side_effect = [
-        _ScalarResult([]),
-        _ScalarResult([]),
-        _ScalarResult([]),
-        _ScalarResult([]),
-        _ScalarResult([rss_source]),
-        _ScalarResult([]),
-        _ScalarResult([]),
-    ]
+    session.execute.side_effect = _select_router(sources=[rss_source])
 
     with patch("pkg.services.foundation.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
         mock_memory.return_value = []
@@ -119,15 +127,7 @@ async def test_generate_discovery_items_from_web_source_with_credibility_and_pre
         raw_content="A guide about knowledge graph architecture.",
         metadata={},
     )
-    session.execute.side_effect = [
-        _ScalarResult([profile]),
-        _ScalarResult([]),
-        _ScalarResult([]),
-        _ScalarResult([]),
-        _ScalarResult([web_source]),
-        _ScalarResult([]),
-        _ScalarResult([]),
-    ]
+    session.execute.side_effect = _select_router(profile=profile, sources=[web_source])
 
     with patch("pkg.services.foundation.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
         mock_memory.return_value = []
@@ -164,7 +164,7 @@ async def test_generate_discovery_items_adds_memory_similarity_reason():
     cached.updated_at = datetime(2026, 5, 25, tzinfo=timezone.utc)
     memory_node = MagicMock()
     memory_node.title = "Memory retrieval architecture"
-    session.execute.side_effect = [_ScalarResult([]), _ScalarResult([cached]), _ScalarResult([]), _ScalarResult([cached]), _ScalarResult([]), _ScalarResult([])]
+    session.execute.side_effect = _select_router(cached=[cached])
 
     with patch("pkg.services.foundation.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
         mock_memory.return_value = [MagicMock(node=memory_node)]
@@ -178,6 +178,7 @@ async def test_generate_discovery_items_adds_memory_similarity_reason():
 @pytest.mark.asyncio
 async def test_dismiss_discovery_item_updates_profile_feedback():
     session = AsyncMock()
+    session.add = MagicMock()
     item = DiscoveryItem(
         user_id="user-1",
         provider="github",
@@ -185,21 +186,22 @@ async def test_dismiss_discovery_item_updates_profile_feedback():
         title="owner/repo",
         payload={"full_name": "owner/repo", "html_url": "https://github.com/owner/repo", "owner": "owner", "name": "repo", "topics": [], "stars": 1, "forks": 0},
     )
-    profile = UserMemory(user_id="user-1", key=PROFILE_MEMORY_KEY, value={})
-    session.execute.return_value = _ScalarResult([profile])
+    preference_memory = UserMemory(user_id="user-1", key=DISCOVERY_PREFERENCES_MEMORY_KEY, value={})
+    session.execute.side_effect = _select_router(preferences=preference_memory)
 
     source, created = await apply_discovery_feedback(session, item=item, action="dismiss")
 
     assert source is None
     assert created is None
     assert item.status == "dismissed"
-    assert profile.value["discovery_feedback"]["github"]["dismiss"] == 1
+    assert preference_memory.value["discovery_feedback"]["github"]["dismiss"] == 1
     session.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_keep_existing_source_does_not_reimport():
     session = AsyncMock()
+    session.add = MagicMock()
     source = MagicMock(spec=Source)
     source.id = "src-1"
     session.get.return_value = source
@@ -225,6 +227,7 @@ async def test_keep_existing_source_does_not_reimport():
 @pytest.mark.asyncio
 async def test_keep_without_existing_source_does_not_import():
     session = AsyncMock()
+    session.add = MagicMock()
     session.execute.return_value = _ScalarResult([])
     item = DiscoveryItem(
         user_id="user-1",
@@ -282,7 +285,7 @@ async def test_save_openalex_discovery_item_imports_article_source():
     assert "## Abstract" in source.raw_content
     assert item.status == "saved"
     assert item.source_id == source.id
-    session.add.assert_called_once_with(source)
+    assert session.add.call_args_list[0].args[0] == source
     mock_upsert.assert_awaited_once_with(session, source)
 
 
@@ -293,10 +296,7 @@ async def test_web_discovery_ingest_scores_trusted_domain():
     session = AsyncMock()
     session.add = MagicMock()
     profile = UserMemory(user_id="user-1", key=PROFILE_MEMORY_KEY, value={})
-    session.execute.side_effect = [
-        _ScalarResult([profile]),
-        _ScalarResult([]),
-    ]
+    session.execute.side_effect = _select_router(profile=profile)
 
     with patch("pkg.services.foundation.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
         mock_memory.return_value = []
@@ -318,6 +318,7 @@ async def test_web_discovery_ingest_scores_trusted_domain():
 @pytest.mark.asyncio
 async def test_feedback_updates_fine_grained_preferences():
     session = AsyncMock()
+    session.add = MagicMock()
     item = DiscoveryItem(
         user_id="user-1",
         provider="web",
@@ -326,16 +327,44 @@ async def test_feedback_updates_fine_grained_preferences():
         url="https://openai.com/research",
         payload={"url": "https://openai.com/research", "domain": "openai.com", "source_name": "search", "query": "ai research"},
     )
-    profile = UserMemory(user_id="user-1", key=PROFILE_MEMORY_KEY, value={})
-    session.execute.return_value = _ScalarResult([profile])
+    preference_memory = UserMemory(user_id="user-1", key=DISCOVERY_PREFERENCES_MEMORY_KEY, value={})
+    session.execute.side_effect = _select_router(preferences=preference_memory)
 
     source, created = await apply_discovery_feedback(session, item=item, action="dismiss")
 
     assert source is None
     assert created is None
-    assert profile.value["discovery_feedback"]["web"]["dismiss"] == 1
-    assert profile.value["discovery_preferences"]["domains"]["openai.com"]["dismiss"] == 1
-    assert profile.value["discovery_preferences"]["sources"]["search"]["dismiss"] == 1
+    assert preference_memory.value["discovery_feedback"]["web"]["dismiss"] == 1
+    assert preference_memory.value["discovery_preferences"]["domains"]["openai.com"]["dismiss"] == 1
+    assert preference_memory.value["discovery_preferences"]["sources"]["search"]["dismiss"] == 1
+
+
+@pytest.mark.asyncio
+async def test_load_discovery_profile_returns_profile_memory_only():
+    session = AsyncMock()
+    session.add = MagicMock()
+    profile = UserMemory(user_id="user-1", key=PROFILE_MEMORY_KEY, value={"summary": "AI builder"})
+    session.execute.side_effect = _select_router(profile=profile)
+
+    result = await load_discovery_profile(session, "user-1")
+
+    assert result["summary"] == "AI builder"
+
+
+@pytest.mark.asyncio
+async def test_load_discovery_preferences_reads_preference_memory():
+    session = AsyncMock()
+    session.add = MagicMock()
+    preferences = UserMemory(
+        user_id="user-1",
+        key=DISCOVERY_PREFERENCES_MEMORY_KEY,
+        value={"discovery_preferences": {"domains": {"openai.com": {"keep": 2}}}},
+    )
+    session.execute.side_effect = _select_router(preferences=preferences)
+
+    result = await load_discovery_preferences(session, "user-1")
+
+    assert result["discovery_preferences"]["domains"]["openai.com"]["keep"] == 2
 
 
 @pytest.mark.asyncio
@@ -357,15 +386,7 @@ async def test_generate_discovery_items_uses_domain_preferences():
         raw_content="Guide about AI agents.",
         metadata={},
     )
-    session.execute.side_effect = [
-        _ScalarResult([profile]),
-        _ScalarResult([]),
-        _ScalarResult([]),
-        _ScalarResult([]),
-        _ScalarResult([web_source]),
-        _ScalarResult([]),
-        _ScalarResult([]),
-    ]
+    session.execute.side_effect = _select_router(profile=profile, sources=[web_source])
 
     with patch("pkg.services.foundation.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
         mock_memory.return_value = []
@@ -426,7 +447,7 @@ async def test_ingest_web_discovery_results_rejects_non_http_url():
 
     session = AsyncMock()
     session.add = MagicMock()
-    session.execute.side_effect = [_ScalarResult([])]
+    session.execute.side_effect = _select_router()
 
     created, updated, skipped = await ingest_web_discovery_results(
         session,
@@ -444,6 +465,7 @@ async def test_import_web_discovery_item_rejects_non_http_url():
     from pkg.services.foundation.discovery import apply_discovery_feedback
 
     session = AsyncMock()
+    session.add = MagicMock()
     session.execute.return_value = _ScalarResult([])
     item = DiscoveryItem(
         user_id="user-1",

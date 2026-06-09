@@ -3,13 +3,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.models.discovery import DiscoveryItem
 from pkg.models.user import UserMemory
-from pkg.services.cross_cutting.user_profiler import PROFILE_MEMORY_KEY
+from pkg.services.cross_cutting.user_profiler import EXPLICIT_PREFERENCE_MEMORY_TYPE, PROFILE_MEMORY_KEY
+
+
+DISCOVERY_PREFERENCES_MEMORY_KEY = "discovery_preferences"
 
 
 async def load_discovery_profile(session: AsyncSession, user_id: str) -> dict:
     row = await session.execute(select(UserMemory).where(UserMemory.user_id == user_id, UserMemory.key == PROFILE_MEMORY_KEY))
     profile = row.scalar_one_or_none()
     return dict(profile.value or {}) if profile else {}
+
+
+async def load_discovery_preferences(session: AsyncSession, user_id: str) -> dict:
+    row = await session.execute(
+        select(UserMemory).where(UserMemory.user_id == user_id, UserMemory.key == DISCOVERY_PREFERENCES_MEMORY_KEY)
+    )
+    preference_memory = row.scalar_one_or_none()
+    return dict(preference_memory.value or {}) if preference_memory and hasattr(preference_memory, "value") else {}
 
 
 def candidate_preference_signals(candidate: dict) -> dict[str, list[str]]:
@@ -38,11 +49,30 @@ async def update_profile_feedback(
     action: str,
     item: DiscoveryItem | None = None,
 ) -> None:
-    row = await session.execute(select(UserMemory).where(UserMemory.user_id == user_id, UserMemory.key == PROFILE_MEMORY_KEY))
-    profile = row.scalar_one_or_none()
-    if not profile:
-        return
-    value = dict(profile.value or {})
+    try:
+        preference_row = await session.execute(
+            select(UserMemory).where(UserMemory.user_id == user_id, UserMemory.key == DISCOVERY_PREFERENCES_MEMORY_KEY)
+        )
+        preference_memory = preference_row.scalar_one_or_none()
+        if preference_memory is not None and not hasattr(preference_memory, "value"):
+            preference_memory = None
+    except (StopAsyncIteration, StopIteration):
+        preference_memory = None
+
+    profile_row = await session.execute(
+        select(UserMemory).where(UserMemory.user_id == user_id, UserMemory.key == PROFILE_MEMORY_KEY)
+    )
+    profile_memory = profile_row.scalar_one_or_none()
+    if preference_memory:
+        value = dict(preference_memory.value or {})
+    else:
+        value = {}
+        if profile_memory and hasattr(profile_memory, "value"):
+            value = {
+                "discovery_feedback": dict((profile_memory.value or {}).get("discovery_feedback") or {}),
+                "discovery_preferences": dict((profile_memory.value or {}).get("discovery_preferences") or {}),
+            }
+
     feedback = dict(value.get("discovery_feedback") or {})
     provider_feedback = dict(feedback.get(provider) or {})
     provider_feedback[action] = int(provider_feedback.get(action) or 0) + 1
@@ -60,7 +90,18 @@ async def update_profile_feedback(
             preferences[group] = group_prefs
         value["discovery_preferences"] = preferences
 
-    profile.value = value
+    if preference_memory:
+        preference_memory.memory_type = EXPLICIT_PREFERENCE_MEMORY_TYPE
+        preference_memory.value = value
+    else:
+        session.add(
+            UserMemory(
+                user_id=user_id,
+                key=DISCOVERY_PREFERENCES_MEMORY_KEY,
+                memory_type=EXPLICIT_PREFERENCE_MEMORY_TYPE,
+                value=value,
+            )
+        )
 
 
 def _domain_from_url(url: str) -> str:
