@@ -7,7 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pkg.services.cross_cutting.user_profiler import (
+    ACTIVITY_PROFILE_MEMORY_TYPE,
+    EXPLICIT_PREFERENCE_MEMORY_TYPE,
+    EXPLICIT_PROFILE_MEMORY_TYPE,
     PROFILE_MEMORY_KEY,
+    classify_user_memory_type,
     _format_activity_summary,
     _get_profile_memory_context,
     _get_recent_activities,
@@ -263,3 +267,64 @@ class TestGenerateUserProfile:
                                     assert result is not None
                                     assert result["interests"][0]["domain"] == "AI"
                                     mock_store.assert_awaited_once_with("user-1", PROFILE_MEMORY_KEY, result)
+
+
+@pytest.mark.asyncio
+async def test_upsert_user_memory_marks_activity_profile_type():
+    from pkg.services.cross_cutting.user_profiler import _upsert_user_memory
+
+    with patch("pkg.services.cross_cutting.user_profiler.async_session") as mock_session_ctx:
+        mock_session = AsyncMock()
+        mock_mem = MagicMock()
+        mock_mem.memory_type = "profile"
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_mem
+        mock_session.execute.return_value = mock_result
+        mock_session.commit = AsyncMock()
+        mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        await _upsert_user_memory("user-1", PROFILE_MEMORY_KEY, {"summary": "x"})
+
+    assert mock_mem.memory_type == ACTIVITY_PROFILE_MEMORY_TYPE
+
+
+def test_classify_user_memory_type_detects_activity_profile_key():
+    assert classify_user_memory_type(PROFILE_MEMORY_KEY, {"summary": "x"}) == ACTIVITY_PROFILE_MEMORY_TYPE
+
+
+def test_classify_user_memory_type_detects_preference_key():
+    assert classify_user_memory_type("writing_preferences", {"tone": "concise"}) == EXPLICIT_PREFERENCE_MEMORY_TYPE
+
+
+def test_classify_user_memory_type_detects_preference_payload():
+    assert classify_user_memory_type("custom_memory", {"discovery_preferences": {"domains": {}}}) == EXPLICIT_PREFERENCE_MEMORY_TYPE
+
+
+def test_classify_user_memory_type_defaults_to_profile():
+    assert classify_user_memory_type("about_me", {"summary": "builder"}) == EXPLICIT_PROFILE_MEMORY_TYPE
+
+
+def test_build_profile_explanations_contains_expected_sections():
+    from pkg.services.cross_cutting.user_profiler import _build_profile_explanations
+
+    explanations = _build_profile_explanations(
+        {"search_queries": ["rag", "agents"], "chat_topics": ["memory design"], "active_period": "evening"},
+        {"domains": {"AI": 3}, "types": {"concept": 2}},
+        {"types": {"pdf": 2}},
+        {"titles": ["Agent session"]},
+        {
+            "interests": [{"domain": "AI"}],
+            "knowledge_level": {"AI": "advanced"},
+            "behavior": {"active_hours": "evening"},
+        },
+    )
+
+    assert "summary" in explanations
+    assert "interests" in explanations
+    assert "knowledge_level" in explanations
+    assert "behavior" in explanations
+    assert explanations["behavior"]["signals"][0] == "active_period:evening"
+    assert explanations["interests"]["items"][0]["value"] == "AI"
+    assert explanations["knowledge_level"]["items"][0]["value"] == "AI:advanced"
+    assert explanations["behavior"]["items"][0]["value"] == "active_hours:evening"

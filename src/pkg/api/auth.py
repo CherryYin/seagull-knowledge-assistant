@@ -21,6 +21,7 @@ from pkg.schemas.user import (
     UserCreate,
     UserRead,
     UserUpdate,
+    USER_MEMORY_TYPE_PATTERN,
 )
 from pkg.services.cross_cutting.auth import create_access_token, hash_password, verify_password
 
@@ -176,12 +177,14 @@ async def update_user(
 
 @router.get("/me/memory", response_model=list[MemoryRead])
 async def list_memories(
+    memory_type: str | None = Query(default=None, pattern=USER_MEMORY_TYPE_PATTERN),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    result = await session.execute(
-        select(UserMemory).where(UserMemory.user_id == user.id).order_by(UserMemory.key)
-    )
+    stmt = select(UserMemory).where(UserMemory.user_id == user.id)
+    if memory_type:
+        stmt = stmt.where(UserMemory.memory_type == memory_type)
+    result = await session.execute(stmt.order_by(UserMemory.memory_type, UserMemory.key))
     return list(result.scalars())
 
 
@@ -212,9 +215,10 @@ async def upsert_memory(
     )
     mem = result.scalar_one_or_none()
     if mem:
+        mem.memory_type = body.memory_type
         mem.value = body.value
     else:
-        mem = UserMemory(user_id=user.id, key=key, value=body.value)
+        mem = UserMemory(user_id=user.id, key=key, memory_type=body.memory_type, value=body.value)
         session.add(mem)
     await session.commit()
     await session.refresh(mem)

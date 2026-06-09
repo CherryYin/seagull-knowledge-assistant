@@ -164,3 +164,55 @@ class TestChangePassword:
             "new_password": "new-pass",
         })
         assert resp.status_code == 400
+
+
+class TestUserMemoryApi:
+    def test_list_memories_supports_memory_type_filter(self, auth_client, mock_session):
+        profile_mem = MagicMock()
+        profile_mem.id = 1
+        profile_mem.memory_type = "profile"
+        profile_mem.key = "preference"
+        profile_mem.value = {"theme": "dark"}
+        profile_mem.updated_at = datetime(2026, 6, 9, tzinfo=timezone.utc)
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = [profile_mem]
+        mock_session.execute.return_value = mock_result
+
+        resp = auth_client.get("/auth/me/memory?memory_type=profile")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data[0]["memory_type"] == "profile"
+        assert data[0]["key"] == "preference"
+
+    def test_upsert_memory_accepts_memory_type(self, auth_client, mock_session):
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_session.execute.return_value = mock_result
+
+        created = MagicMock()
+        created.id = 1
+        created.memory_type = "activity_profile"
+        created.key = "user_profile"
+        created.value = {"summary": "AI researcher"}
+        created.updated_at = datetime(2026, 6, 9, tzinfo=timezone.utc)
+        mock_session.refresh = AsyncMock(side_effect=lambda obj: None)
+
+        def capture_add(obj):
+            created.user_id = obj.user_id
+            created.memory_type = obj.memory_type
+            created.key = obj.key
+            created.value = obj.value
+            mock_session._created = obj
+
+        mock_session.add.side_effect = capture_add
+
+        resp = auth_client.put(
+            "/auth/me/memory/user_profile",
+            json={"memory_type": "activity_profile", "value": {"summary": "AI researcher"}},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["memory_type"] == "activity_profile"
+        assert data["key"] == "user_profile"
+        assert mock_session._created.memory_type == "activity_profile"

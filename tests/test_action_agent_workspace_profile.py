@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import AsyncMock
 
 from pkg.services.orchestration import action_agent
 
@@ -35,6 +36,55 @@ async def test_build_system_prompt_includes_workspace_profile(monkeypatch, tmp_p
     assert "stable Wiki" in prompt
     assert "默认只起草，不自动写入 durable knowledge" in prompt
     assert "不要自动创建或改写 Knowledge Tree、Wiki、Asset、Note" in prompt
+
+
+def test_memory_read_schema_exposes_memory_type():
+    from pkg.schemas.user import MemoryRead
+
+    model = MemoryRead.model_validate({
+        "id": 1,
+        "memory_type": "activity_profile",
+        "key": "user_profile",
+        "value": {"summary": "x"},
+        "updated_at": "2026-06-09T00:00:00",
+    })
+
+    assert model.memory_type == "activity_profile"
+
+
+@pytest.mark.asyncio
+async def test_build_system_prompt_splits_explicit_and_activity_memories(monkeypatch):
+    explicit = type("Mem", (), {"key": "preferences", "memory_type": "preference", "value": {"tone": "concise"}})()
+    derived = type("Mem", (), {"key": "user_profile", "memory_type": "activity_profile", "value": {"summary": "AI researcher"}})()
+
+    class _Result:
+        def scalars(self):
+            return [explicit, derived]
+
+    class _Session:
+        async def execute(self, *_args, **_kwargs):
+            return _Result()
+
+    class _SessionCtx:
+        async def __aenter__(self):
+            return _Session()
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class _CurrentUser:
+        def get(self):
+            return "user-1"
+
+    monkeypatch.setattr(action_agent, "current_user_id", _CurrentUser())
+    monkeypatch.setattr("pkg.db.async_session", lambda: _SessionCtx())
+    monkeypatch.setattr("pkg.services.foundation.memory_retriever.retrieve_for_profile", AsyncMock(return_value=[]))
+    monkeypatch.setattr("pkg.services.foundation.memory_retriever.format_memory_context", lambda *_args, **_kwargs: "")
+
+    section = await action_agent._get_user_memory_section()
+
+    assert "User Profile / Preferences" in section
+    assert "Activity-Derived Profile" in section
+    assert "不能覆盖用户显式偏好" in section
 
 
 @pytest.mark.asyncio

@@ -59,17 +59,35 @@ export interface UserProfileValue {
   knowledge_level?: Record<string, UserProfileDepth>;
   behavior?: UserProfileBehavior;
   summary?: string;
+  _explanations?: Record<string, {
+    signals?: string[];
+    reason?: string;
+    items?: Array<{ value?: string; signals?: string[]; reason?: string }>;
+  }>;
 }
 
 export interface UserMemoryRecord<TValue = Record<string, unknown>> {
   id: number;
+  memory_type: "profile" | "preference" | "activity_profile" | string;
   key: string;
   value: TValue;
   updated_at: string;
 }
 
+export interface UserMemoryUpdateRequest<TValue = Record<string, unknown>> {
+  memory_type: "profile" | "preference" | "activity_profile" | string;
+  value: TValue;
+}
+
 export interface GenerateUserProfileResponse {
   profile: UserProfileValue;
+}
+
+export interface UserActivityRecord {
+  id: number;
+  action: string;
+  detail?: Record<string, unknown> | null;
+  created_at: string;
 }
 
 export const authApi = {
@@ -96,6 +114,20 @@ export const authApi = {
     }),
   getMyProfile: () =>
     request<UserMemoryRecord<UserProfileValue>>("/auth/me/memory/user_profile"),
+  listMyMemories: (memoryType?: string) =>
+    request<UserMemoryRecord[]>(`/auth/me/memory${memoryType ? `?memory_type=${encodeURIComponent(memoryType)}` : ""}`),
+  updateMyMemory: <TValue = Record<string, unknown>>(key: string, body: UserMemoryUpdateRequest<TValue>) =>
+    request<UserMemoryRecord<TValue>>(`/auth/me/memory/${encodeURIComponent(key)}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  listMyActivity: (params?: { limit?: number; offset?: number }) => {
+    const search = new URLSearchParams();
+    if (params?.limit != null) search.set("limit", String(params.limit));
+    if (params?.offset != null) search.set("offset", String(params.offset));
+    const suffix = search.toString() ? `?${search.toString()}` : "";
+    return request<UserActivityRecord[]>(`/auth/me/activity${suffix}`);
+  },
   generateMyProfile: () =>
     request<GenerateUserProfileResponse>("/auth/me/profile/generate", {
       method: "POST",

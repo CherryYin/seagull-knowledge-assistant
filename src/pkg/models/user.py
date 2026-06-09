@@ -27,6 +27,7 @@ class UserMemory(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    memory_type: Mapped[str] = mapped_column(String(50), nullable=False, server_default="profile")
     key: Mapped[str] = mapped_column(String(200), nullable=False)
     value: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())

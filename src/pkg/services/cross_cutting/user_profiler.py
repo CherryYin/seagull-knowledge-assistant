@@ -21,6 +21,43 @@ from pkg.services.foundation.memory_retriever import format_memory_context, retr
 logger = logging.getLogger(__name__)
 
 PROFILE_MEMORY_KEY = "user_profile"
+ACTIVITY_PROFILE_MEMORY_TYPE = "activity_profile"
+EXPLICIT_PROFILE_MEMORY_TYPE = "profile"
+EXPLICIT_PREFERENCE_MEMORY_TYPE = "preference"
+
+
+def classify_user_memory_type(key: str, value: dict | None = None) -> str:
+    normalized_key = (key or "").strip().lower()
+    payload = value if isinstance(value, dict) else {}
+
+    if normalized_key == PROFILE_MEMORY_KEY:
+        return ACTIVITY_PROFILE_MEMORY_TYPE
+
+    preference_markers = {
+        "preference",
+        "preferences",
+        "setting",
+        "settings",
+        "style",
+        "tone",
+    }
+    if any(marker in normalized_key for marker in preference_markers):
+        return EXPLICIT_PREFERENCE_MEMORY_TYPE
+
+    if any(marker in payload for marker in ["discovery_preferences", "writing_preferences", "interaction_preferences"]):
+        return EXPLICIT_PREFERENCE_MEMORY_TYPE
+
+    profile_markers = {
+        "profile",
+        "identity",
+        "about_me",
+        "about-me",
+        "bio",
+    }
+    if any(marker in normalized_key for marker in profile_markers):
+        return EXPLICIT_PROFILE_MEMORY_TYPE
+
+    return EXPLICIT_PROFILE_MEMORY_TYPE
 
 
 def _utc_now_naive() -> datetime:
@@ -87,6 +124,14 @@ async def generate_user_profile(user_id: str) -> dict | None:
     profile = await _llm_generate_profile(summary_text)
     if not profile:
         return None
+
+    profile["_explanations"] = _build_profile_explanations(
+        activities,
+        note_stats,
+        source_stats,
+        chat_stats,
+        profile,
+    )
 
     # 4. Store in UserMemory
     await _upsert_user_memory(user_id, PROFILE_MEMORY_KEY, profile)
@@ -312,6 +357,94 @@ def _format_activity_summary(
     return "\n".join(parts)
 
 
+def _build_profile_explanations(
+    activities: dict,
+    note_stats: dict,
+    source_stats: dict,
+    chat_stats: dict,
+    profile: dict | None = None,
+) -> dict:
+    top_searches = activities.get("search_queries", [])[:5]
+    top_topics = activities.get("chat_topics", [])[:5]
+    top_domains = list((note_stats.get("domains") or {}).keys())[:5]
+    top_note_types = list((note_stats.get("types") or {}).keys())[:5]
+    top_source_types = list((source_stats.get("types") or {}).keys())[:5]
+
+    profile = profile or {}
+    interest_entries = []
+    for item in profile.get("interests") or []:
+        domain = str(item.get("domain") or "").strip()
+        if not domain:
+            continue
+        interest_entries.append({
+            "value": domain,
+            "signals": [
+                *([f"note_domain:{domain}"] if domain in (note_stats.get("domains") or {}) else []),
+                *[f"search:{query}" for query in top_searches[:2]],
+                *[f"chat:{topic}" for topic in top_topics[:2]],
+            ],
+            "reason": f"{domain} 这个兴趣主要参考笔记领域分布、搜索词和近期对话主题。",
+        })
+
+    knowledge_entries = []
+    for domain, depth in (profile.get("knowledge_level") or {}).items():
+        knowledge_entries.append({
+            "value": f"{domain}:{depth}",
+            "signals": [
+                *([f"note_domain:{domain}"] if domain in (note_stats.get("domains") or {}) else []),
+                *[f"note_type:{note_type}" for note_type in top_note_types[:3]],
+            ],
+            "reason": f"{domain} 的知识深度结合领域覆盖与笔记类型进行估计。",
+        })
+
+    behavior_entries = []
+    for key, value in (profile.get("behavior") or {}).items():
+        behavior_entries.append({
+            "value": f"{key}:{value}",
+            "signals": [
+                f"active_period:{activities.get('active_period', 'unknown')}",
+                *[f"source_type:{source_type}" for source_type in top_source_types[:3]],
+                *[f"chat_title:{title}" for title in (chat_stats.get("titles") or [])[:2]],
+            ],
+            "reason": f"{key} 主要依据活跃时间、资料类型和最近对话模式推断。",
+        })
+
+    return {
+        "summary": {
+            "signals": [
+                *[f"search:{query}" for query in top_searches[:3]],
+                *[f"chat:{topic}" for topic in top_topics[:3]],
+            ],
+            "reason": "综合最近搜索、对话主题与内容积累生成整体画像。",
+        },
+        "interests": {
+            "signals": [
+                *[f"note_domain:{domain}" for domain in top_domains[:5]],
+                *[f"search:{query}" for query in top_searches[:3]],
+            ],
+            "reason": "兴趣领域主要来自笔记领域分布与高频搜索主题。",
+            "items": interest_entries,
+        },
+        "knowledge_level": {
+            "signals": [
+                *[f"note_type:{note_type}" for note_type in top_note_types[:5]],
+                *[f"note_domain:{domain}" for domain in top_domains[:5]],
+            ],
+            "reason": "知识深度主要根据笔记规模、领域覆盖和笔记类型推断。",
+            "items": knowledge_entries,
+        },
+        "behavior": {
+            "signals": [
+                f"active_period:{activities.get('active_period', 'unknown')}",
+                *[f"source_type:{source_type}" for source_type in top_source_types[:5]],
+                *[f"chat_title:{title}" for title in (chat_stats.get("titles") or [])[:3]],
+            ],
+            "reason": "行为偏好来自活跃时间、资料类型和最近对话工作方式。",
+            "items": behavior_entries,
+        },
+    }
+
+
 async def _llm_generate_profile(summary_text: str) -> dict | None:
     """Call LLM to generate structured profile JSON from activity summary."""
     from pkg.services.cross_cutting.llm import create_async_client
@@ -363,8 +496,14 @@ async def _upsert_user_memory(user_id: str, key: str, value: dict) -> None:
         )
         mem = result.scalar_one_or_none()
         if mem:
+            mem.memory_type = classify_user_memory_type(key, value)
             mem.value = value
         else:
-            mem = UserMemory(user_id=user_id, key=key, value=value)
+            mem = UserMemory(
+                user_id=user_id,
+                key=key,
+                memory_type=classify_user_memory_type(key, value),
+                value=value,
+            )
             session.add(mem)
         await session.commit()

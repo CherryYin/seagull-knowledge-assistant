@@ -321,11 +321,27 @@ async def _get_user_memory_section() -> str:
             return ""
 
         lines = ["\n\n## 用户记忆与长期上下文\n"]
-        if memories:
+        explicit_memories = [
+            mem for mem in memories if getattr(mem, "memory_type", "profile") in {"profile", "preference"}
+        ]
+        activity_memories = [
+            mem for mem in memories if getattr(mem, "memory_type", "profile") == "activity_profile"
+        ]
+
+        if explicit_memories:
             lines.append("### User Profile / Preferences")
-            for mem in memories:
+            lines.append("以下是用户显式保存的偏好、设定或长期自我描述，应优先视为用户主动确认的信息。")
+            for mem in explicit_memories:
                 val = json.dumps(mem.value, ensure_ascii=False) if isinstance(mem.value, dict) else str(mem.value)
-                lines.append(f"- **{mem.key}**: {val}")
+                lines.append(f"- **{mem.key}** ({mem.memory_type}): {val}")
+
+        if activity_memories:
+            lines.append("\n### Activity-Derived Profile")
+            lines.append("以下是根据用户近期 activity 推断出的画像，只能作为弱信号，不能覆盖用户显式偏好。")
+            for mem in activity_memories:
+                val = json.dumps(mem.value, ensure_ascii=False) if isinstance(mem.value, dict) else str(mem.value)
+                lines.append(f"- **{mem.key}** ({mem.memory_type}): {val}")
+
         if memory_results:
             lines.append("\n### Memory Tree Context")
             lines.append(format_memory_context(memory_results, max_chars_per_item=420))

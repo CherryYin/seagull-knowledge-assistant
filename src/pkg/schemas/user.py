@@ -1,6 +1,9 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+USER_MEMORY_TYPE_PATTERN = r"^(profile|preference|activity_profile)$"
 
 
 # --- Auth ---
@@ -69,12 +72,14 @@ class MemoryRead(BaseModel):
     model_config = {"from_attributes": True}
 
     id: int
+    memory_type: str = Field(pattern=USER_MEMORY_TYPE_PATTERN)
     key: str
     value: dict
     updated_at: datetime
 
 
 class MemoryWrite(BaseModel):
+    memory_type: str = Field(default="profile", pattern=USER_MEMORY_TYPE_PATTERN)
     value: dict
 
 
