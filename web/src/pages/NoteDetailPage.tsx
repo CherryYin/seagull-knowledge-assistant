@@ -1,7 +1,7 @@
 import { useLocation, useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, useMemo, useRef } from "react";
-import { ArrowLeft, Download, Pencil, Save, X, Trash2, List, FileText, FileDown, Bot, RefreshCw, LinkIcon } from "lucide-react";
+import { ArrowLeft, Download, Pencil, Save, X, Trash2, List, FileText, FileDown, Bot, RefreshCw, LinkIcon, BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { MarkdownRenderer } from "@/components/markdown";
 import { notesApi, categoriesApi, wikiApi, downloadFile, type NoteUpdate } from "@/lib/api";
 import { CategorySelect } from "@/components/CategorySelect";
+import { buildAssetHandoffState } from "@/lib/asset-handoff";
 
 const NOTE_TYPES = ["inbox", "architecture", "case-study", "concept", "how-to", "remember"] as const;
 
@@ -156,6 +157,24 @@ export function NoteDetailPage() {
     },
   });
 
+  const createWikiDraftMutation = useMutation({
+    mutationFn: async () => {
+      if (!note) throw new Error("Note is not loaded");
+      return wikiApi.compile({
+        title: note.title,
+        page_type: "topic",
+        note_ids: [note.id],
+        instructions: `Create a draft canonical wiki page from note ${note.id}. Keep it reviewable and evidence-backed.`,
+      });
+    },
+    onSuccess: (page) => {
+      queryClient.invalidateQueries({ queryKey: ["wiki-pages"] });
+      navigate(`/wiki/${encodeURIComponent(page.id)}`, {
+        state: { backTo: `/notes/${encodeURIComponent(note?.id || id!)}`, backLabel: "Back to Note" },
+      });
+    },
+  });
+
   function askAgentAboutNote() {
     if (!note) return;
     navigate("/chat", {
@@ -165,8 +184,8 @@ export function NoteDetailPage() {
           object_id: note.id,
           title: note.title,
         },
-        workflowId: "organize-recent-imports",
-        promptSeed: `Use note "${note.title}" (${note.id}) to help me summarize, refine, or connect it to durable knowledge.`,
+        workflowId: "summarize-source",
+        promptSeed: `Use note "${note.title}" (${note.id}) to help me understand its core claims, extract reusable knowledge, and judge whether it should stay as a note, become a knowledge candidate, or support a wiki draft.`,
       },
     });
   }
@@ -288,7 +307,7 @@ export function NoteDetailPage() {
                   <div className="min-w-0">
                     <h2 className="text-sm font-medium">Actions</h2>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      Attach sources or queue a wiki refresh if this note may affect stable knowledge.
+                      Notes are your own writing and synthesis. Attach sources when this note refers to external evidence, or queue a wiki refresh if it may affect stable knowledge.
                     </p>
                     {queuedRefreshCount !== null && (
                       <button
@@ -331,6 +350,25 @@ export function NoteDetailPage() {
                     </div>
                     <Button size="sm" onClick={() => queueWikiRefreshMutation.mutate()} disabled={queueWikiRefreshMutation.isPending}>
                       <RefreshCw className={`h-4 w-4 ${queueWikiRefreshMutation.isPending ? "animate-spin" : ""}`} /> Queue Wiki Refresh
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => createWikiDraftMutation.mutate()} disabled={createWikiDraftMutation.isPending}>
+                      <BookOpen className="h-4 w-4" /> {createWikiDraftMutation.isPending ? "Creating…" : "Create Wiki Draft"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => note && navigate("/assets", {
+                        state: {
+                          assetHandoff: buildAssetHandoffState({
+                            title: note.title,
+                            brief: `Create a blog asset from note: ${note.title}`,
+                            note_refs: [note.id],
+                            source_refs: note.source_ids ?? [],
+                          }),
+                        },
+                      })}
+                    >
+                      <FileText className="h-4 w-4" /> Create Asset
                     </Button>
                     <Button size="sm" variant="outline" onClick={askAgentAboutNote}>
                       <Bot className="h-4 w-4" /> Ask Agent
@@ -442,6 +480,9 @@ export function NoteDetailPage() {
             ) : viewMode === "full" ? (
               <>
                 <h1 className="text-2xl font-bold mb-2">{note.title}</h1>
+                <p className="mb-3 text-sm text-muted-foreground">
+                  Your own note: writing, synthesis, or confirmed takeaways that may reference sources.
+                </p>
                 {note.abstract && (
                   <p className="text-muted-foreground text-sm mb-6 border-l-2 border-primary pl-3">
                     {note.abstract}
@@ -466,6 +507,9 @@ export function NoteDetailPage() {
               /* Slices view */
               <>
                 <h1 className="text-2xl font-bold mb-2">{note.title}</h1>
+                <p className="mb-3 text-sm text-muted-foreground">
+                  Your own note: writing, synthesis, or confirmed takeaways that may reference sources.
+                </p>
                 {note.abstract && (
                   <p className="text-muted-foreground text-sm mb-4 border-l-2 border-primary pl-3">
                     {note.abstract}

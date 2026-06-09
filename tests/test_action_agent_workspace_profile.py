@@ -1,6 +1,6 @@
 import pytest
 
-from pkg.services import action_agent
+from pkg.services.orchestration import action_agent
 
 
 async def _stub_kb_stats():
@@ -25,13 +25,16 @@ async def test_build_system_prompt_includes_workspace_profile(monkeypatch, tmp_p
     monkeypatch.setattr(action_agent.settings, "AGENT_WORKSPACE_PROFILE_MAX_CHARS", 12000)
     monkeypatch.setattr(action_agent, "_get_cached_kb_stats", _stub_kb_stats)
     monkeypatch.setattr(action_agent, "_get_user_memory_section", _stub_user_memory)
-    monkeypatch.setattr("pkg.services.skills.load_skills_merged", _stub_load_skills)
-    monkeypatch.setattr("pkg.services.skills.format_skills_for_prompt", lambda skills: "")
+    monkeypatch.setattr("pkg.services.cross_cutting.skills.load_skills_merged", _stub_load_skills)
+    monkeypatch.setattr("pkg.services.cross_cutting.skills.format_skills_for_prompt", lambda skills: "")
 
     prompt = await action_agent.build_system_prompt()
 
     assert "当前工作区项目画像" in prompt
     assert "Core capability: test profile" in prompt
+    assert "stable Wiki" in prompt
+    assert "默认只起草，不自动写入 durable knowledge" in prompt
+    assert "不要自动创建或改写 Knowledge Tree、Wiki、Asset、Note" in prompt
 
 
 @pytest.mark.asyncio
@@ -43,8 +46,8 @@ async def test_build_system_prompt_can_disable_workspace_profile(monkeypatch, tm
     monkeypatch.setattr(action_agent.settings, "AGENT_WORKSPACE_PROFILE_PATH", profile)
     monkeypatch.setattr(action_agent, "_get_cached_kb_stats", _stub_kb_stats)
     monkeypatch.setattr(action_agent, "_get_user_memory_section", _stub_user_memory)
-    monkeypatch.setattr("pkg.services.skills.load_skills_merged", _stub_load_skills)
-    monkeypatch.setattr("pkg.services.skills.format_skills_for_prompt", lambda skills: "")
+    monkeypatch.setattr("pkg.services.cross_cutting.skills.load_skills_merged", _stub_load_skills)
+    monkeypatch.setattr("pkg.services.cross_cutting.skills.format_skills_for_prompt", lambda skills: "")
 
     prompt = await action_agent.build_system_prompt()
 

@@ -29,9 +29,11 @@ import {
   type ChatSessionRecord,
 } from "@/lib/chatSessions";
 import {
+  AGENT_WORKFLOW_GROUP_DESCRIPTIONS,
   AGENT_WORKFLOW_SAVE_TARGET_LABELS,
   AGENT_WORKFLOW_TEMPLATES,
   findAgentWorkflowTemplate,
+  groupAgentWorkflowTemplates,
   inferAgentWorkflowId,
   renderAgentWorkflowPrompt,
   type AgentWorkflowContext,
@@ -162,6 +164,7 @@ export function ChatPage() {
     historySessions[0] ??
     null;
   const selectedWorkflow = findAgentWorkflowTemplate(selectedWorkflowId);
+  const workflowSections = groupAgentWorkflowTemplates();
 
   const scrollToBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -410,6 +413,7 @@ export function ChatPage() {
   const handleNewKnowledge = useCallback(
     async (assistantMsg: ChatSessionMessage) => {
       if (!currentSession) return;
+      // Generated long-form outputs are saved as writing documents rather than external evidence records.
       await knowledgeApi.saveDocument({
         message_content: assistantMsg.metadata?.document_content || assistantMsg.content,
         title: assistantMsg.metadata?.document_title,
@@ -423,6 +427,7 @@ export function ChatPage() {
   const handleSaveAsNote = useCallback(
     async (assistantMsg: ChatSessionMessage) => {
       if (!defaultCategoryId) throw new Error("No category available for saved note");
+      // Chat messages saved here become user-authored notes, not source records.
       await notesApi.create({
         title: assistantMsg.metadata?.document_title || assistantMsg.content.split("\n")[0].replace(/^#+\s*/, "").slice(0, 80) || "Agent output",
         category_id: defaultCategoryId,
@@ -512,42 +517,54 @@ export function ChatPage() {
                         - all grounded in your personal knowledge base.
                       </p>
                     </div>
-                    <div className="mt-4 grid w-full max-w-3xl gap-3 md:grid-cols-2">
-                      {AGENT_WORKFLOW_TEMPLATES.map((workflow) => (
-                        <button
-                          key={workflow.id}
-                          type="button"
-                          onClick={() => handleSelectWorkflow(workflow)}
-                          className={cn(
-                            "cursor-pointer rounded-xl border px-4 py-3 text-left transition-colors hover:bg-accent",
-                            selectedWorkflowId === workflow.id
-                              ? "border-primary/50 bg-primary/5"
-                              : "border-border"
-                          )}
-                        >
-                          <div className="mb-1 flex items-center justify-between gap-3">
-                            <h3 className="text-sm font-semibold text-foreground">{workflow.title}</h3>
-                            <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
-                              {workflow.outputSections.length} sections
-                            </span>
-                          </div>
-                          <p className="mb-2 text-xs text-muted-foreground">{workflow.description}</p>
-                          {workflow.requiredInput && (
-                            <p className="mb-2 text-[10px] text-muted-foreground">
-                              Input: {workflow.requiredInput}
+                    <div className="mt-4 flex w-full max-w-4xl flex-col gap-4">
+                      {workflowSections.map((section) => (
+                        <div key={section.group} className="space-y-2">
+                          <div>
+                            <h3 className="text-sm font-semibold">{section.label}</h3>
+                            <p className="text-xs text-muted-foreground">
+                              {section.description ?? AGENT_WORKFLOW_GROUP_DESCRIPTIONS[section.group]}
                             </p>
-                          )}
-                          <div className="flex flex-wrap gap-1">
-                            {workflow.saveTargets.map((target) => (
-                              <span
-                                key={target}
-                                className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground"
+                          </div>
+                          <div className="grid gap-3 md:grid-cols-2">
+                            {section.items.map((workflow) => (
+                              <button
+                                key={workflow.id}
+                                type="button"
+                                onClick={() => handleSelectWorkflow(workflow)}
+                                className={cn(
+                                  "cursor-pointer rounded-xl border px-4 py-3 text-left transition-colors hover:bg-accent",
+                                  selectedWorkflowId === workflow.id
+                                    ? "border-primary/50 bg-primary/5"
+                                    : "border-border"
+                                )}
                               >
-                                {AGENT_WORKFLOW_SAVE_TARGET_LABELS[target]}
-                              </span>
+                                <div className="mb-1 flex items-center justify-between gap-3">
+                                  <h3 className="text-sm font-semibold text-foreground">{workflow.title}</h3>
+                                  <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+                                    {workflow.outputSections.length} sections
+                                  </span>
+                                </div>
+                                <p className="mb-2 text-xs text-muted-foreground">{workflow.description}</p>
+                                {workflow.requiredInput && (
+                                  <p className="mb-2 text-[10px] text-muted-foreground">
+                                    Input: {workflow.requiredInput}
+                                  </p>
+                                )}
+                                <div className="flex flex-wrap gap-1">
+                                  {workflow.saveTargets.map((target) => (
+                                    <span
+                                      key={target}
+                                      className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground"
+                                    >
+                                      {AGENT_WORKFLOW_SAVE_TARGET_LABELS[target]}
+                                    </span>
+                                  ))}
+                                </div>
+                              </button>
                             ))}
                           </div>
-                        </button>
+                        </div>
                       ))}
                     </div>
                   </div>

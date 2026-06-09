@@ -7,6 +7,7 @@ export type AgentWorkflowSaveTarget =
 
 export interface AgentWorkflowTemplate {
   id: string;
+  group: "find" | "understand" | "decide" | "produce";
   title: string;
   description: string;
   promptTemplate: string;
@@ -15,6 +16,20 @@ export interface AgentWorkflowTemplate {
   requiredInput?: string;
   inputPlaceholder?: string;
 }
+
+export const AGENT_WORKFLOW_GROUP_LABELS: Record<AgentWorkflowTemplate["group"], string> = {
+  find: "查找型",
+  understand: "理解型",
+  decide: "决策型",
+  produce: "生产型",
+};
+
+export const AGENT_WORKFLOW_GROUP_DESCRIPTIONS: Record<AgentWorkflowTemplate["group"], string> = {
+  find: "先找资料、聚合上下文、识别缺口。",
+  understand: "先把单份材料或局部上下文讲清楚。",
+  decide: "先判断哪些内容值得进入更稳定的知识层。",
+  produce: "先起草面向输出的内容，但保持可 review。",
+};
 
 export interface AgentWorkflowContext {
   objectRef?: {
@@ -28,8 +43,8 @@ export interface AgentWorkflowContext {
 }
 
 export const AGENT_WORKFLOW_SAVE_TARGET_LABELS: Record<AgentWorkflowSaveTarget, string> = {
-  note: "Save as Note",
-  source_note: "Save as Source + Note",
+  note: "Save as Personal Note",
+  source_note: "Save as Writing Document",
   wiki_refresh: "Queue Wiki Refresh",
   review: "Send to Review",
   memory_candidate: "Create Memory Candidate",
@@ -37,11 +52,40 @@ export const AGENT_WORKFLOW_SAVE_TARGET_LABELS: Record<AgentWorkflowSaveTarget, 
 
 export const AGENT_WORKFLOW_TEMPLATES: AgentWorkflowTemplate[] = [
   {
+    id: "mine-wiki-candidates",
+    group: "decide",
+    title: "挖掘 Wiki 候选",
+    description: "从 source、note 或近期导入里筛出更值得沉淀为 stable wiki 的候选，并给出可 review 的理由。",
+    requiredInput: "一批材料、一个主题，或一个时间范围",
+    inputPlaceholder: "例如：从最近导入里找出值得升级成 wiki 的主题...",
+    saveTargets: ["review", "wiki_refresh", "memory_candidate"],
+    outputSections: [
+      "Candidate Topics",
+      "Why These Matter",
+      "Supporting Evidence",
+      "Open Gaps",
+      "Review Queue Recommendation",
+    ],
+    promptTemplate: `Identify wiki candidates from the available knowledge context.
+Prioritize topics that are recurring, reusable, and supported by multiple pieces of evidence.
+Prefer stable wiki references when they already exist, and explain whether each candidate should refresh an existing wiki or start as a new draft.
+Keep all outputs reviewable. Do not save anything automatically.
+
+Output exactly these sections:
+
+## Candidate Topics
+## Why These Matter
+## Supporting Evidence
+## Open Gaps
+## Review Queue Recommendation`,
+  },
+  {
     id: "summarize-source",
-    title: "Summarize Source",
-    description: "Turn a saved source into a structured, durable summary.",
-    requiredInput: "Source ID, source title, or focus area",
-    inputPlaceholder: "Optional focus, source ID, or selected angle...",
+    group: "understand",
+    title: "理解这份材料",
+    description: "把一份 source 解释清楚，提炼重点，并指出它下一步更适合进入 note、knowledge tree 还是 wiki。",
+    requiredInput: "一份 source、一个角度，或一个具体问题",
+    inputPlaceholder: "例如：重点看这篇材料的核心论点 / 它和我已有知识有什么关系...",
     saveTargets: ["note", "source_note"],
     outputSections: [
       "Summary",
@@ -51,7 +95,7 @@ export const AGENT_WORKFLOW_TEMPLATES: AgentWorkflowTemplate[] = [
       "Recommended Actions",
       "Save Recommendation",
     ],
-    promptTemplate: `You are summarizing a saved source for durable personal knowledge.
+    promptTemplate: `You are summarizing a saved source into a reusable summary draft.
 Use the provided source context and search/read tools if needed.
 Do not invent facts. Cite referenced Source/Note/Memory/Wiki IDs when available.
 Do not save anything automatically; recommend what the user should save.
@@ -67,10 +111,11 @@ Output exactly these sections:
   },
   {
     id: "organize-recent-imports",
-    title: "Organize Recent Imports",
-    description: "Cluster recent imports and identify duplicates or next actions.",
-    requiredInput: "Optional topic filter; defaults to recent 7 days",
-    inputPlaceholder: "Optional topic filter, domain, or time window...",
+    group: "find",
+    title: "梳理最近导入",
+    description: "从最近导入的 source 和 note 里找主题、重复项、缺口和下一步动作。",
+    requiredInput: "可选主题、范围或时间窗口",
+    inputPlaceholder: "例如：过去 7 天里和 agent / memory / wiki 相关的内容...",
     saveTargets: ["note"],
     outputSections: [
       "Clustered Topics",
@@ -96,10 +141,11 @@ Output exactly these sections:
   },
   {
     id: "research-topic",
-    title: "Research Topic",
-    description: "Research a question using existing knowledge first, then gaps.",
-    requiredInput: "Research question",
-    inputPlaceholder: "What should the agent research? Include scope/depth if useful...",
+    group: "find",
+    title: "研究一个主题",
+    description: "先查你已有知识，再识别缺口，形成一版可继续深入的研究结果。",
+    requiredInput: "一个研究问题",
+    inputPlaceholder: "例如：LangGraph 和 Strands 在 agent orchestration 上的差异是什么？",
     saveTargets: ["note", "source_note"],
     outputSections: [
       "Question",
@@ -126,10 +172,11 @@ Output exactly these sections:
   },
   {
     id: "draft-wiki-refresh",
-    title: "Draft Wiki Refresh",
-    description: "Prepare a proposed wiki update without applying it.",
-    requiredInput: "Wiki page, refresh suggestion, or evidence item",
-    inputPlaceholder: "Wiki ID/title, trigger source/note, or update goal...",
+    group: "decide",
+    title: "判断并起草下一步",
+    description: "围绕一个 wiki、knowledge tree node 或新证据，判断下一步该更新什么，并产出可审核草案。",
+    requiredInput: "一个 wiki、一个 knowledge tree 节点，或一条新证据",
+    inputPlaceholder: "例如：这个节点应该变成 wiki 吗？这页 wiki 现在需要刷新吗？",
     saveTargets: ["note", "wiki_refresh"],
     outputSections: [
       "Current Wiki Summary",
@@ -155,6 +202,37 @@ Output exactly these sections:
 ## Suggested Diff
 ## Apply Recommendation`,
   },
+  {
+    id: "draft-blog-asset",
+    group: "produce",
+    title: "起草 Blog Asset",
+    description: "把已有 source、note、wiki 或 knowledge tree context 组织成可继续编辑的 blog asset 草稿。",
+    requiredInput: "一个主题、一个受众，或一批上下文材料",
+    inputPlaceholder: "例如：把这个 wiki 主题整理成一篇面向工程师的博客草稿...",
+    saveTargets: ["source_note", "review"],
+    outputSections: [
+      "Audience",
+      "Angle",
+      "Outline",
+      "Draft",
+      "Evidence To Keep",
+      "Publish Risks",
+    ],
+    promptTemplate: `Create an editable blog asset draft from the current knowledge context.
+Treat wiki content as stable background context, and treat sources/notes as evidence.
+Make the draft useful for later editing instead of pretending it is publication-ready.
+Flag weak evidence, missing references, and claims that still need review.
+Do not publish or save anything automatically.
+
+Output exactly these sections:
+
+## Audience
+## Angle
+## Outline
+## Draft
+## Evidence To Keep
+## Publish Risks`,
+  },
 ];
 
 export function findAgentWorkflowTemplate(id?: string | null) {
@@ -165,9 +243,22 @@ export function findAgentWorkflowTemplate(id?: string | null) {
 export function inferAgentWorkflowId(objectType?: string | null, promptSeed?: string) {
   if (objectType === "source") return "summarize-source";
   if (objectType === "discover") return "research-topic";
+  if (objectType === "memory") return "draft-wiki-refresh";
+  if (objectType === "wiki") return "draft-wiki-refresh";
+  if (objectType === "asset") return "draft-blog-asset";
   if (promptSeed?.toLowerCase().includes("wiki")) return "draft-wiki-refresh";
   if (objectType === "note") return "organize-recent-imports";
   return undefined;
+}
+
+export function groupAgentWorkflowTemplates() {
+  const orderedGroups: AgentWorkflowTemplate["group"][] = ["find", "understand", "decide", "produce"];
+  return orderedGroups.map((group) => ({
+    group,
+    label: AGENT_WORKFLOW_GROUP_LABELS[group],
+    description: AGENT_WORKFLOW_GROUP_DESCRIPTIONS[group],
+    items: AGENT_WORKFLOW_TEMPLATES.filter((workflow) => workflow.group === group),
+  })).filter((section) => section.items.length > 0);
 }
 
 export function renderAgentWorkflowPrompt(

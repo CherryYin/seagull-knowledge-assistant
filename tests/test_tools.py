@@ -1,10 +1,10 @@
-"""Tests for pkg.services.tools — agent tool functions (mocked DB)."""
+"""Tests for pkg.services.orchestration.tools — agent tool functions (mocked DB)."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pkg.services.tools import agentic_rag, ask_human, create_memory_from_conversation, create_skill, read_memory_node, read_note, search_knowledge, search_memory
+from pkg.services.orchestration.tools import agentic_rag, ask_human, create_memory_from_conversation, create_skill, read_memory_node, read_note, search_knowledge, search_memory
 
 
 # ---------------------------------------------------------------------------
@@ -27,7 +27,7 @@ class TestAskHuman:
 class TestMemoryTools:
     @pytest.mark.asyncio
     async def test_search_memory_returns_nodes(self):
-        with patch("pkg.services.action_agent.current_user_id") as mock_user_ctx, patch("pkg.services.action_agent.current_run_id") as mock_run_ctx:
+        with patch("pkg.services.orchestration.action_agent.current_user_id") as mock_user_ctx, patch("pkg.services.orchestration.action_agent.current_run_id") as mock_run_ctx:
             mock_user_ctx.get.return_value = "test-user"
             mock_run_ctx.get.return_value = "run-1"
             mock_node = MagicMock()
@@ -44,7 +44,7 @@ class TestMemoryTools:
                 mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
                 mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
 
-                with patch("pkg.services.agent_memory.search_memory_nodes", new_callable=AsyncMock, return_value=[mock_node]) as mock_search, patch("pkg.services.agent_memory.record_agent_memory_use", new_callable=AsyncMock) as mock_record:
+                with patch("pkg.services.orchestration.agent_memory.search_memory_nodes", new_callable=AsyncMock, return_value=[mock_node]) as mock_search, patch("pkg.services.orchestration.agent_memory.record_agent_memory_use", new_callable=AsyncMock) as mock_record:
                     result = await search_memory._tool_func(query="Memory Tree", top_k=3)
 
             assert "Memory Tree" in result
@@ -54,7 +54,7 @@ class TestMemoryTools:
 
     @pytest.mark.asyncio
     async def test_read_memory_node_records_usage(self):
-        with patch("pkg.services.action_agent.current_user_id") as mock_user_ctx, patch("pkg.services.action_agent.current_run_id") as mock_run_ctx:
+        with patch("pkg.services.orchestration.action_agent.current_user_id") as mock_user_ctx, patch("pkg.services.orchestration.action_agent.current_run_id") as mock_run_ctx:
             mock_user_ctx.get.return_value = "test-user"
             mock_run_ctx.get.return_value = "run-1"
             mock_node = MagicMock()
@@ -78,7 +78,7 @@ class TestMemoryTools:
                 mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
                 mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
 
-                with patch("pkg.services.agent_memory.record_agent_memory_use", new_callable=AsyncMock) as mock_record:
+                with patch("pkg.services.orchestration.agent_memory.record_agent_memory_use", new_callable=AsyncMock) as mock_record:
                     result = await read_memory_node._tool_func(memory_node_id="mem-1")
 
             assert "Full memory content" in result
@@ -88,7 +88,7 @@ class TestMemoryTools:
 
     @pytest.mark.asyncio
     async def test_create_memory_from_conversation_is_pending_review(self):
-        with patch("pkg.services.action_agent.current_user_id") as mock_user_ctx, patch("pkg.services.action_agent.current_run_id") as mock_run_ctx:
+        with patch("pkg.services.orchestration.action_agent.current_user_id") as mock_user_ctx, patch("pkg.services.orchestration.action_agent.current_run_id") as mock_run_ctx:
             mock_user_ctx.get.return_value = "test-user"
             mock_run_ctx.get.return_value = "run-1"
             mock_node = MagicMock()
@@ -101,7 +101,7 @@ class TestMemoryTools:
                 mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
                 mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
 
-                with patch("pkg.services.agent_memory.create_pending_conversation_memory", new_callable=AsyncMock, return_value=mock_node) as mock_create, patch("pkg.services.agent_memory.record_agent_memory_use", new_callable=AsyncMock):
+                with patch("pkg.services.orchestration.agent_memory.create_pending_conversation_memory", new_callable=AsyncMock, return_value=mock_node) as mock_create, patch("pkg.services.orchestration.agent_memory.record_agent_memory_use", new_callable=AsyncMock):
                     result = await create_memory_from_conversation._tool_func(
                         title="Remember preference",
                         summary="User likes concise answers",
@@ -121,7 +121,7 @@ class TestMemoryTools:
 class TestSearchKnowledge:
     @pytest.mark.asyncio
     async def test_no_results(self):
-        with patch("pkg.services.action_agent.current_user_id") as mock_ctx:
+        with patch("pkg.services.orchestration.action_agent.current_user_id") as mock_ctx:
             mock_ctx.get.return_value = "test-user"
 
             mock_retriever = AsyncMock()
@@ -132,13 +132,13 @@ class TestSearchKnowledge:
                 mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
                 mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
 
-                with patch("pkg.services.retriever.RetrieverAgent", return_value=mock_retriever):
+                with patch("pkg.services.foundation.retriever.RetrieverAgent", return_value=mock_retriever):
                     result = await search_knowledge._tool_func(query="nonexistent")
                     assert "未找到" in result
 
     @pytest.mark.asyncio
     async def test_with_results(self):
-        with patch("pkg.services.action_agent.current_user_id") as mock_ctx:
+        with patch("pkg.services.orchestration.action_agent.current_user_id") as mock_ctx:
             mock_ctx.get.return_value = "test-user"
 
             mock_result = MagicMock()
@@ -146,6 +146,7 @@ class TestSearchKnowledge:
             mock_result.title = "Test Note"
             mock_result.id = "note-1"
             mock_result.score = 0.95
+            mock_result.layer = "user_note"
             mock_result.abstract = "Summary"
             mock_result.content_preview = "Preview"
 
@@ -157,10 +158,12 @@ class TestSearchKnowledge:
                 mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
                 mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
 
-                with patch("pkg.services.retriever.RetrieverAgent", return_value=mock_retriever):
+                with patch("pkg.services.foundation.retriever.RetrieverAgent", return_value=mock_retriever):
                     result = await search_knowledge._tool_func(query="test")
                     assert "1 条" in result
                     assert "Test Note" in result
+                    assert "知识层: user_note" in result
+                    assert "角色:" in result
                     assert "0.95" in result
 
 
@@ -170,7 +173,7 @@ class TestSearchKnowledge:
 class TestAgenticRag:
     @pytest.mark.asyncio
     async def test_no_results_includes_trace(self):
-        with patch("pkg.services.action_agent.current_user_id") as mock_ctx:
+        with patch("pkg.services.orchestration.action_agent.current_user_id") as mock_ctx:
             mock_ctx.get.return_value = "test-user"
 
             mock_retriever = AsyncMock()
@@ -181,14 +184,14 @@ class TestAgenticRag:
                 mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
                 mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
 
-                with patch("pkg.services.retriever.RetrieverAgent", return_value=mock_retriever):
+                with patch("pkg.services.foundation.retriever.RetrieverAgent", return_value=mock_retriever):
                     result = await agentic_rag._tool_func(question="missing topic")
                     assert "未找到" in result
                     assert "检索轨迹" in result
 
     @pytest.mark.asyncio
     async def test_opens_best_note_and_summarizes_evidence(self):
-        with patch("pkg.services.action_agent.current_user_id") as mock_ctx:
+        with patch("pkg.services.orchestration.action_agent.current_user_id") as mock_ctx:
             mock_ctx.get.return_value = "test-user"
 
             mock_result = MagicMock()
@@ -196,6 +199,7 @@ class TestAgenticRag:
             mock_result.title = "Agentic RAG Note"
             mock_result.id = "note-1"
             mock_result.score = 0.91
+            mock_result.layer = "user_note"
             mock_result.abstract = "Agentic retrieval uses search and open tools."
             mock_result.content_preview = "Preview"
 
@@ -215,11 +219,13 @@ class TestAgenticRag:
                 mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
                 mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
 
-                with patch("pkg.services.retriever.RetrieverAgent", return_value=mock_retriever):
+                with patch("pkg.services.foundation.retriever.RetrieverAgent", return_value=mock_retriever):
                     result = await agentic_rag._tool_func(question="agentic retrieval", open_top_n=1)
                     assert "Agentic RAG 证据简报" in result
+                    assert "回答优先级" in result
                     assert "note-1" in result
                     assert "Agentic RAG Note" in result
+                    assert "用户笔记 / 局部结论" in result
                     assert "证据片段" in result
 
 
@@ -282,7 +288,7 @@ class TestCreateSkill:
             mock_storage.build_object_key.return_value = "skills/skill-my-test-skill/my-test-skill.md"
             mock_storage.upload_bytes = AsyncMock(return_value="oss://skills/skill-my-test-skill/my-test-skill.md")
 
-            with patch("pkg.services.storage.get_storage_service", return_value=mock_storage):
+            with patch("pkg.services.cross_cutting.storage.get_storage_service", return_value=mock_storage):
                 result = await create_skill._tool_func(
                     name="My Test Skill",
                     description="the user asks for a repeatable test workflow",
@@ -320,9 +326,9 @@ class TestCreateSkill:
 class TestFindSkills:
     @pytest.mark.asyncio
     async def test_requires_tavily_key(self):
-        from pkg.services.tools_web import find_skills
+        from pkg.services.orchestration.tools_web import find_skills
 
-        with patch("pkg.services.tools_web.settings") as mock_settings:
+        with patch("pkg.services.orchestration.tools_web.settings") as mock_settings:
             mock_settings.TAVILY_API_KEY = ""
             result = await find_skills._tool_func(topic="meeting notes")
             assert "TAVILY_API_KEY" in result
