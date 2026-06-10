@@ -14,16 +14,16 @@ class LLMProviderConfig(BaseModel):
     api_key_env: str | None = None
     default_model: str | None = None
 
+    def resolve_api_key(self) -> str:
+        if self.api_key_env:
+            return os.environ.get(self.api_key_env, self.api_key)
+        return self.api_key
+
 
 class ManualLLMModelConfig(BaseModel):
     id: str
     provider_id: str
     display_name: str | None = None
-
-    def resolve_api_key(self) -> str:
-        if self.api_key_env:
-            return os.environ.get(self.api_key_env, self.api_key)
-        return self.api_key
 
 
 class Settings(BaseSettings):
@@ -166,6 +166,7 @@ class Settings(BaseSettings):
     DISCOVERY_GENERATE_INTERVAL_HOURS: int = 24
     PAPER_DISCOVERY_AUTO_ENABLED: bool = False
     PAPER_DISCOVERY_INTERVAL_HOURS: int = 24
+    OPENALEX_API_URL: str = "https://api.openalex.org"
     OPENALEX_API_KEY: str = ""
     
     @property

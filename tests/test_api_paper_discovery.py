@@ -194,6 +194,26 @@ async def test_run_profile_returns_500_when_provider_times_out(mock_session, fak
 
 
 @pytest.mark.asyncio
+async def test_run_profile_returns_provider_error_detail_and_rolls_back(mock_session, fake_user, monkeypatch):
+    async def fake_execute_profile_run(session, *, user_id, profile_id, mode, limit):
+        raise AttributeError("'Settings' object has no attribute 'OPENALEX_POLITE_EMAIL'")
+
+    monkeypatch.setattr("pkg.api.paper_discovery.execute_profile_run", fake_execute_profile_run)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await run_paper_discovery_profile(
+            1,
+            PaperDiscoveryExecuteRequest(),
+            user=fake_user,
+            session=mock_session,
+        )
+
+    assert exc_info.value.status_code == 500
+    assert "OPENALEX_POLITE_EMAIL" in exc_info.value.detail
+    mock_session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_list_runs(mock_session, fake_user, monkeypatch):
     profile = _make_profile(1, fake_user.id)
     run = SimpleNamespace(

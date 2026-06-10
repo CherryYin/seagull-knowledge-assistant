@@ -63,8 +63,6 @@ async def search_openalex(*, query: str, limit: int = 10, from_year: int | None 
     params = {"search": query, "per-page": limit}
     if settings.OPENALEX_API_KEY:
         params["api_key"] = settings.OPENALEX_API_KEY
-    if settings.OPENALEX_POLITE_EMAIL:
-        params["mailto"] = settings.OPENALEX_POLITE_EMAIL
     if from_year is not None:
         params["filter"] = f"from_publication_date:{from_year}-01-01"
     async with httpx.AsyncClient(timeout=20, headers=_headers()) as client:
