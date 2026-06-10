@@ -48,6 +48,78 @@ function assetTypeDescription(assetType: AssetType) {
   return "Readable, publish-oriented writing for a clear audience and angle.";
 }
 
+function assetTypeBriefPlaceholder(assetType: AssetType) {
+  if (assetType === "research_brief") {
+    return "Decision question, scope, intended audience, and why this brief matters";
+  }
+  if (assetType === "knowledge_pack") {
+    return "Who this pack is for, what it includes, and why it should exist";
+  }
+  if (assetType === "newsletter_issue") {
+    return "Theme of this issue, target reader, and what featured items it should include";
+  }
+  if (assetType === "topic_report") {
+    return "Topic scope, key question, why it matters now, and what the report should clarify";
+  }
+  return "Audience, angle, thesis, and why this post should exist";
+}
+
+function assetTypeBriefGuidance(assetType: AssetType) {
+  if (assetType === "research_brief") {
+    return "Include the decision question, scope, intended reader, and the recommendation pressure behind the brief.";
+  }
+  if (assetType === "knowledge_pack") {
+    return "Include who the pack serves, what materials belong in the bundle, and how readers should work through it.";
+  }
+  if (assetType === "newsletter_issue") {
+    return "Include the issue theme, target reader, the kind of featured items to include, and the editorial tone of the send.";
+  }
+  if (assetType === "topic_report") {
+    return "Include the topic boundary, central question, why the topic matters now, and what the report should resolve or recommend.";
+  }
+  return "Include the audience, angle, core thesis, and what should make this post worth reading.";
+}
+
+function assetTypeReadinessGuidance(assetType: AssetType) {
+  if (assetType === "research_brief") {
+    return "A strong brief usually has at least one grounded wiki angle, attached source evidence, and clear sections for executive summary, findings, risks, and recommendations.";
+  }
+  if (assetType === "knowledge_pack") {
+    return "A strong knowledge pack usually has enough linked material to justify the bundle, a clear 'what’s included' section, a guided reading path, and readable references for later reuse.";
+  }
+  if (assetType === "newsletter_issue") {
+    return "A strong newsletter issue usually has a clear theme, a short editor's note, a focused set of featured items, and readable references behind each highlighted item.";
+  }
+  if (assetType === "topic_report") {
+    return "A strong topic report usually has stable wiki grounding, enough material to support themes and findings, explicit risks or gaps, and recommendations that remain traceable to references.";
+  }
+  return "A strong blog post usually has a clear angle, enough evidence to support the thesis, and readable references before export.";
+}
+
+function assetTypeReadinessTitle(assetType: AssetType) {
+  if (assetType === "research_brief") return "Research Brief Readiness";
+  if (assetType === "knowledge_pack") return "Knowledge Pack Readiness";
+  if (assetType === "newsletter_issue") return "Newsletter Issue Readiness";
+  if (assetType === "topic_report") return "Topic Report Readiness";
+  return "Blog Post Readiness";
+}
+
+function assetTypeReadinessIntro(assetType: AssetType) {
+  if (assetType === "research_brief") {
+    return "Check whether this brief is evidence-backed, decision-ready, and complete enough to export.";
+  }
+  if (assetType === "knowledge_pack") {
+    return "Check whether this pack has enough material, a clear reading path, and reusable references before export.";
+  }
+  if (assetType === "newsletter_issue") {
+    return "Check whether this issue has a clear theme, curated featured items, and enough source grounding to send.";
+  }
+  if (assetType === "topic_report") {
+    return "Check whether this report has enough topic grounding, clear structure, and traceable findings before export.";
+  }
+  return "Check whether this post has a clear angle, enough support, and readable references before export.";
+}
+
 const RESEARCH_BRIEF_CHECKLIST = [
   "Define the decision question or research objective",
   "Scope the material and intended audience",
@@ -313,7 +385,8 @@ export function AssetsPage() {
               </button>
             </div>
             <Input placeholder={assetType === "research_brief" ? "Research brief title" : assetType === "knowledge_pack" ? "Knowledge pack title" : assetType === "newsletter_issue" ? "Newsletter issue title" : assetType === "topic_report" ? "Topic report title" : "Asset title"} value={title} onChange={(e) => setTitle(e.target.value)} />
-            <Textarea placeholder={assetType === "research_brief" ? "Decision question, scope, intended audience, and why this brief matters" : assetType === "knowledge_pack" ? "Who this pack is for, what it includes, and why it should exist" : assetType === "newsletter_issue" ? "Theme of this issue, target reader, and what featured items it should include" : assetType === "topic_report" ? "Topic scope, key question, why it matters now, and what the report should clarify" : "Editorial brief"} value={brief} onChange={(e) => setBrief(e.target.value)} rows={4} />
+            <Textarea placeholder={assetTypeBriefPlaceholder(assetType)} value={brief} onChange={(e) => setBrief(e.target.value)} rows={4} />
+            <p className="text-xs text-muted-foreground">{assetTypeBriefGuidance(assetType)}</p>
             <Textarea placeholder="Opinion / thesis" value={opinionNotes} onChange={(e) => setOpinionNotes(e.target.value)} rows={3} />
             <Textarea placeholder="Style notes / tone instructions" value={styleNotes} onChange={(e) => setStyleNotes(e.target.value)} rows={3} />
             <div className="grid gap-4 md:grid-cols-2">
@@ -500,26 +573,7 @@ export function AssetsPage() {
                     <div className="space-y-2">
                       <h3 className="text-sm font-semibold">Brief</h3>
                       <Textarea value={editBrief} onChange={(e) => setEditBrief(e.target.value)} rows={6} />
-                      {selectedAsset.asset_type === "research_brief" && (
-                        <p className="text-xs text-muted-foreground">
-                          Good research briefs usually define the decision question, scope, intended reader, and why the brief matters now.
-                        </p>
-                      )}
-                      {selectedAsset.asset_type === "knowledge_pack" && (
-                        <p className="text-xs text-muted-foreground">
-                          Good knowledge packs explain who the pack is for, what is included, and how to work through the material.
-                        </p>
-                      )}
-                      {selectedAsset.asset_type === "newsletter_issue" && (
-                        <p className="text-xs text-muted-foreground">
-                          Good newsletter issues define the theme, frame the issue with a short editorial note, and highlight why these items are worth reading now.
-                        </p>
-                      )}
-                      {selectedAsset.asset_type === "topic_report" && (
-                        <p className="text-xs text-muted-foreground">
-                          Good topic reports define the topic boundary, surface the major themes, and turn evidence into findings, risks, and next-step recommendations.
-                        </p>
-                      )}
+                      <p className="text-xs text-muted-foreground">{assetTypeBriefGuidance(selectedAsset.asset_type)}</p>
                     </div>
                     <div className="space-y-2">
                       <h3 className="text-sm font-semibold">References</h3>
@@ -679,67 +733,44 @@ export function AssetsPage() {
                   </div>
 
                   {readinessMutation.data && (
-                    selectedAsset.asset_type === "research_brief" ? (
-                      <div className={`space-y-4 rounded-lg border p-4 ${readinessTone(readinessMutation.data.ready)}`}>
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-semibold">Research Brief Readiness</p>
-                            <p className="mt-1 text-sm text-muted-foreground">
-                              Check whether this brief is evidence-backed, decision-ready, and complete enough to export.
-                            </p>
-                          </div>
-                          <Badge variant={readinessMutation.data.ready ? "default" : "secondary"}>
-                            {readinessMutation.data.ready ? "Ready to export" : "Needs work"}
-                          </Badge>
+                    <div className={`space-y-4 rounded-lg border p-4 ${readinessTone(readinessMutation.data.ready)}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold">{assetTypeReadinessTitle(selectedAsset.asset_type)}</p>
+                          <p className="mt-1 text-sm text-muted-foreground">
+                            {assetTypeReadinessIntro(selectedAsset.asset_type)}
+                          </p>
                         </div>
-
-                        <div className="grid gap-3 md:grid-cols-3">
-                          <ReadinessList
-                            title="Blocking"
-                            items={readinessMutation.data.blocking_reasons}
-                            tone="text-destructive"
-                            empty="No blocking issues."
-                          />
-                          <ReadinessList
-                            title="Warnings"
-                            items={readinessMutation.data.warning_reasons}
-                            tone="text-amber-700"
-                            empty="No warning signals."
-                          />
-                          <ReadinessList
-                            title="Suggested next steps"
-                            items={readinessMutation.data.suggestion_reasons}
-                            tone="text-sky-700"
-                            empty="No extra suggestions right now."
-                          />
-                        </div>
-
-                        <div className="rounded-md border bg-background/80 p-3 text-sm text-muted-foreground">
-                          {selectedAsset.asset_type === "research_brief"
-                            ? "A strong brief usually has at least one grounded wiki angle, attached source evidence, and clear sections for executive summary, findings, risks, and recommendations."
-                            : "A strong knowledge pack usually has enough linked material to justify the bundle, a clear 'what’s included' section, a guided reading path, and readable references for later reuse."}
-                        </div>
+                        <Badge variant={readinessMutation.data.ready ? "default" : "secondary"}>
+                          {readinessMutation.data.ready ? "Ready to export" : "Needs work"}
+                        </Badge>
                       </div>
-                    ) : (
-                      <div className="space-y-2 rounded-md border p-3 text-sm">
-                        <p className="font-medium">Readiness: {readinessMutation.data.ready ? "Ready" : "Not ready"}</p>
-                        {readinessMutation.data.blocking_reasons.length > 0 && (
-                          <ul className="list-disc pl-5 text-muted-foreground">
-                            {readinessMutation.data.blocking_reasons.map((reason) => <li key={reason}>{reason}</li>)}
-                          </ul>
-                        )}
-                        {readinessMutation.data.warning_reasons.length > 0 && (
-                          <ul className="list-disc pl-5 text-amber-600">
-                            {readinessMutation.data.warning_reasons.map((reason) => <li key={reason}>{reason}</li>)}
-                          </ul>
-                        )}
-                        {readinessMutation.data.suggestion_reasons.length > 0 && (
-                          <ul className="list-disc pl-5 text-sky-700">
-                            {readinessMutation.data.suggestion_reasons.map((reason) => <li key={reason}>{reason}</li>)}
-                          </ul>
-                        )}
+
+                      <div className="grid gap-3 md:grid-cols-3">
+                        <ReadinessList
+                          title="Blocking"
+                          items={readinessMutation.data.blocking_reasons}
+                          tone="text-destructive"
+                          empty="No blocking issues."
+                        />
+                        <ReadinessList
+                          title="Warnings"
+                          items={readinessMutation.data.warning_reasons}
+                          tone="text-amber-700"
+                          empty="No warning signals."
+                        />
+                        <ReadinessList
+                          title="Suggested next steps"
+                          items={readinessMutation.data.suggestion_reasons}
+                          tone="text-sky-700"
+                          empty="No extra suggestions right now."
+                        />
                       </div>
-                    )
+
+                      <div className="rounded-md border bg-background/80 p-3 text-sm text-muted-foreground">
+                        {assetTypeReadinessGuidance(selectedAsset.asset_type)}
+                      </div>
+                    </div>
                   )}
 
                   {exportedMarkdown && selectedAsset.id === exportMutation.variables && (
