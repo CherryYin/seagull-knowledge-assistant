@@ -102,7 +102,11 @@ def render_generation_context(context: GenerationContext) -> str:
 
 
 def _asset_kind_label(asset_type: str) -> str:
-    return "research brief" if asset_type == "research_brief" else "blog post"
+    if asset_type == "research_brief":
+        return "research brief"
+    if asset_type == "knowledge_pack":
+        return "knowledge pack"
+    return "blog post"
 
 
 def _fallback_outline(asset: Asset) -> str:
@@ -128,6 +132,27 @@ def _fallback_outline(asset: Asset) -> str:
                 "",
                 "## Recommendations",
                 "- Specific decisions or next actions",
+            ]
+        )
+    if asset.asset_type == "knowledge_pack":
+        return "\n".join(
+            [
+                f"# {asset.title}",
+                "",
+                "## Overview",
+                f"- {asset.brief or 'What this pack covers and who it is for.'}",
+                "",
+                "## What’s Included",
+                "- Key sources, notes, wiki pages, and memory nodes in this pack",
+                "",
+                "## Core Themes",
+                "- The main ideas or threads across the material",
+                "",
+                "## Recommended Reading Path",
+                "- Suggested order for consuming the material",
+                "",
+                "## Open Questions",
+                "- Gaps, ambiguities, or what to research next",
             ]
         )
     return "\n".join(
@@ -173,6 +198,26 @@ def _fallback_draft(asset: Asset) -> str:
                 "",
                 "## Recommendations",
                 "Convert the analysis into concrete next actions.",
+            ]
+        )
+    elif asset.asset_type == "knowledge_pack":
+        sections.extend(
+            [
+                "",
+                "## Overview",
+                "Summarize what this pack contains, who it is for, and when to use it.",
+                "",
+                "## What’s Included",
+                "List the most important sources, notes, wiki pages, and memory nodes included in the pack.",
+                "",
+                "## Core Themes",
+                "Synthesize the major themes that connect the materials.",
+                "",
+                "## Recommended Reading Path",
+                "Suggest a reading or onboarding order for the pack.",
+                "",
+                "## Open Questions",
+                "Highlight unresolved questions, weak spots, or next areas to deepen.",
             ]
         )
     else:
@@ -283,6 +328,58 @@ def _research_brief_export_markdown(asset: Asset) -> str:
     return "\n".join(parts).strip()
 
 
+def _knowledge_pack_export_markdown(asset: Asset) -> str:
+    brief = (asset.brief or "").strip()
+    draft = _strip_title_heading(asset.draft_content or "", asset.title)
+    outline = _strip_title_heading(asset.outline or "", asset.title)
+
+    overview = _markdown_section(draft, "Overview")
+    included = _markdown_section(draft, "What’s Included") or _markdown_section(draft, "What's Included")
+    themes = _markdown_section(draft, "Core Themes")
+    path = _markdown_section(draft, "Recommended Reading Path")
+    questions = _markdown_section(draft, "Open Questions")
+
+    parts = [f"# {asset.title}", "", "> [!info] Knowledge Pack"]
+    if brief:
+        parts.append(f"> {brief}")
+    else:
+        parts.append("> Curated pack of related knowledge artifacts for reuse, onboarding, or structured exploration.")
+
+    parts.extend(
+        [
+            "",
+            "## Pack Snapshot",
+            "",
+            f"- **Asset Type:** {_asset_kind_label(asset.asset_type).title()}",
+            f"- **Status:** {asset.status.replace('_', ' ').title()}",
+            f"- **Sources:** {len(asset.source_refs or [])}",
+            f"- **Notes:** {len(asset.note_refs or [])}",
+            f"- **Knowledge Tree Nodes:** {len(asset.memory_refs or [])}",
+            f"- **Wiki Pages:** {len(asset.wiki_refs or [])}",
+        ]
+    )
+
+    if overview:
+        parts.extend(["", "## Overview", "", overview])
+    elif brief:
+        parts.extend(["", "## Overview", "", brief])
+    if included:
+        parts.extend(["", "## What’s Included", "", included])
+    if themes:
+        parts.extend(["", "## Core Themes", "", themes])
+    if path:
+        parts.extend(["", "## Recommended Reading Path", "", path])
+    if questions:
+        parts.extend(["", "## Open Questions", "", questions])
+    if draft:
+        parts.extend(["", "## Full Pack", "", draft])
+    if outline:
+        parts.extend(["", "## Appendix A — Working Outline", "", outline])
+    if asset.reference_notes:
+        parts.extend(["", "## Appendix B — References", "", asset.reference_notes.strip()])
+    return "\n".join(parts).strip()
+
+
 async def _generate_with_fallback(
     session: AsyncSession,
     *,
@@ -324,6 +421,14 @@ async def generate_outline(session: AsyncSession, *, asset: Asset) -> str:
             "Produce a concise Markdown outline with sections for executive summary, findings, risks, and recommendations. "
             "Use stable wiki as high-level context, but preserve traceability back to raw evidence."
         )
+    elif asset.asset_type == "knowledge_pack":
+        system_prompt = (
+            "You are a knowledge pack outline generator for source-driven knowledge assets. "
+            "Produce a concise Markdown outline for a reusable curated knowledge pack. "
+            "Include sections for overview, what's included, core themes, recommended reading path, and open questions. "
+            "Optimize for onboarding, reuse, and guided exploration rather than narrative argument. "
+            "Use stable wiki as high-level context, but preserve traceability back to raw evidence."
+        )
     return await _generate_with_fallback(
         session,
         asset=asset,
@@ -352,6 +457,12 @@ async def generate_draft(session: AsyncSession, *, asset: Asset) -> str:
         system_prompt = (
             "You are a source-grounded research brief generator. Write a Markdown brief that follows the outline, "
             "highlights findings, risks, and recommendations, and keeps claims grounded in raw evidence."
+        )
+    elif asset.asset_type == "knowledge_pack":
+        system_prompt = (
+            "You are a source-grounded knowledge pack generator. Write a Markdown pack that follows the outline, "
+            "curates the most useful materials, explains what is included, groups them into themes, and recommends a clear reading path grounded in raw evidence. "
+            "The result should feel like a reusable onboarding or reference bundle, not a persuasive essay."
         )
     return await _generate_with_fallback(
         session,
@@ -417,6 +528,19 @@ def check_readiness(asset: Asset) -> tuple[bool, list[str], list[str], list[str]
             blocking.append("Research brief requires at least one source or note reference")
         if not (asset.reference_notes or "").strip():
             blocking.append("Research brief requires evidence references before export")
+    if asset.asset_type == "knowledge_pack":
+        total_refs = len(asset.source_refs or []) + len(asset.note_refs or []) + len(asset.memory_refs or []) + len(asset.wiki_refs or [])
+        if total_refs < 3:
+            blocking.append("Knowledge pack requires at least three attached references")
+        if not (asset.reference_notes or "").strip():
+            blocking.append("Knowledge pack requires references before export")
+        draft_text = (asset.draft_content or "").lower()
+        if "overview" not in draft_text:
+            blocking.append("Knowledge pack requires an 'overview' section")
+        if "what's included" not in draft_text and "what’s included" not in draft_text:
+            blocking.append("Knowledge pack requires a 'what’s included' section")
+        if "recommended reading path" not in draft_text:
+            blocking.append("Knowledge pack requires a 'recommended reading path' section")
     if asset.wiki_refs and not asset.source_refs and not asset.note_refs and not asset.memory_refs:
         warnings.append("Wiki context is attached without raw source/note references")
     if asset.wiki_refs and not (asset.reference_notes or "").strip():
@@ -439,6 +563,11 @@ def check_readiness(asset: Asset) -> tuple[bool, list[str], list[str], list[str]
         for heading in ["executive summary", "findings", "risks", "recommendations"]:
             if heading not in draft_text:
                 suggestions.append(f"Research brief draft should include a '{heading}' section")
+    if asset.asset_type == "knowledge_pack":
+        draft_text = (asset.draft_content or "").lower()
+        for heading in ["core themes", "open questions"]:
+            if heading not in draft_text:
+                suggestions.append(f"Knowledge pack draft should include a '{heading}' section")
     wiki_claim_health = _estimate_wiki_claim_health(asset)
     weak_claim_count = wiki_claim_health["weak_claim_count"]
     total_claim_count = wiki_claim_health["total_claim_count"]
@@ -452,6 +581,8 @@ def check_readiness(asset: Asset) -> tuple[bool, list[str], list[str], list[str]
 def export_markdown(asset: Asset) -> str:
     if asset.asset_type == "research_brief":
         return _research_brief_export_markdown(asset)
+    if asset.asset_type == "knowledge_pack":
+        return _knowledge_pack_export_markdown(asset)
     parts = [f"# {asset.title}"]
     if asset.brief:
         parts.extend(["", asset.brief])

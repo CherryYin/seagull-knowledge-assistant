@@ -26,13 +26,19 @@ const STATUS_LABELS = {
 } as const;
 
 function assetTypeLabel(assetType?: string) {
-  return assetType === "research_brief" ? "Research Brief" : "Blog Post";
+  if (assetType === "research_brief") return "Research Brief";
+  if (assetType === "knowledge_pack") return "Knowledge Pack";
+  return "Blog Post";
 }
 
 function assetTypeDescription(assetType?: string) {
-  return assetType === "research_brief"
-    ? "A structured research deliverable focused on findings, risks, recommendations, and evidence-backed references."
-    : "An editable blog draft focused on angle, audience, and readable publish-ready structure.";
+  if (assetType === "research_brief") {
+    return "A structured research deliverable focused on findings, risks, recommendations, and evidence-backed references.";
+  }
+  if (assetType === "knowledge_pack") {
+    return "A reusable knowledge bundle focused on curation, reading order, and traceable references.";
+  }
+  return "An editable blog draft focused on angle, audience, and readable publish-ready structure.";
 }
 
 const RESEARCH_BRIEF_CHECKLIST = [
@@ -41,6 +47,14 @@ const RESEARCH_BRIEF_CHECKLIST = [
   "Synthesize findings instead of repeating raw notes",
   "Call out risks, uncertainty, and conflicting evidence",
   "End with recommendations supported by references",
+];
+
+const KNOWLEDGE_PACK_CHECKLIST = [
+  "Clarify who this pack serves",
+  "Curate enough material to justify the bundle",
+  "Explain what is included and why",
+  "Provide a suggested reading path",
+  "Keep references readable and reusable",
 ];
 
 function formatProductionEventType(eventType?: string) {
@@ -199,12 +213,29 @@ export function AssetDetailPage() {
                 </CardContent>
               </Card>
             )}
+            {asset.asset_type === "knowledge_pack" && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Knowledge Pack Checklist</CardTitle>
+                  <CardDescription>Use this as a quick review frame before export or reuse.</CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-2 md:grid-cols-2">
+                  {KNOWLEDGE_PACK_CHECKLIST.map((item) => (
+                    <div key={item} className="rounded-md border border-border/70 px-3 py-2 text-sm text-muted-foreground">
+                      {item}
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Brief</CardTitle>
                 <CardDescription>
                   {asset.asset_type === "research_brief"
                     ? "Decision question, scope, audience, and framing for this brief."
+                    : asset.asset_type === "knowledge_pack"
+                      ? "Audience, contents, and why this pack should exist."
                     : "Editorial direction for this asset."}
                 </CardDescription>
               </CardHeader>
@@ -220,6 +251,8 @@ export function AssetDetailPage() {
                 <CardDescription>
                   {asset.asset_type === "research_brief"
                     ? "Attached evidence and reference notes. Research briefs should keep this section readable and auditable before export."
+                    : asset.asset_type === "knowledge_pack"
+                      ? "Attached references and reference notes. Knowledge packs should keep this section reusable and easy to navigate."
                     : "Attached references and reference notes."}
                 </CardDescription>
               </CardHeader>
@@ -273,6 +306,9 @@ export function AssetDetailPage() {
                 {asset.asset_type === "research_brief" && (
                   <CardDescription>Research briefs should usually cover executive summary, findings, risks, recommendations, and references.</CardDescription>
                 )}
+                {asset.asset_type === "knowledge_pack" && (
+                  <CardDescription>Knowledge packs should usually cover overview, included materials, core themes, reading path, and references.</CardDescription>
+                )}
               </CardHeader>
               <CardContent>
                 <pre className="whitespace-pre-wrap rounded-md border bg-muted/30 p-3 text-sm">{asset.outline || "(empty)"}</pre>
@@ -284,6 +320,9 @@ export function AssetDetailPage() {
                 <CardTitle className="text-base">Draft</CardTitle>
                 {asset.asset_type === "research_brief" && (
                   <CardDescription>Keep the brief evidence-backed and decision-oriented rather than purely narrative.</CardDescription>
+                )}
+                {asset.asset_type === "knowledge_pack" && (
+                  <CardDescription>Keep the pack curated, reusable, and explicit about what to read first and why.</CardDescription>
                 )}
               </CardHeader>
               <CardContent>

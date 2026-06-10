@@ -447,6 +447,102 @@ def test_export_markdown_uses_research_brief_template():
     assert "## Appendix A — Working Outline" in content
 
 
+def test_check_readiness_requires_enough_references_for_knowledge_pack():
+    from pkg.services.application.blog_generation import check_readiness
+
+    asset = Asset(
+        id="asset-pack-1",
+        user_id="user-1",
+        asset_type="knowledge_pack",
+        status="draft",
+        title="Agent Memory Pack",
+        brief="Onboarding pack for agent memory work.",
+        outline="## Overview",
+        draft_content="## Overview\n\nSomething\n\n## What’s Included\n\nSomething\n\n## Recommended Reading Path\n\nSomething",
+        reference_notes=None,
+        editor_feedback=None,
+        source_refs=["src-1"],
+        note_refs=[],
+        memory_refs=[],
+        wiki_refs=[],
+        export_format=None,
+        exported_at=None,
+        published_at=None,
+        metadata_={},
+    )
+
+    ready, blocking, _warnings, _suggestions = check_readiness(asset)
+
+    assert ready is False
+    assert "Knowledge pack requires at least three attached references" in blocking
+    assert "Knowledge pack requires references before export" in blocking
+
+
+def test_check_readiness_requires_pack_structure_sections():
+    from pkg.services.application.blog_generation import check_readiness
+
+    asset = Asset(
+        id="asset-pack-2",
+        user_id="user-1",
+        asset_type="knowledge_pack",
+        status="draft",
+        title="Agent Memory Pack",
+        brief="Onboarding pack for agent memory work.",
+        outline="## Overview",
+        draft_content="## Overview\n\nSomething\n\n## Core Themes\n\nSomething",
+        reference_notes="## Source References\n\n- Source: Internal note (src-1)",
+        editor_feedback=None,
+        source_refs=["src-1"],
+        note_refs=["note-1"],
+        memory_refs=["mem-1"],
+        wiki_refs=[],
+        export_format=None,
+        exported_at=None,
+        published_at=None,
+        metadata_={},
+    )
+
+    ready, blocking, _warnings, suggestions = check_readiness(asset)
+
+    assert ready is False
+    assert "Knowledge pack requires a 'what’s included' section" in blocking
+    assert "Knowledge pack requires a 'recommended reading path' section" in blocking
+    assert any("open questions" in item for item in suggestions)
+
+
+def test_export_markdown_uses_knowledge_pack_template():
+    from pkg.services.application.blog_generation import export_markdown
+
+    asset = Asset(
+        id="asset-pack-1",
+        user_id="user-1",
+        asset_type="knowledge_pack",
+        status="ready_to_export",
+        title="Agent Memory Pack",
+        brief="Onboarding pack for agent memory work.",
+        outline="# Agent Memory Pack\n\n## Overview\n\n- Summary",
+        draft_content="# Agent Memory Pack\n\n## Overview\n\nIntro\n\n## What’s Included\n\n- Notes\n\n## Core Themes\n\n- Theme\n\n## Recommended Reading Path\n\n- Step 1",
+        reference_notes="## Source References\n\n- Source: Internal note (src-1)",
+        editor_feedback=None,
+        source_refs=["src-1"],
+        note_refs=["note-1"],
+        memory_refs=["mem-1"],
+        wiki_refs=[],
+        export_format=None,
+        exported_at=None,
+        published_at=None,
+        metadata_={},
+    )
+
+    content = export_markdown(asset)
+
+    assert "> [!info] Knowledge Pack" in content
+    assert "## Pack Snapshot" in content
+    assert "## What’s Included" in content
+    assert "## Recommended Reading Path" in content
+    assert "## Appendix B — References" in content
+
+
 @pytest.mark.asyncio
 async def test_generate_outline_falls_back_to_research_brief_template():
     from pkg.services.application.blog_generation import generate_outline
