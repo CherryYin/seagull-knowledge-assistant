@@ -422,6 +422,23 @@ export function NoteDetailPage() {
                     >
                       <FileText className="h-4 w-4" /> Create Pack
                     </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => note && navigate("/assets", {
+                        state: {
+                          assetHandoff: buildAssetHandoffState({
+                            title: `${note.title} Issue`,
+                            brief: `Create a newsletter issue from note: ${note.title}`,
+                            asset_type: "newsletter_issue",
+                            note_refs: [note.id],
+                            source_refs: note.source_ids ?? [],
+                          }),
+                        },
+                      })}
+                    >
+                      <FileText className="h-4 w-4" /> Create Newsletter
+                    </Button>
                     <Button size="sm" variant="outline" onClick={askAgentAboutNote}>
                       <Bot className="h-4 w-4" /> Ask Agent
                     </Button>

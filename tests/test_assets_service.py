@@ -543,6 +543,75 @@ def test_export_markdown_uses_knowledge_pack_template():
     assert "## Appendix B — References" in content
 
 
+def test_check_readiness_requires_newsletter_sections_and_references():
+    from pkg.services.application.blog_generation import check_readiness
+
+    asset = Asset(
+        id="asset-news-1",
+        user_id="user-1",
+        asset_type="newsletter_issue",
+        status="draft",
+        title="Agent Systems Weekly",
+        brief="Weekly roundup for agent systems work.",
+        outline="## Issue Overview",
+        draft_content="## Issue Overview\n\nIntro\n\n## Why It Matters\n\nSomething",
+        reference_notes=None,
+        editor_feedback=None,
+        source_refs=["src-1"],
+        note_refs=["note-1"],
+        memory_refs=[],
+        wiki_refs=[],
+        export_format=None,
+        exported_at=None,
+        published_at=None,
+        metadata_={},
+    )
+
+    ready, blocking, _warnings, suggestions = check_readiness(asset)
+
+    assert ready is False
+    assert "Newsletter issue requires at least three attached references" in blocking
+    assert "Newsletter issue requires references before export" in blocking
+    assert "Newsletter issue requires an 'editor’s note' section" in blocking
+    assert "Newsletter issue requires a 'featured items' section" in blocking
+    assert "Newsletter issue requires a 'recommended next reads' section" in blocking
+    assert any("issue overview" in item for item in suggestions) is False
+
+
+def test_export_markdown_uses_newsletter_template():
+    from pkg.services.application.blog_generation import export_markdown
+
+    asset = Asset(
+        id="asset-news-1",
+        user_id="user-1",
+        asset_type="newsletter_issue",
+        status="ready_to_export",
+        title="Agent Systems Weekly",
+        brief="Weekly roundup for agent systems work.",
+        outline="# Agent Systems Weekly\n\n## Issue Overview\n\n- Summary",
+        draft_content="# Agent Systems Weekly\n\n## Issue Overview\n\nIntro\n\n## Editor’s Note\n\nNote\n\n## Featured Items\n\n- Item\n\n## Why It Matters\n\nMatters\n\n## Recommended Next Reads\n\n- Read next",
+        reference_notes="## Source References\n\n- Source: Internal note (src-1)",
+        editor_feedback=None,
+        source_refs=["src-1"],
+        note_refs=["note-1"],
+        memory_refs=["mem-1"],
+        wiki_refs=[],
+        export_format=None,
+        exported_at=None,
+        published_at=None,
+        metadata_={},
+    )
+
+    content = export_markdown(asset)
+
+    assert "> [!tip] Newsletter Issue" in content
+    assert "## Issue Snapshot" in content
+    assert "## Editor’s Note" in content
+    assert "## Featured Items" in content
+    assert "## Recommended Next Reads" in content
+    assert "## Appendix B — References" in content
+
+
 @pytest.mark.asyncio
 async def test_generate_outline_falls_back_to_research_brief_template():
     from pkg.services.application.blog_generation import generate_outline

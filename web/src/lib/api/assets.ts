@@ -1,7 +1,7 @@
 import { request } from "./client";
 
 export type AssetStatus = "draft" | "in_review" | "ready_to_export" | "exported" | "published" | "archived";
-export type AssetType = "blog_post" | "research_brief" | "knowledge_pack";
+export type AssetType = "blog_post" | "research_brief" | "knowledge_pack" | "newsletter_issue";
 
 export interface Asset {
   id: string;

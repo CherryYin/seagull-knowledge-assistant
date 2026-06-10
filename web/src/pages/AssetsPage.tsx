@@ -27,6 +27,7 @@ const STATUS_LABELS: Record<AssetStatus, string> = {
 function assetTypeLabel(assetType: AssetType) {
   if (assetType === "research_brief") return "Research Brief";
   if (assetType === "knowledge_pack") return "Knowledge Pack";
+  if (assetType === "newsletter_issue") return "Newsletter Issue";
   return "Blog Post";
 }
 
@@ -36,6 +37,9 @@ function assetTypeDescription(assetType: AssetType) {
   }
   if (assetType === "knowledge_pack") {
     return "A reusable bundle of related knowledge artifacts with themes, reading order, and references.";
+  }
+  if (assetType === "newsletter_issue") {
+    return "A curated issue draft with editorial framing, featured items, and suggested next reads.";
   }
   return "Readable, publish-oriented writing for a clear audience and angle.";
 }
@@ -54,6 +58,14 @@ const KNOWLEDGE_PACK_CHECKLIST = [
   "Explain what is included, not just why it matters",
   "Suggest a reading path or onboarding order",
   "Keep the pack reusable with clear references",
+];
+
+const NEWSLETTER_ISSUE_CHECKLIST = [
+  "Clarify the theme or angle of this issue",
+  "Select a small set of featured items worth sending",
+  "Write a short editor's note that frames the issue",
+  "Explain why the items matter right now",
+  "End with clear next reads and readable references",
 ];
 
 function ReadinessList({
@@ -246,7 +258,7 @@ export function AssetsPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="grid gap-2 md:grid-cols-3">
+            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
               <button
                 type="button"
                 onClick={() => setAssetType("blog_post")}
@@ -271,9 +283,17 @@ export function AssetsPage() {
                 <div className="flex items-center gap-2 font-medium"><ScrollText className="h-4 w-4" /> Knowledge Pack</div>
                 <p className="mt-1 text-xs text-muted-foreground">Reusable bundle of related sources, notes, wiki pages, and guided reading order.</p>
               </button>
+              <button
+                type="button"
+                onClick={() => setAssetType("newsletter_issue")}
+                className={`rounded-lg border p-3 text-left transition-colors ${assetType === "newsletter_issue" ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}
+              >
+                <div className="flex items-center gap-2 font-medium"><ScrollText className="h-4 w-4" /> Newsletter Issue</div>
+                <p className="mt-1 text-xs text-muted-foreground">Curated issue draft with editorial framing, featured items, and next reads.</p>
+              </button>
             </div>
-            <Input placeholder={assetType === "research_brief" ? "Research brief title" : assetType === "knowledge_pack" ? "Knowledge pack title" : "Asset title"} value={title} onChange={(e) => setTitle(e.target.value)} />
-            <Textarea placeholder={assetType === "research_brief" ? "Decision question, scope, intended audience, and why this brief matters" : assetType === "knowledge_pack" ? "Who this pack is for, what it includes, and why it should exist" : "Editorial brief"} value={brief} onChange={(e) => setBrief(e.target.value)} rows={4} />
+            <Input placeholder={assetType === "research_brief" ? "Research brief title" : assetType === "knowledge_pack" ? "Knowledge pack title" : assetType === "newsletter_issue" ? "Newsletter issue title" : "Asset title"} value={title} onChange={(e) => setTitle(e.target.value)} />
+            <Textarea placeholder={assetType === "research_brief" ? "Decision question, scope, intended audience, and why this brief matters" : assetType === "knowledge_pack" ? "Who this pack is for, what it includes, and why it should exist" : assetType === "newsletter_issue" ? "Theme of this issue, target reader, and what featured items it should include" : "Editorial brief"} value={brief} onChange={(e) => setBrief(e.target.value)} rows={4} />
             <Textarea placeholder="Opinion / thesis" value={opinionNotes} onChange={(e) => setOpinionNotes(e.target.value)} rows={3} />
             <Textarea placeholder="Style notes / tone instructions" value={styleNotes} onChange={(e) => setStyleNotes(e.target.value)} rows={3} />
             <div className="grid gap-4 md:grid-cols-2">
@@ -367,6 +387,8 @@ export function AssetsPage() {
                     ? `Working on research brief: ${selectedAsset.title}`
                     : selectedAsset.asset_type === "knowledge_pack"
                       ? `Working on knowledge pack: ${selectedAsset.title}`
+                      : selectedAsset.asset_type === "newsletter_issue"
+                        ? `Working on newsletter issue: ${selectedAsset.title}`
                     : `Working on ${selectedAsset.title}`
                   : "Select or create an asset"}
               </CardDescription>
@@ -402,14 +424,26 @@ export function AssetsPage() {
                       </div>
                     </div>
                   )}
+                  {selectedAsset.asset_type === "newsletter_issue" && (
+                    <div className="rounded-lg border border-border/70 bg-background p-4">
+                      <p className="text-sm font-semibold text-foreground">Newsletter Issue Checklist</p>
+                      <div className="mt-3 grid gap-2 md:grid-cols-2">
+                        {NEWSLETTER_ISSUE_CHECKLIST.map((item) => (
+                          <div key={item} className="rounded-md border border-border/60 px-3 py-2 text-xs text-muted-foreground">
+                            {item}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <div className="flex flex-wrap gap-2">
                     <Button variant="outline" onClick={() => generateOutlineMutation.mutate(selectedAsset.id)}>
                       <Sparkles className="mr-2 h-4 w-4" />
-                      {selectedAsset.asset_type === "research_brief" ? "Generate Brief Outline" : selectedAsset.asset_type === "knowledge_pack" ? "Generate Pack Outline" : "Generate Outline"}
+                      {selectedAsset.asset_type === "research_brief" ? "Generate Brief Outline" : selectedAsset.asset_type === "knowledge_pack" ? "Generate Pack Outline" : selectedAsset.asset_type === "newsletter_issue" ? "Generate Issue Outline" : "Generate Outline"}
                     </Button>
                     <Button variant="outline" onClick={() => generateDraftMutation.mutate(selectedAsset.id)}>
                       <FileText className="mr-2 h-4 w-4" />
-                      {selectedAsset.asset_type === "research_brief" ? "Generate Brief Draft" : selectedAsset.asset_type === "knowledge_pack" ? "Generate Pack Draft" : "Generate Draft"}
+                      {selectedAsset.asset_type === "research_brief" ? "Generate Brief Draft" : selectedAsset.asset_type === "knowledge_pack" ? "Generate Pack Draft" : selectedAsset.asset_type === "newsletter_issue" ? "Generate Issue Draft" : "Generate Draft"}
                     </Button>
                     <Button variant="outline" onClick={() => attachReferencesMutation.mutate(selectedAsset.id)}>
                       <CheckCircle2 className="mr-2 h-4 w-4" />
@@ -442,6 +476,11 @@ export function AssetsPage() {
                           Good knowledge packs explain who the pack is for, what is included, and how to work through the material.
                         </p>
                       )}
+                      {selectedAsset.asset_type === "newsletter_issue" && (
+                        <p className="text-xs text-muted-foreground">
+                          Good newsletter issues define the theme, frame the issue with a short editorial note, and highlight why these items are worth reading now.
+                        </p>
+                      )}
                     </div>
                     <div className="space-y-2">
                       <h3 className="text-sm font-semibold">References</h3>
@@ -454,6 +493,11 @@ export function AssetsPage() {
                       {selectedAsset.asset_type === "knowledge_pack" && (
                         <p className="text-xs text-muted-foreground">
                           Knowledge packs should attach readable references before export so the bundle stays reusable and navigable.
+                        </p>
+                      )}
+                      {selectedAsset.asset_type === "newsletter_issue" && (
+                        <p className="text-xs text-muted-foreground">
+                          Newsletter issues should attach readable references before export so every featured item can be traced back to source material.
                         </p>
                       )}
                     </div>

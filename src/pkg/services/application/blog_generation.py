@@ -106,6 +106,8 @@ def _asset_kind_label(asset_type: str) -> str:
         return "research brief"
     if asset_type == "knowledge_pack":
         return "knowledge pack"
+    if asset_type == "newsletter_issue":
+        return "newsletter issue"
     return "blog post"
 
 
@@ -153,6 +155,27 @@ def _fallback_outline(asset: Asset) -> str:
                 "",
                 "## Open Questions",
                 "- Gaps, ambiguities, or what to research next",
+            ]
+        )
+    if asset.asset_type == "newsletter_issue":
+        return "\n".join(
+            [
+                f"# {asset.title}",
+                "",
+                "## Issue Overview",
+                f"- {asset.brief or 'What this issue covers and who it is for.'}",
+                "",
+                "## Editor’s Note",
+                "- The framing or theme for this issue",
+                "",
+                "## Featured Items",
+                "- The most important links, notes, or takeaways in this issue",
+                "",
+                "## Why It Matters",
+                "- Why the selected items matter now",
+                "",
+                "## Recommended Next Reads",
+                "- What readers should open next",
             ]
         )
     return "\n".join(
@@ -218,6 +241,26 @@ def _fallback_draft(asset: Asset) -> str:
                 "",
                 "## Open Questions",
                 "Highlight unresolved questions, weak spots, or next areas to deepen.",
+            ]
+        )
+    elif asset.asset_type == "newsletter_issue":
+        sections.extend(
+            [
+                "",
+                "## Issue Overview",
+                "Summarize the theme of this issue and what readers will get from it.",
+                "",
+                "## Editor’s Note",
+                "Write a short editorial note that frames the issue.",
+                "",
+                "## Featured Items",
+                "List the most important items included in this issue, with short explanations.",
+                "",
+                "## Why It Matters",
+                "Explain why these items are worth the reader’s attention now.",
+                "",
+                "## Recommended Next Reads",
+                "Suggest follow-up links or next items to read after this issue.",
             ]
         )
     else:
@@ -380,6 +423,58 @@ def _knowledge_pack_export_markdown(asset: Asset) -> str:
     return "\n".join(parts).strip()
 
 
+def _newsletter_issue_export_markdown(asset: Asset) -> str:
+    brief = (asset.brief or "").strip()
+    draft = _strip_title_heading(asset.draft_content or "", asset.title)
+    outline = _strip_title_heading(asset.outline or "", asset.title)
+
+    overview = _markdown_section(draft, "Issue Overview")
+    editors_note = _markdown_section(draft, "Editor’s Note") or _markdown_section(draft, "Editor's Note")
+    featured = _markdown_section(draft, "Featured Items")
+    matters = _markdown_section(draft, "Why It Matters")
+    next_reads = _markdown_section(draft, "Recommended Next Reads")
+
+    parts = [f"# {asset.title}", "", "> [!tip] Newsletter Issue"]
+    if brief:
+        parts.append(f"> {brief}")
+    else:
+        parts.append("> Curated issue draft for sending a set of relevant updates, links, and takeaways to readers.")
+
+    parts.extend(
+        [
+            "",
+            "## Issue Snapshot",
+            "",
+            f"- **Asset Type:** {_asset_kind_label(asset.asset_type).title()}",
+            f"- **Status:** {asset.status.replace('_', ' ').title()}",
+            f"- **Sources:** {len(asset.source_refs or [])}",
+            f"- **Notes:** {len(asset.note_refs or [])}",
+            f"- **Knowledge Tree Nodes:** {len(asset.memory_refs or [])}",
+            f"- **Wiki Pages:** {len(asset.wiki_refs or [])}",
+        ]
+    )
+
+    if overview:
+        parts.extend(["", "## Issue Overview", "", overview])
+    elif brief:
+        parts.extend(["", "## Issue Overview", "", brief])
+    if editors_note:
+        parts.extend(["", "## Editor’s Note", "", editors_note])
+    if featured:
+        parts.extend(["", "## Featured Items", "", featured])
+    if matters:
+        parts.extend(["", "## Why It Matters", "", matters])
+    if next_reads:
+        parts.extend(["", "## Recommended Next Reads", "", next_reads])
+    if draft:
+        parts.extend(["", "## Full Issue", "", draft])
+    if outline:
+        parts.extend(["", "## Appendix A — Working Outline", "", outline])
+    if asset.reference_notes:
+        parts.extend(["", "## Appendix B — References", "", asset.reference_notes.strip()])
+    return "\n".join(parts).strip()
+
+
 async def _generate_with_fallback(
     session: AsyncSession,
     *,
@@ -429,6 +524,13 @@ async def generate_outline(session: AsyncSession, *, asset: Asset) -> str:
             "Optimize for onboarding, reuse, and guided exploration rather than narrative argument. "
             "Use stable wiki as high-level context, but preserve traceability back to raw evidence."
         )
+    elif asset.asset_type == "newsletter_issue":
+        system_prompt = (
+            "You are a newsletter issue outline generator for source-driven knowledge assets. "
+            "Produce a concise Markdown outline for a readable issue with sections for issue overview, editor's note, featured items, why it matters, and recommended next reads. "
+            "Optimize for curation and reader flow rather than exhaustive analysis. "
+            "Use stable wiki as high-level context, but preserve traceability back to raw evidence."
+        )
     return await _generate_with_fallback(
         session,
         asset=asset,
@@ -463,6 +565,12 @@ async def generate_draft(session: AsyncSession, *, asset: Asset) -> str:
             "You are a source-grounded knowledge pack generator. Write a Markdown pack that follows the outline, "
             "curates the most useful materials, explains what is included, groups them into themes, and recommends a clear reading path grounded in raw evidence. "
             "The result should feel like a reusable onboarding or reference bundle, not a persuasive essay."
+        )
+    elif asset.asset_type == "newsletter_issue":
+        system_prompt = (
+            "You are a source-grounded newsletter issue generator. Write a Markdown issue draft that follows the outline, "
+            "curates the most important items, uses a light editorial voice, and gives readers a clear sense of what to read and why. "
+            "The result should feel like a sendable issue rather than a report or essay."
         )
     return await _generate_with_fallback(
         session,
@@ -541,6 +649,19 @@ def check_readiness(asset: Asset) -> tuple[bool, list[str], list[str], list[str]
             blocking.append("Knowledge pack requires a 'what’s included' section")
         if "recommended reading path" not in draft_text:
             blocking.append("Knowledge pack requires a 'recommended reading path' section")
+    if asset.asset_type == "newsletter_issue":
+        total_refs = len(asset.source_refs or []) + len(asset.note_refs or []) + len(asset.memory_refs or []) + len(asset.wiki_refs or [])
+        if total_refs < 3:
+            blocking.append("Newsletter issue requires at least three attached references")
+        if not (asset.reference_notes or "").strip():
+            blocking.append("Newsletter issue requires references before export")
+        draft_text = (asset.draft_content or "").lower()
+        if "editor's note" not in draft_text and "editor’s note" not in draft_text:
+            blocking.append("Newsletter issue requires an 'editor’s note' section")
+        if "featured items" not in draft_text:
+            blocking.append("Newsletter issue requires a 'featured items' section")
+        if "recommended next reads" not in draft_text:
+            blocking.append("Newsletter issue requires a 'recommended next reads' section")
     if asset.wiki_refs and not asset.source_refs and not asset.note_refs and not asset.memory_refs:
         warnings.append("Wiki context is attached without raw source/note references")
     if asset.wiki_refs and not (asset.reference_notes or "").strip():
@@ -568,6 +689,11 @@ def check_readiness(asset: Asset) -> tuple[bool, list[str], list[str], list[str]
         for heading in ["core themes", "open questions"]:
             if heading not in draft_text:
                 suggestions.append(f"Knowledge pack draft should include a '{heading}' section")
+    if asset.asset_type == "newsletter_issue":
+        draft_text = (asset.draft_content or "").lower()
+        for heading in ["issue overview", "why it matters"]:
+            if heading not in draft_text:
+                suggestions.append(f"Newsletter issue draft should include a '{heading}' section")
     wiki_claim_health = _estimate_wiki_claim_health(asset)
     weak_claim_count = wiki_claim_health["weak_claim_count"]
     total_claim_count = wiki_claim_health["total_claim_count"]
@@ -583,6 +709,8 @@ def export_markdown(asset: Asset) -> str:
         return _research_brief_export_markdown(asset)
     if asset.asset_type == "knowledge_pack":
         return _knowledge_pack_export_markdown(asset)
+    if asset.asset_type == "newsletter_issue":
+        return _newsletter_issue_export_markdown(asset)
     parts = [f"# {asset.title}"]
     if asset.brief:
         parts.extend(["", asset.brief])

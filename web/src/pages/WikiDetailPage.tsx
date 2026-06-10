@@ -374,6 +374,24 @@ export function WikiDetailPage() {
               >
                 <ExternalLink className="h-4 w-4" /> Create Pack
               </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate("/assets", {
+                  state: {
+                    assetHandoff: buildAssetHandoffState({
+                      title: `${page.title} Issue`,
+                      brief: `Create a newsletter issue from wiki: ${page.title}`,
+                      asset_type: "newsletter_issue",
+                      wiki_refs: [page.id],
+                      source_refs: page.derived_from_sources,
+                      note_refs: page.derived_from_notes,
+                    }),
+                  },
+                })}
+              >
+                <ExternalLink className="h-4 w-4" /> Create Newsletter
+              </Button>
               <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" onClick={() => setDeleteOpen(true)}>
                 <Trash2 className="h-4 w-4" /> Delete
               </Button>

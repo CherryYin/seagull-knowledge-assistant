@@ -28,6 +28,7 @@ const STATUS_LABELS = {
 function assetTypeLabel(assetType?: string) {
   if (assetType === "research_brief") return "Research Brief";
   if (assetType === "knowledge_pack") return "Knowledge Pack";
+  if (assetType === "newsletter_issue") return "Newsletter Issue";
   return "Blog Post";
 }
 
@@ -37,6 +38,9 @@ function assetTypeDescription(assetType?: string) {
   }
   if (assetType === "knowledge_pack") {
     return "A reusable knowledge bundle focused on curation, reading order, and traceable references.";
+  }
+  if (assetType === "newsletter_issue") {
+    return "A curated issue draft focused on editorial framing, featured items, and sendable structure.";
   }
   return "An editable blog draft focused on angle, audience, and readable publish-ready structure.";
 }
@@ -55,6 +59,14 @@ const KNOWLEDGE_PACK_CHECKLIST = [
   "Explain what is included and why",
   "Provide a suggested reading path",
   "Keep references readable and reusable",
+];
+
+const NEWSLETTER_ISSUE_CHECKLIST = [
+  "Clarify the issue theme and target reader",
+  "Pick a small set of featured items worth sending",
+  "Frame the issue with a short editor's note",
+  "Explain why the selected items matter now",
+  "Close with next reads and readable references",
 ];
 
 function formatProductionEventType(eventType?: string) {
@@ -228,6 +240,21 @@ export function AssetDetailPage() {
                 </CardContent>
               </Card>
             )}
+            {asset.asset_type === "newsletter_issue" && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Newsletter Issue Checklist</CardTitle>
+                  <CardDescription>Use this as a quick review frame before export or sending.</CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-2 md:grid-cols-2">
+                  {NEWSLETTER_ISSUE_CHECKLIST.map((item) => (
+                    <div key={item} className="rounded-md border border-border/70 px-3 py-2 text-sm text-muted-foreground">
+                      {item}
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Brief</CardTitle>
@@ -236,6 +263,8 @@ export function AssetDetailPage() {
                     ? "Decision question, scope, audience, and framing for this brief."
                     : asset.asset_type === "knowledge_pack"
                       ? "Audience, contents, and why this pack should exist."
+                      : asset.asset_type === "newsletter_issue"
+                        ? "Issue theme, intended reader, and the kind of updates this issue should feature."
                     : "Editorial direction for this asset."}
                 </CardDescription>
               </CardHeader>
@@ -253,6 +282,8 @@ export function AssetDetailPage() {
                     ? "Attached evidence and reference notes. Research briefs should keep this section readable and auditable before export."
                     : asset.asset_type === "knowledge_pack"
                       ? "Attached references and reference notes. Knowledge packs should keep this section reusable and easy to navigate."
+                      : asset.asset_type === "newsletter_issue"
+                        ? "Attached references and reference notes. Newsletter issues should keep each featured item traceable before export."
                     : "Attached references and reference notes."}
                 </CardDescription>
               </CardHeader>
@@ -309,6 +340,9 @@ export function AssetDetailPage() {
                 {asset.asset_type === "knowledge_pack" && (
                   <CardDescription>Knowledge packs should usually cover overview, included materials, core themes, reading path, and references.</CardDescription>
                 )}
+                {asset.asset_type === "newsletter_issue" && (
+                  <CardDescription>Newsletter issues should usually cover issue overview, editor's note, featured items, why it matters, and next reads.</CardDescription>
+                )}
               </CardHeader>
               <CardContent>
                 <pre className="whitespace-pre-wrap rounded-md border bg-muted/30 p-3 text-sm">{asset.outline || "(empty)"}</pre>
@@ -323,6 +357,9 @@ export function AssetDetailPage() {
                 )}
                 {asset.asset_type === "knowledge_pack" && (
                   <CardDescription>Keep the pack curated, reusable, and explicit about what to read first and why.</CardDescription>
+                )}
+                {asset.asset_type === "newsletter_issue" && (
+                  <CardDescription>Keep the issue light, curated, and readable enough to send to an audience without turning it into a report.</CardDescription>
                 )}
               </CardHeader>
               <CardContent>

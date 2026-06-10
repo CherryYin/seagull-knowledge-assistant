@@ -442,6 +442,20 @@ function MiningArticlePreview({
             <ScrollText className="mr-1 h-4 w-4" /> Create Pack
           </Link>
         </Button>
+        <Button size="sm" variant="outline" asChild disabled={disabled}>
+          <Link
+            to={onCreateAssetHref}
+            state={{
+              assetHandoff: {
+                title: `${article.title} Issue`,
+                brief: `Create a newsletter issue from wiki candidate article: ${article.title}`,
+                asset_type: "newsletter_issue",
+              },
+            }}
+          >
+            <ScrollText className="mr-1 h-4 w-4" /> Create Newsletter
+          </Link>
+        </Button>
         <Button size="sm" onClick={onAccept} disabled={disabled || shouldGateAccept} title={shouldGateAccept ? "Reduce weak claims or keep this article in review before accepting it as a draft." : undefined}>
           <CheckCircle2 className="mr-1 h-4 w-4" /> {shouldGateAccept ? "Weak Claims Block Accept" : "Accept as Draft"}
         </Button>
