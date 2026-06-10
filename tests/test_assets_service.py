@@ -370,6 +370,40 @@ def test_check_readiness_warns_for_weak_wiki_claims():
     assert any("weak claims" in item for item in warnings)
 
 
+def test_export_markdown_uses_research_brief_template():
+    from pkg.services.application.blog_generation import export_markdown
+
+    asset = Asset(
+        id="asset-brief-1",
+        user_id="user-1",
+        asset_type="research_brief",
+        status="ready_to_export",
+        title="AI Tooling Brief",
+        brief="Assess trade-offs and recommend a default stack.",
+        outline="# AI Tooling Brief\n\n## Executive Summary\n\n- Summary\n\n## Recommendations\n\n- Pick one",
+        draft_content="# AI Tooling Brief\n\n## Executive Summary\n\nUse MiniMax for long-form synthesis.\n\n## Findings\n\n- Model quality is stable.\n\n## Risks and Open Questions\n\n- Cost should be tracked.\n\n## Recommendations\n\n- Adopt as default for parser tasks.",
+        reference_notes="## Source References\n\n- Source: Vendor docs (src-1)",
+        editor_feedback="Tighten the risk framing.",
+        source_refs=["src-1"],
+        note_refs=["note-1"],
+        memory_refs=[],
+        wiki_refs=["wiki-1"],
+        export_format=None,
+        exported_at=None,
+        published_at=None,
+        metadata_={"opinion_notes": "Bias toward operational simplicity.", "style_notes": "Write for decision-makers."},
+    )
+
+    content = export_markdown(asset)
+
+    assert "> [!abstract] Brief Overview" in content
+    assert "## Brief Snapshot" in content
+    assert "## Recommended Decision" in content
+    assert "## Full Brief" in content
+    assert "## Appendix C — Evidence and References" in content
+    assert "## Appendix A — Working Outline" in content
+
+
 @pytest.mark.asyncio
 async def test_generate_outline_falls_back_to_research_brief_template():
     from pkg.services.application.blog_generation import generate_outline

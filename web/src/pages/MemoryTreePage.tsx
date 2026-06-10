@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { Archive, Brain, Bot, ChevronRight, FileText, GitMerge, RefreshCw, RotateCcw, Search, Sparkles, XCircle } from "lucide-react";
+import { Archive, Brain, Bot, ChevronRight, FileText, GitMerge, RefreshCw, RotateCcw, ScrollText, Search, Sparkles, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -327,6 +327,20 @@ export function MemoryTreePage() {
                       },
                     })
                   }
+                  onCreateBrief={() =>
+                    navigate("/assets", {
+                      state: {
+                        assetHandoff: buildAssetHandoffState({
+                          title: `${selectedNode.title} Brief`,
+                          brief: `Create a research brief from knowledge tree node: ${selectedNode.title}`,
+                          asset_type: "research_brief",
+                          source_refs: selectedNode.derived_from_sources || [],
+                          note_refs: selectedNode.derived_from_notes || [],
+                          memory_refs: [selectedNode.id],
+                        }),
+                      },
+                    })
+                  }
                   onMerge={(targetNodeId) => mergeMutation.mutate({ id: selectedNode.id, targetNodeId })}
                   onJumpToNode={handleSelectNode}
                 />
@@ -443,6 +457,7 @@ function MemoryDetail({
   onCreateWikiDraft,
   onAskAgent,
   onCreateAsset,
+  onCreateBrief,
   onMerge,
   onJumpToNode,
 }: {
@@ -461,6 +476,7 @@ function MemoryDetail({
   onCreateWikiDraft: () => void;
   onAskAgent: () => void;
   onCreateAsset: () => void;
+  onCreateBrief: () => void;
   onMerge: (targetNodeId: string) => void;
   onJumpToNode: (node: MemoryNode) => void;
 }) {
@@ -493,6 +509,9 @@ function MemoryDetail({
           </Button>
           <Button variant="outline" onClick={onCreateAsset}>
             <Sparkles className="h-4 w-4" /> Create Asset
+          </Button>
+          <Button variant="outline" onClick={onCreateBrief}>
+            <ScrollText className="h-4 w-4" /> Create Brief
           </Button>
           {queuedRefreshCount !== null && (
             <Link to="/review/wiki-suggestions" className="text-xs text-primary hover:underline">

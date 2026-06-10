@@ -25,6 +25,24 @@ const STATUS_LABELS = {
   archived: "Archived",
 } as const;
 
+function assetTypeLabel(assetType?: string) {
+  return assetType === "research_brief" ? "Research Brief" : "Blog Post";
+}
+
+function assetTypeDescription(assetType?: string) {
+  return assetType === "research_brief"
+    ? "A structured research deliverable focused on findings, risks, recommendations, and evidence-backed references."
+    : "An editable blog draft focused on angle, audience, and readable publish-ready structure.";
+}
+
+const RESEARCH_BRIEF_CHECKLIST = [
+  "State the decision question or research objective",
+  "Scope the material and intended reader",
+  "Synthesize findings instead of repeating raw notes",
+  "Call out risks, uncertainty, and conflicting evidence",
+  "End with recommendations supported by references",
+];
+
 function formatProductionEventType(eventType?: string) {
   return String(eventType || "unknown")
     .split("_")
@@ -151,6 +169,11 @@ export function AssetDetailPage() {
             <p className="text-sm text-muted-foreground">
               {asset ? `Updated ${new Date(asset.updated_at).toLocaleString()}` : "Loading asset..."}
             </p>
+            {asset && (
+              <p className="mt-2 text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">{assetTypeLabel(asset.asset_type)}:</span> {assetTypeDescription(asset.asset_type)}
+              </p>
+            )}
           </div>
           <Button variant="outline" onClick={() => exportMutation.mutate()} disabled={!asset || exportMutation.isPending}>
             Export Markdown
@@ -161,10 +184,29 @@ export function AssetDetailPage() {
 
         {asset && (
           <>
+            {asset.asset_type === "research_brief" && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Research Brief Checklist</CardTitle>
+                  <CardDescription>Use this as a quick review frame before export or publication.</CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-2 md:grid-cols-2">
+                  {RESEARCH_BRIEF_CHECKLIST.map((item) => (
+                    <div key={item} className="rounded-md border border-border/70 px-3 py-2 text-sm text-muted-foreground">
+                      {item}
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Brief</CardTitle>
-                <CardDescription>Editorial direction for this asset.</CardDescription>
+                <CardDescription>
+                  {asset.asset_type === "research_brief"
+                    ? "Decision question, scope, audience, and framing for this brief."
+                    : "Editorial direction for this asset."}
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <pre className="whitespace-pre-wrap rounded-md border bg-muted/30 p-3 text-sm">{asset.brief || "(empty)"}</pre>
@@ -173,10 +215,14 @@ export function AssetDetailPage() {
 
             <div className="grid gap-6 md:grid-cols-2">
               <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">References</CardTitle>
-                  <CardDescription>Attached references and reference notes.</CardDescription>
-                </CardHeader>
+              <CardHeader>
+                <CardTitle className="text-base">References</CardTitle>
+                <CardDescription>
+                  {asset.asset_type === "research_brief"
+                    ? "Attached evidence and reference notes. Research briefs should keep this section readable and auditable before export."
+                    : "Attached references and reference notes."}
+                </CardDescription>
+              </CardHeader>
                 <CardContent className="space-y-3 text-sm">
                   <div className="space-y-1 text-muted-foreground">
                     <p>Sources: {asset.source_refs.length}</p>
@@ -224,6 +270,9 @@ export function AssetDetailPage() {
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Outline</CardTitle>
+                {asset.asset_type === "research_brief" && (
+                  <CardDescription>Research briefs should usually cover executive summary, findings, risks, recommendations, and references.</CardDescription>
+                )}
               </CardHeader>
               <CardContent>
                 <pre className="whitespace-pre-wrap rounded-md border bg-muted/30 p-3 text-sm">{asset.outline || "(empty)"}</pre>
@@ -233,6 +282,9 @@ export function AssetDetailPage() {
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Draft</CardTitle>
+                {asset.asset_type === "research_brief" && (
+                  <CardDescription>Keep the brief evidence-backed and decision-oriented rather than purely narrative.</CardDescription>
+                )}
               </CardHeader>
               <CardContent>
                 <pre className="max-h-[640px] overflow-auto whitespace-pre-wrap rounded-md border bg-muted/30 p-3 text-sm">{asset.draft_content || "(empty)"}</pre>

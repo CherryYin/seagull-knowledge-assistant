@@ -338,6 +338,24 @@ export function WikiDetailPage() {
               >
                 <ExternalLink className="h-4 w-4" /> Create Asset
               </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate("/assets", {
+                  state: {
+                    assetHandoff: buildAssetHandoffState({
+                      title: `${page.title} Brief`,
+                      brief: `Create a research brief from wiki: ${page.title}`,
+                      asset_type: "research_brief",
+                      wiki_refs: [page.id],
+                      source_refs: page.derived_from_sources,
+                      note_refs: page.derived_from_notes,
+                    }),
+                  },
+                })}
+              >
+                <ExternalLink className="h-4 w-4" /> Create Brief
+              </Button>
               <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" onClick={() => setDeleteOpen(true)}>
                 <Trash2 className="h-4 w-4" /> Delete
               </Button>

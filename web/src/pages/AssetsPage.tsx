@@ -1,13 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "react-router-dom";
-import { FileText, Sparkles, Download, CheckCircle2, Plus } from "lucide-react";
-import { assetsApi, notesApi, sourcesApi, type Asset, type AssetStatus } from "@/lib/api";
+import { FileText, Sparkles, Download, CheckCircle2, Plus, ScrollText } from "lucide-react";
+import { assetsApi, notesApi, sourcesApi, type Asset, type AssetStatus, type AssetType } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+
+function readinessTone(ready: boolean) {
+  return ready
+    ? "border-emerald-200 bg-emerald-50/80"
+    : "border-amber-200 bg-amber-50/70";
+}
 
 const STATUS_LABELS: Record<AssetStatus, string> = {
   draft: "Draft",
@@ -18,11 +24,55 @@ const STATUS_LABELS: Record<AssetStatus, string> = {
   archived: "Archived",
 };
 
+function assetTypeLabel(assetType: AssetType) {
+  return assetType === "research_brief" ? "Research Brief" : "Blog Post";
+}
+
+function assetTypeDescription(assetType: AssetType) {
+  return assetType === "research_brief"
+    ? "Structured synthesis with findings, risks, recommendations, and evidence-backed references."
+    : "Readable, publish-oriented writing for a clear audience and angle.";
+}
+
+const RESEARCH_BRIEF_CHECKLIST = [
+  "Define the decision question or research objective",
+  "Scope the material and intended audience",
+  "Summarize key findings, not just source summaries",
+  "Call out risks, uncertainty, or conflicting evidence",
+  "End with recommendations backed by references",
+];
+
+function ReadinessList({
+  title,
+  items,
+  tone,
+  empty,
+}: {
+  title: string;
+  items: string[];
+  tone: string;
+  empty: string;
+}) {
+  return (
+    <div className="space-y-2 rounded-md border bg-background/70 p-3">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</p>
+      {items.length > 0 ? (
+        <ul className={`list-disc space-y-1 pl-5 text-sm ${tone}`}>
+          {items.map((item) => <li key={item}>{item}</li>)}
+        </ul>
+      ) : (
+        <p className="text-sm text-muted-foreground">{empty}</p>
+      )}
+    </div>
+  );
+}
+
 export function AssetsPage() {
   const location = useLocation();
   const queryClient = useQueryClient();
   const [title, setTitle] = useState("");
   const [brief, setBrief] = useState("");
+  const [assetType, setAssetType] = useState<AssetType>("blog_post");
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
   const [selectedNoteIds, setSelectedNoteIds] = useState<string[]>([]);
   const [opinionNotes, setOpinionNotes] = useState("");
@@ -66,10 +116,11 @@ export function AssetsPage() {
   const selectedAssetId = selectedAsset?.id ?? null;
 
   const createMutation = useMutation({
-    mutationFn: () => assetsApi.create({ title, brief, source_refs: selectedSourceIds, note_refs: selectedNoteIds, opinion_notes: opinionNotes, style_notes: styleNotes }),
+    mutationFn: () => assetsApi.create({ asset_type: assetType, title, brief, source_refs: selectedSourceIds, note_refs: selectedNoteIds, opinion_notes: opinionNotes, style_notes: styleNotes }),
     onSuccess: async (asset) => {
       setTitle("");
       setBrief("");
+      setAssetType("blog_post");
       setSelectedSourceIds([]);
       setSelectedNoteIds([]);
       setOpinionNotes("");
@@ -112,11 +163,12 @@ export function AssetsPage() {
   }, [selectedAssetId]);
 
   useEffect(() => {
-    const state = location.state as { assetHandoff?: { title?: string; brief?: string; source_refs?: string[]; note_refs?: string[]; memory_refs?: string[]; wiki_refs?: string[] } } | null;
+    const state = location.state as { assetHandoff?: { title?: string; brief?: string; asset_type?: AssetType; source_refs?: string[]; note_refs?: string[]; memory_refs?: string[]; wiki_refs?: string[] } } | null;
     const handoff = state?.assetHandoff;
     if (!handoff) return;
     setTitle(handoff.title ?? "");
     setBrief(handoff.brief ?? "");
+    setAssetType(handoff.asset_type ?? "blog_post");
     setSelectedSourceIds(handoff.source_refs ?? []);
     setSelectedNoteIds(handoff.note_refs ?? []);
   }, [location.state]);
@@ -168,18 +220,38 @@ export function AssetsPage() {
         <div>
           <h1 className="text-2xl font-bold">Assets</h1>
           <p className="text-sm text-muted-foreground">
-            Source-driven blog assets for the first commercialization loop.
+            Source-driven blog posts and research briefs for the knowledge asset loop.
           </p>
         </div>
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Create Blog Asset</CardTitle>
-            <CardDescription>Start from a title and editorial brief, then iterate into outline, draft, and export.</CardDescription>
+            <CardTitle className="text-base">Create Asset</CardTitle>
+            <CardDescription>
+              Start from a title and brief, then iterate into outline, draft, references, and export.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            <Input placeholder="Asset title" value={title} onChange={(e) => setTitle(e.target.value)} />
-            <Textarea placeholder="Editorial brief" value={brief} onChange={(e) => setBrief(e.target.value)} rows={4} />
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setAssetType("blog_post")}
+                className={`rounded-lg border p-3 text-left transition-colors ${assetType === "blog_post" ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}
+              >
+                <div className="flex items-center gap-2 font-medium"><FileText className="h-4 w-4" /> Blog Post</div>
+                <p className="mt-1 text-xs text-muted-foreground">Readable, publish-oriented writing for a clear audience.</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setAssetType("research_brief")}
+                className={`rounded-lg border p-3 text-left transition-colors ${assetType === "research_brief" ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}
+              >
+                <div className="flex items-center gap-2 font-medium"><ScrollText className="h-4 w-4" /> Research Brief</div>
+                <p className="mt-1 text-xs text-muted-foreground">Structured synthesis with findings, risks, recommendations, and evidence.</p>
+              </button>
+            </div>
+            <Input placeholder={assetType === "research_brief" ? "Research brief title" : "Asset title"} value={title} onChange={(e) => setTitle(e.target.value)} />
+            <Textarea placeholder={assetType === "research_brief" ? "Decision question, scope, intended audience, and why this brief matters" : "Editorial brief"} value={brief} onChange={(e) => setBrief(e.target.value)} rows={4} />
             <Textarea placeholder="Opinion / thesis" value={opinionNotes} onChange={(e) => setOpinionNotes(e.target.value)} rows={3} />
             <Textarea placeholder="Style notes / tone instructions" value={styleNotes} onChange={(e) => setStyleNotes(e.target.value)} rows={3} />
             <div className="grid gap-4 md:grid-cols-2">
@@ -242,7 +314,10 @@ export function AssetsPage() {
                   onClick={() => setSelectedId(asset.id)}
                 >
                   <div className="mb-2 flex items-center justify-between gap-2">
-                    <Badge variant="outline">{STATUS_LABELS[asset.status]}</Badge>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline">{STATUS_LABELS[asset.status]}</Badge>
+                      <Badge variant="secondary">{assetTypeLabel(asset.asset_type)}</Badge>
+                    </div>
                     <span className="text-[10px] text-muted-foreground">{new Date(asset.updated_at).toLocaleDateString()}</span>
                   </div>
                   <div className="flex items-center justify-between gap-2">
@@ -265,21 +340,40 @@ export function AssetsPage() {
             <CardHeader>
               <CardTitle className="text-base">Asset Workspace</CardTitle>
               <CardDescription>
-                {selectedAsset ? `Working on ${selectedAsset.title}` : "Select or create an asset"}
+                {selectedAsset
+                  ? selectedAsset.asset_type === "research_brief"
+                    ? `Working on research brief: ${selectedAsset.title}`
+                    : `Working on ${selectedAsset.title}`
+                  : "Select or create an asset"}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               {!selectedAsset && <p className="text-sm text-muted-foreground">No asset selected.</p>}
               {selectedAsset && (
                 <>
+                  <div className="rounded-lg border border-border/70 bg-muted/30 p-3 text-sm text-muted-foreground">
+                    <span className="font-medium text-foreground">{assetTypeLabel(selectedAsset.asset_type)}:</span> {assetTypeDescription(selectedAsset.asset_type)}
+                  </div>
+                  {selectedAsset.asset_type === "research_brief" && (
+                    <div className="rounded-lg border border-border/70 bg-background p-4">
+                      <p className="text-sm font-semibold text-foreground">Research Brief Checklist</p>
+                      <div className="mt-3 grid gap-2 md:grid-cols-2">
+                        {RESEARCH_BRIEF_CHECKLIST.map((item) => (
+                          <div key={item} className="rounded-md border border-border/60 px-3 py-2 text-xs text-muted-foreground">
+                            {item}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <div className="flex flex-wrap gap-2">
                     <Button variant="outline" onClick={() => generateOutlineMutation.mutate(selectedAsset.id)}>
                       <Sparkles className="mr-2 h-4 w-4" />
-                      Generate Outline
+                      {selectedAsset.asset_type === "research_brief" ? "Generate Brief Outline" : "Generate Outline"}
                     </Button>
                     <Button variant="outline" onClick={() => generateDraftMutation.mutate(selectedAsset.id)}>
                       <FileText className="mr-2 h-4 w-4" />
-                      Generate Draft
+                      {selectedAsset.asset_type === "research_brief" ? "Generate Brief Draft" : "Generate Draft"}
                     </Button>
                     <Button variant="outline" onClick={() => attachReferencesMutation.mutate(selectedAsset.id)}>
                       <CheckCircle2 className="mr-2 h-4 w-4" />
@@ -302,10 +396,20 @@ export function AssetsPage() {
                     <div className="space-y-2">
                       <h3 className="text-sm font-semibold">Brief</h3>
                       <Textarea value={editBrief} onChange={(e) => setEditBrief(e.target.value)} rows={6} />
+                      {selectedAsset.asset_type === "research_brief" && (
+                        <p className="text-xs text-muted-foreground">
+                          Good research briefs usually define the decision question, scope, intended reader, and why the brief matters now.
+                        </p>
+                      )}
                     </div>
                     <div className="space-y-2">
                       <h3 className="text-sm font-semibold">References</h3>
                       <pre className="whitespace-pre-wrap rounded-md border bg-muted/30 p-3 text-xs">{selectedAsset.reference_notes || "(empty)"}</pre>
+                      {selectedAsset.asset_type === "research_brief" && (
+                        <p className="text-xs text-muted-foreground">
+                          Research briefs should attach readable references before export so findings and recommendations stay auditable.
+                        </p>
+                      )}
                     </div>
                   </div>
 
@@ -441,24 +545,65 @@ export function AssetsPage() {
                   </div>
 
                   {readinessMutation.data && (
-                    <div className="space-y-2 rounded-md border p-3 text-sm">
-                      <p className="font-medium">Readiness: {readinessMutation.data.ready ? "Ready" : "Not ready"}</p>
-                      {readinessMutation.data.blocking_reasons.length > 0 && (
-                        <ul className="list-disc pl-5 text-muted-foreground">
-                          {readinessMutation.data.blocking_reasons.map((reason) => <li key={reason}>{reason}</li>)}
-                        </ul>
-                      )}
-                      {readinessMutation.data.warning_reasons.length > 0 && (
-                        <ul className="list-disc pl-5 text-amber-600">
-                          {readinessMutation.data.warning_reasons.map((reason) => <li key={reason}>{reason}</li>)}
-                        </ul>
-                      )}
-                      {readinessMutation.data.suggestion_reasons.length > 0 && (
-                        <ul className="list-disc pl-5 text-sky-700">
-                          {readinessMutation.data.suggestion_reasons.map((reason) => <li key={reason}>{reason}</li>)}
-                        </ul>
-                      )}
-                    </div>
+                    selectedAsset.asset_type === "research_brief" ? (
+                      <div className={`space-y-4 rounded-lg border p-4 ${readinessTone(readinessMutation.data.ready)}`}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold">Research Brief Readiness</p>
+                            <p className="mt-1 text-sm text-muted-foreground">
+                              Check whether this brief is evidence-backed, decision-ready, and complete enough to export.
+                            </p>
+                          </div>
+                          <Badge variant={readinessMutation.data.ready ? "default" : "secondary"}>
+                            {readinessMutation.data.ready ? "Ready to export" : "Needs work"}
+                          </Badge>
+                        </div>
+
+                        <div className="grid gap-3 md:grid-cols-3">
+                          <ReadinessList
+                            title="Blocking"
+                            items={readinessMutation.data.blocking_reasons}
+                            tone="text-destructive"
+                            empty="No blocking issues."
+                          />
+                          <ReadinessList
+                            title="Warnings"
+                            items={readinessMutation.data.warning_reasons}
+                            tone="text-amber-700"
+                            empty="No warning signals."
+                          />
+                          <ReadinessList
+                            title="Suggested next steps"
+                            items={readinessMutation.data.suggestion_reasons}
+                            tone="text-sky-700"
+                            empty="No extra suggestions right now."
+                          />
+                        </div>
+
+                        <div className="rounded-md border bg-background/80 p-3 text-sm text-muted-foreground">
+                          A strong brief usually has at least one grounded wiki angle, attached source evidence, and clear sections for executive summary, findings, risks, and recommendations.
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 rounded-md border p-3 text-sm">
+                        <p className="font-medium">Readiness: {readinessMutation.data.ready ? "Ready" : "Not ready"}</p>
+                        {readinessMutation.data.blocking_reasons.length > 0 && (
+                          <ul className="list-disc pl-5 text-muted-foreground">
+                            {readinessMutation.data.blocking_reasons.map((reason) => <li key={reason}>{reason}</li>)}
+                          </ul>
+                        )}
+                        {readinessMutation.data.warning_reasons.length > 0 && (
+                          <ul className="list-disc pl-5 text-amber-600">
+                            {readinessMutation.data.warning_reasons.map((reason) => <li key={reason}>{reason}</li>)}
+                          </ul>
+                        )}
+                        {readinessMutation.data.suggestion_reasons.length > 0 && (
+                          <ul className="list-disc pl-5 text-sky-700">
+                            {readinessMutation.data.suggestion_reasons.map((reason) => <li key={reason}>{reason}</li>)}
+                          </ul>
+                        )}
+                      </div>
+                    )
                   )}
 
                   {exportedMarkdown && selectedAsset.id === exportMutation.variables && (

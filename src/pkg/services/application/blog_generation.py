@@ -180,6 +180,109 @@ def _fallback_draft(asset: Asset) -> str:
     return "\n".join(sections)
 
 
+def _clean_heading_title(value: str) -> str:
+    text = re.sub(r"^#+\s*", "", value.strip())
+    return text.strip()
+
+
+def _strip_title_heading(markdown: str, title: str) -> str:
+    text = (markdown or "").strip()
+    if not text:
+        return ""
+    lines = text.splitlines()
+    if lines:
+        first = _clean_heading_title(lines[0])
+        if first.lower() == title.strip().lower():
+            return "\n".join(lines[1:]).lstrip()
+    return text
+
+
+def _markdown_section(markdown: str, title: str) -> str | None:
+    text = (markdown or "").strip()
+    if not text:
+        return None
+    pattern = re.compile(rf"^##\s+{re.escape(title)}\s*$", re.IGNORECASE | re.MULTILINE)
+    match = pattern.search(text)
+    if not match:
+        return None
+    start = match.end()
+    remainder = text[start:]
+    next_heading = re.search(r"^##\s+", remainder, re.MULTILINE)
+    section = remainder[: next_heading.start()] if next_heading else remainder
+    return section.strip() or None
+
+
+def _research_brief_export_markdown(asset: Asset) -> str:
+    brief = (asset.brief or "").strip()
+    draft = _strip_title_heading(asset.draft_content or "", asset.title)
+    outline = _strip_title_heading(asset.outline or "", asset.title)
+    metadata = dict(asset.metadata_ or {})
+    opinion_notes = str(metadata.get("opinion_notes") or "").strip()
+    style_notes = str(metadata.get("style_notes") or "").strip()
+
+    executive_summary = _markdown_section(draft, "Executive Summary")
+    findings = _markdown_section(draft, "Findings") or _markdown_section(draft, "Key Findings")
+    risks = _markdown_section(draft, "Risks") or _markdown_section(draft, "Risks and Open Questions")
+    recommendations = _markdown_section(draft, "Recommendations")
+    background = _markdown_section(draft, "Background")
+    comparisons = _markdown_section(draft, "Comparisons")
+
+    parts = [f"# {asset.title}", "", "> [!abstract] Brief Overview"]
+    if brief:
+        parts.append(f"> {brief}")
+    else:
+        parts.append("> Decision-oriented research brief generated from linked evidence.")
+
+    parts.extend(
+        [
+            "",
+            "## Brief Snapshot",
+            "",
+            f"- **Asset Type:** { _asset_kind_label(asset.asset_type).title() }",
+            f"- **Status:** {asset.status.replace('_', ' ').title()}",
+            f"- **Sources:** {len(asset.source_refs or [])}",
+            f"- **Notes:** {len(asset.note_refs or [])}",
+            f"- **Knowledge Tree Nodes:** {len(asset.memory_refs or [])}",
+            f"- **Wiki Pages:** {len(asset.wiki_refs or [])}",
+        ]
+    )
+
+    if executive_summary:
+        parts.extend(["", "## Executive Summary", "", executive_summary])
+    elif brief:
+        parts.extend(["", "## Executive Summary", "", brief])
+
+    if recommendations:
+        parts.extend(["", "## Recommended Decision", "", recommendations])
+
+    if findings:
+        parts.extend(["", "## Key Findings", "", findings])
+    if risks:
+        parts.extend(["", "## Risks and Open Questions", "", risks])
+    if background:
+        parts.extend(["", "## Background", "", background])
+    if comparisons:
+        parts.extend(["", "## Comparisons", "", comparisons])
+
+    if draft:
+        parts.extend(["", "## Full Brief", "", draft])
+
+    if outline:
+        parts.extend(["", "## Appendix A — Working Outline", "", outline])
+
+    if opinion_notes or style_notes:
+        parts.extend(["", "## Appendix B — Editorial Intent", ""])
+        if opinion_notes:
+            parts.extend(["### Point of View", "", opinion_notes, ""])
+        if style_notes:
+            parts.extend(["### Style Notes", "", style_notes])
+
+    if asset.reference_notes:
+        parts.extend(["", "## Appendix C — Evidence and References", "", asset.reference_notes.strip()])
+
+    return "\n".join(parts).strip()
+
+
 async def _generate_with_fallback(
     session: AsyncSession,
     *,
@@ -345,6 +448,8 @@ def check_readiness(asset: Asset) -> tuple[bool, list[str], list[str], list[str]
 
 
 def export_markdown(asset: Asset) -> str:
+    if asset.asset_type == "research_brief":
+        return _research_brief_export_markdown(asset)
     parts = [f"# {asset.title}"]
     if asset.brief:
         parts.extend(["", asset.brief])

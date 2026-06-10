@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { Bot, CheckCircle2, Clock, Copy, FileSearch, RefreshCw, Sparkles, XCircle } from "lucide-react";
+import { Bot, CheckCircle2, Clock, Copy, FileSearch, RefreshCw, ScrollText, Sparkles, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -412,6 +412,20 @@ function MiningArticlePreview({
             }}
           >
             <Sparkles className="mr-1 h-4 w-4" /> Create Asset
+          </Link>
+        </Button>
+        <Button size="sm" variant="outline" asChild disabled={disabled}>
+          <Link
+            to={onCreateAssetHref}
+            state={{
+              assetHandoff: {
+                title: `${article.title} Brief`,
+                brief: `Create a research brief from wiki candidate article: ${article.title}`,
+                asset_type: "research_brief",
+              },
+            }}
+          >
+            <ScrollText className="mr-1 h-4 w-4" /> Create Brief
           </Link>
         </Button>
         <Button size="sm" onClick={onAccept} disabled={disabled || shouldGateAccept} title={shouldGateAccept ? "Reduce weak claims or keep this article in review before accepting it as a draft." : undefined}>

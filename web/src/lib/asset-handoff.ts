@@ -1,6 +1,7 @@
 export interface AssetHandoffState {
   title?: string;
   brief?: string;
+  asset_type?: "blog_post" | "research_brief";
   source_refs?: string[];
   note_refs?: string[];
   memory_refs?: string[];
@@ -11,6 +12,7 @@ export function buildAssetHandoffState(input: AssetHandoffState): AssetHandoffSt
   return {
     title: input.title,
     brief: input.brief,
+    asset_type: input.asset_type,
     source_refs: input.source_refs ?? [],
     note_refs: input.note_refs ?? [],
     memory_refs: input.memory_refs ?? [],
