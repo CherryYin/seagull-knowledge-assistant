@@ -313,6 +313,7 @@ def test_build_profile_explanations_contains_expected_sections():
         {"domains": {"AI": 3}, "types": {"concept": 2}},
         {"types": {"pdf": 2}},
         {"titles": ["Agent session"]},
+        {"event_types": {"asset_published": 1}, "asset_types": {"blog_post": 1}, "channels": ["newsletter"]},
         {
             "interests": [{"domain": "AI"}],
             "knowledge_level": {"AI": "advanced"},
@@ -328,3 +329,81 @@ def test_build_profile_explanations_contains_expected_sections():
     assert explanations["interests"]["items"][0]["value"] == "AI"
     assert explanations["knowledge_level"]["items"][0]["value"] == "AI:advanced"
     assert explanations["behavior"]["items"][0]["value"] == "active_hours:evening"
+    assert "production_asset_type:blog_post" in explanations["behavior"]["signals"]
+    assert "production_channel:newsletter" in explanations["behavior"]["signals"]
+
+
+@pytest.mark.asyncio
+async def test_get_production_memory_summary_extracts_event_signals():
+    from pkg.services.cross_cutting.user_profiler import _get_production_memory_summary
+
+    with patch("pkg.services.cross_cutting.user_profiler.async_session") as mock_session_ctx:
+        mock_session = AsyncMock()
+        memory = MagicMock()
+        memory.value = {
+            "events": [
+                {
+                    "event_type": "asset_published",
+                    "asset_type": "blog_post",
+                    "title": "Wikipedia-style Wiki",
+                    "detail": {"channel": "newsletter"},
+                },
+                {
+                    "event_type": "asset_exported",
+                    "asset_type": "research_brief",
+                    "title": "Research Brief",
+                    "detail": {"channel": "markdown"},
+                },
+            ]
+        }
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = memory
+        mock_session.execute.return_value = mock_result
+        mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        summary = await _get_production_memory_summary("user-1")
+
+    assert summary["total_events"] == 2
+    assert summary["event_types"]["asset_published"] == 1
+    assert summary["asset_types"]["blog_post"] == 1
+    assert "Wikipedia-style Wiki" in summary["recent_titles"]
+    assert "newsletter" in summary["channels"]
+
+
+@pytest.mark.asyncio
+async def test_generate_user_profile_passes_production_summary_into_formatter():
+    from pkg.services.cross_cutting.user_profiler import generate_user_profile
+
+    with patch("pkg.services.cross_cutting.user_profiler._get_recent_activities") as mock_act:
+        mock_act.return_value = {
+            "search_queries": ["wiki"],
+            "chat_topics": ["readability"],
+            "active_period": "evening",
+            "total_activities": 3,
+        }
+        with patch("pkg.services.cross_cutting.user_profiler._get_note_stats") as mock_notes:
+            mock_notes.return_value = {"total": 1, "domains": {}, "tags": {}, "types": {}}
+            with patch("pkg.services.cross_cutting.user_profiler._get_source_stats") as mock_src:
+                mock_src.return_value = {"total": 1, "types": {}, "titles": []}
+                with patch("pkg.services.cross_cutting.user_profiler._get_chat_stats") as mock_chat:
+                    mock_chat.return_value = {"total": 1, "titles": []}
+                    with patch("pkg.services.cross_cutting.user_profiler._get_profile_memory_context") as mock_memory:
+                        mock_memory.return_value = ""
+                        with patch("pkg.services.cross_cutting.user_profiler._get_production_memory_summary") as mock_production:
+                            mock_production.return_value = {"total_events": 2, "event_types": {"asset_published": 1}, "asset_types": {}, "recent_titles": [], "channels": ["newsletter"]}
+                            with patch("pkg.services.cross_cutting.user_profiler._format_activity_summary") as mock_format:
+                                mock_format.return_value = "summary"
+                                with patch("pkg.services.cross_cutting.user_profiler._llm_generate_profile") as mock_llm:
+                                    mock_llm.return_value = {
+                                        "interests": [{"domain": "AI", "depth": "advanced", "recent_focus": "wiki"}],
+                                        "knowledge_level": {"AI": "advanced"},
+                                        "behavior": {"active_hours": "evening"},
+                                        "summary": "builder",
+                                    }
+                                    with patch("pkg.services.cross_cutting.user_profiler._upsert_user_memory", new=AsyncMock()):
+                                        await generate_user_profile("user-1")
+
+    assert mock_format.await_count == 0
+    _, kwargs = mock_format.call_args
+    assert kwargs["production_summary"]["total_events"] == 2

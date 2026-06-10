@@ -12,6 +12,7 @@ from pkg.models.foundation.source import Source
 from pkg.models.foundation.wiki import WikiPage
 from pkg.schemas.application.asset import AssetCreate, AssetUpdate
 from pkg.services.application.blog_generation import check_readiness
+from pkg.services.application.production_memory import record_asset_production_event
 
 ALLOWED_ASSET_STATUSES = {"draft", "in_review", "ready_to_export", "exported", "published", "archived"}
 
@@ -75,6 +76,14 @@ async def create_asset(session: AsyncSession, *, user_id: str, body: AssetCreate
         metadata_=metadata or None,
     )
     session.add(asset)
+    await session.flush()
+    await record_asset_production_event(
+        session,
+        user_id=user_id,
+        asset=asset,
+        event_type="asset_generated",
+        detail={"source": "create_asset"},
+    )
     await session.commit()
     await session.refresh(asset)
     return asset
@@ -169,6 +178,37 @@ async def update_asset(session: AsyncSession, *, user_id: str, asset_id: str, bo
             setattr(asset, key, value)
     if "metadata" not in data and {"wiki_refs", "opinion_notes", "style_notes"}.intersection(data.keys()):
         asset.metadata_ = effective_metadata
+
+    event_type = None
+    event_detail = {}
+    if data.get("status") == "ready_to_export":
+        event_type = "asset_ready_to_export"
+    elif data.get("status") == "exported":
+        event_type = "asset_exported"
+        event_detail = {
+            "export_format": data.get("export_format", asset.export_format),
+            "channel": data.get("export_format", asset.export_format),
+        }
+    elif data.get("status") == "published":
+        event_type = "asset_published"
+        publish_feedback = dict((effective_metadata or {}).get("publish_feedback") or {})
+        event_detail = {
+            "published_at": data.get("published_at", asset.published_at.isoformat() if asset.published_at else None),
+            "channel": publish_feedback.get("channel"),
+            "publish_url": publish_feedback.get("publish_url"),
+            "feedback": publish_feedback.get("feedback"),
+        }
+    elif data.get("editor_feedback"):
+        event_type = "asset_feedback_recorded"
+        event_detail = {"feedback": data.get("editor_feedback")}
+    if event_type:
+        await record_asset_production_event(
+            session,
+            user_id=user_id,
+            asset=asset,
+            event_type=event_type,
+            detail=event_detail,
+        )
     await session.commit()
     await session.refresh(asset)
     metadata = dict(asset.metadata_ or {})

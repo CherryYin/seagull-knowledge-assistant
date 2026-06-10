@@ -52,6 +52,35 @@ export const AGENT_WORKFLOW_SAVE_TARGET_LABELS: Record<AgentWorkflowSaveTarget, 
 
 export const AGENT_WORKFLOW_TEMPLATES: AgentWorkflowTemplate[] = [
   {
+    id: "review-candidate-article",
+    group: "decide",
+    title: "审核 Candidate Article",
+    description: "围绕 wiki mining 生成的 candidate article，检查证据、弱 claim、是否该继续 in review / accept as draft / merge。",
+    requiredInput: "一篇 candidate article 或一组待审核 claims",
+    inputPlaceholder: "例如：检查这篇 candidate article 的证据强度，判断是否能接受为 draft...",
+    saveTargets: ["review", "wiki_refresh", "memory_candidate"],
+    outputSections: [
+      "Article Summary",
+      "Evidence Strength",
+      "Weak Claims",
+      "Decision Recommendation",
+      "Next Review Action",
+    ],
+    promptTemplate: `Review this wiki candidate article as a draft-first knowledge artifact.
+Check whether its claims are sufficiently supported by evidence.
+Separate strong evidence from weak claims.
+Recommend whether to keep it in review, accept it as a draft, or merge it into an existing wiki later.
+Do not apply any changes automatically.
+
+Output exactly these sections:
+
+## Article Summary
+## Evidence Strength
+## Weak Claims
+## Decision Recommendation
+## Next Review Action`,
+  },
+  {
     id: "mine-wiki-candidates",
     group: "decide",
     title: "挖掘 Wiki 候选",
@@ -78,6 +107,34 @@ Output exactly these sections:
 ## Supporting Evidence
 ## Open Gaps
 ## Review Queue Recommendation`,
+  },
+  {
+    id: "review-discovery-batch",
+    group: "find",
+    title: "梳理 Discovery 候选",
+    description: "把 discovery / paper discovery / web discovery 候选按主题聚类，判断哪些值得保存、研究或进入 wiki。",
+    requiredInput: "一批 discovery items、一个主题或一个时间窗口",
+    inputPlaceholder: "例如：整理这批 discovery 候选，找出最值得保存和继续研究的主题...",
+    saveTargets: ["note", "review", "memory_candidate"],
+    outputSections: [
+      "Top Discoveries",
+      "Topic Clusters",
+      "What To Save",
+      "What To Research Next",
+      "Wiki Potential",
+    ],
+    promptTemplate: `Review discovery candidates as a triage workflow.
+Cluster items into topics, identify which ones are worth saving, and flag which topics are promising inputs for wiki or deeper research.
+Prefer reusable knowledge over one-off noisy links.
+Do not save anything automatically.
+
+Output exactly these sections:
+
+## Top Discoveries
+## Topic Clusters
+## What To Save
+## What To Research Next
+## Wiki Potential`,
   },
   {
     id: "summarize-source",
@@ -171,6 +228,34 @@ Output exactly these sections:
 ## Suggested Next Steps`,
   },
   {
+    id: "production-retrospective",
+    group: "decide",
+    title: "复盘生产输出",
+    description: "基于 production memory 回顾最近生成、导出、发布与反馈，提炼有效渠道、内容类型和下一步策略。",
+    requiredInput: "一个时间窗口、一个资产类型，或最近生产记录",
+    inputPlaceholder: "例如：复盘最近 2 周 blog / brief 的输出和反馈，找出有效策略...",
+    saveTargets: ["note", "review"],
+    outputSections: [
+      "Production Summary",
+      "What Worked",
+      "What Underperformed",
+      "Channel Signals",
+      "Next Production Moves",
+    ],
+    promptTemplate: `Review recent production memory to understand what has been generated, exported, published, and revised.
+Look for repeated asset types, active channels, and feedback patterns.
+Turn the production history into practical next-step recommendations.
+Do not save anything automatically.
+
+Output exactly these sections:
+
+## Production Summary
+## What Worked
+## What Underperformed
+## Channel Signals
+## Next Production Moves`,
+  },
+  {
     id: "draft-wiki-refresh",
     group: "decide",
     title: "判断并起草下一步",
@@ -246,6 +331,8 @@ export function inferAgentWorkflowId(objectType?: string | null, promptSeed?: st
   if (objectType === "memory") return "draft-wiki-refresh";
   if (objectType === "wiki") return "draft-wiki-refresh";
   if (objectType === "asset") return "draft-blog-asset";
+  if (objectType === "wiki_candidate_article") return "review-candidate-article";
+  if (objectType === "production_memory") return "production-retrospective";
   if (promptSeed?.toLowerCase().includes("wiki")) return "draft-wiki-refresh";
   if (objectType === "note") return "organize-recent-imports";
   return undefined;

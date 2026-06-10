@@ -18,6 +18,8 @@ from pkg.models.foundation.source import Source
 from pkg.models.user import ActivityLog, User, UserMemory
 from pkg.services.foundation.memory_retriever import format_memory_context, retrieve_for_profile
 
+PRODUCTION_MEMORY_KEY = "production_memory"
+
 logger = logging.getLogger(__name__)
 
 PROFILE_MEMORY_KEY = "user_profile"
@@ -104,6 +106,7 @@ async def generate_user_profile(user_id: str) -> dict | None:
     source_stats = await _get_source_stats(user_id)
     chat_stats = await _get_chat_stats(user_id, days=30)
     memory_context = await _get_profile_memory_context(user_id)
+    production_summary = await _get_production_memory_summary(user_id)
 
     # Check if we have enough data to generate a meaningful profile
     total_signals = (
@@ -112,13 +115,21 @@ async def generate_user_profile(user_id: str) -> dict | None:
         + note_stats.get("total", 0)
         + source_stats.get("total", 0)
         + (1 if memory_context else 0)
+        + production_summary.get("total_events", 0)
     )
     if total_signals < 3:
         logger.info("User %s has insufficient data (%d signals) for profiling", user_id, total_signals)
         return None
 
     # 2. Format aggregated data as text for LLM
-    summary_text = _format_activity_summary(activities, note_stats, source_stats, chat_stats, memory_context=memory_context)
+    summary_text = _format_activity_summary(
+        activities,
+        note_stats,
+        source_stats,
+        chat_stats,
+        memory_context=memory_context,
+        production_summary=production_summary,
+    )
 
     # 3. Call LLM
     profile = await _llm_generate_profile(summary_text)
@@ -130,6 +141,7 @@ async def generate_user_profile(user_id: str) -> dict | None:
         note_stats,
         source_stats,
         chat_stats,
+        production_summary,
         profile,
     )
 
@@ -298,6 +310,48 @@ async def _get_profile_memory_context(user_id: str) -> str:
     return format_memory_context(results, max_chars_per_item=500)
 
 
+async def _get_production_memory_summary(user_id: str) -> dict:
+    async with async_session() as session:
+        result = await session.execute(
+            select(UserMemory).where(UserMemory.user_id == user_id, UserMemory.key == PRODUCTION_MEMORY_KEY)
+        )
+        memory = result.scalar_one_or_none()
+
+    value = dict((memory.value or {}) if memory else {})
+    events = list(value.get("events") or [])
+    if not events:
+        return {"total_events": 0, "event_types": {}, "asset_types": {}, "recent_titles": [], "channels": []}
+
+    event_counter: Counter = Counter()
+    asset_type_counter: Counter = Counter()
+    recent_titles: list[str] = []
+    channels: list[str] = []
+
+    for event in events[:20]:
+        if not isinstance(event, dict):
+            continue
+        event_type = str(event.get("event_type") or "unknown")
+        asset_type = str(event.get("asset_type") or "unknown")
+        title = str(event.get("title") or "").strip()
+        detail = event.get("detail") or {}
+        channel = str((detail or {}).get("channel") or "").strip() if isinstance(detail, dict) else ""
+
+        event_counter[event_type] += 1
+        asset_type_counter[asset_type] += 1
+        if title and title not in recent_titles:
+          recent_titles.append(title)
+        if channel and channel not in channels:
+          channels.append(channel)
+
+    return {
+        "total_events": len(events),
+        "event_types": dict(event_counter),
+        "asset_types": dict(asset_type_counter),
+        "recent_titles": recent_titles[:8],
+        "channels": channels[:8],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Formatting and LLM
 # ---------------------------------------------------------------------------
@@ -309,6 +363,7 @@ def _format_activity_summary(
     chat_stats: dict,
     *,
     memory_context: str = "",
+    production_summary: dict | None = None,
 ) -> str:
     """Format collected data into a text summary for the LLM."""
     parts: list[str] = []
@@ -320,6 +375,20 @@ def _format_activity_summary(
     if memory_context:
         parts.append("\n## Memory Tree 长期上下文")
         parts.append(memory_context)
+
+    production_summary = production_summary or {}
+    if production_summary.get("total_events", 0) > 0:
+        parts.append(f"\n## Production Memory（共 {production_summary['total_events']} 条事件）")
+        if production_summary.get("event_types"):
+            parts.append(f"- 事件类型分布: {production_summary['event_types']}")
+        if production_summary.get("asset_types"):
+            parts.append(f"- 资产类型分布: {production_summary['asset_types']}")
+        if production_summary.get("channels"):
+            parts.append(f"- 发布/导出渠道: {production_summary['channels']}")
+        if production_summary.get("recent_titles"):
+            parts.append("- 最近涉及的资产:")
+            for title in production_summary["recent_titles"][:5]:
+                parts.append(f"  - {title}")
 
     if activities["search_queries"]:
         parts.append("\n## 搜索记录（最近）")
@@ -362,6 +431,7 @@ def _build_profile_explanations(
     note_stats: dict,
     source_stats: dict,
     chat_stats: dict,
+    production_summary: dict,
     profile: dict | None = None,
 ) -> dict:
     top_searches = activities.get("search_queries", [])[:5]
@@ -369,6 +439,9 @@ def _build_profile_explanations(
     top_domains = list((note_stats.get("domains") or {}).keys())[:5]
     top_note_types = list((note_stats.get("types") or {}).keys())[:5]
     top_source_types = list((source_stats.get("types") or {}).keys())[:5]
+    top_production_events = list((production_summary.get("event_types") or {}).keys())[:5]
+    top_production_asset_types = list((production_summary.get("asset_types") or {}).keys())[:5]
+    top_production_channels = list((production_summary.get("channels") or []))[:5]
 
     profile = profile or {}
     interest_entries = []
@@ -414,6 +487,7 @@ def _build_profile_explanations(
             "signals": [
                 *[f"search:{query}" for query in top_searches[:3]],
                 *[f"chat:{topic}" for topic in top_topics[:3]],
+                *[f"production_event:{event_type}" for event_type in top_production_events[:2]],
             ],
             "reason": "综合最近搜索、对话主题与内容积累生成整体画像。",
         },
@@ -438,8 +512,10 @@ def _build_profile_explanations(
                 f"active_period:{activities.get('active_period', 'unknown')}",
                 *[f"source_type:{source_type}" for source_type in top_source_types[:5]],
                 *[f"chat_title:{title}" for title in (chat_stats.get("titles") or [])[:3]],
+                *[f"production_asset_type:{asset_type}" for asset_type in top_production_asset_types[:3]],
+                *[f"production_channel:{channel}" for channel in top_production_channels[:3]],
             ],
-            "reason": "行为偏好来自活跃时间、资料类型和最近对话工作方式。",
+            "reason": "行为偏好来自活跃时间、资料类型、最近对话工作方式，以及近期生产/发布行为。",
             "items": behavior_entries,
         },
     }

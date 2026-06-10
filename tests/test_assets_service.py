@@ -39,11 +39,15 @@ async def test_create_asset_persists_asset_when_refs_exist():
 
     session.refresh.side_effect = _refresh
 
-    asset = await create_asset(
-        session,
-        user_id="user-1",
-        body=AssetCreate(title="Draft post", source_refs=["src-1"], note_refs=["note-1"], wiki_refs=["wiki-1"], opinion_notes="Take a strong stance", style_notes="Write analytically"),
-    )
+    with pytest.MonkeyPatch.context() as m:
+        async def _fake_record(*args, **kwargs):
+            return None
+        m.setattr("pkg.services.application.assets.record_asset_production_event", _fake_record)
+        asset = await create_asset(
+            session,
+            user_id="user-1",
+            body=AssetCreate(title="Draft post", source_refs=["src-1"], note_refs=["note-1"], wiki_refs=["wiki-1"], opinion_notes="Take a strong stance", style_notes="Write analytically"),
+        )
 
     assert asset.title == "Draft post"
     assert asset.asset_type == "blog_post"
@@ -152,6 +156,120 @@ async def test_update_asset_blocks_ready_to_export_when_not_ready():
         )
 
     assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_update_asset_records_publish_feedback_in_production_memory_detail(monkeypatch):
+    session = AsyncMock()
+    asset = Asset(
+        id="asset-1",
+        user_id="user-1",
+        asset_type="blog_post",
+        status="exported",
+        title="Draft post",
+        brief=None,
+        outline=None,
+        draft_content=None,
+        reference_notes=None,
+        editor_feedback=None,
+        source_refs=[],
+        note_refs=[],
+        memory_refs=[],
+        wiki_refs=[],
+        export_format="markdown",
+        exported_at=None,
+        published_at=None,
+        metadata_={},
+    )
+
+    scalar_result = MagicMock()
+    scalar_result.scalar_one_or_none.return_value = asset
+    session.execute.side_effect = [scalar_result]
+
+    recorded: dict = {}
+
+    async def _fake_record(session_arg, *, user_id, asset, event_type, detail=None):
+        recorded.update({
+            "user_id": user_id,
+            "event_type": event_type,
+            "detail": detail or {},
+        })
+        return MagicMock()
+
+    monkeypatch.setattr("pkg.services.application.assets.record_asset_production_event", _fake_record)
+
+    updated = await update_asset(
+        session,
+        user_id="user-1",
+        asset_id="asset-1",
+        body=AssetUpdate(
+            status="published",
+            metadata={
+                "publish_feedback": {
+                    "channel": "newsletter",
+                    "publish_url": "https://example.com/post",
+                    "feedback": "Good open rate",
+                    "published_at": "2026-06-10T10:00:00Z",
+                }
+            },
+        ),
+    )
+
+    assert updated.status == "published"
+    assert recorded["event_type"] == "asset_published"
+    assert recorded["detail"]["channel"] == "newsletter"
+    assert recorded["detail"]["publish_url"] == "https://example.com/post"
+    assert recorded["detail"]["feedback"] == "Good open rate"
+
+
+@pytest.mark.asyncio
+async def test_update_asset_records_editor_feedback_in_production_memory_detail(monkeypatch):
+    session = AsyncMock()
+    asset = Asset(
+        id="asset-1",
+        user_id="user-1",
+        asset_type="blog_post",
+        status="draft",
+        title="Draft post",
+        brief=None,
+        outline=None,
+        draft_content=None,
+        reference_notes=None,
+        editor_feedback=None,
+        source_refs=[],
+        note_refs=[],
+        memory_refs=[],
+        wiki_refs=[],
+        export_format=None,
+        exported_at=None,
+        published_at=None,
+        metadata_={},
+    )
+
+    scalar_result = MagicMock()
+    scalar_result.scalar_one_or_none.return_value = asset
+    session.execute.side_effect = [scalar_result]
+
+    recorded: dict = {}
+
+    async def _fake_record(session_arg, *, user_id, asset, event_type, detail=None):
+        recorded.update({
+            "event_type": event_type,
+            "detail": detail or {},
+        })
+        return MagicMock()
+
+    monkeypatch.setattr("pkg.services.application.assets.record_asset_production_event", _fake_record)
+
+    await update_asset(
+        session,
+        user_id="user-1",
+        asset_id="asset-1",
+        body=AssetUpdate(editor_feedback="Needs a sharper conclusion"),
+    )
+
+    assert recorded["event_type"] == "asset_feedback_recorded"
+    assert recorded["detail"]["feedback"] == "Needs a sharper conclusion"
 
 
 def test_check_readiness_warns_for_unsupported_claims():

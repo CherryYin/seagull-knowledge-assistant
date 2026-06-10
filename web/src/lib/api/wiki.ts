@@ -16,6 +16,7 @@ export interface WikiPage {
   stale_reason?: string | null;
   stale_triggered_at?: string | null;
   last_compiled_at?: string | null;
+  metadata_?: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }

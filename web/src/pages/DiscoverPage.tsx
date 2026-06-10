@@ -134,9 +134,29 @@ export function DiscoverPage() {
 				</p>
               </div>
             </div>
-            <Button onClick={() => generateMutation.mutate()} disabled={generateMutation.isPending}>
-              {generateMutation.isPending && <RefreshCw className="mr-2 h-4 w-4 animate-spin" />} Refresh Recommendations
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                onClick={() =>
+                  navigate("/chat", {
+                    state: {
+                      objectRef: {
+                        object_type: "discover",
+                        object_id: "recommended-discoveries",
+                        title: "Discovery Queue",
+                      },
+                      workflowId: "review-discovery-batch",
+                      promptSeed: "Review my current discovery queue. Cluster the best candidates, identify what to save now, what to research next, and what could support future wiki pages.",
+                    },
+                  })
+                }
+              >
+                <Bot className="mr-2 h-4 w-4" /> Discovery Workflow
+              </Button>
+              <Button onClick={() => generateMutation.mutate()} disabled={generateMutation.isPending}>
+                {generateMutation.isPending && <RefreshCw className="mr-2 h-4 w-4 animate-spin" />} Refresh Recommendations
+              </Button>
+            </div>
           </div>
         </section>
 

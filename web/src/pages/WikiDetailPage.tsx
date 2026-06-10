@@ -197,12 +197,14 @@ export function WikiDetailPage() {
     const claims: Array<{ text: string; status: string; sourceLabel: string }> = [];
     sourceEvidence.forEach((item) => {
       (item.supporting_claims ?? []).forEach((claim) => {
-        if (claim) claims.push({ text: claim, status: item.cited_chunk_ids?.length ? "supported" : "weak", sourceLabel: item.source_id });
+        const text = typeof claim === "string" ? claim : JSON.stringify(claim);
+        if (text) claims.push({ text, status: item.cited_chunk_ids?.length ? "supported" : "weak", sourceLabel: item.source_id });
       });
     });
     memoryEvidence.forEach((item) => {
       (item.supporting_claims ?? []).forEach((claim) => {
-        if (claim) claims.push({ text: claim, status: item.confidence_score != null ? "supported" : "weak", sourceLabel: item.memory_node_id });
+        const text = typeof claim === "string" ? claim : JSON.stringify(claim);
+        if (text) claims.push({ text, status: item.confidence_score != null ? "supported" : "weak", sourceLabel: item.memory_node_id });
       });
     });
     return claims;

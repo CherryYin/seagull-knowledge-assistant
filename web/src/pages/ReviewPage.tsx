@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Bell, BookOpenCheck, Brain, FileSearch, GitPullRequestArrow, Sparkles, UserRoundCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -9,6 +9,7 @@ import { SUMMARY_LAYER_DESCRIPTION } from "@/lib/summaryLayer";
 import { SectionNav, reviewNavItems } from "@/components/SectionNav";
 
 export function ReviewPage() {
+  const navigate = useNavigate();
   const { data: digestData, isLoading: digestLoading } = useQuery({
     queryKey: ["review-digest-pending"],
     queryFn: () => notesApi.list({ note_type: "digest", status: "pending_review", limit: 5 }),
@@ -88,6 +89,20 @@ export function ReviewPage() {
             description="Recent wiki mining runs with candidate insights and draft articles waiting for review or conversion into draft wiki pages."
             to="/review/wiki-suggestions"
             icon={Sparkles}
+            workflowLabel="Run Candidate Review"
+            onWorkflow={() =>
+              navigate("/chat", {
+                state: {
+                  objectRef: {
+                    object_type: "wiki_candidate_article",
+                    object_id: "review-queue",
+                    title: "Wiki Mining Candidates",
+                  },
+                  workflowId: "review-candidate-article",
+                  promptSeed: "Review the current wiki mining candidate queue. Identify which articles are closest to acceptable draft quality, which weak claims block acceptance, and what should remain in review.",
+                },
+              })
+            }
             count={pendingMiningRuns.length}
             loading={miningRunsLoading}
             items={pendingMiningRuns.map((run) => {
@@ -132,6 +147,20 @@ export function ReviewPage() {
             description="Generated profile updates and quality checks that may improve personalization."
             to="/review/suggestions?type=profile_update"
             icon={UserRoundCheck}
+            workflowLabel="Run Production Retrospective"
+            onWorkflow={() =>
+              navigate("/chat", {
+                state: {
+                  objectRef: {
+                    object_type: "production_memory",
+                    object_id: "production_memory",
+                    title: "Production Memory",
+                  },
+                  workflowId: "production-retrospective",
+                  promptSeed: "Use my production memory and profile-related review context to understand what I have been producing, what channels are active, and what this suggests about the next best content moves.",
+                },
+              })
+            }
             count={profileSuggestionData?.total ?? 0}
             loading={profileSuggestionLoading}
             items={(profileSuggestionData?.items ?? []).map((item) => ({ title: item.title, meta: item.summary || item.target_id }))}
@@ -147,6 +176,8 @@ function ReviewQueueCard({
   description,
   to,
   icon: Icon,
+  workflowLabel,
+  onWorkflow,
   count,
   loading,
   items,
@@ -155,6 +186,8 @@ function ReviewQueueCard({
   description: string;
   to: string;
   icon: typeof Bell;
+  workflowLabel?: string;
+  onWorkflow?: () => void;
   count: number;
   loading: boolean;
   items: Array<{ title: string; meta: string }>;
@@ -178,7 +211,12 @@ function ReviewQueueCard({
             </div>
           ))}
         </div>
-        <Button asChild variant="outline" size="sm" className="mt-auto"><Link to={to}>Open</Link></Button>
+        <div className="mt-auto flex flex-wrap gap-2">
+          {onWorkflow && workflowLabel && (
+            <Button variant="outline" size="sm" onClick={onWorkflow}>{workflowLabel}</Button>
+          )}
+          <Button asChild variant="outline" size="sm"><Link to={to}>Open</Link></Button>
+        </div>
       </CardContent>
     </Card>
   );

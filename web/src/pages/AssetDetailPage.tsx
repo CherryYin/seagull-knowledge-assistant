@@ -1,10 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, Link } from "react-router-dom";
-import { assetsApi, notesApi, sourcesApi, wikiApi } from "@/lib/api";
+import { assetsApi, authApi, notesApi, sourcesApi, wikiApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ReferenceChips, type ReferenceItem } from "@/components/ReferenceChips";
+
+type ProductionEvent = {
+  event_type?: string;
+  asset_id?: string;
+  asset_type?: string;
+  title?: string;
+  status?: string;
+  timestamp?: string;
+  detail?: Record<string, unknown>;
+};
 
 const STATUS_LABELS = {
   draft: "Draft",
@@ -14,6 +24,50 @@ const STATUS_LABELS = {
   published: "Published",
   archived: "Archived",
 } as const;
+
+function formatProductionEventType(eventType?: string) {
+  return String(eventType || "unknown")
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function formatProductionEventSummary(event: ProductionEvent) {
+  const title = event.title || event.asset_type || "asset";
+  switch (event.event_type) {
+    case "asset_generated":
+      return `Generated ${title}`;
+    case "asset_ready_to_export":
+      return `${title} is ready to export`;
+    case "asset_exported": {
+      const channel = typeof event.detail?.channel === "string" ? event.detail.channel : undefined;
+      return channel ? `Exported ${title} to ${channel}` : `Exported ${title}`;
+    }
+    case "asset_published": {
+      const channel = typeof event.detail?.channel === "string" ? event.detail.channel : undefined;
+      return channel ? `Published ${title} via ${channel}` : `Published ${title}`;
+    }
+    case "asset_feedback_recorded":
+      return `Recorded feedback for ${title}`;
+    default:
+      return formatProductionEventType(event.event_type);
+  }
+}
+
+function productionEventMeta(event: ProductionEvent): string[] {
+  const parts: string[] = [];
+  const channel = typeof event.detail?.channel === "string" ? event.detail.channel : undefined;
+  const exportFormat = typeof event.detail?.export_format === "string" ? event.detail.export_format : undefined;
+  const publishUrl = typeof event.detail?.publish_url === "string" ? event.detail.publish_url : undefined;
+  const feedback = typeof event.detail?.feedback === "string" ? event.detail.feedback : undefined;
+
+  if (channel) parts.push(`Channel: ${channel}`);
+  if (exportFormat && exportFormat !== channel) parts.push(`Format: ${exportFormat}`);
+  if (publishUrl) parts.push(`URL: ${publishUrl}`);
+  if (feedback) parts.push(`Feedback: ${feedback}`);
+
+  return parts;
+}
 
 export function AssetDetailPage() {
   const { id = "" } = useParams();
@@ -51,6 +105,10 @@ export function AssetDetailPage() {
     queryFn: () => wikiApi.resolveReferences((asset?.wiki_refs ?? []).map((wikiId) => ({ ref_type: "wiki", ref_id: wikiId }))),
     enabled: Boolean(asset?.wiki_refs?.length),
   });
+  const productionMemoryQuery = useQuery({
+    queryKey: ["asset-production-memory", id],
+    queryFn: () => authApi.listMyMemories("production_memory"),
+  });
 
   const sourceRefItems: ReferenceItem[] = (asset?.source_refs ?? []).map((sourceId) => {
     const source = sourceMap.get(sourceId);
@@ -74,6 +132,9 @@ export function AssetDetailPage() {
   });
   const stableWikiItems = (wikiRefsQuery.data?.items ?? []).filter((item) => item.status === "stable") as ReferenceItem[];
   const candidateWikiItems = (wikiRefsQuery.data?.items ?? []).filter((item) => item.status !== "stable") as ReferenceItem[];
+  const productionEvents: ProductionEvent[] = ((productionMemoryQuery.data?.[0]?.value as { events?: ProductionEvent[] } | undefined)?.events ?? [])
+    .filter((event) => String(event.asset_id || "") === id)
+    .slice(0, 12);
 
   return (
     <div className="h-full overflow-y-auto">
@@ -175,6 +236,53 @@ export function AssetDetailPage() {
               </CardHeader>
               <CardContent>
                 <pre className="max-h-[640px] overflow-auto whitespace-pre-wrap rounded-md border bg-muted/30 p-3 text-sm">{asset.draft_content || "(empty)"}</pre>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Production Timeline</CardTitle>
+                <CardDescription>Asset generation, export, publish, and feedback events recorded in production memory.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {productionEvents.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No production events recorded yet.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {productionEvents.map((event, index) => (
+                      <div key={`${String(event.timestamp || index)}-${String(event.event_type || index)}`} className="rounded-md border bg-muted/20 p-3">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="space-y-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge variant="outline">{formatProductionEventType(event.event_type)}</Badge>
+                              {event.asset_type && <Badge variant="secondary">{event.asset_type}</Badge>}
+                              {event.status && <Badge variant="secondary">{event.status}</Badge>}
+                            </div>
+                            <div className="text-sm font-medium">{formatProductionEventSummary(event)}</div>
+                            {(event.title || event.asset_id) && (
+                              <p className="text-xs text-muted-foreground">
+                                {event.title || "Untitled asset"}
+                                {event.asset_id ? ` · ${event.asset_id}` : ""}
+                              </p>
+                            )}
+                            {productionEventMeta(event).length > 0 && (
+                              <div className="flex flex-wrap gap-2 pt-1">
+                                {productionEventMeta(event).map((item) => (
+                                  <span key={item} className="rounded-full bg-muted px-2 py-1 text-[11px] text-muted-foreground">
+                                    {item}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {event.timestamp ? new Date(event.timestamp).toLocaleString() : "Unknown time"}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </>

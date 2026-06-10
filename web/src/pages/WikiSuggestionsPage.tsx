@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Bot, CheckCircle2, Clock, Copy, FileSearch, RefreshCw, Sparkles, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import { SectionNav, reviewNavItems } from "@/components/SectionNav";
 
 export function WikiSuggestionsPage() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const { data, isLoading, error } = useQuery({
     queryKey: ["wiki-suggestions", "all"],
     queryFn: () => wikiApi.suggestions({ status: undefined, limit: 100 }),
@@ -161,6 +162,7 @@ export function WikiSuggestionsPage() {
               <MiningRunCard
                 key={run.id}
                 runId={run.id}
+                navigate={navigate}
                 isUpdatingInsight={updateInsightMutation.isPending}
                 isUpdatingArticle={updateArticleMutation.isPending || mergeArticleMutation.isPending || convertArticleMutation.isPending}
                 onAcceptInsight={(id) => updateInsightMutation.mutate({ id, status: "accepted" })}
@@ -181,6 +183,7 @@ export function WikiSuggestionsPage() {
 
 function MiningRunCard({
   runId,
+  navigate,
   isUpdatingInsight,
   isUpdatingArticle,
   onAcceptInsight,
@@ -192,6 +195,7 @@ function MiningRunCard({
   onConvertArticle,
 }: {
   runId: number;
+  navigate: ReturnType<typeof useNavigate>;
   isUpdatingInsight: boolean;
   isUpdatingArticle: boolean;
   onAcceptInsight: (id: number) => void;
@@ -235,6 +239,19 @@ function MiningRunCard({
               <MiningArticlePreview
                 key={article.id}
                 article={article}
+                onAskAgent={() =>
+                  navigate("/chat", {
+                    state: {
+                      objectRef: {
+                        object_type: "wiki_candidate_article",
+                        object_id: String(article.id),
+                        title: article.title,
+                      },
+                      workflowId: "review-candidate-article",
+                      promptSeed: `Review wiki candidate article \"${article.title}\" (${article.id}). Use its summary, claims, and evidence refs to judge whether it should stay in review, be accepted as a draft, or wait for stronger evidence.`,
+                    },
+                  })
+                }
                 disabled={isUpdatingArticle}
                 onAccept={() => onAcceptArticle(article.id)}
                 onReject={() => onRejectArticle(article.id)}
@@ -311,6 +328,7 @@ function MiningInsightPreview({
 
 function MiningArticlePreview({
   article,
+  onAskAgent,
   disabled,
   onAccept,
   onReject,
@@ -320,6 +338,7 @@ function MiningArticlePreview({
   onCreateAssetHref,
 }: {
   article: WikiArticleDraft;
+  onAskAgent: () => void;
   disabled: boolean;
   onAccept: () => void;
   onReject: () => void;
@@ -367,6 +386,9 @@ function MiningArticlePreview({
       )}
       <ReferenceList items={(resolvedRefs?.items ?? []) as ReferenceItem[]} title="Evidence" />
       <div className="mt-3 flex flex-wrap gap-2">
+        <Button size="sm" variant="outline" onClick={onAskAgent} disabled={disabled}>
+          <Bot className="mr-1 h-4 w-4" /> Ask Agent
+        </Button>
         <Button size="sm" variant="outline" onClick={onReject} disabled={disabled}>
           <XCircle className="mr-1 h-4 w-4" /> Reject
         </Button>
