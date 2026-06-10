@@ -24,9 +24,12 @@ _CACHE_TTL = 3600
 def _is_allowed_provider_model(provider: LLMProviderConfig, model_id: str) -> bool:
     normalized = model_id.strip().lower()
     if provider.id == "qwen":
-        if normalized.startswith("qwen3"):
-            return True
-        return False
+        blocked_prefixes = (
+            "qwen2",
+            "qwen-1",
+            "qwen1",
+        )
+        return not normalized.startswith(blocked_prefixes)
     return True
 
 
@@ -137,12 +140,33 @@ async def discover_models(provider: LLMProviderConfig) -> list[dict]:
 async def list_all_models() -> list[dict]:
     """Query all configured providers concurrently and return merged model list."""
     providers = settings.get_llm_providers()
-    if not providers:
+    manual_models = settings.get_manual_llm_models()
+    if not providers and not manual_models:
         return []
-    results = await asyncio.gather(*(discover_models(p) for p in providers))
+
+    results = await asyncio.gather(*(discover_models(p) for p in providers)) if providers else []
     merged: list[dict] = []
     for r in results:
         merged.extend(r)
+
+    seen = {(item["provider_id"], item["id"]) for item in merged if "provider_id" in item and "id" in item}
+    for item in manual_models:
+        provider = settings.get_provider(item.provider_id)
+        if provider is None:
+            continue
+        key = (item.provider_id, item.id)
+        if key in seen or not _is_allowed_provider_model(provider, item.id):
+            continue
+        merged.append(
+            {
+                "id": item.id,
+                "display_name": item.display_name or item.id,
+                "provider_id": provider.id,
+                "provider_name": provider.display_name,
+            }
+        )
+
+    merged.sort(key=lambda item: (str(item.get("provider_name", "")), str(item.get("id", ""))))
     return merged
 
 
@@ -171,12 +195,10 @@ def create_model(
     if provider_id:
         provider = settings.get_provider(provider_id)
         if provider:
-            if provider.id == "minimax":
-                raise ValueError("MiniMax is not yet supported as a Strands Action Agent model; use it for non-agent LLM features via create_async_client.")
             client = AsyncOpenAI(base_url=provider.base_url, api_key=provider.resolve_api_key())
             return OpenAIModel(
                 client=client,
-                model_id=model_id or provider.default_model or settings.QWEN_MODEL,
+                model_id=model_id or provider.default_model or settings.MINIMAX_MODEL or settings.QWEN_MODEL,
                 **model_params,
             )
 
@@ -186,6 +208,12 @@ def create_model(
             if provider.default_model == model_id:
                 client = AsyncOpenAI(base_url=provider.base_url, api_key=provider.resolve_api_key())
                 return OpenAIModel(client=client, model_id=model_id, **model_params)
+        for item in settings.get_manual_llm_models():
+            if item.id == model_id:
+                provider = settings.get_provider(item.provider_id)
+                if provider:
+                    client = AsyncOpenAI(base_url=provider.base_url, api_key=provider.resolve_api_key())
+                    return OpenAIModel(client=client, model_id=model_id, **model_params)
 
     # Legacy fallback: use global LLM_PROVIDER setting
     if settings.LLM_PROVIDER == "azure":
@@ -228,6 +256,17 @@ def create_async_client(
                 return client, model_id or provider.default_model or settings.MINIMAX_MODEL or "MiniMax-M3"
             client = AsyncOpenAI(base_url=provider.base_url, api_key=provider.resolve_api_key())
             return client, model_id or provider.default_model or settings.QWEN_MODEL
+
+    if model_id:
+        for item in settings.get_manual_llm_models():
+            if item.id == model_id:
+                provider = settings.get_provider(item.provider_id)
+                if provider:
+                    if provider.id == "minimax":
+                        client = _MiniMaxAsyncClient(base_url=provider.base_url, api_key=provider.resolve_api_key(), timeout=120)
+                        return client, model_id
+                    client = AsyncOpenAI(base_url=provider.base_url, api_key=provider.resolve_api_key())
+                    return client, model_id
 
     if settings.LLM_PROVIDER == "azure":
         client = AsyncOpenAI(

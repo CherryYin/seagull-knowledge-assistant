@@ -14,6 +14,12 @@ class LLMProviderConfig(BaseModel):
     api_key_env: str | None = None
     default_model: str | None = None
 
+
+class ManualLLMModelConfig(BaseModel):
+    id: str
+    provider_id: str
+    display_name: str | None = None
+
     def resolve_api_key(self) -> str:
         if self.api_key_env:
             return os.environ.get(self.api_key_env, self.api_key)
@@ -92,6 +98,9 @@ class Settings(BaseSettings):
 
     # LLM provider registry — JSON array of {id, display_name, base_url, api_key, default_model?}
     LLM_PROVIDERS: str = "[]"
+    # Manual model registry — JSON array of {id, provider_id, display_name?}
+    # Useful when a provider does not implement GET /models.
+    MANUAL_LLM_MODELS: str = "[]"
 
     # Context compaction settings (SummarizingConversationManager)
     COMPACTION_SUMMARY_RATIO: float = 0.4
@@ -202,6 +211,15 @@ class Settings(BaseSettings):
             if p.id == provider_id:
                 return p
         return None
+
+    def get_manual_llm_models(self) -> list[ManualLLMModelConfig]:
+        try:
+            raw = json.loads(self.MANUAL_LLM_MODELS)
+        except (json.JSONDecodeError, TypeError):
+            raw = []
+        if not raw:
+            return []
+        return [ManualLLMModelConfig(**entry) for entry in raw]
 
 
 settings = Settings()

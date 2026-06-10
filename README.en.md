@@ -105,6 +105,7 @@ Key configuration:
 | `QWEN_API_KEY` | Qwen API key | — |
 | `MINIMAX_API_KEY` | MiniMax API key | — |
 | `LLM_PROVIDERS` | OpenAI-compatible multi-provider JSON config | `[]` |
+| `MANUAL_LLM_MODELS` | Manually registered models for providers that do not support `/models` | `[]` |
 | `EMBEDDING_API_KEY` | Embedding API key | — |
 | `EMBEDDING_MODEL` | Embedding model | `text-embedding-v4` |
 | `TAVILY_API_KEY` | Tavily web search API key | — |

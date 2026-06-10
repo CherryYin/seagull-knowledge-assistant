@@ -436,6 +436,15 @@ async def _vlm_describe_page(
                                 ],
                             },
                         ],
+                    ) if not getattr(client, "_minimax_vision_mode", False) else client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {"role": "system", "content": _VLM_SYSTEM_PROMPT},
+                            {
+                                "role": "user",
+                                "content": f"请完整转录这一页的所有文字内容。\n\n图片(data url): data:image/png;base64,{page_b64}",
+                            },
+                        ],
                     ),
                     timeout=120,
                 )
@@ -478,7 +487,7 @@ async def extract_content_vlm(
     import base64
 
     import pymupdf
-    from openai import AsyncOpenAI
+    from pkg.services.cross_cutting.llm import create_async_client
 
     if isinstance(source, bytes):
         label = "<bytes>"
@@ -504,13 +513,9 @@ async def extract_content_vlm(
     logger.info("[vlm] rendered %d pages (%.1fs)", total_pages, time.monotonic() - t0)
     sys.stderr.flush()
 
-    # Create LLM client with generous timeout for vision requests
-    client = AsyncOpenAI(
-        base_url=settings.QWEN_API_BASE,
-        api_key=settings.QWEN_API_KEY,
-        timeout=120.0,
-    )
-    model = settings.QWEN_MODEL
+    # Create LLM client with MiniMax M3 first for VLM parsing
+    client, model = create_async_client(provider_id="minimax", model_id=settings.MINIMAX_MODEL or "MiniMax-M3")
+    setattr(client, "_minimax_vision_mode", True)
 
     # Process pages in parallel with concurrency limit
     semaphore = asyncio.Semaphore(4)
