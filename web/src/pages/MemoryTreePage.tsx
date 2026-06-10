@@ -369,6 +369,20 @@ export function MemoryTreePage() {
                       },
                     })
                   }
+                  onCreateReport={() =>
+                    navigate("/assets", {
+                      state: {
+                        assetHandoff: buildAssetHandoffState({
+                          title: `${selectedNode.title} Report`,
+                          brief: `Create a topic report from knowledge tree node: ${selectedNode.title}`,
+                          asset_type: "topic_report",
+                          source_refs: selectedNode.derived_from_sources || [],
+                          note_refs: selectedNode.derived_from_notes || [],
+                          memory_refs: [selectedNode.id],
+                        }),
+                      },
+                    })
+                  }
                   onMerge={(targetNodeId) => mergeMutation.mutate({ id: selectedNode.id, targetNodeId })}
                   onJumpToNode={handleSelectNode}
                 />
@@ -488,6 +502,7 @@ function MemoryDetail({
   onCreateBrief,
   onCreatePack,
   onCreateNewsletter,
+  onCreateReport,
   onMerge,
   onJumpToNode,
 }: {
@@ -509,6 +524,7 @@ function MemoryDetail({
   onCreateBrief: () => void;
   onCreatePack: () => void;
   onCreateNewsletter: () => void;
+  onCreateReport: () => void;
   onMerge: (targetNodeId: string) => void;
   onJumpToNode: (node: MemoryNode) => void;
 }) {
@@ -550,6 +566,9 @@ function MemoryDetail({
           </Button>
           <Button variant="outline" onClick={onCreateNewsletter}>
             <ScrollText className="h-4 w-4" /> Create Newsletter
+          </Button>
+          <Button variant="outline" onClick={onCreateReport}>
+            <ScrollText className="h-4 w-4" /> Create Report
           </Button>
           {queuedRefreshCount !== null && (
             <Link to="/review/wiki-suggestions" className="text-xs text-primary hover:underline">

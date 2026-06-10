@@ -1,7 +1,7 @@
 export interface AssetHandoffState {
   title?: string;
   brief?: string;
-  asset_type?: "blog_post" | "research_brief" | "knowledge_pack" | "newsletter_issue";
+  asset_type?: "blog_post" | "research_brief" | "knowledge_pack" | "newsletter_issue" | "topic_report";
   source_refs?: string[];
   note_refs?: string[];
   memory_refs?: string[];

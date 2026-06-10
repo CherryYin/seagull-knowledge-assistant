@@ -612,6 +612,75 @@ def test_export_markdown_uses_newsletter_template():
     assert "## Appendix B — References" in content
 
 
+def test_check_readiness_requires_topic_report_structure_and_wiki():
+    from pkg.services.application.blog_generation import check_readiness
+
+    asset = Asset(
+        id="asset-report-1",
+        user_id="user-1",
+        asset_type="topic_report",
+        status="draft",
+        title="Agent Memory Report",
+        brief="Report on agent memory systems.",
+        outline="## Executive Summary",
+        draft_content="## Executive Summary\n\nSummary\n\n## Findings\n\nFinding",
+        reference_notes=None,
+        editor_feedback=None,
+        source_refs=["src-1"],
+        note_refs=["note-1"],
+        memory_refs=[],
+        wiki_refs=[],
+        export_format=None,
+        exported_at=None,
+        published_at=None,
+        metadata_={},
+    )
+
+    ready, blocking, _warnings, suggestions = check_readiness(asset)
+
+    assert ready is False
+    assert "Topic report requires at least one wiki reference" in blocking
+    assert "Topic report requires at least three attached references" in blocking
+    assert "Topic report requires references before export" in blocking
+    assert "Topic report requires a 'key themes' section" in blocking
+    assert "Topic report requires a 'recommendations' section" in blocking
+    assert any("topic overview" in item for item in suggestions)
+
+
+def test_export_markdown_uses_topic_report_template():
+    from pkg.services.application.blog_generation import export_markdown
+
+    asset = Asset(
+        id="asset-report-1",
+        user_id="user-1",
+        asset_type="topic_report",
+        status="ready_to_export",
+        title="Agent Memory Report",
+        brief="Report on agent memory systems.",
+        outline="# Agent Memory Report\n\n## Executive Summary\n\n- Summary",
+        draft_content="# Agent Memory Report\n\n## Executive Summary\n\nSummary\n\n## Topic Overview\n\nOverview\n\n## Key Themes\n\n- Theme\n\n## Findings\n\n- Finding\n\n## Risks and Gaps\n\n- Gap\n\n## Recommendations and Next Steps\n\n- Next",
+        reference_notes="## Source References\n\n- Source: Internal note (src-1)",
+        editor_feedback=None,
+        source_refs=["src-1"],
+        note_refs=["note-1"],
+        memory_refs=["mem-1"],
+        wiki_refs=["wiki-1"],
+        export_format=None,
+        exported_at=None,
+        published_at=None,
+        metadata_={},
+    )
+
+    content = export_markdown(asset)
+
+    assert "> [!summary] Topic Report" in content
+    assert "## Report Snapshot" in content
+    assert "## Executive Summary" in content
+    assert "## Key Themes" in content
+    assert "## Recommendations and Next Steps" in content
+    assert "## Appendix B — References" in content
+
+
 @pytest.mark.asyncio
 async def test_generate_outline_falls_back_to_research_brief_template():
     from pkg.services.application.blog_generation import generate_outline

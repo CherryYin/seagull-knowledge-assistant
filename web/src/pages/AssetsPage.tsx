@@ -28,6 +28,7 @@ function assetTypeLabel(assetType: AssetType) {
   if (assetType === "research_brief") return "Research Brief";
   if (assetType === "knowledge_pack") return "Knowledge Pack";
   if (assetType === "newsletter_issue") return "Newsletter Issue";
+  if (assetType === "topic_report") return "Topic Report";
   return "Blog Post";
 }
 
@@ -40,6 +41,9 @@ function assetTypeDescription(assetType: AssetType) {
   }
   if (assetType === "newsletter_issue") {
     return "A curated issue draft with editorial framing, featured items, and suggested next reads.";
+  }
+  if (assetType === "topic_report") {
+    return "A systematic topic-level report with themes, findings, risks, and next-step recommendations.";
   }
   return "Readable, publish-oriented writing for a clear audience and angle.";
 }
@@ -66,6 +70,14 @@ const NEWSLETTER_ISSUE_CHECKLIST = [
   "Write a short editor's note that frames the issue",
   "Explain why the items matter right now",
   "End with clear next reads and readable references",
+];
+
+const TOPIC_REPORT_CHECKLIST = [
+  "Define the topic scope and why it matters now",
+  "Anchor the report in at least one stable wiki page",
+  "Surface key themes across the material",
+  "Separate findings from risks and gaps",
+  "End with clear recommendations and references",
 ];
 
 function ReadinessList({
@@ -258,7 +270,7 @@ export function AssetsPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-5">
               <button
                 type="button"
                 onClick={() => setAssetType("blog_post")}
@@ -291,9 +303,17 @@ export function AssetsPage() {
                 <div className="flex items-center gap-2 font-medium"><ScrollText className="h-4 w-4" /> Newsletter Issue</div>
                 <p className="mt-1 text-xs text-muted-foreground">Curated issue draft with editorial framing, featured items, and next reads.</p>
               </button>
+              <button
+                type="button"
+                onClick={() => setAssetType("topic_report")}
+                className={`rounded-lg border p-3 text-left transition-colors ${assetType === "topic_report" ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}
+              >
+                <div className="flex items-center gap-2 font-medium"><ScrollText className="h-4 w-4" /> Topic Report</div>
+                <p className="mt-1 text-xs text-muted-foreground">Systematic report with key themes, findings, risks, and next-step recommendations.</p>
+              </button>
             </div>
-            <Input placeholder={assetType === "research_brief" ? "Research brief title" : assetType === "knowledge_pack" ? "Knowledge pack title" : assetType === "newsletter_issue" ? "Newsletter issue title" : "Asset title"} value={title} onChange={(e) => setTitle(e.target.value)} />
-            <Textarea placeholder={assetType === "research_brief" ? "Decision question, scope, intended audience, and why this brief matters" : assetType === "knowledge_pack" ? "Who this pack is for, what it includes, and why it should exist" : assetType === "newsletter_issue" ? "Theme of this issue, target reader, and what featured items it should include" : "Editorial brief"} value={brief} onChange={(e) => setBrief(e.target.value)} rows={4} />
+            <Input placeholder={assetType === "research_brief" ? "Research brief title" : assetType === "knowledge_pack" ? "Knowledge pack title" : assetType === "newsletter_issue" ? "Newsletter issue title" : assetType === "topic_report" ? "Topic report title" : "Asset title"} value={title} onChange={(e) => setTitle(e.target.value)} />
+            <Textarea placeholder={assetType === "research_brief" ? "Decision question, scope, intended audience, and why this brief matters" : assetType === "knowledge_pack" ? "Who this pack is for, what it includes, and why it should exist" : assetType === "newsletter_issue" ? "Theme of this issue, target reader, and what featured items it should include" : assetType === "topic_report" ? "Topic scope, key question, why it matters now, and what the report should clarify" : "Editorial brief"} value={brief} onChange={(e) => setBrief(e.target.value)} rows={4} />
             <Textarea placeholder="Opinion / thesis" value={opinionNotes} onChange={(e) => setOpinionNotes(e.target.value)} rows={3} />
             <Textarea placeholder="Style notes / tone instructions" value={styleNotes} onChange={(e) => setStyleNotes(e.target.value)} rows={3} />
             <div className="grid gap-4 md:grid-cols-2">
@@ -389,6 +409,8 @@ export function AssetsPage() {
                       ? `Working on knowledge pack: ${selectedAsset.title}`
                       : selectedAsset.asset_type === "newsletter_issue"
                         ? `Working on newsletter issue: ${selectedAsset.title}`
+                        : selectedAsset.asset_type === "topic_report"
+                          ? `Working on topic report: ${selectedAsset.title}`
                     : `Working on ${selectedAsset.title}`
                   : "Select or create an asset"}
               </CardDescription>
@@ -436,14 +458,26 @@ export function AssetsPage() {
                       </div>
                     </div>
                   )}
+                  {selectedAsset.asset_type === "topic_report" && (
+                    <div className="rounded-lg border border-border/70 bg-background p-4">
+                      <p className="text-sm font-semibold text-foreground">Topic Report Checklist</p>
+                      <div className="mt-3 grid gap-2 md:grid-cols-2">
+                        {TOPIC_REPORT_CHECKLIST.map((item) => (
+                          <div key={item} className="rounded-md border border-border/60 px-3 py-2 text-xs text-muted-foreground">
+                            {item}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <div className="flex flex-wrap gap-2">
                     <Button variant="outline" onClick={() => generateOutlineMutation.mutate(selectedAsset.id)}>
                       <Sparkles className="mr-2 h-4 w-4" />
-                      {selectedAsset.asset_type === "research_brief" ? "Generate Brief Outline" : selectedAsset.asset_type === "knowledge_pack" ? "Generate Pack Outline" : selectedAsset.asset_type === "newsletter_issue" ? "Generate Issue Outline" : "Generate Outline"}
+                      {selectedAsset.asset_type === "research_brief" ? "Generate Brief Outline" : selectedAsset.asset_type === "knowledge_pack" ? "Generate Pack Outline" : selectedAsset.asset_type === "newsletter_issue" ? "Generate Issue Outline" : selectedAsset.asset_type === "topic_report" ? "Generate Report Outline" : "Generate Outline"}
                     </Button>
                     <Button variant="outline" onClick={() => generateDraftMutation.mutate(selectedAsset.id)}>
                       <FileText className="mr-2 h-4 w-4" />
-                      {selectedAsset.asset_type === "research_brief" ? "Generate Brief Draft" : selectedAsset.asset_type === "knowledge_pack" ? "Generate Pack Draft" : selectedAsset.asset_type === "newsletter_issue" ? "Generate Issue Draft" : "Generate Draft"}
+                      {selectedAsset.asset_type === "research_brief" ? "Generate Brief Draft" : selectedAsset.asset_type === "knowledge_pack" ? "Generate Pack Draft" : selectedAsset.asset_type === "newsletter_issue" ? "Generate Issue Draft" : selectedAsset.asset_type === "topic_report" ? "Generate Report Draft" : "Generate Draft"}
                     </Button>
                     <Button variant="outline" onClick={() => attachReferencesMutation.mutate(selectedAsset.id)}>
                       <CheckCircle2 className="mr-2 h-4 w-4" />
@@ -481,6 +515,11 @@ export function AssetsPage() {
                           Good newsletter issues define the theme, frame the issue with a short editorial note, and highlight why these items are worth reading now.
                         </p>
                       )}
+                      {selectedAsset.asset_type === "topic_report" && (
+                        <p className="text-xs text-muted-foreground">
+                          Good topic reports define the topic boundary, surface the major themes, and turn evidence into findings, risks, and next-step recommendations.
+                        </p>
+                      )}
                     </div>
                     <div className="space-y-2">
                       <h3 className="text-sm font-semibold">References</h3>
@@ -498,6 +537,11 @@ export function AssetsPage() {
                       {selectedAsset.asset_type === "newsletter_issue" && (
                         <p className="text-xs text-muted-foreground">
                           Newsletter issues should attach readable references before export so every featured item can be traced back to source material.
+                        </p>
+                      )}
+                      {selectedAsset.asset_type === "topic_report" && (
+                        <p className="text-xs text-muted-foreground">
+                          Topic reports should attach readable references before export so themes and findings remain traceable to source material and wiki context.
                         </p>
                       )}
                     </div>

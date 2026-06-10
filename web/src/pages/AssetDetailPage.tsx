@@ -29,6 +29,7 @@ function assetTypeLabel(assetType?: string) {
   if (assetType === "research_brief") return "Research Brief";
   if (assetType === "knowledge_pack") return "Knowledge Pack";
   if (assetType === "newsletter_issue") return "Newsletter Issue";
+  if (assetType === "topic_report") return "Topic Report";
   return "Blog Post";
 }
 
@@ -41,6 +42,9 @@ function assetTypeDescription(assetType?: string) {
   }
   if (assetType === "newsletter_issue") {
     return "A curated issue draft focused on editorial framing, featured items, and sendable structure.";
+  }
+  if (assetType === "topic_report") {
+    return "A systematic topic-level report focused on themes, findings, risks, and recommendations.";
   }
   return "An editable blog draft focused on angle, audience, and readable publish-ready structure.";
 }
@@ -67,6 +71,14 @@ const NEWSLETTER_ISSUE_CHECKLIST = [
   "Frame the issue with a short editor's note",
   "Explain why the selected items matter now",
   "Close with next reads and readable references",
+];
+
+const TOPIC_REPORT_CHECKLIST = [
+  "Clarify the topic boundary and why it matters now",
+  "Ground the report in at least one stable wiki page",
+  "Surface the major themes across the material",
+  "Separate findings from risks and unresolved gaps",
+  "End with next steps supported by references",
 ];
 
 function formatProductionEventType(eventType?: string) {
@@ -255,6 +267,21 @@ export function AssetDetailPage() {
                 </CardContent>
               </Card>
             )}
+            {asset.asset_type === "topic_report" && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Topic Report Checklist</CardTitle>
+                  <CardDescription>Use this as a quick review frame before export or publication.</CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-2 md:grid-cols-2">
+                  {TOPIC_REPORT_CHECKLIST.map((item) => (
+                    <div key={item} className="rounded-md border border-border/70 px-3 py-2 text-sm text-muted-foreground">
+                      {item}
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Brief</CardTitle>
@@ -265,6 +292,8 @@ export function AssetDetailPage() {
                       ? "Audience, contents, and why this pack should exist."
                       : asset.asset_type === "newsletter_issue"
                         ? "Issue theme, intended reader, and the kind of updates this issue should feature."
+                        : asset.asset_type === "topic_report"
+                          ? "Topic boundary, report objective, and what this report should clarify."
                     : "Editorial direction for this asset."}
                 </CardDescription>
               </CardHeader>
@@ -284,6 +313,8 @@ export function AssetDetailPage() {
                       ? "Attached references and reference notes. Knowledge packs should keep this section reusable and easy to navigate."
                       : asset.asset_type === "newsletter_issue"
                         ? "Attached references and reference notes. Newsletter issues should keep each featured item traceable before export."
+                        : asset.asset_type === "topic_report"
+                          ? "Attached references and reference notes. Topic reports should keep findings and recommendations traceable before export."
                     : "Attached references and reference notes."}
                 </CardDescription>
               </CardHeader>
@@ -343,6 +374,9 @@ export function AssetDetailPage() {
                 {asset.asset_type === "newsletter_issue" && (
                   <CardDescription>Newsletter issues should usually cover issue overview, editor's note, featured items, why it matters, and next reads.</CardDescription>
                 )}
+                {asset.asset_type === "topic_report" && (
+                  <CardDescription>Topic reports should usually cover executive summary, topic overview, key themes, findings, risks, recommendations, and references.</CardDescription>
+                )}
               </CardHeader>
               <CardContent>
                 <pre className="whitespace-pre-wrap rounded-md border bg-muted/30 p-3 text-sm">{asset.outline || "(empty)"}</pre>
@@ -360,6 +394,9 @@ export function AssetDetailPage() {
                 )}
                 {asset.asset_type === "newsletter_issue" && (
                   <CardDescription>Keep the issue light, curated, and readable enough to send to an audience without turning it into a report.</CardDescription>
+                )}
+                {asset.asset_type === "topic_report" && (
+                  <CardDescription>Keep the report systematic and evidence-backed, with clear distinctions between themes, findings, risks, and next steps.</CardDescription>
                 )}
               </CardHeader>
               <CardContent>

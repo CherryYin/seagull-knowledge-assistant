@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-ASSET_TYPE_PATTERN = r"^(blog_post|research_brief|knowledge_pack|newsletter_issue)$"
+ASSET_TYPE_PATTERN = r"^(blog_post|research_brief|knowledge_pack|newsletter_issue|topic_report)$"
 ASSET_STATUS_PATTERN = r"^(draft|in_review|ready_to_export|exported|published|archived)$"
 
 

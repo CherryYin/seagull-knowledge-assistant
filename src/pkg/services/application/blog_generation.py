@@ -108,6 +108,8 @@ def _asset_kind_label(asset_type: str) -> str:
         return "knowledge pack"
     if asset_type == "newsletter_issue":
         return "newsletter issue"
+    if asset_type == "topic_report":
+        return "topic report"
     return "blog post"
 
 
@@ -176,6 +178,30 @@ def _fallback_outline(asset: Asset) -> str:
                 "",
                 "## Recommended Next Reads",
                 "- What readers should open next",
+            ]
+        )
+    if asset.asset_type == "topic_report":
+        return "\n".join(
+            [
+                f"# {asset.title}",
+                "",
+                "## Executive Summary",
+                f"- {asset.brief or 'Summarize the topic and why this report matters.'}",
+                "",
+                "## Topic Overview",
+                "- Scope, framing, and why this topic matters now",
+                "",
+                "## Key Themes",
+                "- The major thematic threads across the material",
+                "",
+                "## Findings",
+                "- Evidence-backed findings across sources and notes",
+                "",
+                "## Risks and Gaps",
+                "- What remains uncertain, conflicted, or incomplete",
+                "",
+                "## Recommendations and Next Steps",
+                "- What to do or investigate next",
             ]
         )
     return "\n".join(
@@ -261,6 +287,29 @@ def _fallback_draft(asset: Asset) -> str:
                 "",
                 "## Recommended Next Reads",
                 "Suggest follow-up links or next items to read after this issue.",
+            ]
+        )
+    elif asset.asset_type == "topic_report":
+        sections.extend(
+            [
+                "",
+                "## Executive Summary",
+                "Summarize the topic, the core conclusion, and why the report matters now.",
+                "",
+                "## Topic Overview",
+                "Explain the scope, framing, and boundaries of the topic.",
+                "",
+                "## Key Themes",
+                "Identify the major themes that appear across the material.",
+                "",
+                "## Findings",
+                "List the strongest evidence-backed findings from sources, notes, and stable wiki pages.",
+                "",
+                "## Risks and Gaps",
+                "Call out uncertainties, contradictions, and what still needs validation.",
+                "",
+                "## Recommendations and Next Steps",
+                "Turn the analysis into concrete decisions, next actions, or follow-up work.",
             ]
         )
     else:
@@ -475,6 +524,61 @@ def _newsletter_issue_export_markdown(asset: Asset) -> str:
     return "\n".join(parts).strip()
 
 
+def _topic_report_export_markdown(asset: Asset) -> str:
+    brief = (asset.brief or "").strip()
+    draft = _strip_title_heading(asset.draft_content or "", asset.title)
+    outline = _strip_title_heading(asset.outline or "", asset.title)
+
+    summary = _markdown_section(draft, "Executive Summary")
+    overview = _markdown_section(draft, "Topic Overview")
+    themes = _markdown_section(draft, "Key Themes")
+    findings = _markdown_section(draft, "Findings")
+    risks = _markdown_section(draft, "Risks and Gaps")
+    recommendations = _markdown_section(draft, "Recommendations and Next Steps")
+
+    parts = [f"# {asset.title}", "", "> [!summary] Topic Report"]
+    if brief:
+        parts.append(f"> {brief}")
+    else:
+        parts.append("> Systematic report that consolidates a topic into themes, findings, risks, and next steps.")
+
+    parts.extend(
+        [
+            "",
+            "## Report Snapshot",
+            "",
+            f"- **Asset Type:** {_asset_kind_label(asset.asset_type).title()}",
+            f"- **Status:** {asset.status.replace('_', ' ').title()}",
+            f"- **Sources:** {len(asset.source_refs or [])}",
+            f"- **Notes:** {len(asset.note_refs or [])}",
+            f"- **Knowledge Tree Nodes:** {len(asset.memory_refs or [])}",
+            f"- **Wiki Pages:** {len(asset.wiki_refs or [])}",
+        ]
+    )
+
+    if summary:
+        parts.extend(["", "## Executive Summary", "", summary])
+    elif brief:
+        parts.extend(["", "## Executive Summary", "", brief])
+    if overview:
+        parts.extend(["", "## Topic Overview", "", overview])
+    if themes:
+        parts.extend(["", "## Key Themes", "", themes])
+    if findings:
+        parts.extend(["", "## Findings", "", findings])
+    if risks:
+        parts.extend(["", "## Risks and Gaps", "", risks])
+    if recommendations:
+        parts.extend(["", "## Recommendations and Next Steps", "", recommendations])
+    if draft:
+        parts.extend(["", "## Full Report", "", draft])
+    if outline:
+        parts.extend(["", "## Appendix A — Working Outline", "", outline])
+    if asset.reference_notes:
+        parts.extend(["", "## Appendix B — References", "", asset.reference_notes.strip()])
+    return "\n".join(parts).strip()
+
+
 async def _generate_with_fallback(
     session: AsyncSession,
     *,
@@ -531,6 +635,13 @@ async def generate_outline(session: AsyncSession, *, asset: Asset) -> str:
             "Optimize for curation and reader flow rather than exhaustive analysis. "
             "Use stable wiki as high-level context, but preserve traceability back to raw evidence."
         )
+    elif asset.asset_type == "topic_report":
+        system_prompt = (
+            "You are a topic report outline generator for source-driven knowledge assets. "
+            "Produce a concise Markdown outline for a systematic topic report with sections for executive summary, topic overview, key themes, findings, risks and gaps, and recommendations. "
+            "Optimize for structured synthesis rather than a newsletter or persuasive essay. "
+            "Use stable wiki as high-level context, but preserve traceability back to raw evidence."
+        )
     return await _generate_with_fallback(
         session,
         asset=asset,
@@ -571,6 +682,12 @@ async def generate_draft(session: AsyncSession, *, asset: Asset) -> str:
             "You are a source-grounded newsletter issue generator. Write a Markdown issue draft that follows the outline, "
             "curates the most important items, uses a light editorial voice, and gives readers a clear sense of what to read and why. "
             "The result should feel like a sendable issue rather than a report or essay."
+        )
+    elif asset.asset_type == "topic_report":
+        system_prompt = (
+            "You are a source-grounded topic report generator. Write a Markdown report that follows the outline, "
+            "synthesizes the topic into themes and findings, calls out risks and gaps, and ends with concrete next steps. "
+            "The result should feel like a systematic report rather than a newsletter or short brief."
         )
     return await _generate_with_fallback(
         session,
@@ -662,6 +779,23 @@ def check_readiness(asset: Asset) -> tuple[bool, list[str], list[str], list[str]
             blocking.append("Newsletter issue requires a 'featured items' section")
         if "recommended next reads" not in draft_text:
             blocking.append("Newsletter issue requires a 'recommended next reads' section")
+    if asset.asset_type == "topic_report":
+        total_refs = len(asset.source_refs or []) + len(asset.note_refs or []) + len(asset.memory_refs or []) + len(asset.wiki_refs or [])
+        if not (asset.wiki_refs or []):
+            blocking.append("Topic report requires at least one wiki reference")
+        if total_refs < 3:
+            blocking.append("Topic report requires at least three attached references")
+        if not (asset.reference_notes or "").strip():
+            blocking.append("Topic report requires references before export")
+        draft_text = (asset.draft_content or "").lower()
+        if "executive summary" not in draft_text:
+            blocking.append("Topic report requires an 'executive summary' section")
+        if "key themes" not in draft_text:
+            blocking.append("Topic report requires a 'key themes' section")
+        if "findings" not in draft_text:
+            blocking.append("Topic report requires a 'findings' section")
+        if "recommendations" not in draft_text:
+            blocking.append("Topic report requires a 'recommendations' section")
     if asset.wiki_refs and not asset.source_refs and not asset.note_refs and not asset.memory_refs:
         warnings.append("Wiki context is attached without raw source/note references")
     if asset.wiki_refs and not (asset.reference_notes or "").strip():
@@ -694,6 +828,11 @@ def check_readiness(asset: Asset) -> tuple[bool, list[str], list[str], list[str]
         for heading in ["issue overview", "why it matters"]:
             if heading not in draft_text:
                 suggestions.append(f"Newsletter issue draft should include a '{heading}' section")
+    if asset.asset_type == "topic_report":
+        draft_text = (asset.draft_content or "").lower()
+        for heading in ["topic overview", "risks", "gaps"]:
+            if heading not in draft_text:
+                suggestions.append(f"Topic report draft should include a '{heading}' section")
     wiki_claim_health = _estimate_wiki_claim_health(asset)
     weak_claim_count = wiki_claim_health["weak_claim_count"]
     total_claim_count = wiki_claim_health["total_claim_count"]
@@ -711,6 +850,8 @@ def export_markdown(asset: Asset) -> str:
         return _knowledge_pack_export_markdown(asset)
     if asset.asset_type == "newsletter_issue":
         return _newsletter_issue_export_markdown(asset)
+    if asset.asset_type == "topic_report":
+        return _topic_report_export_markdown(asset)
     parts = [f"# {asset.title}"]
     if asset.brief:
         parts.extend(["", asset.brief])
