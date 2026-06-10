@@ -5,7 +5,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { wikiApi, type WikiArticleDraft, type WikiInsightCandidate, type WikiRecompileSuggestion } from "@/lib/api";
-import { ReferenceChips, type ReferenceItem } from "@/components/ReferenceChips";
+import { type ReferenceItem } from "@/components/ReferenceChips";
+import { ReferenceList } from "@/components/ReferenceList";
 import { getReviewConflictMessage, getReviewStatusLabel } from "@/lib/reviewStatus";
 import { SUMMARY_LAYER_DESCRIPTION } from "@/lib/summaryLayer";
 import { SectionNav, reviewNavItems } from "@/components/SectionNav";
@@ -265,16 +266,37 @@ function MiningInsightPreview({
     queryKey: ["wiki-reference-resolve", "insight", insight.id],
     queryFn: () => wikiApi.resolveReferences(insight.evidence_refs),
   });
+  const claims = Array.isArray(insight.metadata_?.claims) ? insight.metadata_.claims : [];
+  const weakClaimCount = claims.filter((claim) => String(claim.status || "") !== "supported").length;
 
   return (
     <div className="rounded-md border p-3">
       <div className="flex flex-wrap items-center gap-2">
         <Badge>{insight.insight_type}</Badge>
         <Badge variant="secondary">{insight.evidence_refs.length} refs</Badge>
+        {weakClaimCount > 0 && <Badge variant="outline">{weakClaimCount} weak claim{weakClaimCount > 1 ? "s" : ""}</Badge>}
       </div>
       <p className="mt-2 font-medium">{insight.title}</p>
       <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{insight.summary}</p>
-      <ReferenceChips items={(resolvedRefs?.items ?? []) as ReferenceItem[]} />
+      {claims.length > 0 && (
+        <div className="mt-3 rounded-lg border border-border/70 bg-background/70 p-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Claim</p>
+          {claims.map((claim, index) => (
+            <div key={index} className="mt-2 text-sm leading-6">
+              <div className="flex items-center gap-2">
+                <Badge variant="outline">{String(claim.status || "weak")}</Badge>
+              </div>
+              <p className="mt-1 text-foreground">{String(claim.text || "")}</p>
+            </div>
+          ))}
+          {weakClaimCount > 0 && (
+            <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">
+              This insight still has weakly supported claims. Review evidence before accepting it into a draft.
+            </p>
+          )}
+        </div>
+      )}
+      <ReferenceList items={(resolvedRefs?.items ?? []) as ReferenceItem[]} title="Evidence" />
       <div className="mt-3 flex flex-wrap gap-2">
         <Button size="sm" variant="outline" onClick={onReject} disabled={disabled}>
           <XCircle className="mr-1 h-4 w-4" /> Reject
@@ -310,16 +332,40 @@ function MiningArticlePreview({
     queryKey: ["wiki-reference-resolve", "article", article.id],
     queryFn: () => wikiApi.resolveReferences(article.evidence_refs),
   });
+  const claims = Array.isArray(article.metadata_?.claims) ? article.metadata_.claims : [];
+  const weakClaimCount = claims.filter((claim) => String(claim.status || "") !== "supported").length;
+  const shouldGateAccept = weakClaimCount >= 2;
 
   return (
     <div className="rounded-md border p-3">
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant="outline">{article.status}</Badge>
         <Badge variant="secondary">{article.evidence_refs.length} refs</Badge>
+        {weakClaimCount > 0 && <Badge variant="outline">{weakClaimCount} weak claim{weakClaimCount > 1 ? "s" : ""}</Badge>}
       </div>
       <p className="mt-2 font-medium">{article.title}</p>
       <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{article.summary || article.content}</p>
-      <ReferenceChips items={(resolvedRefs?.items ?? []) as ReferenceItem[]} />
+      {claims.length > 0 && (
+        <div className="mt-3 rounded-lg border border-border/70 bg-background/70 p-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Candidate Claims</p>
+          <div className="mt-2 space-y-2">
+            {claims.slice(0, 4).map((claim, index) => (
+              <div key={index} className="rounded-md border border-border/60 p-2">
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline">{String(claim.status || "weak")}</Badge>
+                </div>
+                <p className="mt-1 text-sm leading-6 text-foreground">{String(claim.text || "")}</p>
+              </div>
+            ))}
+          </div>
+          {weakClaimCount > 0 && (
+            <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">
+              This candidate article still contains weakly supported claims. It may be better to keep it in review until evidence is stronger.
+            </p>
+          )}
+        </div>
+      )}
+      <ReferenceList items={(resolvedRefs?.items ?? []) as ReferenceItem[]} title="Evidence" />
       <div className="mt-3 flex flex-wrap gap-2">
         <Button size="sm" variant="outline" onClick={onReject} disabled={disabled}>
           <XCircle className="mr-1 h-4 w-4" /> Reject
@@ -346,8 +392,8 @@ function MiningArticlePreview({
             <Sparkles className="mr-1 h-4 w-4" /> Create Asset
           </Link>
         </Button>
-        <Button size="sm" onClick={onAccept} disabled={disabled}>
-          <CheckCircle2 className="mr-1 h-4 w-4" /> Accept as Draft
+        <Button size="sm" onClick={onAccept} disabled={disabled || shouldGateAccept} title={shouldGateAccept ? "Reduce weak claims or keep this article in review before accepting it as a draft." : undefined}>
+          <CheckCircle2 className="mr-1 h-4 w-4" /> {shouldGateAccept ? "Weak Claims Block Accept" : "Accept as Draft"}
         </Button>
       </div>
     </div>

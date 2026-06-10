@@ -6,6 +6,7 @@ Falls back to legacy LLM_PROVIDER (azure/qwen) config for backward compatibility
 import asyncio
 import logging
 import time
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -18,6 +19,55 @@ logger = logging.getLogger(__name__)
 
 _MODEL_CACHE: dict[str, tuple[list[dict], float]] = {}
 _CACHE_TTL = 3600
+
+
+def _is_allowed_provider_model(provider: LLMProviderConfig, model_id: str) -> bool:
+    normalized = model_id.strip().lower()
+    if provider.id == "qwen":
+        if normalized.startswith("qwen3"):
+            return True
+        return False
+    return True
+
+
+class _MiniMaxChatCompletions:
+    def __init__(self, *, base_url: str, api_key: str, timeout: float = 120):
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.timeout = timeout
+
+    async def create(self, *, model: str, messages: list[dict], **kwargs):
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+        }
+        if "temperature" in kwargs and kwargs["temperature"] is not None:
+            payload["temperature"] = kwargs["temperature"]
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.post(
+                f"{self.base_url}/text/chatcompletion_v2",
+                json=payload,
+                headers={"Authorization": f"Bearer {self.api_key}"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        text = (
+            data.get("choices", [{}])[0].get("message", {}).get("content")
+            or data.get("reply")
+            or data.get("output_text")
+            or ""
+        )
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=text))],
+            raw=data,
+        )
+
+
+class _MiniMaxAsyncClient:
+    def __init__(self, *, base_url: str, api_key: str, timeout: float = 120):
+        self.chat = SimpleNamespace(
+            completions=_MiniMaxChatCompletions(base_url=base_url, api_key=api_key, timeout=timeout)
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +99,7 @@ async def discover_models(provider: LLMProviderConfig) -> list[dict]:
                     "provider_name": provider.display_name,
                 }
                 for m in data
-                if isinstance(m, dict) and "id" in m
+                if isinstance(m, dict) and "id" in m and _is_allowed_provider_model(provider, str(m["id"]))
             ]
             models.sort(key=lambda m: m["id"])
         try:
@@ -121,6 +171,8 @@ def create_model(
     if provider_id:
         provider = settings.get_provider(provider_id)
         if provider:
+            if provider.id == "minimax":
+                raise ValueError("MiniMax is not yet supported as a Strands Action Agent model; use it for non-agent LLM features via create_async_client.")
             client = AsyncOpenAI(base_url=provider.base_url, api_key=provider.resolve_api_key())
             return OpenAIModel(
                 client=client,
@@ -166,11 +218,14 @@ def create_model(
 def create_async_client(
     model_id: str | None = None,
     provider_id: str | None = None,
-) -> tuple[AsyncOpenAI, str]:
+) -> tuple[Any, str]:
     """Create a plain AsyncOpenAI client + resolved model_id for non-agent LLM calls."""
     if provider_id:
         provider = settings.get_provider(provider_id)
         if provider:
+            if provider.id == "minimax":
+                client = _MiniMaxAsyncClient(base_url=provider.base_url, api_key=provider.resolve_api_key(), timeout=120)
+                return client, model_id or provider.default_model or settings.MINIMAX_MODEL or "MiniMax-M3"
             client = AsyncOpenAI(base_url=provider.base_url, api_key=provider.resolve_api_key())
             return client, model_id or provider.default_model or settings.QWEN_MODEL
 

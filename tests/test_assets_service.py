@@ -20,11 +20,17 @@ class _ScalarResult:
 async def test_create_asset_persists_asset_when_refs_exist():
     session = AsyncMock()
     session.add = MagicMock()
+    wiki = MagicMock()
+    wiki.id = "wiki-1"
+    wiki.title = "Wiki One"
+    wiki.metadata_ = {"claims": [{"text": "claim", "status": "supported"}]}
+    wiki_result = MagicMock()
+    wiki_result.scalars.return_value = iter([wiki])
     session.execute.side_effect = [
         _ScalarResult(["src-1"]),
         _ScalarResult(["note-1"]),
-        _ScalarResult([]),
-        _ScalarResult([]),
+        _ScalarResult(["wiki-1"]),
+        wiki_result,
     ]
     refreshed = {}
 
@@ -36,7 +42,7 @@ async def test_create_asset_persists_asset_when_refs_exist():
     asset = await create_asset(
         session,
         user_id="user-1",
-        body=AssetCreate(title="Draft post", source_refs=["src-1"], note_refs=["note-1"], opinion_notes="Take a strong stance", style_notes="Write analytically"),
+        body=AssetCreate(title="Draft post", source_refs=["src-1"], note_refs=["note-1"], wiki_refs=["wiki-1"], opinion_notes="Take a strong stance", style_notes="Write analytically"),
     )
 
     assert asset.title == "Draft post"
@@ -44,6 +50,7 @@ async def test_create_asset_persists_asset_when_refs_exist():
     assert asset.status == "draft"
     assert asset.metadata_["opinion_notes"] == "Take a strong stance"
     assert asset.metadata_["style_notes"] == "Write analytically"
+    assert asset.metadata_["wiki_claims"][0]["wiki_title"] == "Wiki One"
     session.add.assert_called_once()
     session.commit.assert_awaited_once()
     assert refreshed["asset"] is asset
@@ -175,3 +182,106 @@ def test_check_readiness_warns_for_unsupported_claims():
 
     assert ready is False
     assert any("unsupported claims" in item for item in warnings + suggestions)
+
+
+def test_check_readiness_requires_wiki_and_evidence_for_research_brief():
+    from pkg.services.application.blog_generation import check_readiness
+
+    asset = Asset(
+        id="asset-brief-1",
+        user_id="user-1",
+        asset_type="research_brief",
+        status="draft",
+        title="Brief",
+        brief="Decision memo",
+        outline="## Executive Summary",
+        draft_content="## Executive Summary\n\nSomething\n\n## Findings\n\nSomething",
+        reference_notes="## References\n\n- Ref",
+        editor_feedback=None,
+        source_refs=[],
+        note_refs=[],
+        memory_refs=[],
+        wiki_refs=[],
+        export_format=None,
+        exported_at=None,
+        published_at=None,
+        metadata_={},
+    )
+
+    ready, blocking, _warnings, suggestions = check_readiness(asset)
+
+    assert ready is False
+    assert "Research brief requires at least one wiki reference" in blocking
+    assert "Research brief requires at least one source or note reference" in blocking
+    assert any("recommendations" in item for item in suggestions)
+
+
+def test_check_readiness_warns_for_weak_wiki_claims():
+    from pkg.services.application.blog_generation import check_readiness
+
+    asset = Asset(
+        id="asset-1",
+        user_id="user-1",
+        asset_type="blog_post",
+        status="draft",
+        title="Draft post",
+        brief="brief",
+        outline="outline",
+        draft_content="draft content with references",
+        reference_notes="## References\n\n- Ref",
+        editor_feedback="tighten claims",
+        source_refs=["src-1"],
+        note_refs=[],
+        memory_refs=[],
+        wiki_refs=["wiki-1"],
+        export_format=None,
+        exported_at=None,
+        published_at=None,
+        metadata_={
+            "wiki_claims": [
+                {"text": "claim 1", "status": "weak"},
+                {"text": "claim 2", "status": "weak"},
+                {"text": "claim 3", "status": "weak"},
+            ]
+        },
+    )
+
+    ready, _blocking, warnings, _suggestions = check_readiness(asset)
+
+    assert ready is True
+    assert any("weak claims" in item for item in warnings)
+
+
+@pytest.mark.asyncio
+async def test_generate_outline_falls_back_to_research_brief_template():
+    from pkg.services.application.blog_generation import generate_outline
+
+    asset = Asset(
+        id="asset-brief-1",
+        user_id="user-1",
+        asset_type="research_brief",
+        status="draft",
+        title="AI Tooling Brief",
+        brief="Assess trade-offs and recommendation",
+        outline=None,
+        draft_content=None,
+        reference_notes=None,
+        editor_feedback=None,
+        source_refs=[],
+        note_refs=[],
+        memory_refs=[],
+        wiki_refs=[],
+        export_format=None,
+        exported_at=None,
+        published_at=None,
+        metadata_={},
+    )
+
+    session = AsyncMock()
+    session.execute.side_effect = []
+
+    outline = await generate_outline(session, asset=asset)
+
+    assert "## Executive Summary" in outline
+    assert "## Key Findings" in outline
+    assert "## Recommendations" in outline

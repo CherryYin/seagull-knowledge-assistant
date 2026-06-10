@@ -103,6 +103,8 @@ Key configuration:
 |---|---|---|
 | `LLM_PROVIDER` | LLM provider (`azure` / `qwen`) | `qwen` |
 | `QWEN_API_KEY` | Qwen API key | — |
+| `MINIMAX_API_KEY` | MiniMax API key | — |
+| `LLM_PROVIDERS` | OpenAI-compatible multi-provider JSON config | `[]` |
 | `EMBEDDING_API_KEY` | Embedding API key | — |
 | `EMBEDDING_MODEL` | Embedding model | `text-embedding-v4` |
 | `TAVILY_API_KEY` | Tavily web search API key | — |

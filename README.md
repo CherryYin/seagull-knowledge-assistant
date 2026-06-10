@@ -102,6 +102,8 @@ cp .env.example .env
 |---|---|---|
 | `LLM_PROVIDER` | LLM 提供商 (`azure` / `qwen`) | `qwen` |
 | `QWEN_API_KEY` | 通义千问 API Key | — |
+| `MINIMAX_API_KEY` | MiniMax API Key | — |
+| `LLM_PROVIDERS` | OpenAI-compatible 多模型提供方 JSON 配置 | `[]` |
 | `EMBEDDING_API_KEY` | Embedding API Key | — |
 | `EMBEDDING_MODEL` | 嵌入模型 | `text-embedding-v4` |
 | `TAVILY_API_KEY` | Tavily Web 搜索 API Key | — |

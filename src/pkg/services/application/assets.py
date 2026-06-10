@@ -55,6 +55,12 @@ async def create_asset(session: AsyncSession, *, user_id: str, body: AssetCreate
         metadata["opinion_notes"] = body.opinion_notes
     if body.style_notes is not None:
         metadata["style_notes"] = body.style_notes
+    metadata = await _inject_wiki_claims_metadata(
+        session,
+        user_id=user_id,
+        wiki_refs=body.wiki_refs,
+        metadata=metadata,
+    )
     asset = Asset(
         id=make_asset_id(body.title),
         user_id=user_id,
@@ -109,6 +115,19 @@ async def update_asset(session: AsyncSession, *, user_id: str, asset_id: str, bo
         memory_refs=data.get("memory_refs", asset.memory_refs or []),
         wiki_refs=data.get("wiki_refs", asset.wiki_refs or []),
     )
+    effective_metadata = dict(asset.metadata_ or {})
+    if "metadata" in data:
+        effective_metadata = dict(data["metadata"] or {})
+    if "opinion_notes" in data:
+        effective_metadata["opinion_notes"] = data["opinion_notes"]
+    if "style_notes" in data:
+        effective_metadata["style_notes"] = data["style_notes"]
+    effective_metadata = await _inject_wiki_claims_metadata(
+        session,
+        user_id=user_id,
+        wiki_refs=data.get("wiki_refs", asset.wiki_refs or []),
+        metadata=effective_metadata,
+    )
     if data.get("status") == "ready_to_export":
         candidate = Asset(
             id=asset.id,
@@ -126,7 +145,7 @@ async def update_asset(session: AsyncSession, *, user_id: str, asset_id: str, bo
             memory_refs=data.get("memory_refs", asset.memory_refs),
             wiki_refs=data.get("wiki_refs", asset.wiki_refs),
             export_format=data.get("export_format", asset.export_format),
-            metadata_=dict(asset.metadata_ or {}),
+            metadata_=effective_metadata,
         )
         if "opinion_notes" in data:
             candidate.metadata_["opinion_notes"] = data["opinion_notes"]
@@ -142,15 +161,45 @@ async def update_asset(session: AsyncSession, *, user_id: str, asset_id: str, bo
         if key in {"metadata", "opinion_notes", "style_notes"}:
             metadata = dict(asset.metadata_ or {})
             if key == "metadata":
-                metadata = dict(value or {})
+                metadata = dict(effective_metadata or value or {})
             else:
-                metadata[key] = value
+                metadata = dict(effective_metadata or metadata)
             setattr(asset, "metadata_", metadata)
         else:
             setattr(asset, key, value)
+    if "metadata" not in data and {"wiki_refs", "opinion_notes", "style_notes"}.intersection(data.keys()):
+        asset.metadata_ = effective_metadata
     await session.commit()
     await session.refresh(asset)
     metadata = dict(asset.metadata_ or {})
     setattr(asset, "opinion_notes", metadata.get("opinion_notes"))
     setattr(asset, "style_notes", metadata.get("style_notes"))
     return asset
+
+
+async def _inject_wiki_claims_metadata(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    wiki_refs: list[str],
+    metadata: dict,
+) -> dict:
+    if not wiki_refs:
+        metadata.pop("wiki_claims", None)
+        return metadata
+    rows = await session.execute(select(WikiPage).where(WikiPage.user_id == user_id, WikiPage.id.in_(wiki_refs)))
+    wiki_rows = list(rows.scalars())
+    claims: list[dict] = []
+    for wiki in wiki_rows:
+        for claim in (wiki.metadata_ or {}).get("claims", []) if isinstance(wiki.metadata_, dict) else []:
+            if not isinstance(claim, dict):
+                continue
+            enriched = dict(claim)
+            enriched.setdefault("wiki_id", wiki.id)
+            enriched.setdefault("wiki_title", wiki.title)
+            claims.append(enriched)
+    if claims:
+        metadata["wiki_claims"] = claims
+    else:
+        metadata.pop("wiki_claims", None)
+    return metadata

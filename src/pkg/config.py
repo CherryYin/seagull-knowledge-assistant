@@ -82,6 +82,11 @@ class Settings(BaseSettings):
     QWEN_API_KEY: str = ""
     QWEN_MODEL: str = "qwen-plus"
 
+    # MiniMax API (OpenAI-compatible, recommended via LLM_PROVIDERS)
+    MINIMAX_API_BASE: str = "https://api.minimax.io/v1"
+    MINIMAX_API_KEY: str = ""
+    MINIMAX_MODEL: str = ""
+
     # Deprecated — agent_profiles now uses dynamic model discovery via /knowledge/models
     ALLOWED_MODELS: list[str] = ["qwen-plus", "qwen-max", "qwen-turbo"]
 

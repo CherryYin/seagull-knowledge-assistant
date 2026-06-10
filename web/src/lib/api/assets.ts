@@ -1,11 +1,12 @@
 import { request } from "./client";
 
 export type AssetStatus = "draft" | "in_review" | "ready_to_export" | "exported" | "published" | "archived";
+export type AssetType = "blog_post" | "research_brief";
 
 export interface Asset {
   id: string;
   user_id: string;
-  asset_type: "blog_post";
+  asset_type: AssetType;
   status: AssetStatus;
   title: string;
   brief?: string | null;
@@ -35,7 +36,7 @@ export interface AssetList {
 export interface AssetCreate {
   title: string;
   brief?: string;
-  asset_type?: "blog_post";
+  asset_type?: AssetType;
   status?: AssetStatus;
   source_refs?: string[];
   note_refs?: string[];

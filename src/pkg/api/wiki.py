@@ -695,13 +695,15 @@ async def compile_wiki_page(
         content = source.raw_content or ""
         sections.append(f"## Source: {source.title}\nID: {source.id}\n\n{content[:12000]}")
 
-    system_prompt = """你是个人知识图谱的 Wiki Compiler。请把输入的 notes 和 sources 综合成一篇长期维护的中文 Markdown wiki 页面。
+    system_prompt = """你是个人知识图谱的 Wiki Compiler。请把输入的 notes 和 sources 综合成一篇长期维护、适合阅读的中文 Markdown wiki 页面。
 要求：
-1. 输出包含：当前理解、关键结论、Source Evidence、我的笔记与洞察、开放问题。
-2. Source Evidence 中说明每个 source 对当前主题的贡献，不要照搬全文。
-3. 保留 note/source id，方便追溯。
-4. 不要编造未提供的信息。
-5. Memory Tree Context 是系统长期理解，只能作为线索；最终结论仍需尽量落到 notes/sources 证据。
+1. 输出更像百科条目，而不是内部提纲或工作底稿。
+2. 优先写成可连续阅读的自然段，而不是堆很多碎 bullet。
+3. 结构应优先包含：概述 / 背景 / 核心内容 / 影响或适用范围 / 开放问题。
+4. 可以在正文中自然引用 notes/sources，但不要把正文写成“Source Evidence”清单。
+5. 保留 note/source id，方便追溯，但把引用写得尽量不打断阅读。
+6. 不要编造未提供的信息。
+7. Memory Tree Context 是系统长期理解，只能作为线索；最终结论仍需尽量落到 notes/sources 证据。
 """
     user_prompt = f"标题：{body.title}\n类型：{body.page_type}\n额外指令：{body.instructions or '无'}\n\n材料：\n" + "\n\n---\n\n".join(sections)
 
@@ -787,14 +789,16 @@ def _wiki_draft_content_from_memory(memory: MemoryNode) -> str:
     return (
         f"# {_wiki_title_from_memory(memory)}\n\n"
         "<!-- Draft generated from Topic Memory. Review before promoting to stable wiki. -->\n\n"
-        "## Current Understanding\n\n"
+        "## Overview\n\n"
         f"{memory.content}\n\n"
-        "## Source Evidence\n\n"
+        "## Background and Context\n\n"
+        "Expand this draft into a readable wiki article. Explain the topic in prose, clarify key ideas, and keep factual claims grounded in supporting evidence.\n\n"
+        "## References To Review\n\n"
         + "\n".join(f"- `{source_id}`" for source_id in memory.derived_from_sources)
-        + "\n\n## Review Checklist\n\n"
-        "- [ ] Verify claims against source evidence.\n"
-        "- [ ] Merge duplicate or weak points.\n"
-        "- [ ] Promote from draft when stable.\n"
+        + "\n\n## Open Questions\n\n"
+        "- Which claims still need stronger evidence?\n"
+        "- Which paragraphs should be rewritten for clarity or neutrality?\n"
+        "- What should be added before promoting this draft to stable?\n"
     )
 
 

@@ -361,7 +361,11 @@ def _mine_insights(new_records: list[MiningRecord], related_records: list[Mining
                 title=title,
                 summary=summary,
                 evidence_refs=evidence_refs,
-                metadata={"keyword": keyword, "record_refs": [_record_ref(record) for record in records[:5]]},
+                metadata={
+                    "keyword": keyword,
+                    "record_refs": [_record_ref(record) for record in records[:5]],
+                    "claims": _build_claims_for_insight(title=title, summary=summary, evidence_refs=evidence_refs),
+                },
             )
         )
 
@@ -373,7 +377,14 @@ def _mine_insights(new_records: list[MiningRecord], related_records: list[Mining
                     title=f"Capture {record.title}",
                     summary=f"{record.title} should be folded into the knowledge base as a candidate synthesis topic.",
                     evidence_refs=[_record_to_evidence(record).to_dict()],
-                    metadata={"record_refs": [_record_ref(record)]},
+                    metadata={
+                        "record_refs": [_record_ref(record)],
+                        "claims": _build_claims_for_insight(
+                            title=f"Capture {record.title}",
+                            summary=f"{record.title} should be folded into the knowledge base as a candidate synthesis topic.",
+                            evidence_refs=[_record_to_evidence(record).to_dict()],
+                        ),
+                    },
                 )
             )
 
@@ -439,9 +450,36 @@ def _draft_articles(
                 "insight_titles": [insight.title for insight in primary],
                 "input_refs": [_record_ref(record) for record in new_records[:8]],
                 "related_refs": [_record_ref(record) for record in related_records[:8]],
+                "claims": _build_claims_for_article(primary, deduped_refs),
             },
         )
     ]
+
+
+def _build_claims_for_insight(*, title: str, summary: str, evidence_refs: list[dict]) -> list[dict]:
+    return [
+        {
+            "text": summary or title,
+            "status": "supported" if evidence_refs else "weak",
+            "evidence_refs": evidence_refs[:3],
+        }
+    ]
+
+
+def _build_claims_for_article(insights: list[MiningInsight], evidence_refs: list[dict]) -> list[dict]:
+    claims: list[dict] = []
+    for index, insight in enumerate(insights[:5]):
+        refs = insight.evidence_refs[:2] or evidence_refs[:2]
+        claims.append(
+            {
+                "text": insight.summary,
+                "status": "supported" if refs else "weak",
+                "evidence_refs": refs,
+                "source_insight_title": insight.title,
+                "rank": index + 1,
+            }
+        )
+    return claims
 
 
 def _infer_page_type(insights: list[MiningInsight]) -> str:

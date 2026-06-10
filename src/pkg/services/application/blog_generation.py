@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
+from typing import Callable
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -100,7 +101,93 @@ def render_generation_context(context: GenerationContext) -> str:
     return "\n\n".join(parts).strip()
 
 
-async def generate_outline(session: AsyncSession, *, asset: Asset) -> str:
+def _asset_kind_label(asset_type: str) -> str:
+    return "research brief" if asset_type == "research_brief" else "blog post"
+
+
+def _fallback_outline(asset: Asset) -> str:
+    if asset.asset_type == "research_brief":
+        return "\n".join(
+            [
+                f"# {asset.title}",
+                "",
+                "## Executive Summary",
+                f"- {asset.brief or 'Summarize the main finding and why it matters.'}",
+                "",
+                "## Background",
+                "- Context, scope, and framing",
+                "",
+                "## Key Findings",
+                "- Evidence-backed observations",
+                "",
+                "## Comparisons",
+                "- Alternatives, benchmarks, or competing views",
+                "",
+                "## Risks and Open Questions",
+                "- Uncertainties, contradictions, and follow-ups",
+                "",
+                "## Recommendations",
+                "- Specific decisions or next actions",
+            ]
+        )
+    return "\n".join(
+        [
+            f"# {asset.title}",
+            "",
+            "## Why this matters",
+            "- Main argument",
+            "",
+            "## Core evidence",
+            "- Source-backed point 1",
+            "- Source-backed point 2",
+            "",
+            "## Implications",
+            "- Practical takeaway",
+        ]
+    )
+
+
+def _fallback_draft(asset: Asset) -> str:
+    brief = asset.brief or ""
+    outline = (asset.outline or "").strip()
+    sections = [f"# {asset.title}"]
+    if brief:
+        sections.extend(["", brief])
+    if outline:
+        sections.extend(["", outline])
+    if asset.asset_type == "research_brief":
+        sections.extend(
+            [
+                "",
+                "## Executive Summary",
+                "Summarize the most important evidence-backed conclusions for a decision-maker.",
+                "",
+                "## Background",
+                "Explain the problem framing, time horizon, and scope.",
+                "",
+                "## Findings",
+                "List the strongest supported findings from sources, notes, and stable wiki pages.",
+                "",
+                "## Risks and Open Questions",
+                "Identify uncertainty, conflicting evidence, and what still needs validation.",
+                "",
+                "## Recommendations",
+                "Convert the analysis into concrete next actions.",
+            ]
+        )
+    else:
+        sections.extend(["", "## Draft", "", "Expand this draft with source-backed evidence."])
+    return "\n".join(sections)
+
+
+async def _generate_with_fallback(
+    session: AsyncSession,
+    *,
+    asset: Asset,
+    system_prompt: str,
+    user_prompt_builder: Callable[[str], str],
+    fallback_builder: Callable[[Asset], str],
+) -> str:
     context = await load_generation_context(session, asset=asset)
     context_text = render_generation_context(context)
     try:
@@ -108,25 +195,8 @@ async def generate_outline(session: AsyncSession, *, asset: Asset) -> str:
         response = await client.chat.completions.create(
             model=model,
             messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a blog outline generator for source-driven knowledge assets. "
-                        "Produce a concise Markdown outline with sections and bullet points. "
-                        "Use stable wiki as high-level context, but do not treat wiki as the only evidence. "
-                        "Preserve traceability back to raw sources, notes, and knowledge-tree context."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        f"Asset title: {asset.title}\n\n"
-                        f"Asset brief:\n{asset.brief or '(none)'}\n\n"
-                        f"Opinion / thesis:\n{str((asset.metadata_ or {}).get('opinion_notes') or '(none)')}\n\n"
-                        f"Style notes:\n{str((asset.metadata_ or {}).get('style_notes') or '(none)')}\n\n"
-                        f"Context:\n{context_text[:14000]}"
-                    ),
-                },
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt_builder(context_text)},
             ],
         )
         content = response.choices[0].message.content or ""
@@ -134,58 +204,64 @@ async def generate_outline(session: AsyncSession, *, asset: Asset) -> str:
             return content.strip()
     except Exception:
         pass
+    return fallback_builder(asset)
 
-    headings = [
-        f"# {asset.title}",
-        "",
-        "## Why this matters",
-        "- Main argument",
-        "",
-        "## Core evidence",
-        "- Source-backed point 1",
-        "- Source-backed point 2",
-        "",
-        "## Implications",
-        "- Practical takeaway",
-    ]
-    return "\n".join(headings)
+
+async def generate_outline(session: AsyncSession, *, asset: Asset) -> str:
+    kind = _asset_kind_label(asset.asset_type)
+    system_prompt = (
+        "You are a blog outline generator for source-driven knowledge assets. "
+        "Produce a concise Markdown outline with sections and bullet points. "
+        "Use stable wiki as high-level context, but do not treat wiki as the only evidence. "
+        "Preserve traceability back to raw sources, notes, and knowledge-tree context."
+    )
+    if asset.asset_type == "research_brief":
+        system_prompt = (
+            "You are a research brief outline generator for source-driven knowledge assets. "
+            "Produce a concise Markdown outline with sections for executive summary, findings, risks, and recommendations. "
+            "Use stable wiki as high-level context, but preserve traceability back to raw evidence."
+        )
+    return await _generate_with_fallback(
+        session,
+        asset=asset,
+        system_prompt=system_prompt,
+        user_prompt_builder=lambda context_text: (
+            f"Asset title: {asset.title}\n\n"
+            f"Asset type: {kind}\n\n"
+            f"Asset brief:\n{asset.brief or '(none)'}\n\n"
+            f"Opinion / thesis:\n{str((asset.metadata_ or {}).get('opinion_notes') or '(none)')}\n\n"
+            f"Style notes:\n{str((asset.metadata_ or {}).get('style_notes') or '(none)')}\n\n"
+            f"Context:\n{context_text[:14000]}"
+        ),
+        fallback_builder=_fallback_outline,
+    )
 
 
 async def generate_draft(session: AsyncSession, *, asset: Asset) -> str:
-    context = await load_generation_context(session, asset=asset)
-    context_text = render_generation_context(context)
     outline = asset.outline or await generate_outline(session, asset=asset)
-    try:
-        client, model = create_async_client()
-        response = await client.chat.completions.create(
-            model=model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a long-form blog draft generator. Write a Markdown draft that follows the outline, "
-                        "uses the provided stable wiki as context, and keeps claims grounded in raw evidence. "
-                        "Do not treat stable wiki as the final unquestionable source of truth if raw evidence is thin or conflicting."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        f"Asset title: {asset.title}\n\n"
-                        f"Outline:\n{outline}\n\n"
-                        f"Context:\n{context_text[:14000]}"
-                    ),
-                },
-            ],
+    kind = _asset_kind_label(asset.asset_type)
+    system_prompt = (
+        "You are a long-form blog draft generator. Write a Markdown draft that follows the outline, "
+        "uses the provided stable wiki as context, and keeps claims grounded in raw evidence. "
+        "Do not treat stable wiki as the final unquestionable source of truth if raw evidence is thin or conflicting."
+    )
+    if asset.asset_type == "research_brief":
+        system_prompt = (
+            "You are a source-grounded research brief generator. Write a Markdown brief that follows the outline, "
+            "highlights findings, risks, and recommendations, and keeps claims grounded in raw evidence."
         )
-        content = response.choices[0].message.content or ""
-        if content.strip():
-            return content.strip()
-    except Exception:
-        pass
-
-    brief = asset.brief or ""
-    return f"# {asset.title}\n\n{brief}\n\n## Draft\n\nExpand this draft with source-backed evidence."
+    return await _generate_with_fallback(
+        session,
+        asset=asset,
+        system_prompt=system_prompt,
+        user_prompt_builder=lambda context_text: (
+            f"Asset title: {asset.title}\n\n"
+            f"Asset type: {kind}\n\n"
+            f"Outline:\n{outline}\n\n"
+            f"Context:\n{context_text[:14000]}"
+        ),
+        fallback_builder=_fallback_draft,
+    )
 
 
 async def attach_references(session: AsyncSession, *, asset: Asset, include_reference_notes: bool = True) -> str:
@@ -231,6 +307,11 @@ def check_readiness(asset: Asset) -> tuple[bool, list[str], list[str], list[str]
         blocking.append("Missing draft content")
     if not any([asset.source_refs, asset.note_refs, asset.memory_refs, asset.wiki_refs]):
         blocking.append("No references attached")
+    if asset.asset_type == "research_brief":
+        if not (asset.wiki_refs or []):
+            blocking.append("Research brief requires at least one wiki reference")
+        if not any([asset.source_refs, asset.note_refs]):
+            blocking.append("Research brief requires at least one source or note reference")
     if asset.wiki_refs and not asset.source_refs and not asset.note_refs and not asset.memory_refs:
         warnings.append("Wiki context is attached without raw source/note references")
     if asset.wiki_refs and not (asset.reference_notes or "").strip():
@@ -248,6 +329,18 @@ def check_readiness(asset: Asset) -> tuple[bool, list[str], list[str], list[str]
         warnings.append(f"Draft may contain {unsupported_claim_count} unsupported claims")
     elif unsupported_claim_count > 0:
         suggestions.append(f"Review {unsupported_claim_count} potentially unsupported claims in the draft")
+    if asset.asset_type == "research_brief":
+        draft_text = (asset.draft_content or "").lower()
+        for heading in ["executive summary", "findings", "risks", "recommendations"]:
+            if heading not in draft_text:
+                suggestions.append(f"Research brief draft should include a '{heading}' section")
+    wiki_claim_health = _estimate_wiki_claim_health(asset)
+    weak_claim_count = wiki_claim_health["weak_claim_count"]
+    total_claim_count = wiki_claim_health["total_claim_count"]
+    if weak_claim_count >= 3:
+        warnings.append(f"Attached wiki context contains {weak_claim_count} weak claims across {total_claim_count} extracted claims")
+    elif weak_claim_count > 0:
+        suggestions.append(f"Review {weak_claim_count} weak claims in attached wiki context before export")
     return len(blocking) == 0, blocking, warnings, suggestions
 
 
@@ -277,3 +370,19 @@ def _estimate_unsupported_claims(asset: Asset) -> int:
         if len(sentence) >= 40 and not sentence.startswith("#") and any(marker in sentence.lower() for marker in [" is ", " are ", " shows ", " means ", " will ", " can ", " 表明", "意味着", "说明", "是"])  # noqa: E501
     ]
     return max(0, min(len(claim_like), 6) - min(reference_weight, 3))
+
+
+def _estimate_wiki_claim_health(asset: Asset) -> dict[str, int]:
+    metadata = dict(asset.metadata_ or {})
+    wiki_claims = metadata.get("wiki_claims")
+    if not isinstance(wiki_claims, list):
+        return {"weak_claim_count": 0, "total_claim_count": 0}
+    total = 0
+    weak = 0
+    for item in wiki_claims:
+        if not isinstance(item, dict):
+            continue
+        total += 1
+        if str(item.get("status") or "") != "supported":
+            weak += 1
+    return {"weak_claim_count": weak, "total_claim_count": total}
