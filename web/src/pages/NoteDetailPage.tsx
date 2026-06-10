@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { MarkdownRenderer } from "@/components/markdown";
+import { NoteContentRenderer, inferNoteRenderModeFromTags, type NoteRenderMode } from "@/components/NoteContentRenderer";
 import { notesApi, categoriesApi, wikiApi, downloadFile, type NoteUpdate } from "@/lib/api";
 import { CategorySelect } from "@/components/CategorySelect";
 import { buildAssetHandoffState } from "@/lib/asset-handoff";
@@ -71,6 +71,7 @@ export function NoteDetailPage() {
   const [draft, setDraft] = useState<ReturnType<typeof noteToDraft> | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("full");
+  const [renderMode, setRenderMode] = useState<NoteRenderMode>("markdown");
   const [selectedSection, setSelectedSection] = useState(0);
   const [sourceIdInput, setSourceIdInput] = useState("");
   const [queuedRefreshCount, setQueuedRefreshCount] = useState<number | null>(null);
@@ -92,6 +93,10 @@ export function NoteDetailPage() {
     if (!note?.content) return [];
     return splitSections(note.content);
   }, [note?.content]);
+
+  useEffect(() => {
+    setRenderMode(inferNoteRenderModeFromTags(note?.tags, note?.content || ""));
+  }, [note?.content, note?.tags]);
 
   // Highlight range for the selected section in the preview panel
   const highlightRange = useMemo(() => {
@@ -282,19 +287,32 @@ export function NoteDetailPage() {
             </>
           )}
           {!editing && (
-            <div className="ml-auto flex items-center gap-1 rounded-md border border-border p-0.5">
-              <button
-                onClick={() => setViewMode("full")}
-                className={`px-2.5 py-1 rounded text-xs transition-colors cursor-pointer ${viewMode === "full" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent"}`}
-              >
-                <FileText className="h-3.5 w-3.5 inline-block mr-1" />Full
-              </button>
-              <button
-                onClick={() => setViewMode("slices")}
-                className={`px-2.5 py-1 rounded text-xs transition-colors cursor-pointer ${viewMode === "slices" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent"}`}
-              >
-                <List className="h-3.5 w-3.5 inline-block mr-1" />Slices
-              </button>
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1 rounded-md border border-border p-0.5">
+                <button
+                  onClick={() => setViewMode("full")}
+                  className={`px-2.5 py-1 rounded text-xs transition-colors cursor-pointer ${viewMode === "full" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent"}`}
+                >
+                  <FileText className="h-3.5 w-3.5 inline-block mr-1" />Full
+                </button>
+                <button
+                  onClick={() => setViewMode("slices")}
+                  className={`px-2.5 py-1 rounded text-xs transition-colors cursor-pointer ${viewMode === "slices" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent"}`}
+                >
+                  <List className="h-3.5 w-3.5 inline-block mr-1" />Slices
+                </button>
+              </div>
+              <div className="flex items-center gap-1 rounded-md border border-border p-0.5">
+                {(["markdown", "html", "raw"] as NoteRenderMode[]).map((mode) => (
+                  <button
+                    key={mode}
+                    onClick={() => setRenderMode(mode)}
+                    className={`px-2.5 py-1 rounded text-xs transition-colors cursor-pointer ${renderMode === mode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent"}`}
+                  >
+                    {mode.toUpperCase()}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -461,6 +479,9 @@ export function NoteDetailPage() {
                     onChange={(e) => setDraft((d) => (d ? { ...d, tagsCsv: e.target.value } : d))}
                     className="mt-1 font-mono text-sm"
                   />
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Add <code>render:html</code> to explicitly render this note as HTML.
+                  </p>
                 </div>
                 <div>
                   <label className="text-xs font-medium text-muted-foreground">Content (Markdown)</label>
@@ -500,7 +521,7 @@ export function NoteDetailPage() {
                   </div>
                 )}
                 <div className="prose max-h-[70vh] overflow-y-auto">
-                  <MarkdownRenderer>{note.content || "*No content*"}</MarkdownRenderer>
+                  <NoteContentRenderer content={note.content || ""} mode={renderMode} />
                 </div>
               </>
             ) : (
@@ -566,11 +587,11 @@ export function NoteDetailPage() {
                     <div className="p-4">
                       {hasSections && sections[selectedSection] ? (
                         <div className="prose text-sm">
-                          <MarkdownRenderer>{sections[selectedSection].content}</MarkdownRenderer>
+                          <NoteContentRenderer content={sections[selectedSection].content} mode={renderMode} />
                         </div>
                       ) : (
                         <div className="prose text-sm">
-                          <MarkdownRenderer>{note.content || "*No content*"}</MarkdownRenderer>
+                          <NoteContentRenderer content={note.content || ""} mode={renderMode} />
                         </div>
                       )}
                     </div>

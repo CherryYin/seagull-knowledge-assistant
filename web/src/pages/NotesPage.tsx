@@ -166,6 +166,19 @@ export function NotesPage() {
                   placeholder="Tags (comma separated)"
                   onChange={(e) => setForm({ ...form, tags: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
                 />
+                <label className="flex items-center gap-2 rounded-md border border-dashed border-border p-3 text-sm text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={form.tags?.includes("render:html") || false}
+                    onChange={(e) => {
+                      const current = new Set(form.tags || []);
+                      if (e.target.checked) current.add("render:html");
+                      else current.delete("render:html");
+                      setForm({ ...form, tags: Array.from(current) });
+                    }}
+                  />
+                  Render this note as HTML
+                </label>
                 <Input
                   placeholder="Abstract"
                   value={form.abstract || ""}
