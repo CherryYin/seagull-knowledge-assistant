@@ -183,6 +183,38 @@ async def test_export_markdown_route_blocks_when_missing_references_section():
 
 
 @pytest.mark.asyncio
+async def test_update_publish_feedback_route_blocks_research_brief_without_references():
+    from pkg.api.assets import update_publish_feedback_route
+    from pkg.schemas.application.asset import AssetPublishFeedbackUpdate
+
+    fake_user = MagicMock()
+    fake_user.id = "user-1"
+    session = AsyncMock()
+    asset = _make_asset("asset-1", fake_user.id)
+    asset.asset_type = "research_brief"
+    asset.brief = "Decision memo"
+    asset.outline = "## Executive Summary"
+    asset.draft_content = "## Executive Summary\n\nSomething\n\n## Findings\n\nSomething\n\n## Risks\n\nSomething\n\n## Recommendations\n\nSomething"
+    asset.reference_notes = None
+    asset.source_refs = ["src-1"]
+    asset.wiki_refs = ["wiki-1"]
+
+    with (
+        patch("pkg.api.assets.get_asset", new=AsyncMock(return_value=asset)),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await update_publish_feedback_route(
+                "asset-1",
+                AssetPublishFeedbackUpdate(publish_url="https://example.com", channel="brief", published_at=datetime.now(timezone.utc), feedback="Ship it"),
+                user=fake_user,
+                session=session,
+            )
+
+    assert exc.value.status_code == 409
+    assert "not ready to publish" in exc.value.detail
+
+
+@pytest.mark.asyncio
 async def test_update_publish_feedback_route_updates_asset():
     from pkg.api.assets import update_publish_feedback_route
     from pkg.schemas.application.asset import AssetPublishFeedbackUpdate

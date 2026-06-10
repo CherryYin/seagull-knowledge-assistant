@@ -164,6 +164,13 @@ async def update_publish_feedback_route(
     session: AsyncSession = Depends(get_session),
 ):
     asset = await get_asset(session, user_id=user.id, asset_id=asset_id)
+    if body.published_at and asset.asset_type == "research_brief":
+        ready, blocking_reasons, _, _ = check_readiness(asset)
+        if not ready:
+            raise HTTPException(
+                status_code=409,
+                detail="Asset is not ready to publish: " + "; ".join(blocking_reasons),
+            )
     metadata = dict(asset.metadata_ or {})
     metadata["publish_feedback"] = {
         "publish_url": body.publish_url,

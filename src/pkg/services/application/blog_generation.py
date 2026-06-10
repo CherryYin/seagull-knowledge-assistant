@@ -415,6 +415,8 @@ def check_readiness(asset: Asset) -> tuple[bool, list[str], list[str], list[str]
             blocking.append("Research brief requires at least one wiki reference")
         if not any([asset.source_refs, asset.note_refs]):
             blocking.append("Research brief requires at least one source or note reference")
+        if not (asset.reference_notes or "").strip():
+            blocking.append("Research brief requires evidence references before export")
     if asset.wiki_refs and not asset.source_refs and not asset.note_refs and not asset.memory_refs:
         warnings.append("Wiki context is attached without raw source/note references")
     if asset.wiki_refs and not (asset.reference_notes or "").strip():

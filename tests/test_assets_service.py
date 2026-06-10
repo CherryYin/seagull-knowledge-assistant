@@ -331,7 +331,50 @@ def test_check_readiness_requires_wiki_and_evidence_for_research_brief():
     assert ready is False
     assert "Research brief requires at least one wiki reference" in blocking
     assert "Research brief requires at least one source or note reference" in blocking
+    assert "Research brief requires evidence references before export" not in blocking
     assert any("recommendations" in item for item in suggestions)
+
+
+@pytest.mark.asyncio
+async def test_update_asset_blocks_research_brief_ready_to_export_without_reference_notes():
+    session = AsyncMock()
+    asset = Asset(
+        id="asset-brief-1",
+        user_id="user-1",
+        asset_type="research_brief",
+        status="draft",
+        title="Brief",
+        brief="Decision memo",
+        outline="## Executive Summary",
+        draft_content="## Executive Summary\n\nSomething\n\n## Findings\n\nSomething\n\n## Risks\n\nSomething\n\n## Recommendations\n\nSomething",
+        reference_notes=None,
+        editor_feedback=None,
+        source_refs=["src-1"],
+        note_refs=[],
+        memory_refs=[],
+        wiki_refs=["wiki-1"],
+        export_format=None,
+        exported_at=None,
+        published_at=None,
+        metadata_={},
+    )
+
+    scalar_result = MagicMock()
+    scalar_result.scalar_one_or_none.return_value = asset
+    wiki_result = MagicMock()
+    wiki_result.scalars.return_value = iter([])
+    session.execute.side_effect = [scalar_result, _ScalarResult(["src-1"]), _ScalarResult(["wiki-1"]), wiki_result]
+
+    with pytest.raises(HTTPException) as exc:
+        await update_asset(
+            session,
+            user_id="user-1",
+            asset_id="asset-brief-1",
+            body=AssetUpdate(status="ready_to_export"),
+        )
+
+    assert exc.value.status_code == 409
+    assert "evidence references" in exc.value.detail
 
 
 def test_check_readiness_warns_for_weak_wiki_claims():

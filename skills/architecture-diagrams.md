@@ -52,6 +52,26 @@ Use these diagram types:
 - Avoid decorative complexity unless the user asks for presentation polish.
 - Prefer semantic grouping and readable flow over exhaustive implementation detail.
 
+## Mermaid Safety Rules
+
+Default to the Mermaid-safe subset unless the user explicitly asks for richer syntax.
+
+- Always quote labels when they contain spaces or punctuation: `api["FastAPI API"]`, `Intent{"Intent Analysis"}`.
+- For multiline node labels, use `<br/>` inside quoted labels: `Raw["Raw Sources<br/>(PDF, Notes, Web, Code)"]`. Avoid raw `\n` inside unquoted labels.
+- Prefer simple ASCII text in labels. Avoid emojis by default unless the user explicitly wants presentation polish.
+- Replace parser-sensitive text where possible: use `and` instead of `&`, avoid overly dense `/`-separated phrases, and keep parenthetical text short.
+- Quote edge labels when using dotted or styled links: `A -. "Frequent topic" .-> B`.
+- Use quoted subgraph titles when they contain spaces or punctuation: `subgraph Pipeline["Data Ingestion Pipeline"]`.
+- Keep IDs simple and stable: letters, numbers, and short camel-case names only.
+- If a node label is long, shorten it first instead of packing many clauses into one Mermaid node.
+
+Before returning Mermaid, quickly self-check:
+
+- Does every complex label use quotes?
+- Do multiline labels use `<br/>`?
+- Are there any emojis or `&` that can be safely removed?
+- Would this still parse if copied into a plain Mermaid renderer?
+
 ## Output Pattern
 
 Use a Markdown heading for the diagram title, then start the code block directly with the Mermaid diagram type:
