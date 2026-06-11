@@ -168,6 +168,7 @@ class Settings(BaseSettings):
     PAPER_DISCOVERY_INTERVAL_HOURS: int = 24
     OPENALEX_API_URL: str = "https://api.openalex.org"
     OPENALEX_API_KEY: str = ""
+    GITHUB_TOKEN: str = ""
     
     @property
     def resolved_embedding_api_base(self) -> str:
