@@ -269,6 +269,15 @@ async def lifespan(app: FastAPI):
         yield
         return
 
+    try:
+        from pkg.services.cross_cutting.system_jobs import mark_stale_running_jobs_failed
+
+        recovered = await mark_stale_running_jobs_failed()
+        if recovered:
+            logger.warning("Recovered %d stale running system job(s) left by a previous process.", recovered)
+    except Exception:
+        logger.exception("Failed to recover stale running system jobs during startup")
+
     background_tasks = [
         asyncio.create_task(_daily_summarizer_loop()),
         asyncio.create_task(_user_profiler_loop()),

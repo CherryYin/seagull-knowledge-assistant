@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from time import perf_counter
 from typing import AsyncIterator
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.db import async_session
@@ -118,3 +118,31 @@ async def list_system_jobs(
         .limit(limit)
     )
     return list(rows.scalars()), total
+
+
+async def mark_stale_running_jobs_failed(*, older_than_seconds: int = 300) -> int:
+    """Mark orphaned long-running system jobs as failed.
+
+    Background loops record jobs with status="running" and only finalize them when
+    the async context exits normally. If the API process is terminated or reloaded
+    mid-run, those rows can remain in `running` forever. This helper converts such
+    stale rows to `failed` so the System Jobs page reflects reality.
+    """
+    cutoff = _utc_now_naive().timestamp() - max(older_than_seconds, 0)
+    cutoff_dt = datetime.fromtimestamp(cutoff)
+    async with async_session() as session:
+        result = await session.execute(
+            update(SystemJob)
+            .where(
+                SystemJob.status == "running",
+                SystemJob.ended_at.is_(None),
+                SystemJob.started_at < cutoff_dt,
+            )
+            .values(
+                status="failed",
+                error_message="Marked failed because the worker process stopped before reporting completion.",
+                ended_at=_utc_now_naive(),
+            )
+        )
+        await session.commit()
+        return result.rowcount or 0
