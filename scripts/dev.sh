@@ -3,11 +3,11 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BACKEND_CMD=(pkg serve)
-FRONTEND_CMD=(npm --prefix "$ROOT_DIR/web" run dev)
+BACKEND_CMD=(pkg serve --host 0.0.0.0 --port 8000)
+FRONTEND_CMD=(npm --prefix "$ROOT_DIR/web" run dev -- --host 0.0.0.0)
 
 if [[ -x "$ROOT_DIR/.venv/bin/pkg" ]]; then
-  BACKEND_CMD=("$ROOT_DIR/.venv/bin/pkg" serve)
+  BACKEND_CMD=("$ROOT_DIR/.venv/bin/pkg" serve --host 0.0.0.0 --port 8000)
 fi
 
 cleanup() {

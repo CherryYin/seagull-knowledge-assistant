@@ -12,12 +12,12 @@ FRONTEND_PID_FILE="$PID_DIR/frontend.pid"
 
 mkdir -p "$LOG_DIR"
 
-BACKEND_CMD=(pkg serve)
+BACKEND_CMD=(pkg serve --host 0.0.0.0 --port 8000)
 if [[ -x "$ROOT_DIR/.venv/bin/pkg" ]]; then
-  BACKEND_CMD=("$ROOT_DIR/.venv/bin/pkg" serve)
+  BACKEND_CMD=("$ROOT_DIR/.venv/bin/pkg" serve --host 0.0.0.0 --port 8000)
 fi
 
-FRONTEND_CMD=(npm --prefix "$ROOT_DIR/web" run dev)
+FRONTEND_CMD=(npm --prefix "$ROOT_DIR/web" run dev -- --host 0.0.0.0)
 
 stop_if_running() {
   local pid_file="$1"
