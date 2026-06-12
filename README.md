@@ -158,6 +158,21 @@ npm run dev
 
 前端默认运行在 `http://localhost:5173`，已配置代理转发 `/api` 请求到后端。
 
+**一键联调（前后端一起跑）:**
+
+```bash
+npm run install:web   # 首次运行或前端依赖变更时
+npm run dev:all       # 前台同时启动前后端
+npm run dev:all-bg    # 后台同时启动前后端
+npm run dev:status    # 查看后台前后端状态与最近日志
+npm run dev:stop      # 停止后台前后端进程
+```
+
+后台联跑日志默认写入：
+
+- `tmp/dev/backend.log`
+- `tmp/dev/frontend.log`
+
 ## CLI 使用
 
 ```bash
