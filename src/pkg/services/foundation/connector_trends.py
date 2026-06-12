@@ -280,11 +280,27 @@ async def _trend_user_ids(session: AsyncSession, explicit_user_ids: list[str] | 
     return list(rows.scalars())
 
 
+async def _active_user_exists(session: AsyncSession, user_id: str) -> bool:
+    row = await session.execute(
+        select(User.id).where(User.id == user_id, User.is_active.is_(True)).limit(1)
+    )
+    return row.scalar_one_or_none() is not None
+
+
 async def collect_daily_connector_trends(*, user_ids: list[str] | None = None, trend_date: str | None = None) -> dict[str, int]:
-    stats = {"users": 0, "github": 0, "failed": 0, "github_failed": 0}
+    stats = {"users": 0, "github": 0, "failed": 0, "github_failed": 0, "skipped_missing_user": 0}
     async with async_session() as session:
         target_users = await _trend_user_ids(session, user_ids)
         for user_id in target_users:
+            if not await _active_user_exists(session, user_id):
+                stats["failed"] += 1
+                stats["skipped_missing_user"] += 1
+                logger.warning(
+                    "Skipping connector trend collection for unknown or inactive user %s. "
+                    "Check CONNECTOR_TRENDS_USER_IDS or the users table.",
+                    user_id,
+                )
+                continue
             user_ok = False
             try:
                 github_items = await collect_github_trends_for_user(session, user_id=user_id, trend_date=trend_date)

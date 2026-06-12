@@ -5,7 +5,13 @@ import httpx
 import pytest
 
 from pkg.schemas.connector import ArxivPaper, GitHubRepo
-from pkg.services.foundation.connector_trends import score_arxiv_paper, score_github_repo, collect_arxiv_trends_for_user, collect_github_trends_for_user
+from pkg.services.foundation.connector_trends import (
+    score_arxiv_paper,
+    score_github_repo,
+    collect_arxiv_trends_for_user,
+    collect_daily_connector_trends,
+    collect_github_trends_for_user,
+)
 
 
 def test_arxiv_score_uses_citations_and_recency():
@@ -130,3 +136,22 @@ async def test_collect_github_trends_filters_old_repositories():
 
     assert items == []
     mock_import.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_collect_daily_connector_trends_skips_missing_user():
+    session = AsyncMock()
+    missing_user_rows = MagicMock()
+    missing_user_rows.scalar_one_or_none.return_value = None
+    session.execute.return_value = missing_user_rows
+
+    session_cm = MagicMock()
+    session_cm.__aenter__ = AsyncMock(return_value=session)
+    session_cm.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("pkg.services.foundation.connector_trends.async_session", return_value=session_cm), \
+         patch("pkg.services.foundation.connector_trends.collect_github_trends_for_user", new_callable=AsyncMock) as mock_collect:
+        stats = await collect_daily_connector_trends(user_ids=["missing-user"])
+
+    assert stats == {"users": 0, "github": 0, "failed": 1, "github_failed": 0, "skipped_missing_user": 1}
+    mock_collect.assert_not_called()

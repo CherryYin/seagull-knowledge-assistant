@@ -156,7 +156,7 @@ npm install    # 首次运行或依赖变更时
 npm run dev
 ```
 
-前端默认运行在 `http://localhost:5173`，已配置代理转发 `/api` 请求到后端。
+前端默认运行在 `http://localhost:8005`，已配置代理转发 `/api` 请求到后端。
 
 **一键联调（前后端一起跑）:**
 
