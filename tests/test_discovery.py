@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pkg.models.connector_cache import ConnectorSearchItem
+from pkg.models.connector_trend import ConnectorTrendItem
 from pkg.models.discovery import DiscoveryItem
 from pkg.models.source import Source
 from pkg.models.user import UserMemory
@@ -173,6 +174,54 @@ async def test_generate_discovery_items_adds_memory_similarity_reason():
     assert (created, updated, skipped) == (1, 0, 0)
     item = session.add.call_args.args[0]
     assert any("Similar to memory" in reason for reason in item.why)
+
+
+@pytest.mark.asyncio
+async def test_generate_discovery_items_uses_trend_metadata_payload():
+    session = AsyncMock()
+    session.add = MagicMock()
+    trend = ConnectorTrendItem(
+        user_id="user-1",
+        provider="github",
+        trend_date="2026-06-12",
+        item_key="owner/trending-repo",
+        title="owner/trending-repo",
+        metadata_={
+            "full_name": "owner/trending-repo",
+            "owner": "owner",
+            "name": "trending-repo",
+            "description": "A trending repository about memory systems.",
+            "topics": ["memory"],
+            "stars": 120,
+            "forks": 8,
+            "html_url": "https://github.com/owner/trending-repo",
+        },
+    )
+
+    async def execute(stmt, *args, **kwargs):
+        sql = str(stmt)
+        if "FROM connector_search_items" in sql:
+            return _ScalarResult([])
+        if "FROM connector_trend_items" in sql:
+            return _ScalarResult([trend])
+        if "FROM discovery_items" in sql:
+            return _ScalarResult([])
+        if "FROM user_memories" in sql:
+            return _ScalarResult([])
+        if "FROM sources" in sql:
+            return _ScalarResult([])
+        return _ScalarResult([])
+
+    session.execute.side_effect = execute
+
+    with patch("pkg.services.foundation.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
+        mock_memory.return_value = []
+        created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["github"])
+
+    assert (created, updated, skipped) == (1, 0, 0)
+    item = session.add.call_args.args[0]
+    assert item.provider == "github"
+    assert item.payload["full_name"] == "owner/trending-repo"
 
 
 @pytest.mark.asyncio

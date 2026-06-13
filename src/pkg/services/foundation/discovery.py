@@ -222,7 +222,7 @@ async def _load_candidates(session: AsyncSession, *, user_id: str, providers: li
             .limit(limit * 2)
         )
         for trend in trend_rows.scalars():
-            payload = cache_payloads.get((trend.provider, trend.item_key), trend.payload)
+            payload = cache_payloads.get((trend.provider, trend.item_key), trend.metadata_)
             candidates.append({
                 "source": "trend",
                 "provider": trend.provider,
