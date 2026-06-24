@@ -13,6 +13,13 @@ import { buildAssetHandoffState } from "@/lib/asset-handoff";
 import { getSourceProcessingState, getSourceProcessingSteps } from "@/lib/sourceProcessingStatus";
 
 type ViewMode = "full" | "slices";
+type SourceEditDraft = {
+  title: string;
+  category_id: number;
+  source_type: string;
+  url: string;
+  metadata?: Record<string, unknown> | null;
+};
 
 export function SourceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -27,7 +34,7 @@ export function SourceDetailPage() {
   const [selectedChunk, setSelectedChunk] = useState(0);
   const previewRef = useRef<HTMLDivElement>(null);
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<{ title: string; category_id: number; source_type: string; url: string } | null>(null);
+  const [draft, setDraft] = useState<SourceEditDraft | null>(null);
 
   const { data: source, isLoading, error } = useQuery({
     queryKey: ["source", id],
@@ -64,8 +71,45 @@ export function SourceDetailPage() {
     },
   });
 
+  const retryExtractionMutation = useMutation({
+    mutationFn: () => sourcesApi.retryExtraction(id!),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(["source", id], updated);
+      queryClient.invalidateQueries({ queryKey: ["sources"] });
+    },
+  });
+
+  const downloadPdfMutation = useMutation({
+    mutationFn: () => sourcesApi.downloadPdf(id!),
+    onSuccess: (pdfSource) => {
+      queryClient.invalidateQueries({ queryKey: ["source", id] });
+      queryClient.invalidateQueries({ queryKey: ["sources"] });
+      navigate(`/sources/${encodeURIComponent(pdfSource.id)}`, {
+        state: { backTo: `/sources/${encodeURIComponent(source?.id || id!)}`, backLabel: "Back to Article Source" },
+      });
+    },
+  });
+
   const isRssEnabled = source?.metadata_?.rss_enabled === "true";
   const isWebDirectoryEnabled = source?.metadata_?.web_directory_enabled === true;
+  const pdfUrl = typeof source?.metadata_?.pdf_url === "string"
+    ? source.metadata_.pdf_url
+    : typeof source?.metadata_?.download_url === "string"
+      ? source.metadata_.download_url
+      : null;
+  const downloadedPdfSourceId = typeof source?.metadata_?.downloaded_pdf_source_id === "string"
+    ? source.metadata_.downloaded_pdf_source_id
+    : null;
+  const extractionMode = typeof source?.metadata_?.extraction_mode === "string"
+    ? source.metadata_.extraction_mode
+    : null;
+  const extractionStatus = typeof source?.metadata_?.extraction_status === "string"
+    ? source.metadata_.extraction_status
+    : null;
+  const isNews = source?.source_type === "article" && source?.metadata_?.kind === "news";
+  const newsSourceName = typeof source?.metadata_?.source_name === "string" ? source.metadata_.source_name : null;
+  const newsAuthor = typeof source?.metadata_?.author === "string" ? source.metadata_.author : null;
+  const newsPublishedAt = typeof source?.metadata_?.published_at === "string" ? source.metadata_.published_at : null;
 
   const { data: articlesData } = useQuery({
     queryKey: ["source-articles", id],
@@ -188,11 +232,20 @@ export function SourceDetailPage() {
 
   function startEdit() {
     if (!source) return;
+    const metadata = source.metadata_ ?? {};
     setDraft({
       title: source.title,
       category_id: source.category_id,
       source_type: source.source_type,
       url: source.url ?? "",
+      metadata: {
+        ...metadata,
+        auto_discover: metadata.auto_discover === true,
+        discover_interval_hours: Number(metadata.discover_interval_hours ?? 24),
+        max_articles_per_run: Number(metadata.max_articles_per_run ?? 50),
+        auto_refresh: metadata.auto_refresh === true,
+        refresh_interval_days: Number(metadata.refresh_interval_days ?? 7),
+      },
     });
     setEditing(true);
   }
@@ -209,6 +262,7 @@ export function SourceDetailPage() {
     if (draft.category_id !== source.category_id) patch.category_id = draft.category_id;
     if (draft.source_type !== source.source_type) patch.source_type = draft.source_type;
     if ((draft.url || null) !== (source.url || null)) patch.url = draft.url || null;
+    if (JSON.stringify(draft.metadata ?? null) !== JSON.stringify(source.metadata_ ?? null)) patch.metadata = draft.metadata ?? null;
     updateMutation.mutate(patch);
   }
 
@@ -335,6 +389,81 @@ export function SourceDetailPage() {
                   placeholder="https://..."
                 />
               </div>
+              {draft.source_type === "web" && (
+                <div className="grid gap-4 rounded-lg border border-border p-4 md:grid-cols-2">
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground">Web directory auto discover</label>
+                        <p className="text-xs text-muted-foreground">Only opt-in directory sources should enable this.</p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={draft.metadata?.auto_discover === true}
+                        onChange={(e) => setDraft({
+                          ...draft,
+                          metadata: { ...(draft.metadata ?? {}), auto_discover: e.target.checked },
+                        })}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground">Discover interval hours</label>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={String(draft.metadata?.discover_interval_hours ?? 24)}
+                        onChange={(e) => setDraft({
+                          ...draft,
+                          metadata: { ...(draft.metadata ?? {}), discover_interval_hours: Number(e.target.value || 24) },
+                        })}
+                        className="mt-1"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground">Max articles per run</label>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={String(draft.metadata?.max_articles_per_run ?? 50)}
+                        onChange={(e) => setDraft({
+                          ...draft,
+                          metadata: { ...(draft.metadata ?? {}), max_articles_per_run: Number(e.target.value || 50) },
+                        })}
+                        className="mt-1"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground">Web page auto refresh</label>
+                        <p className="text-xs text-muted-foreground">Refreshes normal web pages on a conservative interval.</p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={draft.metadata?.auto_refresh === true}
+                        onChange={(e) => setDraft({
+                          ...draft,
+                          metadata: { ...(draft.metadata ?? {}), auto_refresh: e.target.checked },
+                        })}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground">Refresh interval days</label>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={String(draft.metadata?.refresh_interval_days ?? 7)}
+                        onChange={(e) => setDraft({
+                          ...draft,
+                          metadata: { ...(draft.metadata ?? {}), refresh_interval_days: Number(e.target.value || 7) },
+                        })}
+                        className="mt-1"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
               {updateMutation.isError && (
                 <p className="text-sm text-destructive">
                   {updateMutation.error instanceof Error ? updateMutation.error.message : "Update failed"}
@@ -345,6 +474,7 @@ export function SourceDetailPage() {
             <>
               <div className="flex items-center gap-2 mb-2">
                 <Badge variant="source">{source.source_type}</Badge>
+                {isNews && <Badge variant="secondary">news</Badge>}
                 <Badge variant="outline">{processing.label}</Badge>
                 {source.category_name && source.category_name !== "general" && (
                   <Badge variant="secondary">{source.category_name}</Badge>
@@ -357,10 +487,22 @@ export function SourceDetailPage() {
               <p className="mt-2 text-xs text-muted-foreground">
                 Processing status: {processing.detail}
               </p>
+              {(extractionMode || extractionStatus) && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Extraction: {extractionMode || "unknown"} · {extractionStatus || "unknown"}
+                </p>
+              )}
               {source.url && (
                 <a href={source.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-sm text-primary hover:underline mt-1">
                   {source.url} <ExternalLink className="h-3 w-3" />
                 </a>
+              )}
+              {isNews && (newsSourceName || newsAuthor || newsPublishedAt) && (
+                <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                  {newsSourceName && <Badge variant="outline">{newsSourceName}</Badge>}
+                  {newsAuthor && <Badge variant="outline">{newsAuthor}</Badge>}
+                  {newsPublishedAt && <Badge variant="outline">{new Date(newsPublishedAt).toLocaleString()}</Badge>}
+                </div>
               )}
             </>
           )}
@@ -372,6 +514,44 @@ export function SourceDetailPage() {
                 onClick={() => downloadFile(`/sources/${encodeURIComponent(source.id)}/file`, source.title)}
               >
                 <Download className="h-4 w-4" /> Download Source File
+              </Button>
+            </div>
+          )}
+          {!source.file_path && source.source_type === "article" && downloadedPdfSourceId && (
+            <div className="mt-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate(`/sources/${encodeURIComponent(downloadedPdfSourceId)}`, {
+                  state: { backTo: `/sources/${encodeURIComponent(source.id)}`, backLabel: "Back to Article Source" },
+                })}
+              >
+                <FileText className="h-4 w-4" /> Open Imported PDF
+              </Button>
+            </div>
+          )}
+          {!source.file_path && source.source_type === "article" && pdfUrl && !downloadedPdfSourceId && (
+            <div className="mt-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => downloadPdfMutation.mutate()}
+                disabled={downloadPdfMutation.isPending}
+              >
+                <Download className="h-4 w-4" /> {downloadPdfMutation.isPending ? "Downloading PDF…" : "Download PDF to Library"}
+              </Button>
+            </div>
+          )}
+          {source.file_path && extractionStatus !== "completed" && (
+            <div className="mt-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => retryExtractionMutation.mutate()}
+                disabled={retryExtractionMutation.isPending}
+              >
+                <RefreshCw className={`h-4 w-4 ${retryExtractionMutation.isPending ? "animate-spin" : ""}`} />
+                {retryExtractionMutation.isPending ? "Retrying Extraction…" : "Retry Extraction"}
               </Button>
             </div>
           )}
@@ -406,6 +586,19 @@ export function SourceDetailPage() {
                   <p className="mt-2 text-xs leading-5 text-muted-foreground">{step.detail}</p>
                 </div>
               ))}
+              {(extractionMode || extractionStatus) && (
+                <div className="rounded-lg border p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Extraction</p>
+                    <Badge variant={extractionStatus === "completed" ? "secondary" : "outline"}>
+                      {extractionStatus || "unknown"}
+                    </Badge>
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                    Mode: {extractionMode || "unknown"}
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         )}

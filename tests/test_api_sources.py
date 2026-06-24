@@ -53,6 +53,78 @@ class TestListSources:
         assert data["total"] == 0
         assert data["items"] == []
 
+    @pytest.mark.asyncio
+    async def test_list_sources_supports_kind_filter(self, mock_session, fake_user):
+        from pkg.api.sources import list_sources
+
+        news_source = _make_source("src-news-1", fake_user.id)
+        news_source.source_type = "article"
+        news_source.metadata_ = {"kind": "news", "source_name": "Example News"}
+        news_source.ingested_at = datetime.now(timezone.utc)
+
+        mock_count = MagicMock()
+        mock_count.scalar.return_value = 1
+        mock_rows = MagicMock()
+        mock_rows.scalars.return_value = [news_source]
+        mock_cat_rows = MagicMock()
+        category = MagicMock()
+        category.id = 1
+        category.name = "general"
+        mock_cat_rows.scalars.return_value = [category]
+        mock_session.execute.side_effect = [mock_count, mock_rows, mock_cat_rows]
+
+        result = await list_sources(kind="news", user=fake_user, session=mock_session)
+
+        assert result.total == 1
+        assert len(result.items) == 1
+        assert result.items[0].metadata_["kind"] == "news"
+        executed_sql = str(mock_session.execute.await_args_list[0].args[0])
+        assert "metadata->>'kind' = :kind" in executed_sql
+
+
+# ---------------------------------------------------------------------------
+# PATCH /sources/{source_id}
+# ---------------------------------------------------------------------------
+class TestUpdateSource:
+    @pytest.mark.asyncio
+    async def test_update_source_can_replace_metadata(self, mock_session, fake_user):
+        from pkg.api.sources import update_source
+        from pkg.schemas.source import SourceUpdate
+
+        source = _make_source("src-1", fake_user.id)
+        source.source_type = "web"
+        source.metadata_ = {"auto_refresh": False}
+        category = MagicMock()
+        category.name = "General"
+        mock_session.get.side_effect = [source, category]
+
+        result = await update_source(
+            "src-1",
+            SourceUpdate(metadata={"auto_refresh": True, "refresh_interval_days": 7}),
+            user=fake_user,
+            session=mock_session,
+        )
+
+        assert result.id == "src-1"
+        assert source.metadata_ == {"auto_refresh": True, "refresh_interval_days": 7}
+        mock_session.commit.assert_awaited()
+        mock_session.refresh.assert_awaited_with(source)
+
+    @pytest.mark.asyncio
+    async def test_update_source_empty_patch_returns_existing_source(self, mock_session, fake_user):
+        from pkg.api.sources import update_source
+        from pkg.schemas.source import SourceUpdate
+
+        source = _make_source("src-1", fake_user.id)
+        category = MagicMock()
+        category.name = "General"
+        mock_session.get.side_effect = [source, category]
+
+        result = await update_source("src-1", SourceUpdate(), user=fake_user, session=mock_session)
+
+        assert result.id == "src-1"
+        mock_session.commit.assert_not_awaited()
+
 
 # ---------------------------------------------------------------------------
 # POST /sources

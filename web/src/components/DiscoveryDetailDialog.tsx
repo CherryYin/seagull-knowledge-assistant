@@ -1,4 +1,4 @@
-import { ExternalLink, FileText, Github, Globe2, Link2, Rss, Sparkles } from "lucide-react";
+import { ExternalLink, FileText, Github, Globe2, Link2, Newspaper, Rss, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -8,10 +8,13 @@ export interface DiscoveryDetailData extends PaperDetailData {
   summary?: string | null;
   source_name?: string | null;
   domain?: string | null;
+  published_at?: string | null;
+  author?: string | null;
 }
 
 const providerIcons: Record<string, typeof Sparkles> = {
   github: Github,
+  news: Newspaper,
   web: Globe2,
   rss: Rss,
 };
@@ -38,7 +41,9 @@ export function DiscoveryDetailDialog({ open, onOpenChange, item }: DiscoveryDet
               <div className="mb-3 flex flex-wrap items-center gap-2">
                 {item.provider && <Badge className="gap-1"><Icon className="h-3 w-3" /> {item.provider}</Badge>}
                 {item.source_name && <Badge variant="outline">{item.source_name}</Badge>}
+                {item.author && <Badge variant="outline">{item.author}</Badge>}
                 {item.domain && <Badge variant="outline">{item.domain}</Badge>}
+                {item.published_at && <Badge variant="outline">{new Date(item.published_at).toLocaleString()}</Badge>}
               </div>
               <DialogTitle className="leading-7">{item.title}</DialogTitle>
             </DialogHeader>

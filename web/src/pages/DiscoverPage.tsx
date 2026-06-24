@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, Bot, CheckCircle2, ChevronDown, ChevronRight, Compass, Github, Globe2, RefreshCw, Rss, Search, Sparkles, XCircle } from "lucide-react";
+import { BookOpen, Bot, CheckCircle2, ChevronDown, ChevronRight, Compass, Github, Globe2, Newspaper, RefreshCw, Rss, Search, Sparkles, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,6 +17,7 @@ import { toDiscoveryDetail } from "@/lib/discovery-detail";
 const providerIcons: Record<string, typeof BookOpen> = {
   arxiv: BookOpen,
   github: Github,
+  news: Newspaper,
   rss: Rss,
   web: Globe2,
 };
@@ -58,7 +59,7 @@ export function DiscoverPage() {
     },
   });
   const generateMutation = useMutation({
-    mutationFn: () => discoveryApi.generate({ providers: ["github", "rss", "web"], limit: 100 }),
+    mutationFn: () => discoveryApi.generate({ providers: ["github", "news", "rss", "web"], limit: 100 }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["discovery-items", "recommended"] }),
   });
   const feedbackMutation = useMutation({
@@ -237,6 +238,7 @@ export function DiscoverPage() {
         <div className="grid gap-4 md:grid-cols-5">
           <MetricCard label="Recommended" value={allData?.total ?? data?.total ?? 0} icon={Sparkles} active={!providerFilter} onClick={() => setProviderFilter(null)} />
           <MetricCard label="GitHub" value={providerCounts.github ?? 0} icon={Github} active={providerFilter === "github"} onClick={() => setProviderFilter("github")} />
+          <MetricCard label="News" value={providerCounts.news ?? 0} icon={Newspaper} active={providerFilter === "news"} onClick={() => setProviderFilter("news")} />
           <MetricCard label="RSS" value={providerCounts.rss ?? 0} icon={Rss} active={providerFilter === "rss"} onClick={() => setProviderFilter("rss")} />
           <MetricCard label="Web" value={providerCounts.web ?? 0} icon={Globe2} active={providerFilter === "web"} onClick={() => setProviderFilter("web")} />
         </div>
@@ -363,6 +365,8 @@ function DiscoveryCard({
   onOpenDetail?: () => void;
 }) {
   const Icon = providerIcons[item.provider] ?? Sparkles;
+  const sourceName = typeof item.payload?.source_name === "string" ? item.payload.source_name : null;
+  const publishedAt = typeof item.payload?.published_at === "string" ? item.payload.published_at : null;
   return (
     <div className="rounded-lg border border-border bg-card p-4">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -371,6 +375,8 @@ function DiscoveryCard({
             <Badge className="gap-1"><Icon className="h-3 w-3" /> {item.provider}</Badge>
             <Badge variant="outline">score {Math.round(item.score ?? 0)}</Badge>
             {item.source_id && <Badge variant="secondary">source linked</Badge>}
+            {sourceName && <Badge variant="outline">{sourceName}</Badge>}
+            {publishedAt && <Badge variant="outline">{new Date(publishedAt).toLocaleDateString()}</Badge>}
           </div>
           <div className="mt-2 flex items-start justify-between gap-3">
             <button type="button" className="text-left font-medium hover:text-primary" onClick={onOpenDetail}>{item.title}</button>

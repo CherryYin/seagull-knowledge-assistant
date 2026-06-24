@@ -2,7 +2,7 @@ import { request } from "./client";
 import type { Source } from "./sources";
 
 export type DiscoveryStatus = "recommended" | "kept" | "saved" | "dismissed";
-export type DiscoveryProvider = "arxiv" | "github" | "rss" | "web" | "openalex" | "crossref" | "semantic_scholar";
+export type DiscoveryProvider = "arxiv" | "github" | "news" | "rss" | "web" | "openalex" | "crossref" | "semantic_scholar";
 
 export interface DiscoveryItem {
   id: number;

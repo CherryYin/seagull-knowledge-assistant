@@ -31,7 +31,7 @@ async def generate_discovery_items(
     limit: int = 50,
     commit: bool = True,
 ) -> tuple[int, int, int]:
-    providers = providers or ["arxiv", "github", "rss", "web", "openalex", "crossref", "semantic_scholar"]
+    providers = providers or ["arxiv", "github", "news", "rss", "web", "openalex", "crossref", "semantic_scholar"]
     profile = await load_discovery_profile(session, user_id)
     try:
         preferences = await load_discovery_preferences(session, user_id)
@@ -186,11 +186,11 @@ async def _load_candidates(session: AsyncSession, *, user_id: str, providers: li
     candidates: list[dict] = []
     cache_payloads = await _load_cache_payloads(session, user_id=user_id, providers=providers)
 
-    if any(provider in providers for provider in ["arxiv", "github"]):
+    if any(provider in providers for provider in ["arxiv", "github", "news"]):
         rows = await session.execute(
             select(ConnectorSearchItem)
             .where(ConnectorSearchItem.user_id == user_id)
-            .where(ConnectorSearchItem.provider.in_([provider for provider in providers if provider in {"arxiv", "github"}]))
+            .where(ConnectorSearchItem.provider.in_([provider for provider in providers if provider in {"arxiv", "github", "news"}]))
             .order_by(ConnectorSearchItem.updated_at.desc())
             .limit(limit * 3)
         )
@@ -240,7 +240,7 @@ async def _load_candidates(session: AsyncSession, *, user_id: str, providers: li
             .where(ConnectorTrendItem.provider.in_([]))
         )
 
-    if "rss" in providers or "web" in providers:
+    if "rss" in providers or "web" in providers or "news" in providers:
         source_rows = await session.execute(
             select(Source)
             .where(Source.user_id == user_id)
@@ -268,6 +268,26 @@ async def _load_candidates(session: AsyncSession, *, user_id: str, providers: li
                         "published_at": metadata.get("published") or metadata.get("published_at"),
                     },
                     "base_score": 0,
+                    "source_id": source.id,
+                })
+            elif source.source_type == "article" and metadata.get("kind") == "news" and "news" in providers:
+                candidates.append({
+                    "source": "news_article",
+                    "provider": "news",
+                    "item_key": metadata.get("dedupe_key") or source.id,
+                    "title": source.title,
+                    "payload": {
+                        "source_id": source.id,
+                        "title": source.title,
+                        "url": source.url,
+                        "summary": metadata.get("description"),
+                        "source_name": metadata.get("source_name") or metadata.get("connector"),
+                        "domain": metadata.get("domain") or domain_from_url(source.url or ""),
+                        "published_at": metadata.get("published_at"),
+                        "author": metadata.get("author"),
+                        "provider": metadata.get("provider") or "news",
+                    },
+                    "base_score": 6,
                     "source_id": source.id,
                 })
             elif source.source_type == "web" and "web" in providers:
@@ -315,6 +335,9 @@ async def _upsert_discovery_item(session: AsyncSession, *, user_id: str, candida
     if candidate.get("source") == "rss_article":
         score += 14
         why = ["Recent RSS article", *why]
+    if candidate.get("source") == "news_article":
+        score += 12
+        why = ["Recent news article", *why]
     if candidate.get("source") == "web_source":
         score += 10
         why = ["Recent web/article source", *why]

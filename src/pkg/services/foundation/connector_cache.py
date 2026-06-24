@@ -16,6 +16,11 @@ def connector_cache_key(provider: str, item: BaseModel | dict[str, Any]) -> str:
         return str(data.get("arxiv_id") or data.get("entry_url") or data.get("title"))
     if provider == "github":
         return str(data.get("full_name") or data.get("html_url") or data.get("name"))
+    if provider == "news":
+        url = str(data.get("url") or "").strip()
+        if url:
+            return url
+        return str(data.get("title") or data.get("source_name") or "news")
     return str(data.get("id") or data.get("key") or data.get("title"))
 
 
@@ -107,7 +112,7 @@ async def delete_expired_connector_search_items(
     user_id: str | None = None,
     provider: str | None = None,
     now: datetime | None = None,
-) -> None:
+) -> int:
     now = now or datetime.now(timezone.utc)
     filters = [
         ConnectorSearchItem.status != "saved",
@@ -118,4 +123,11 @@ async def delete_expired_connector_search_items(
         filters.append(ConnectorSearchItem.user_id == user_id)
     if provider:
         filters.append(ConnectorSearchItem.provider == provider)
-    await session.execute(delete(ConnectorSearchItem).where(*filters))
+    result = await session.execute(delete(ConnectorSearchItem).where(*filters))
+    return result.rowcount or 0
+
+
+async def cleanup_expired_connector_cache(session: AsyncSession, *, now: datetime | None = None) -> int:
+    deleted = await delete_expired_connector_search_items(session, now=now)
+    await session.commit()
+    return deleted

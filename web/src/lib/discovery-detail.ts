@@ -27,6 +27,8 @@ export function toDiscoveryDetail(item: DiscoveryItem): DiscoveryDetailData {
     categories: asStringArray(item.payload?.categories),
     source_name: asString(item.payload?.source_name),
     domain: asString(item.payload?.domain),
+    published_at: asString(item.payload?.published_at),
+    author: asString(item.payload?.author),
     venue: asString(item.payload?.venue),
     year: asNumber(item.payload?.year),
     citation_count: asNumber(item.payload?.citation_count),

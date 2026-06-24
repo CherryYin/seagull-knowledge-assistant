@@ -7,6 +7,7 @@ import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,12 +15,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pkg.api.sources import persist_source, upsert_source_embeddings
 from pkg.config import settings
 from pkg.models.foundation.source import Source
-from pkg.schemas.connector import ArxivPaper, GitHubRepo
+from pkg.schemas.connector import ArxivPaper, GitHubRepo, NewsArticle
 from pkg.schemas.source import SourceCreate
 from pkg.services.foundation.source_memory import upsert_source_memory_node
+from pkg.services.foundation.web_extractor import WebPageFetchError, fetch_web_page
 
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
 GITHUB_API_URL = "https://api.github.com"
+NEWSAPI_EVERYTHING_PATH = "/everything"
 CONNECTOR_USER_AGENT = "personal-knowledge-graph/0.1"
 _arxiv_request_lock = asyncio.Lock()
 _last_arxiv_request_at = 0.0
@@ -27,6 +30,10 @@ logger = logging.getLogger(__name__)
 
 
 class ArxivRateLimitError(RuntimeError):
+    pass
+
+
+class NewsRateLimitError(RuntimeError):
     pass
 
 
@@ -83,6 +90,11 @@ def arxiv_source_id(arxiv_id: str) -> str:
 
 def github_source_id(full_name: str) -> str:
     return f"src-github-{_safe_id(full_name.replace('/', '-'))}"
+
+
+def news_source_id(provider: str, url: str) -> str:
+    canonical_url = _canonicalize_news_url(url)
+    return f"src-news-{_safe_id(provider)}-{_safe_id(canonical_url)[:48]}"
 
 
 def _parse_datetime(value: str | None) -> datetime | None:
@@ -416,6 +428,151 @@ async def import_github_repo(session: AsyncSession, *, user_id: str, repo: GitHu
             category_id=category_id,
             source_type="github",
             url=repo.html_url,
+            raw_content=raw_content,
+            metadata=metadata,
+        ),
+        user_id=user_id,
+    )
+    return source, True, dedupe_key
+
+
+def _news_headers() -> dict[str, str]:
+    headers = {"User-Agent": CONNECTOR_USER_AGENT}
+    api_key = getattr(settings, "NEWSAPI_API_KEY", "")
+    if api_key:
+        headers["X-Api-Key"] = api_key
+    return headers
+
+
+def _canonicalize_news_url(url: str) -> str:
+    stripped = (url or "").strip()
+    if not stripped:
+        return ""
+    parts = urlsplit(stripped)
+    query = [(key, value) for key, value in parse_qsl(parts.query, keep_blank_values=True) if key.lower() not in {"fbclid", "gclid", "ref"} and not key.lower().startswith("utm_")]
+    normalized = parts._replace(scheme=parts.scheme.lower(), netloc=parts.netloc.lower(), query=urlencode(query, doseq=True), fragment="")
+    return urlunsplit(normalized)
+
+
+def parse_newsapi_article(item: dict, *, query: str | None = None, language: str | None = None, country: str | None = None) -> NewsArticle:
+    source = item.get("source") or {}
+    return NewsArticle(
+        provider="newsapi",
+        title=(item.get("title") or "").strip(),
+        url=item.get("url") or "",
+        source_name=source.get("name"),
+        author=item.get("author"),
+        description=item.get("description"),
+        content=item.get("content"),
+        published_at=_parse_datetime(item.get("publishedAt")),
+        image_url=item.get("urlToImage"),
+        language=language,
+        country=country,
+        query=query,
+    )
+
+
+async def search_news_articles(*, query: str, language: str | None = None, country: str | None = None, from_date: str | None = None, to_date: str | None = None, sources: list[str] | None = None, domains: list[str] | None = None, max_results: int | None = None) -> list[NewsArticle]:
+    provider = (settings.NEWS_PROVIDER or "newsapi").strip().lower()
+    if provider != "newsapi":
+        raise ValueError(f"Unsupported news provider: {provider}")
+    params = {
+        "q": query,
+        "language": language or settings.NEWS_DEFAULT_LANGUAGE or None,
+        "from": from_date or None,
+        "to": to_date or None,
+        "pageSize": max_results or settings.NEWS_DEFAULT_MAX_RESULTS,
+        "sortBy": "publishedAt",
+    }
+    if sources:
+        params["sources"] = ",".join(sources)
+    if domains:
+        params["domains"] = ",".join(domains)
+    params = {key: value for key, value in params.items() if value not in (None, "", [])}
+    base_url = (settings.NEWSAPI_BASE_URL or "https://newsapi.org/v2").rstrip("/")
+    async with httpx.AsyncClient(timeout=settings.NEWS_FETCH_TIMEOUT, headers=_news_headers()) as client:
+        response = await client.get(f"{base_url}{NEWSAPI_EVERYTHING_PATH}", params=params)
+        if response.status_code == 429:
+            raise NewsRateLimitError("News provider rate limit exceeded; please retry later.")
+        response.raise_for_status()
+    payload = response.json()
+    articles = payload.get("articles") or []
+    return [parse_newsapi_article(item, query=query, language=language, country=country) for item in articles if item.get("title") and item.get("url")]
+
+
+def news_raw_content(article: NewsArticle, extracted_text: str | None = None) -> str:
+    parts = [f"# {article.title}"]
+    if article.source_name:
+        parts.append(f"Source: {article.source_name}")
+    if article.author:
+        parts.append(f"Author: {article.author}")
+    if article.published_at:
+        parts.append(f"Published At: {article.published_at.isoformat()}")
+    parts.append(f"URL: {article.url}")
+    if article.description:
+        parts.extend(["", "## Summary", article.description])
+    body_text = extracted_text or article.content
+    if body_text:
+        parts.extend(["", "## Content", body_text])
+    return "\n".join(parts)
+
+
+async def import_news_article(session: AsyncSession, *, user_id: str, article: NewsArticle, category_id: int = 1, fetch_full_text: bool = True) -> tuple[Source, bool, str]:
+    canonical_url = _canonicalize_news_url(article.url)
+    dedupe_key = f"{article.provider}:{canonical_url}"
+    source_id = news_source_id(article.provider, canonical_url)
+    extracted_text: str | None = None
+    fetch_status = "api_summary_only"
+    fetch_error: str | None = None
+    if fetch_full_text and canonical_url:
+        try:
+            page = await fetch_web_page(canonical_url)
+            extracted_text = page.text_content
+            fetch_status = "full_text_fetched"
+        except WebPageFetchError as exc:
+            fetch_error = str(exc)
+    metadata = {
+        "kind": "news",
+        "provider": article.provider,
+        "connector": article.provider,
+        "source_name": article.source_name,
+        "author": article.author,
+        "published_at": article.published_at.isoformat() if article.published_at else None,
+        "description": article.description,
+        "image_url": article.image_url,
+        "language": article.language,
+        "country": article.country,
+        "query": article.query,
+        "dedupe_key": dedupe_key,
+        "fetch_status": fetch_status,
+        "fetch_error": fetch_error,
+        "review_status": "imported_reviewable",
+        "retention": "permanent",
+        "kept_at": _utc_now_iso(),
+        "fetched_at": _utc_now_iso(),
+    }
+    raw_content = news_raw_content(article, extracted_text)
+    existing = await session.get(Source, source_id)
+    if existing:
+        if existing.user_id != user_id:
+            raise ValueError("A source with this news article already exists for another user")
+        existing.title = article.title
+        existing.category_id = category_id
+        existing.source_type = "article"
+        existing.url = canonical_url or article.url
+        existing.raw_content = raw_content
+        existing.metadata_ = {**(existing.metadata_ or {}), **metadata}
+        await upsert_source_memory_node(session, existing)
+        return existing, False, dedupe_key
+
+    source = await persist_source(
+        session=session,
+        body=SourceCreate(
+            id=source_id,
+            title=article.title,
+            category_id=category_id,
+            source_type="article",
+            url=canonical_url or article.url,
             raw_content=raw_content,
             metadata=metadata,
         ),

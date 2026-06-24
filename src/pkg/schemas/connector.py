@@ -86,6 +86,48 @@ class GitHubImportRequest(BaseModel):
     fetch_readme: bool = True
 
 
+class NewsSearchRequest(BaseModel):
+    query: str
+    language: str | None = None
+    country: str | None = None
+    from_date: str | None = None
+    to_date: str | None = None
+    sources: list[str] | None = None
+    domains: list[str] | None = None
+    max_results: int = Field(default=10, ge=1, le=50)
+
+
+class NewsArticle(BaseModel):
+    cache_id: int | None = None
+    cache_status: str | None = None
+    cache_expires_at: datetime | None = None
+    source_id: str | None = None
+    provider: str
+    title: str
+    url: str
+    source_name: str | None = None
+    author: str | None = None
+    description: str | None = None
+    content: str | None = None
+    published_at: datetime | None = None
+    image_url: str | None = None
+    language: str | None = None
+    country: str | None = None
+    query: str | None = None
+
+
+class NewsSearchResponse(BaseModel):
+    items: list[NewsArticle]
+    total: int
+
+
+class NewsImportRequest(BaseModel):
+    article: NewsArticle | None = None
+    url: str | None = None
+    category_id: int = 1
+    fetch_full_text: bool = True
+
+
 class ConnectorImportResponse(BaseModel):
     source: SourceRead
     created: bool

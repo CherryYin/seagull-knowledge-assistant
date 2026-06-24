@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Plus, FileText, Upload, ChevronDown, ChevronRight, FolderOpen, Rss, Search, Github, BookOpen, RefreshCw, Download, BookmarkCheck, Trash2 } from "lucide-react";
+import { Plus, FileText, Upload, ChevronDown, ChevronRight, FolderOpen, Rss, Search, Github, BookOpen, RefreshCw, Download, BookmarkCheck, Trash2, Newspaper } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -12,7 +12,7 @@ import { CategorySelect } from "@/components/CategorySelect";
 import { PaperDetailDialog, type PaperDetailData } from "@/components/PaperDetailDialog";
 import { toPaperResult } from "@/lib/discovery-detail";
 import { getSourceProcessingState } from "@/lib/sourceProcessingStatus";
-import { sourcesApi, categoriesApi, connectorsApi, type ArxivPaper, type GitHubRepo, type SourceCreate, type Source } from "@/lib/api";
+import { sourcesApi, categoriesApi, connectorsApi, type ArxivPaper, type GitHubRepo, type NewsArticle, type SourceCreate, type Source } from "@/lib/api";
 import { discoveryApi, type DiscoveryItem } from "@/lib/api";
 import { paperDiscoveryApi } from "@/lib/api/paper-discovery";
 import { SectionNav, knowledgeNavItems } from "@/components/SectionNav";
@@ -44,6 +44,7 @@ export function SourcesPage() {
   const queryClient = useQueryClient();
   const reviewFilter = searchParams.get("review") === "imported" ? "imported" : "";
   const [typeFilter, setTypeFilter] = useState("");
+  const [newsOnly, setNewsOnly] = useState(false);
   const [feedView, setFeedView] = useState("parents");
   const [categoryFilter, setCategoryFilter] = useState<number | null>(null);
   const [open, setOpen] = useState(false);
@@ -53,9 +54,11 @@ export function SourcesPage() {
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
   const [paperForm, setPaperForm] = useState({ query: "", author: "", category: "", paperId: "", maxResults: 5, categoryId: 1 });
   const [githubForm, setGithubForm] = useState({ query: "", fullName: "", language: "", topic: "", minStars: "", maxResults: 5, categoryId: 1, fetchReadme: true });
+  const [newsForm, setNewsForm] = useState({ query: "", language: "en", fromDate: "", toDate: "", maxResults: 5, categoryId: 1, fetchFullText: true });
   const [paperResults, setPaperResults] = useState<ArxivPaper[]>([]);
   const [paperDiscoveryItems, setPaperDiscoveryItems] = useState<DiscoveryItem[]>([]);
   const [githubResults, setGithubResults] = useState<GitHubRepo[]>([]);
+  const [newsResults, setNewsResults] = useState<NewsArticle[]>([]);
   const [connectorMessage, setConnectorMessage] = useState<string | null>(null);
   const [deleteReviewSource, setDeleteReviewSource] = useState<Source | null>(null);
   const [activePaper, setActivePaper] = useState<PaperDetailData | null>(null);
@@ -67,10 +70,11 @@ export function SourcesPage() {
   const categories = categoriesData?.items ?? [];
 
   const { data, isLoading } = useQuery({
-    queryKey: ["sources", typeFilter, categoryFilter, feedView, reviewFilter],
+    queryKey: ["sources", typeFilter, categoryFilter, newsOnly ? "news" : "", feedView, reviewFilter],
     queryFn: () => sourcesApi.list({
       source_type: typeFilter || undefined,
       category_id: categoryFilter ?? undefined,
+      kind: newsOnly ? "news" : undefined,
       feed_view: feedView,
       limit: 100,
     }),
@@ -78,10 +82,12 @@ export function SourcesPage() {
 
   const visibleSources = useMemo(() => {
     const items = data?.items ?? [];
-    if (reviewFilter === "imported") {
-      return items.filter((source) => source.metadata_?.review_status === "imported_reviewable");
-    }
-    return items;
+    return items.filter((source) => {
+      if (reviewFilter === "imported" && source.metadata_?.review_status !== "imported_reviewable") {
+        return false;
+      }
+      return true;
+    });
   }, [data?.items, reviewFilter]);
 
   // Group sources by category
@@ -234,6 +240,32 @@ export function SourcesPage() {
       queryClient.invalidateQueries({ queryKey: ["sources"] });
       queryClient.invalidateQueries({ queryKey: ["memory-nodes"] });
       setTypeFilter("github");
+      setFeedView("parents");
+      setConnectorMessage(`${result.created ? "Kept" : "Updated"} ${result.source.title}`);
+    },
+  });
+
+  const newsSearchMutation = useMutation({
+    mutationFn: () => connectorsApi.searchNews({
+      query: newsForm.query,
+      language: newsForm.language || undefined,
+      from_date: newsForm.fromDate || undefined,
+      to_date: newsForm.toDate || undefined,
+      max_results: newsForm.maxResults,
+    }),
+    onSuccess: (result) => {
+      setNewsResults(result.items);
+      setConnectorMessage(`Found ${result.total} news article(s). Unsaved results are cached for 7 days.`);
+    },
+  });
+
+  const newsImportMutation = useMutation({
+    mutationFn: (article: NewsArticle) => connectorsApi.importNews({ article, category_id: newsForm.categoryId, fetch_full_text: newsForm.fetchFullText }),
+    onSuccess: (result, article) => {
+      queryClient.invalidateQueries({ queryKey: ["sources"] });
+      queryClient.invalidateQueries({ queryKey: ["memory-nodes"] });
+      setNewsResults((items) => items.map((item) => item.url === article.url ? { ...item, cache_status: "saved", cache_expires_at: null, source_id: result.source.id } : item));
+      setTypeFilter("article");
       setFeedView("parents");
       setConnectorMessage(`${result.created ? "Kept" : "Updated"} ${result.source.title}`);
     },
@@ -470,33 +502,56 @@ export function SourcesPage() {
               {t}
             </button>
           ))}
+          <button
+            onClick={() => { setTypeFilter("article"); setNewsOnly((current) => !current); clearReviewFilter(); }}
+            className={`px-3 py-1 rounded-md text-xs cursor-pointer transition-colors ${
+              newsOnly ? "bg-primary/20 text-primary font-medium" : "text-muted-foreground hover:bg-accent"
+            }`}
+          >
+            news
+          </button>
         </div>
 
 
         {typeFilter === "article" && (
-          <ArxivConnectorPanel
-            categories={categories}
-            form={paperForm}
-            setForm={setPaperForm}
-            results={paperResults}
-            onSearch={() => paperSearchMutation.mutate()}
-            onImport={(paper) => paperImportMutation.mutate(paper)}
-            onOpenDetail={(paper) => setActivePaper({
-              title: paper.title,
-              authors: paper.authors,
-              abstract: paper.abstract,
-              url: paper.entry_url,
-              pdf_url: paper.pdf_url,
-              doi: paper.doi,
-              arxiv_id: paper.arxiv_id,
-              categories: paper.categories,
-              provider: "openalex",
-            })}
-            isSearching={paperSearchMutation.isPending}
-            importingId={paperImportMutation.variables?.arxiv_id ?? null}
-            error={paperSearchMutation.error instanceof Error ? paperSearchMutation.error.message : paperImportMutation.error instanceof Error ? paperImportMutation.error.message : null}
-            message={connectorMessage}
-          />
+          <>
+            <ArxivConnectorPanel
+              categories={categories}
+              form={paperForm}
+              setForm={setPaperForm}
+              results={paperResults}
+              onSearch={() => paperSearchMutation.mutate()}
+              onImport={(paper) => paperImportMutation.mutate(paper)}
+              onOpenDetail={(paper) => setActivePaper({
+                title: paper.title,
+                authors: paper.authors,
+                abstract: paper.abstract,
+                url: paper.entry_url,
+                pdf_url: paper.pdf_url,
+                doi: paper.doi,
+                arxiv_id: paper.arxiv_id,
+                categories: paper.categories,
+                provider: "openalex",
+              })}
+              isSearching={paperSearchMutation.isPending}
+              importingId={paperImportMutation.variables?.arxiv_id ?? null}
+              error={paperSearchMutation.error instanceof Error ? paperSearchMutation.error.message : paperImportMutation.error instanceof Error ? paperImportMutation.error.message : null}
+              message={connectorMessage}
+            />
+
+            <NewsConnectorPanel
+              categories={categories}
+              form={newsForm}
+              setForm={setNewsForm}
+              results={newsResults}
+              onSearch={() => newsSearchMutation.mutate()}
+              onImport={(article) => newsImportMutation.mutate(article)}
+              isSearching={newsSearchMutation.isPending}
+              importingUrl={newsImportMutation.variables?.url ?? null}
+              error={newsSearchMutation.error instanceof Error ? newsSearchMutation.error.message : newsImportMutation.error instanceof Error ? newsImportMutation.error.message : null}
+              message={connectorMessage}
+            />
+          </>
         )}
 
         {typeFilter === "github" && (
@@ -641,6 +696,9 @@ function SourceRow({
 }) {
   const isRss = (source.source_type === "web" || source.source_type === "article") && source.metadata_?.rss_enabled === "true";
   const isFeedArticle = Boolean(source.metadata_?.feed_source_id);
+  const isNews = source.source_type === "article" && source.metadata_?.kind === "news";
+  const sourceName = typeof source.metadata_?.source_name === "string" ? source.metadata_.source_name : null;
+  const publishedAt = typeof source.metadata_?.published_at === "string" ? source.metadata_.published_at : null;
   const label = isFeedArticle ? "feed article" : isRss ? "feed" : source.source_type === "web" ? "web snapshot" : source.source_type;
   const processing = getSourceProcessingState(source);
   return (
@@ -649,14 +707,18 @@ function SourceRow({
       onClick={onClick}
     >
       <Badge variant="source" className="shrink-0">{label}</Badge>
+      {isNews && <Badge variant="secondary" className="shrink-0">news</Badge>}
       <Badge variant="outline" className="shrink-0">{processing.label}</Badge>
       {isRss && <Rss className="h-3.5 w-3.5 text-orange-500 shrink-0" />}
       <span className="text-sm font-medium truncate flex-1">{source.title}</span>
+      {isNews && sourceName && (
+        <span className="text-xs text-muted-foreground truncate max-w-[140px] hidden lg:block">{sourceName}</span>
+      )}
       {source.url && (
         <span className="text-xs text-muted-foreground truncate max-w-[200px] hidden md:block">{source.url}</span>
       )}
       <span className="text-xs text-muted-foreground shrink-0">
-        {new Date(source.ingested_at).toLocaleDateString()}
+        {publishedAt ? new Date(publishedAt).toLocaleDateString() : new Date(source.ingested_at).toLocaleDateString()}
       </span>
       {reviewMode && (
         <div className="flex shrink-0 gap-2" onClick={(event) => event.stopPropagation()}>
@@ -675,6 +737,7 @@ function SourceRow({
 type CategoryOption = Parameters<typeof CategorySelect>[0]["categories"][number];
 type ArxivForm = { query: string; author: string; category: string; paperId: string; maxResults: number; categoryId: number };
 type GitHubForm = { query: string; fullName: string; language: string; topic: string; minStars: string; maxResults: number; categoryId: number; fetchReadme: boolean };
+type NewsForm = { query: string; language: string; fromDate: string; toDate: string; maxResults: number; categoryId: number; fetchFullText: boolean };
 
 function ArxivConnectorPanel({
   categories,
@@ -848,6 +911,85 @@ function GitHubConnectorPanel({
                   <ConnectorCacheStatus status={repo.cache_status} expiresAt={repo.cache_expires_at} sourceId={repo.source_id} />
                   <Button type="button" size="sm" variant={repo.cache_status === "saved" ? "secondary" : "outline"} disabled={importingName === repo.full_name || repo.cache_status === "saved"} onClick={() => onImport(repo)}>
                     {importingName === repo.full_name ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <BookmarkCheck className="h-3.5 w-3.5" />} {repo.cache_status === "saved" ? "Kept" : "Keep"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NewsConnectorPanel({
+  categories,
+  form,
+  setForm,
+  results,
+  onSearch,
+  onImport,
+  isSearching,
+  importingUrl,
+  error,
+  message,
+}: {
+  categories: Awaited<ReturnType<typeof categoriesApi.list>>["items"];
+  form: NewsForm;
+  setForm: React.Dispatch<React.SetStateAction<NewsForm>>;
+  results: NewsArticle[];
+  onSearch: () => void;
+  onImport: (article: NewsArticle) => void;
+  isSearching: boolean;
+  importingUrl: string | null;
+  error: string | null;
+  message: string | null;
+}) {
+  return (
+    <div className="mb-4 rounded-xl border border-border bg-card p-4">
+      <div className="mb-3 flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 className="flex items-center gap-2 text-sm font-semibold"><Newspaper className="h-4 w-4" /> News Search</h2>
+          <p className="text-xs text-muted-foreground">Search and keep news articles as article sources with news metadata.</p>
+        </div>
+        {message && <p className="text-xs text-muted-foreground">{message}</p>}
+      </div>
+      <div className="space-y-3">
+        <div className="grid gap-2 md:grid-cols-[minmax(0,2fr)_120px_120px]">
+          <Input placeholder="Search query, e.g. OpenAI" value={form.query} onChange={(e) => setForm((current) => ({ ...current, query: e.target.value }))} />
+          <Input placeholder="Language" value={form.language} onChange={(e) => setForm((current) => ({ ...current, language: e.target.value }))} />
+          <Input type="number" min={1} max={50} value={form.maxResults} onChange={(e) => setForm((current) => ({ ...current, maxResults: Number(e.target.value) || 5 }))} />
+        </div>
+        <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(180px,220px)_auto]">
+          <Input type="date" value={form.fromDate} onChange={(e) => setForm((current) => ({ ...current, fromDate: e.target.value }))} />
+          <Input type="date" value={form.toDate} onChange={(e) => setForm((current) => ({ ...current, toDate: e.target.value }))} />
+          <CategorySelect categories={categories} value={form.categoryId} onChange={(id) => setForm((current) => ({ ...current, categoryId: id }))} />
+          <Button type="button" disabled={!form.query || isSearching} onClick={onSearch}>
+            {isSearching ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} Search
+          </Button>
+        </div>
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          <input type="checkbox" checked={form.fetchFullText} onChange={(e) => setForm((current) => ({ ...current, fetchFullText: e.target.checked }))} />
+          Try fetching readable full text when saving.
+        </label>
+        {error && <p className="text-xs text-destructive">{error}</p>}
+        <div className="space-y-2">
+          {results.map((article) => (
+            <div key={article.url} className="rounded-lg border border-border p-3">
+              <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="source">news</Badge>
+                    {article.source_name && <Badge variant="outline">{article.source_name}</Badge>}
+                    {article.published_at && <Badge variant="secondary">{new Date(article.published_at).toLocaleDateString()}</Badge>}
+                  </div>
+                  <h3 className="mt-2 text-sm font-medium leading-5">{article.title}</h3>
+                  <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{article.description || article.content || article.url}</p>
+                </div>
+                <div className="flex flex-col items-start gap-2 md:items-end">
+                  <ConnectorCacheStatus status={article.cache_status} expiresAt={article.cache_expires_at} sourceId={article.source_id} />
+                  <Button type="button" size="sm" variant={article.cache_status === "saved" ? "secondary" : "outline"} disabled={importingUrl === article.url || article.cache_status === "saved"} onClick={() => onImport(article)}>
+                    {importingUrl === article.url ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <BookmarkCheck className="h-3.5 w-3.5" />} {article.cache_status === "saved" ? "Kept" : "Keep"}
                   </Button>
                 </div>
               </div>

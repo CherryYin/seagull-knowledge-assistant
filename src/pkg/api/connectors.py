@@ -14,14 +14,20 @@ from pkg.schemas.connector import (
     GitHubImportRequest,
     GitHubRepoSearchRequest,
     GitHubRepoSearchResponse,
+    NewsImportRequest,
+    NewsSearchRequest,
+    NewsSearchResponse,
 )
 from pkg.services.foundation.connectors import (
     get_github_repo,
     import_arxiv_paper,
     import_github_repo,
     ArxivRateLimitError,
+    NewsRateLimitError,
+    import_news_article,
     search_arxiv,
     search_github_repos,
+    search_news_articles,
 )
 
 router = APIRouter()
@@ -162,4 +168,67 @@ async def import_github_connector(
     except Exception as exc:
         await session.rollback()
         raise HTTPException(status_code=500, detail=f"GitHub import failed: {exc}") from exc
+    return ConnectorImportResponse(source=source, created=created, dedupe_key=dedupe_key)
+
+
+@router.post("/news/search", response_model=NewsSearchResponse)
+async def search_news_connector(
+    body: NewsSearchRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    try:
+        items = await search_news_articles(
+            query=body.query,
+            language=body.language,
+            country=body.country,
+            from_date=body.from_date,
+            to_date=body.to_date,
+            sources=body.sources,
+            domains=body.domains,
+            max_results=body.max_results,
+        )
+    except NewsRateLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"News search failed: {exc}") from exc
+    cached = await upsert_connector_search_items(session, user_id=user.id, provider="news", items=items)
+    await session.commit()
+    for item in items:
+        cache_item = cached.get(connector_cache_key("news", item))
+        if cache_item:
+            item.cache_id = cache_item.id
+            item.cache_status = cache_item.status
+            item.cache_expires_at = cache_item.expires_at
+            item.source_id = cache_item.source_id
+    return NewsSearchResponse(items=items, total=len(items))
+
+
+@router.post("/news/import", response_model=ConnectorImportResponse, status_code=201)
+async def import_news_connector(
+    body: NewsImportRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    article = body.article
+    if article is None:
+        raise HTTPException(status_code=422, detail="article is required")
+
+    try:
+        source, created, dedupe_key = await import_news_article(
+            session,
+            user_id=user.id,
+            article=article,
+            category_id=body.category_id,
+            fetch_full_text=body.fetch_full_text,
+        )
+        await mark_connector_item_saved(session, user_id=user.id, provider="news", item_key=connector_cache_key("news", article), source_id=source.id)
+        await session.commit()
+        await session.refresh(source)
+    except ValueError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        await session.rollback()
+        raise HTTPException(status_code=500, detail=f"News import failed: {exc}") from exc
     return ConnectorImportResponse(source=source, created=created, dedupe_key=dedupe_key)

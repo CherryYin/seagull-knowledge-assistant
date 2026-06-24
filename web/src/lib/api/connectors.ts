@@ -81,6 +81,48 @@ export interface GitHubImportRequest {
   fetch_readme?: boolean;
 }
 
+export interface NewsSearchRequest {
+  query: string;
+  language?: string | null;
+  country?: string | null;
+  from_date?: string | null;
+  to_date?: string | null;
+  sources?: string[] | null;
+  domains?: string[] | null;
+  max_results?: number;
+}
+
+export interface NewsArticle {
+  cache_id?: number | null;
+  cache_status?: string | null;
+  cache_expires_at?: string | null;
+  source_id?: string | null;
+  provider: string;
+  title: string;
+  url: string;
+  source_name?: string | null;
+  author?: string | null;
+  description?: string | null;
+  content?: string | null;
+  published_at?: string | null;
+  image_url?: string | null;
+  language?: string | null;
+  country?: string | null;
+  query?: string | null;
+}
+
+export interface NewsSearchResponse {
+  items: NewsArticle[];
+  total: number;
+}
+
+export interface NewsImportRequest {
+  article?: NewsArticle | null;
+  url?: string | null;
+  category_id?: number;
+  fetch_full_text?: boolean;
+}
+
 export interface ConnectorImportResponse {
   source: Source;
   created: boolean;
@@ -96,4 +138,8 @@ export const connectorsApi = {
     request<GitHubRepoSearchResponse>("/connectors/github/search", { method: "POST", body: JSON.stringify(body) }),
   importGitHub: (body: GitHubImportRequest) =>
     request<ConnectorImportResponse>("/connectors/github/import", { method: "POST", body: JSON.stringify(body) }),
+  searchNews: (body: NewsSearchRequest) =>
+    request<NewsSearchResponse>("/connectors/news/search", { method: "POST", body: JSON.stringify(body) }),
+  importNews: (body: NewsImportRequest) =>
+    request<ConnectorImportResponse>("/connectors/news/import", { method: "POST", body: JSON.stringify(body) }),
 };

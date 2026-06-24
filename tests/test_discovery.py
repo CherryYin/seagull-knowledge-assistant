@@ -114,6 +114,75 @@ async def test_generate_discovery_items_from_rss_source():
 
 
 @pytest.mark.asyncio
+async def test_generate_discovery_items_from_news_connector_cache():
+    session = AsyncMock()
+    session.add = MagicMock()
+    cached = ConnectorSearchItem(
+        user_id="user-1",
+        provider="news",
+        item_key="https://example.com/news/openai",
+        title="OpenAI ships feature",
+        status="cached",
+        payload={
+            "provider": "newsapi",
+            "title": "OpenAI ships feature",
+            "url": "https://example.com/news/openai",
+            "description": "Summary about launch.",
+            "source_name": "Example News",
+            "published_at": "2026-05-25T10:00:00Z",
+        },
+    )
+    cached.updated_at = datetime(2026, 5, 25, tzinfo=timezone.utc)
+    session.execute.side_effect = _select_router(cached=[cached])
+
+    with patch("pkg.services.foundation.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
+        mock_memory.return_value = []
+        created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["news"])
+
+    assert (created, updated, skipped) == (1, 0, 0)
+    item = session.add.call_args.args[0]
+    assert item.provider == "news"
+    assert item.title == "OpenAI ships feature"
+    assert item.url == "https://example.com/news/openai"
+
+
+@pytest.mark.asyncio
+async def test_generate_discovery_items_from_imported_news_source():
+    session = AsyncMock()
+    session.add = MagicMock()
+    news_source = Source(
+        id="src-news-1",
+        user_id="user-1",
+        category_id=1,
+        title="AI policy update",
+        source_type="article",
+        url="https://example.com/news/policy",
+        raw_content="Article body.",
+        metadata={
+            "kind": "news",
+            "provider": "newsapi",
+            "source_name": "Policy Daily",
+            "description": "Policy summary.",
+            "published_at": "2026-05-24T08:00:00Z",
+            "dedupe_key": "newsapi:https://example.com/news/policy",
+        },
+    )
+    session.execute.side_effect = _select_router(sources=[news_source])
+
+    with patch("pkg.services.foundation.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
+        mock_memory.return_value = []
+        created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["news"])
+
+    assert (created, updated, skipped) == (1, 0, 0)
+    item = session.add.call_args.args[0]
+    assert item.provider == "news"
+    assert item.source_id == "src-news-1"
+    assert item.payload["source_name"] == "Policy Daily"
+    assert item.payload["published_at"] == "2026-05-24T08:00:00Z"
+    assert any("Recent news article" in reason for reason in item.why)
+
+
+@pytest.mark.asyncio
 async def test_generate_discovery_items_from_web_source_with_credibility_and_preferences():
     session = AsyncMock()
     session.add = MagicMock()

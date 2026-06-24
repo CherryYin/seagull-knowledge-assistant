@@ -15,11 +15,13 @@ The core product goal is a durable personal knowledge graph with deterministic r
 - Run a Strands-based Action Agent that can use project tools to search/read/write knowledge.
 - Offer frontend Agent workflow templates for common tasks such as source summarization, recent import organization, topic research, and wiki refresh drafting.
 - Inject this workspace profile into the default in-app Action Agent prompt when `AGENT_LOAD_WORKSPACE_PROFILE=true`.
-- Import or discover external knowledge from RSS, web pages, GitHub repositories, and arXiv papers.
+- Import or discover external knowledge from RSS, web pages, GitHub repositories, arXiv papers, and news providers.
 - Create `web` sources from a direct URL by fetching and extracting readable page text when content is left empty.
 - Discover article links from a `web` directory source such as a blog index and import each article as a child web source.
 - Maintain memory nodes and memory edges for topic organization and semantic retrieval.
 - Generate review suggestions, discovery items, wiki pages, summaries, and temporary/permanent knowledge artifacts.
+- Create newsletter assets from sources ingested in a recent time window plus the user's editorial point of view, without manual source/note picking.
+- Mine recent knowledge materials for reusable concept/entity candidates and recommend concept wiki drafts with evidence.
 - Support persistent conversations, model/provider selection, skills, observable background jobs, and user profiling.
 
 ## Key Architecture
@@ -47,10 +49,11 @@ The core product goal is a durable personal knowledge graph with deterministic r
 - `src/pkg/services/tools.py`, `src/pkg/services/tools_web.py`, `src/pkg/services/tools_document.py`: built-in agent tools.
 - `src/pkg/services/retriever.py`, `src/pkg/services/memory_retriever.py`: knowledge and memory retrieval.
 - `src/pkg/services/sync_pipeline.py`, `src/pkg/services/document_extractor.py`: source ingestion and document processing.
-- `src/pkg/services/connectors.py`: GitHub and arXiv connector search/import logic.
+- `src/pkg/services/connectors.py`: GitHub, arXiv, and news connector search/import logic.
 - `src/pkg/services/connector_trends.py`: daily GitHub/arXiv trend collection.
 - `src/pkg/services/rss_fetcher.py`, `src/pkg/services/rss_discovery.py`, `src/pkg/services/rss_summarizer.py`: RSS ingestion and summarization.
 - `src/pkg/services/discovery.py`, `src/pkg/services/review_suggestions.py`, `src/pkg/services/wiki_recompile.py`: discovery/review/wiki workflows.
+- `src/pkg/services/foundation/wiki_concept_discovery.py`: reusable knowledge concept/entity discovery for wiki mining recommendations, with rule-based recall and optional top-K LLM refinement.
 - `src/pkg/services/system_jobs.py` and `web/src/pages/SystemJobsPage.tsx`: background job observability, failure inspection, and troubleshooting entry points.
 - System jobs are user-scoped when attached to a user; global jobs are for admin/system inspection and must not leak to ordinary users.
 
@@ -75,6 +78,7 @@ When changing tool names, tool behavior, workflow templates, skill loading, stre
 - Web directory article discovery lives in `src/pkg/services/web_directory.py` and uses `metadata.feed_source_id` to link imported child articles to the parent directory source.
 - arXiv search/import lives in `src/pkg/services/connectors.py` and `src/pkg/api/connectors.py`.
 - GitHub search/import lives in `src/pkg/services/connectors.py` and `src/pkg/api/connectors.py`.
+- News search/import lives in `src/pkg/services/connectors.py` and `src/pkg/api/connectors.py`; imported news is stored as `article` sources with `metadata.kind = "news"`.
 - Connector search results are cached temporarily before being kept as permanent sources.
 - Default GitHub and arXiv search windows should stay aligned with product expectations; currently searches default to the past year unless callers provide explicit dates.
 - arXiv may return `429`; code should preserve this as rate limiting rather than converting it to a generic bad gateway where possible.

@@ -3,17 +3,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pkg.schemas.connector import ArxivPaper, GitHubRepo
+from pkg.schemas.connector import ArxivPaper, GitHubRepo, NewsArticle
 from pkg.services.foundation.connectors import (
     ArxivRateLimitError,
+    NewsRateLimitError,
+    _canonicalize_news_url,
     arxiv_source_id,
     build_arxiv_query,
     build_github_query,
     github_source_id,
     import_arxiv_paper,
     import_github_repo,
+    import_news_article,
     one_year_ago_date,
     parse_arxiv_feed,
+    search_news_articles,
     search_arxiv,
     search_github_repos,
 )
@@ -361,6 +365,187 @@ async def test_import_github_repo_updates_existing_source():
     assert "Topics: agents" in existing.metadata_["embedding_text"]
     mock_embeddings.assert_awaited_once_with(mock_session, existing)
     mock_memory.assert_awaited_once_with(mock_session, existing)
+
+
+def test_canonicalize_news_url_removes_tracking_params():
+    url = "https://Example.com/story?a=1&utm_source=x&fbclid=abc#section"
+    assert _canonicalize_news_url(url) == "https://example.com/story?a=1"
+
+
+@pytest.mark.asyncio
+async def test_search_news_articles_maps_newsapi_payload(monkeypatch):
+    class Response:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "articles": [
+                    {
+                        "source": {"name": "Example News"},
+                        "author": "Jane Doe",
+                        "title": "Test headline",
+                        "description": "Summary",
+                        "content": "Body",
+                        "url": "https://example.com/news/1",
+                        "urlToImage": "https://example.com/img.jpg",
+                        "publishedAt": "2026-06-20T12:00:00Z",
+                    }
+                ]
+            }
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url, params):
+            return Response()
+
+    monkeypatch.setattr("pkg.services.foundation.connectors.httpx.AsyncClient", Client)
+
+    items = await search_news_articles(query="openai", language="en", max_results=5)
+
+    assert len(items) == 1
+    assert items[0].provider == "newsapi"
+    assert items[0].source_name == "Example News"
+    assert items[0].title == "Test headline"
+    assert items[0].language == "en"
+
+
+@pytest.mark.asyncio
+async def test_search_news_articles_raises_rate_limit(monkeypatch):
+    class Response:
+        status_code = 429
+
+        def raise_for_status(self):
+            return None
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url, params):
+            return Response()
+
+    monkeypatch.setattr("pkg.services.foundation.connectors.httpx.AsyncClient", Client)
+
+    with pytest.raises(NewsRateLimitError):
+        await search_news_articles(query="openai")
+
+
+@pytest.mark.asyncio
+async def test_import_news_article_creates_article_source_with_news_metadata():
+    mock_session = AsyncMock()
+    mock_session.get.return_value = None
+    article = NewsArticle(
+        provider="newsapi",
+        title="OpenAI launches feature",
+        url="https://example.com/story?utm_source=newsletter",
+        source_name="Example News",
+        author="Jane Doe",
+        description="Summary",
+    )
+    mock_source = MagicMock()
+    mock_source.id = "src-news-newsapi-example"
+
+    with (
+        patch("pkg.services.foundation.connectors.persist_source", new_callable=AsyncMock, return_value=mock_source) as mock_persist,
+        patch("pkg.services.foundation.connectors.fetch_web_page", new_callable=AsyncMock, side_effect=Exception("skip")),
+    ):
+        source, created, dedupe_key = await import_news_article(mock_session, user_id="user-1", article=article, fetch_full_text=False)
+
+    assert source is mock_source
+    assert created is True
+    assert dedupe_key == "newsapi:https://example.com/story"
+    body = mock_persist.await_args.kwargs["body"]
+    assert body.source_type == "article"
+    assert body.metadata["kind"] == "news"
+    assert body.metadata["provider"] == "newsapi"
+    assert body.url == "https://example.com/story"
+
+
+@pytest.mark.asyncio
+async def test_news_search_api_returns_cached_items(fake_user, mock_session, monkeypatch):
+    from pkg.api import connectors as connectors_api
+    from pkg.schemas.connector import NewsSearchRequest
+
+    article = NewsArticle(provider="newsapi", title="Headline", url="https://example.com/news/1")
+
+    async def fake_search_news_articles(**kwargs):
+        return [article]
+
+    class CacheRow:
+        id = 1
+        status = "cached"
+        expires_at = None
+        source_id = None
+
+    async def fake_upsert_connector_search_items(*args, **kwargs):
+        return {"https://example.com/news/1": CacheRow()}
+
+    monkeypatch.setattr(connectors_api, "search_news_articles", fake_search_news_articles)
+    monkeypatch.setattr(connectors_api, "upsert_connector_search_items", fake_upsert_connector_search_items)
+
+    response = await connectors_api.search_news_connector(
+        NewsSearchRequest(query="openai", max_results=3),
+        user=fake_user,
+        session=mock_session,
+    )
+
+    assert response.total == 1
+    assert response.items[0].cache_status == "cached"
+
+
+@pytest.mark.asyncio
+async def test_news_import_api_imports_article(fake_user, mock_session, monkeypatch):
+    from pkg.api import connectors as connectors_api
+    from pkg.schemas.connector import NewsImportRequest
+    from pkg.models.source import Source
+
+    article = NewsArticle(provider="newsapi", title="Headline", url="https://example.com/news/1")
+    source = Source(
+        id="src-news-newsapi-example",
+        user_id="test-user-001",
+        category_id=1,
+        title="Headline",
+        source_type="article",
+        url="https://example.com/news/1",
+        raw_content="body",
+        metadata_={},
+        ingested_at=datetime.now(timezone.utc),
+    )
+
+    async def fake_import_news_article(*args, **kwargs):
+        return source, True, "newsapi:https://example.com/news/1"
+
+    async def fake_mark_connector_item_saved(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(connectors_api, "import_news_article", fake_import_news_article)
+    monkeypatch.setattr(connectors_api, "mark_connector_item_saved", fake_mark_connector_item_saved)
+
+    response = await connectors_api.import_news_connector(
+        NewsImportRequest(article=article),
+        user=fake_user,
+        session=mock_session,
+    )
+
+    assert response.created is True
+    assert response.dedupe_key == "newsapi:https://example.com/news/1"
 
 
 @pytest.mark.asyncio

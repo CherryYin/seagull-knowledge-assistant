@@ -4,9 +4,11 @@ import logging
 import re
 import uuid
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 from pathlib import Path
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy import delete, func, or_, select, text
@@ -52,6 +54,14 @@ RSS_DISCOVERY_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
 }
+
+
+def _pdf_filename_from_url(url: str, fallback: str) -> str:
+    name = Path(urlparse(url).path).name
+    if name.lower().endswith(".pdf"):
+        return name
+    safe = re.sub(r"[^a-z0-9]+", "-", fallback.lower()).strip("-") or "source"
+    return f"{safe[:60]}.pdf"
 
 
 def make_source_id(title: str, explicit_id: str | None = None) -> str:
@@ -305,6 +315,77 @@ async def create_source(
     return source
 
 
+@router.post("/{source_id}/download-pdf", response_model=SourceRead, status_code=201)
+async def download_source_pdf(
+    source_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    source = await session.get(Source, source_id)
+    if not source or source.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    metadata = source.metadata_ or {}
+    pdf_url = metadata.get("pdf_url") or metadata.get("download_url")
+    if not isinstance(pdf_url, str) or not pdf_url.strip():
+        raise HTTPException(status_code=422, detail="This source does not have a downloadable PDF link")
+
+    if metadata.get("downloaded_pdf_source_id"):
+        existing = await session.get(Source, str(metadata["downloaded_pdf_source_id"]))
+        if existing and existing.user_id == user.id:
+            return existing
+
+    async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+        response = await client.get(pdf_url)
+        response.raise_for_status()
+        content_type = response.headers.get("content-type", "")
+        if "pdf" not in content_type.lower() and not pdf_url.lower().endswith(".pdf"):
+            raise HTTPException(status_code=422, detail="Download URL did not return a PDF")
+        pdf_bytes = response.content
+
+    filename = _pdf_filename_from_url(pdf_url, source.title)
+    extracted_text = await extract_text_content(filename, "application/pdf", pdf_bytes, pdf_type=None)
+    object_key = get_storage_service().build_object_key("sources", source.id, filename)
+    storage_uri = await get_storage_service().upload_bytes(
+        object_key=object_key,
+        data=pdf_bytes,
+        content_type="application/pdf",
+    )
+
+    pdf_source = await persist_source(
+        session=session,
+        body=SourceCreate(
+            id=f"{source.id}-pdf",
+            title=f"{source.title} (PDF)",
+            category_id=source.category_id,
+            source_type="pdf",
+            url=pdf_url,
+            raw_content=extracted_text,
+            file_path=storage_uri,
+            metadata={
+                "origin": "downloaded_pdf",
+                "downloaded_from_source_id": source.id,
+                "source_connector": metadata.get("connector"),
+                "review_status": "imported_reviewable",
+                "retention": "permanent",
+                "kept_at": datetime.now(timezone.utc).isoformat(),
+                "content_type": "application/pdf",
+                "extraction_mode": "llm_markdown",
+                "extraction_status": "completed" if extracted_text else "missing_text",
+            },
+        ),
+        user_id=user.id,
+        file_path=storage_uri,
+        raw_content_override=extracted_text,
+        content_hash_override=hashlib.sha256(pdf_bytes).hexdigest(),
+    )
+
+    source.metadata_ = {**metadata, "downloaded_pdf_source_id": pdf_source.id, "downloaded_pdf_at": datetime.now(timezone.utc).isoformat()}
+    await session.commit()
+    await session.refresh(source)
+    return pdf_source
+
+
 @router.post("/upload", response_model=SourceRead, status_code=201)
 async def upload_source(
     file: UploadFile = File(...),
@@ -354,6 +435,7 @@ async def upload_source(
 async def list_sources(
     source_type: str | None = None,
     category_id: int | None = None,
+    kind: str | None = None,
     feed_view: str = Query(default="parents", pattern=r"^(parents|all|articles|feeds|snapshots)$"),
     limit: int = Query(default=20, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
@@ -370,6 +452,10 @@ async def list_sources(
     if source_type:
         stmt = stmt.where(Source.source_type == source_type)
         count_stmt = count_stmt.where(Source.source_type == source_type)
+    if kind:
+        kind_filter = text("metadata->>'kind' = :kind")
+        stmt = stmt.where(kind_filter).params(kind=kind)
+        count_stmt = count_stmt.where(kind_filter).params(kind=kind)
 
     if feed_view == "parents":
         no_parent = text("NOT (metadata ? 'feed_source_id')")
@@ -453,6 +539,9 @@ async def update_source(
         return result
 
     for key, value in patch.items():
+        if key == "metadata":
+            source.metadata_ = value
+            continue
         setattr(source, key, value)
 
     # Re-embed if title changed
@@ -582,6 +671,49 @@ async def get_source_file(
     if not local_path.exists():
         raise HTTPException(status_code=404, detail="Source file not found")
     return FileResponse(local_path)
+
+
+@router.post("/{source_id}/retry-extraction", response_model=SourceRead)
+async def retry_source_extraction(
+    source_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    source = await session.get(Source, source_id)
+    if not source or source.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Source not found")
+    if not source.file_path:
+        raise HTTPException(status_code=422, detail="Source has no stored file to re-extract")
+
+    if source.file_path.startswith("minio://"):
+        payload = await get_storage_service().get_object(source.file_path)
+        filename = Path(source.file_path).name
+    else:
+        local_path = Path(source.file_path).resolve()
+        allowed_root = Path(settings.DATA_DIR).resolve()
+        if not local_path.is_relative_to(allowed_root):
+            raise HTTPException(status_code=403, detail="Access denied")
+        if not local_path.exists():
+            raise HTTPException(status_code=404, detail="Source file not found")
+        payload = await asyncio.to_thread(local_path.read_bytes)
+        filename = local_path.name
+
+    extracted_text = await extract_text_content(filename, None, payload, pdf_type=None)
+    source.raw_content = (extracted_text or "").replace("\x00", "") or None
+    metadata = dict(source.metadata_ or {})
+    metadata["extraction_mode"] = "llm_markdown"
+    metadata["extraction_status"] = "completed" if extracted_text else "missing_text"
+    metadata["extracted_at"] = datetime.now(timezone.utc).isoformat()
+    source.metadata_ = metadata
+
+    await upsert_source_embeddings(session, source)
+    try:
+        await upsert_source_memory_node(session, source)
+    except Exception:
+        logger.error("Source memory regeneration failed for source %s", source_id, exc_info=True)
+    await session.commit()
+    await session.refresh(source)
+    return source
 
 
 # --- RSS Feed Endpoints ---
