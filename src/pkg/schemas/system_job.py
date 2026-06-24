@@ -24,3 +24,18 @@ class SystemJobRead(BaseModel):
 class SystemJobList(BaseModel):
     items: list[SystemJobRead]
     total: int
+
+
+class SchedulerTaskStatus(BaseModel):
+    name: str
+    job_type: str
+    title: str
+    enabled: bool
+    schedule_type: str
+    last_run_at: datetime | None = None
+    next_run_at: datetime | None = None
+    due_now: bool
+
+
+class SchedulerStatusList(BaseModel):
+    items: list[SchedulerTaskStatus]

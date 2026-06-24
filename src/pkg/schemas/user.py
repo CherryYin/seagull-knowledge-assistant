@@ -3,7 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
-USER_MEMORY_TYPE_PATTERN = r"^(profile|preference|activity_profile)$"
+USER_MEMORY_TYPE_PATTERN = r"^(profile|preference|activity_profile|production_memory)$"
 
 
 # --- Auth ---

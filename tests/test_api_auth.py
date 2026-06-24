@@ -185,6 +185,24 @@ class TestUserMemoryApi:
         assert data[0]["memory_type"] == "profile"
         assert data[0]["key"] == "preference"
 
+    def test_list_memories_supports_production_memory_filter(self, auth_client, mock_session):
+        production_mem = MagicMock()
+        production_mem.id = 1
+        production_mem.memory_type = "production_memory"
+        production_mem.key = "production_memory"
+        production_mem.value = {"events": []}
+        production_mem.updated_at = datetime(2026, 6, 9, tzinfo=timezone.utc)
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = [production_mem]
+        mock_session.execute.return_value = mock_result
+
+        resp = auth_client.get("/auth/me/memory?memory_type=production_memory")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data[0]["memory_type"] == "production_memory"
+        assert data[0]["key"] == "production_memory"
+
     def test_upsert_memory_accepts_memory_type(self, auth_client, mock_session):
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None

@@ -22,6 +22,7 @@ const DigestPage = lazy(() => import("./pages/DigestPage").then((m) => ({ defaul
 const WikiPage = lazy(() => import("./pages/WikiPage").then((m) => ({ default: m.WikiPage })));
 const WikiDetailPage = lazy(() => import("./pages/WikiDetailPage").then((m) => ({ default: m.WikiDetailPage })));
 const WikiSuggestionsPage = lazy(() => import("./pages/WikiSuggestionsPage").then((m) => ({ default: m.WikiSuggestionsPage })));
+const WikiDiscoveryPage = lazy(() => import("./pages/WikiDiscoveryPage").then((m) => ({ default: m.WikiDiscoveryPage })));
 const WikiRulesPage = lazy(() => import("./pages/WikiRulesPage").then((m) => ({ default: m.WikiRulesPage })));
 const AdminUsersPage = lazy(() => import("./pages/AdminUsersPage").then((m) => ({ default: m.AdminUsersPage })));
 const AgentProfilesPage = lazy(() => import("./pages/AgentProfilesPage").then((m) => ({ default: m.AgentProfilesPage })));
@@ -119,11 +120,13 @@ export default function App() {
             <Route path="/assets" element={<LazyPage><AssetsPage /></LazyPage>} />
             <Route path="/assets/:id" element={<LazyPage><AssetDetailPage /></LazyPage>} />
             <Route path="/review/wiki-suggestions" element={<LazyPage><WikiSuggestionsPage /></LazyPage>} />
+            <Route path="/wiki/discovery" element={<LazyPage><WikiDiscoveryPage /></LazyPage>} />
             <Route path="/review/suggestions" element={<LazyPage><ReviewSuggestionsPage /></LazyPage>} />
             <Route path="/wiki/rules" element={<LazyPage><WikiRulesPage /></LazyPage>} />
             <Route path="/wiki/digest" element={<Navigate to="/review/digest" replace />} />
             <Route path="/wiki/writing" element={<Navigate to="/documents" replace />} />
             <Route path="/wiki/suggestions" element={<Navigate to="/review/wiki-suggestions" replace />} />
+            <Route path="/review/wiki-discovery" element={<Navigate to="/wiki/discovery" replace />} />
             <Route path="/writing" element={<Navigate to="/documents" replace />} />
             <Route path="/digest" element={<Navigate to="/review/digest" replace />} />
             <Route path="/stats" element={<LazyPage><StatsPage /></LazyPage>} />

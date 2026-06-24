@@ -86,3 +86,62 @@ async def test_suggest_wiki_recompile_ignores_missing_trigger():
     )
 
     assert suggestions == []
+
+
+@pytest.mark.asyncio
+async def test_suggest_wiki_recompile_filters_low_score_suggestions():
+    memory = MemoryNode(
+        id="mem-low-score",
+        user_id="user-1",
+        node_type="topic",
+        scope_id="misc",
+        level="topic",
+        title="Topic Memory - Alpha",
+        summary="Tiny overlap",
+        content="Alpha mention only.",
+        child_node_ids=[],
+        derived_from_notes=[],
+        derived_from_sources=[],
+        derived_from_chunks=[],
+        metadata_={},
+        confidence_score=None,
+    )
+    wiki = WikiPage(
+        id="wiki-alpha",
+        user_id="user-1",
+        title="Alpha",
+        page_type="topic",
+        summary="Unrelated summary",
+        content="Current wiki",
+        domains=[],
+        tags=[],
+        derived_from_notes=[],
+        derived_from_sources=[],
+        open_questions=[],
+        confidence_score=None,
+        needs_recompile=False,
+        stale_reason=None,
+        stale_triggered_at=None,
+        last_compiled_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+
+    attached_rows = MagicMock()
+    attached_rows.scalars.return_value = []
+    trigger_rows = MagicMock()
+    trigger_rows.scalars.return_value = [wiki]
+
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=memory)
+    session.execute = AsyncMock(side_effect=[attached_rows, trigger_rows])
+    session.add = MagicMock()
+
+    suggestions = await suggest_wiki_recompile_for_trigger(
+        session,
+        user_id="user-1",
+        trigger_type="memory",
+        trigger_id="mem-low-score",
+    )
+
+    assert suggestions == []
+    assert wiki.needs_recompile is False
+    session.add.assert_not_called()

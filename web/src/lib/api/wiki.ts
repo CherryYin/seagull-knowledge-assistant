@@ -110,6 +110,13 @@ export interface WikiFromMemoryRequest {
   tags?: string[];
 }
 
+export interface WikiUpdateDraftFromMemoryRequest {
+  wiki_id: string;
+  memory_node_id: string;
+  section?: string;
+  page_type?: string;
+}
+
 export interface WikiRecompileSuggestion {
   id: number;
   user_id: string;
@@ -279,6 +286,15 @@ export const wikiApi = {
   // Creates a wiki draft from compiled topic memory.
   createFromMemory: (body: WikiFromMemoryRequest) =>
     request<WikiPage>("/wiki/from-memory", { method: "POST", body: JSON.stringify(body) }),
+  createUpdateDraftFromMemory: (body: WikiUpdateDraftFromMemoryRequest) =>
+    request<WikiArticleDraft>("/wiki/update-drafts/from-memory", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateDrafts: (wikiId: string) =>
+    request<WikiArticleDraft[]>(`/wiki/update-drafts?wiki_id=${encodeURIComponent(wikiId)}`),
+  deleteUpdateDraft: (id: number) =>
+    request<void>(`/wiki/update-drafts/${id}`, { method: "DELETE" }),
   suggestions: (params?: { status?: string; wiki_id?: string; limit?: number; offset?: number }) => {
     const q = new URLSearchParams();
     if (params?.status !== undefined) q.set("status", params.status);
@@ -314,13 +330,21 @@ export const wikiApi = {
       method: "PATCH",
       body: JSON.stringify({ status, reviewer_note }),
     }),
+  deleteMiningInsight: (id: number) =>
+    request<void>(`/wiki/mining/insights/${id}`, {
+      method: "DELETE",
+    }),
   updateMiningArticle: (
     id: number,
-    body: { status: "candidate" | "draft" | "in_review" | "accepted" | "rejected" | "merged"; reviewer_note?: string | null; wiki_title?: string | null; page_type?: string | null }
+    body: { status: "candidate" | "draft" | "in_review" | "accepted" | "rejected" | "merged" | "applied"; reviewer_note?: string | null; wiki_title?: string | null; page_type?: string | null }
   ) =>
     request<WikiArticleDraft>(`/wiki/mining/articles/${id}`, {
       method: "PATCH",
       body: JSON.stringify(body),
+    }),
+  deleteMiningArticle: (id: number) =>
+    request<void>(`/wiki/mining/articles/${id}`, {
+      method: "DELETE",
     }),
   mergeMiningArticle: (id: number, body?: { target_wiki_id?: string | null; reviewer_note?: string | null }) =>
     request<WikiArticleDraft>(`/wiki/mining/articles/${id}/merge`, {

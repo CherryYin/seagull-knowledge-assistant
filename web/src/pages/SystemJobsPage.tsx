@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SectionNav, settingsNavItems } from "@/components/SectionNav";
 import { StateMessage } from "@/components/StateMessage";
 import { StatusBadge } from "@/components/StatusBadge";
-import { systemJobsApi, type SystemJob } from "@/lib/api/system-jobs";
+import { systemJobsApi, type SchedulerTaskStatus, type SystemJob } from "@/lib/api/system-jobs";
 import { formatDateTime, formatDuration } from "@/lib/status";
 import { cn } from "@/lib/utils";
 
@@ -22,13 +22,63 @@ function jobTarget(job: SystemJob) {
 }
 
 function nextStep(job: SystemJob) {
+  const metadata = job.metadata ?? {};
+  const reason = typeof metadata.reason === "string" ? metadata.reason : null;
   if (job.status === "failed") {
     return "Inspect the related object or rerun the action from its detail page. Raw job details stay here for troubleshooting.";
   }
   if (["running", "queued", "pending"].includes(job.status)) {
     return "Wait for completion. If it stays here too long, inspect the related object or background worker.";
   }
+  if (reason === "no_rss_enabled_feeds") return "No RSS-enabled feeds are configured yet.";
+  if (reason === "no_new_rss_articles") return "Feeds were checked, but no new RSS articles were found.";
+  if (reason === "no_recent_rss_articles") return "No recent RSS articles were available to summarize.";
+  if (reason === "no_temporary_notes") return "No temporary notes were available for daily summarization.";
+  if (reason === "no_active_users") return "No active users were eligible for this scheduled task.";
+  if (reason === "no_recent_rss_articles_or_connector_candidates") return "No fresh discovery candidates were found from RSS or connectors.";
+  if (reason === "no_enabled_profiles") return "No enabled paper discovery profiles are configured.";
+  if (reason === "no_due_profiles") return "Paper discovery profiles exist, but none were due this round.";
+  if (reason === "no_due_web_directories") return "No web directory sources were due for auto-discovery.";
+  if (reason === "no_due_web_sources") return "No web sources were due for auto-refresh.";
+  if (reason === "no_web_content_changes") return "Web sources were checked, but content did not change.";
   return "No action needed. This job is available for audit history.";
+}
+
+function renderJobStats(job: SystemJob) {
+  const metadata = job.metadata ?? {};
+  const rawEntries: Array<[string, unknown]> = [
+    ["feeds", metadata.feeds_checked],
+    ["new", metadata.new_articles],
+    ["deleted", metadata.deleted],
+    ["created", metadata.created],
+    ["updated", metadata.updated],
+    ["skipped", metadata.skipped],
+    ["users", metadata.users ?? metadata.active_users],
+    ["profiled", metadata.profiled],
+    ["candidates", metadata.candidate_count],
+    ["profiles", metadata.profiles],
+    ["eligible", metadata.eligible],
+    ["runs", metadata.runs],
+    ["directories", metadata.sources_due],
+    ["checked", metadata.sources_checked],
+    ["refreshed", metadata.sources_refreshed],
+    ["unchanged", metadata.sources_unchanged],
+    ["errors", metadata.errors],
+  ];
+  const entries = rawEntries.filter(([, value]) => typeof value === "number");
+
+  if (!entries.length) return null;
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      {entries.map(([label, value]) => (
+        <span key={label} className="inline-flex rounded-md border bg-muted px-2 py-1 text-xs text-muted-foreground">
+          <span className="mr-1 font-medium text-foreground">{label}</span>
+          {String(value)}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 function JobCard({ job }: { job: SystemJob }) {
@@ -65,6 +115,7 @@ function JobCard({ job }: { job: SystemJob }) {
         <div className="rounded-lg bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
           <span className="font-medium text-foreground">Next step: </span>{nextStep(job)}
         </div>
+        {renderJobStats(job)}
         {hasRawDetails && (
           <div>
             <Button size="sm" variant="ghost" onClick={() => setExpanded((value) => !value)}>
@@ -82,13 +133,43 @@ function JobCard({ job }: { job: SystemJob }) {
   );
 }
 
+function SchedulerTaskCard({ task }: { task: SchedulerTaskStatus }) {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div className="min-w-0">
+            <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+              <Clock className="h-4 w-4" />
+              <span className="truncate">{task.title}</span>
+              <StatusBadge status={task.enabled ? (task.due_now ? "running" : "completed") : "archived"} label={task.enabled ? (task.due_now ? "Due now" : "Enabled") : "Disabled"} />
+            </CardTitle>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {task.job_type} · {task.schedule_type}
+            </p>
+          </div>
+          <div className="flex flex-col gap-1 text-xs text-muted-foreground md:text-right">
+            <span>Last run {formatDateTime(task.last_run_at)}</span>
+            <span>Next run {formatDateTime(task.next_run_at)}</span>
+          </div>
+        </div>
+      </CardHeader>
+    </Card>
+  );
+}
+
 export function SystemJobsPage() {
   const [status, setStatus] = useState<string>("failed");
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ["system-jobs", status],
     queryFn: () => systemJobsApi.list({ status: status || undefined, scope: "all", limit: 100 }),
   });
+  const schedulerQuery = useQuery({
+    queryKey: ["scheduler-status"],
+    queryFn: () => systemJobsApi.scheduler(),
+  });
   const jobs = data?.items ?? [];
+  const schedulerTasks = schedulerQuery.data?.items ?? [];
   const failedCount = useMemo(() => jobs.filter((job) => job.status === "failed").length, [jobs]);
 
   return (
@@ -122,6 +203,24 @@ export function SystemJobsPage() {
             <span className="text-xs text-red-600">{failedCount} failed job{failedCount === 1 ? "" : "s"} need attention.</span>
           )}
         </div>
+
+        <section className="space-y-3">
+          <div>
+            <h2 className="text-lg font-semibold">Scheduler</h2>
+            <p className="text-sm text-muted-foreground">Current task enablement and next-run status.</p>
+          </div>
+          {schedulerQuery.isLoading ? (
+            <StateMessage title="Loading scheduler" description="Checking task schedules and next-run times." />
+          ) : schedulerQuery.isError ? (
+            <StateMessage tone="error" title="Could not load scheduler status" description="Retry or check the API logs if this keeps failing." actionLabel="Retry" onAction={() => schedulerQuery.refetch()} />
+          ) : schedulerTasks.length === 0 ? (
+            <StateMessage title="No scheduler tasks visible" description="Scheduler task status is available to admins when background automation is configured." />
+          ) : (
+            <div className="space-y-3">
+              {schedulerTasks.map((task) => <SchedulerTaskCard key={task.name} task={task} />)}
+            </div>
+          )}
+        </section>
 
         {isLoading ? (
           <StateMessage title="Loading jobs" description="Checking the latest background job status." />

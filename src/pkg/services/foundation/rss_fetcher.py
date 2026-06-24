@@ -517,7 +517,7 @@ async def fetch_all_feeds() -> dict[str, int]:
 
 
 async def cleanup_old_rss_articles() -> int:
-    """Delete RSS articles older than RSS_RETENTION_DAYS. Returns count deleted."""
+    """Delete old feed articles except those explicitly reviewed and kept."""
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=settings.RSS_RETENTION_DAYS)
     deleted = 0
 
@@ -536,6 +536,9 @@ async def cleanup_old_rss_articles() -> int:
         storage = get_storage_service()
         for article in old_articles:
             try:
+                metadata = dict(article.metadata_ or {})
+                if metadata.get("review_status") == "reviewed_kept":
+                    continue
                 await session.execute(
                     SourceChunk.__table__.delete().where(SourceChunk.source_id == article.id)
                 )

@@ -4,7 +4,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pkg.api.deps import get_current_user
 from pkg.db import get_session
 from pkg.models.user import User
-from pkg.schemas.system_job import SystemJobList
+from pkg.schemas.system_job import SchedulerStatusList, SystemJobList
+from pkg.services.cross_cutting.scheduler import get_scheduler_status
 from pkg.services.cross_cutting.system_jobs import list_system_jobs, sanitize_system_job
 
 router = APIRouter()
@@ -35,3 +36,12 @@ async def get_system_jobs(
     include_sensitive = user.role == "admin"
     sanitized = [sanitize_system_job(item, include_sensitive=include_sensitive) for item in items]
     return SystemJobList(items=sanitized, total=total)
+
+
+@router.get("/scheduler", response_model=SchedulerStatusList)
+async def get_scheduler_tasks(user: User = Depends(get_current_user)):
+    if user.role != "admin":
+        items = []
+    else:
+        items = await get_scheduler_status()
+    return SchedulerStatusList(items=items)

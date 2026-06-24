@@ -24,6 +24,51 @@ def test_discover_article_links_keeps_same_blog_articles_only():
     ]
 
 
+def test_discover_article_links_supports_docs_subpages_with_noise_filtered():
+    html = """
+    <a href="/docs/foundry/ontology/object-types">Object types</a>
+    <a href="/docs/foundry/ontology/action-types">Action types</a>
+    <a href="/docs/foundry/ontology#top">Anchor only</a>
+    <a href="/docs/foundry/ontology/overview">Overview page</a>
+    <a href="/docs/foundry/platform/ontology-sdk">Sibling docs page</a>
+    <a href="/docs/foundry/ontology/page/2">Pagination</a>
+    <a href="https://www.palantir.com/docs/foundry/ontology/object-types">Duplicate absolute</a>
+    <a href="https://www.palantir.com/blog">Blog</a>
+    """
+
+    links = discover_article_links(html, directory_url="https://www.palantir.com/docs/foundry/ontology")
+
+    assert links == [
+        "https://www.palantir.com/docs/foundry/ontology/object-types",
+        "https://www.palantir.com/docs/foundry/ontology/action-types",
+    ]
+
+
+def test_discover_article_links_prefers_main_content_over_nav_noise():
+    html = """
+    <nav>
+      <a href="/docs/foundry/ontology/overview">Overview</a>
+      <a href="/docs/foundry/ontology/object-types">Object types nav</a>
+    </nav>
+    <main>
+      <article>
+        <a href="/docs/foundry/ontology/object-types">Object types body</a>
+        <a href="/docs/foundry/ontology/action-types">Action types body</a>
+      </article>
+    </main>
+    <footer>
+      <a href="/docs/foundry/ontology/next">Next</a>
+    </footer>
+    """
+
+    links = discover_article_links(html, directory_url="https://www.palantir.com/docs/foundry/ontology")
+
+    assert links == [
+        "https://www.palantir.com/docs/foundry/ontology/object-types",
+        "https://www.palantir.com/docs/foundry/ontology/action-types",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_import_web_directory_articles_persists_children():
     session = AsyncMock()

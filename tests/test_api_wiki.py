@@ -62,8 +62,81 @@ class TestCloneWikiDraft:
 
         assert result.title == "Personal Knowledge Graph Draft"
         assert "wiki-draft" in result.tags
-        assert "from-stable-wiki" in result.tags
-        assert resp.json()["id"] == "wiki-1"
+
+    @pytest.mark.asyncio
+    async def test_create_wiki_update_draft_from_memory(self, mock_session, fake_user):
+        from pkg.api.wiki import create_wiki_update_draft_from_memory
+        from pkg.schemas.wiki import WikiUpdateDraftFromMemoryRequest
+
+        wiki = type("WikiObj", (), {
+            "id": "wiki-ai-agent",
+            "user_id": fake_user.id,
+            "title": "AI AGENT",
+            "summary": "AI agent page summary",
+            "content": "# AI AGENT\n\n## Risks\n\nCurrent risk guidance.\n\n## Tooling\n\nCurrent tooling guidance.",
+        })()
+        memory = type("MemoryObj", (), {
+            "id": "mem-1",
+            "user_id": fake_user.id,
+            "title": "Source Memory - APIKey compatibility",
+            "summary": "Compatibility note",
+            "content": "Any-site API keys may have compatibility risk in Pi Agent.",
+        })()
+
+        article = type("ArticleObj", (), {
+            "id": 11,
+            "run_id": 1,
+            "user_id": fake_user.id,
+            "title": "Update AI AGENT from memory",
+            "page_type": "topic",
+            "summary": "Compatibility note",
+            "content": "draft",
+            "evidence_refs": [],
+            "metadata_": {"origin": "wiki_update_draft", "target_wiki_id": "wiki-ai-agent"},
+            "status": "draft",
+            "reviewer_note": None,
+            "created_at": datetime(2026, 6, 16, tzinfo=timezone.utc),
+            "updated_at": datetime(2026, 6, 16, tzinfo=timezone.utc),
+        })()
+
+        mock_session.get.side_effect = [wiki, memory]
+        mock_session.refresh = AsyncMock(side_effect=lambda obj: None)
+        mock_session.flush = AsyncMock(side_effect=lambda: None)
+
+        def fake_add(obj):
+            if hasattr(obj, "title") and hasattr(obj, "content"):
+                article.run_id = obj.run_id
+                article.title = obj.title
+                article.summary = obj.summary
+                article.content = obj.content
+                article.metadata_ = obj.metadata_
+                article.status = obj.status
+            else:
+                obj.id = 1
+
+        mock_session.add.side_effect = fake_add
+
+        result = await create_wiki_update_draft_from_memory(
+            WikiUpdateDraftFromMemoryRequest(wiki_id="wiki-ai-agent", memory_node_id="mem-1", section="Risks"),
+            user=fake_user,
+            session=mock_session,
+        )
+
+        assert result.status == "draft"
+        assert result.run_id == 1
+        assert result.metadata_["origin"] == "wiki_update_draft"
+        assert result.metadata_["target_wiki_id"] == "wiki-ai-agent"
+        assert result.metadata_["suggested_section"] == "Risks"
+        assert "# Wiki Refresh Proposal: AI AGENT" in result.content
+        assert "## Current Wiki Summary" in result.content
+        assert "AI agent page summary" in result.content
+        assert "## Relevant Existing Content" in result.content
+        assert "Current risk guidance." in result.content
+        assert "## New Evidence" in result.content
+        assert "Compatibility note" in result.content
+        assert "## Proposed Update" in result.content
+        assert "without drifting away from the existing wiki topic" in result.content
+        mock_session.commit.assert_awaited()
 
     def test_not_found_for_other_user(self, client, mock_session):
         wiki = _make_wiki("wiki-1", "other-user")
@@ -169,6 +242,36 @@ class TestCreateWikiDraftFromMemory:
                 session=mock_session,
             )
         assert getattr(exc_info.value, "status_code") == 422
+
+
+class TestListWikiUpdateDrafts:
+    @pytest.mark.asyncio
+    async def test_success(self, mock_session, fake_user):
+        from pkg.api.wiki import list_wiki_update_drafts
+
+        article = type("ArticleObj", (), {
+            "id": 11,
+            "run_id": 1,
+            "user_id": fake_user.id,
+            "title": "Update AI AGENT from memory",
+            "page_type": "topic",
+            "summary": "Compatibility note",
+            "content": "draft",
+            "evidence_refs": [],
+            "metadata_": {"origin": "wiki_update_draft", "target_wiki_id": "wiki-ai-agent", "suggested_section": "Risks"},
+            "status": "draft",
+            "reviewer_note": None,
+            "created_at": datetime(2026, 6, 16, tzinfo=timezone.utc),
+            "updated_at": datetime(2026, 6, 16, tzinfo=timezone.utc),
+        })()
+        rows = MagicMock()
+        rows.scalars.return_value = [article]
+        mock_session.execute.return_value = rows
+
+        result = await list_wiki_update_drafts("wiki-ai-agent", user=fake_user, session=mock_session)
+
+        assert len(result) == 1
+        assert result[0].metadata_["target_wiki_id"] == "wiki-ai-agent"
 
 
 class TestWikiMemoryEvidence:

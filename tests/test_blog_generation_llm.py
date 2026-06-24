@@ -54,3 +54,32 @@ async def test_generate_draft_falls_back_when_llm_fails():
 
     assert "# Draft" in draft
     assert "## References" in draft
+
+
+@pytest.mark.asyncio
+async def test_generate_draft_falls_back_when_llm_returns_empty_content():
+    asset = Asset(
+        id="asset-1",
+        user_id="user-1",
+        asset_type="newsletter_issue",
+        status="draft",
+        title="Weekly Newsletter",
+        brief="Recent source summary",
+        outline="## Issue Overview",
+        source_refs=[],
+        note_refs=[],
+        memory_refs=[],
+        wiki_refs=[],
+    )
+    session = AsyncMock()
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock(message=MagicMock(content="   "))]
+    mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+    with patch("pkg.services.application.blog_generation.create_async_client", return_value=(mock_client, "test-model")):
+        draft = await generate_draft(session, asset=asset)
+
+    assert "# Weekly Newsletter" in draft
+    assert "## Issue Overview" in draft
+    assert "## Featured Items" in draft

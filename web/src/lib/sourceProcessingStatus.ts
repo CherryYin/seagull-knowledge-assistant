@@ -18,7 +18,7 @@ export interface SourceProcessingState {
 export interface SourceProcessingStep {
   key: SourceProcessingStage | "review";
   label: string;
-  state: "done" | "current" | "pending" | "failed";
+  state: "done" | "current" | "pending" | "failed" | "skipped";
   detail: string;
 }
 
@@ -72,6 +72,7 @@ export function getSourceProcessingSteps(source: Source, options?: { chunkCount?
   const hasReadable = !!source.raw_content || webFetchStatus === "fetched" || extractionStatus === "completed";
   const hasChunks = (chunkCount ?? 0) > 0;
   const hasSummary = summaryStatus === "completed";
+  const summarySupported = summaryStatus.length > 0;
   const reviewed = reviewStatus === "reviewed_kept";
 
   return [
@@ -96,8 +97,12 @@ export function getSourceProcessingSteps(source: Source, options?: { chunkCount?
     {
       key: "summarized",
       label: "Summarized",
-      state: failed ? "failed" : hasSummary ? "done" : hasChunks ? "current" : "pending",
-      detail: hasSummary ? "Summary is available." : "Summary has not been generated yet.",
+      state: failed ? "failed" : hasSummary ? "done" : !summarySupported ? "skipped" : hasChunks ? "current" : "pending",
+      detail: hasSummary
+        ? "Summary is available."
+        : !summarySupported
+          ? "This source does not report a standalone summary status."
+          : "Summary has not been generated yet.",
     },
     {
       key: "review",

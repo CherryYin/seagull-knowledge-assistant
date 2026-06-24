@@ -61,6 +61,36 @@ class TestWebExtractorFallback:
         assert "Cookie settings" not in text
         assert "No items found" not in text
 
+    def test_docs_fallback_prefers_main_article_and_filters_api_navigation_noise(self):
+        html = """
+        <html><head><title>transforms.api • Overview • Palantir</title></head><body>
+          <header>API Reference Search User Documentation Send feedback</header>
+          <nav>Index Libraries Transforms REST API Python transforms-python transforms.api Overview</nav>
+          <main>
+            <article>
+              <h1>transforms.api</h1>
+              <p>The Transforms Python API provides classes and decorators for constructing a Pipeline.</p>
+              <h2>Functions</h2>
+              <p>configure modifies the configuration of a Spark transform.</p>
+              <p>transform_df registers the wrapped compute function as a DataFrame transform.</p>
+            </article>
+          </main>
+          <aside>BooleanParam Check ComputeBackend ContainerTransform</aside>
+          <footer>© 2026 Palantir Technologies Inc. All rights reserved. Cookies Statement Privacy Statement Terms of Use Cookie Settings</footer>
+        </body></html>
+        """
+
+        text = _extract_text(html, url="https://www.palantir.com/docs/foundry/ontology/transforms/api")
+
+        assert text is not None
+        assert text.startswith("transforms.api")
+        assert "The Transforms Python API provides classes and decorators" in text
+        assert "configure modifies the configuration" in text
+        assert "API Reference Search" not in text
+        assert "Index Libraries Transforms" not in text
+        assert "Cookies Statement" not in text
+        assert "All rights reserved" not in text
+
 
 class TestFetchWebPage:
     @pytest.mark.asyncio

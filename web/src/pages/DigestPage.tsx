@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Newspaper, Check, X, ExternalLink, Merge } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -13,9 +13,15 @@ type DigestTab = "pending" | "kept";
 
 export function DigestPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<DigestTab>("pending");
+  const [activeTab, setActiveTab] = useState<DigestTab>((searchParams.get("tab") as DigestTab) || "pending");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  const digestNoteState = useMemo(() => ({
+    backTo: `/wiki/digest${searchParams.toString() ? `?${searchParams.toString()}` : ""}`,
+    backLabel: "Back to Digest",
+  }), [searchParams]);
 
   const { data, isLoading } = useQuery({
     queryKey: ["digest"],
@@ -98,7 +104,11 @@ export function DigestPage() {
         <Tabs
           value={activeTab}
           onValueChange={(value) => {
-            setActiveTab(value as DigestTab);
+            const nextTab = value === "kept" ? "kept" : "pending";
+            setActiveTab(nextTab);
+            const next = new URLSearchParams(searchParams);
+            next.set("tab", nextTab);
+            setSearchParams(next, { replace: true });
             setSelectedIds(new Set());
           }}
         >
@@ -126,7 +136,7 @@ export function DigestPage() {
               isLoading={isLoading}
               selectedIds={selectedIds}
               onToggleSelected={toggleSelected}
-              onView={(id) => navigate(`/notes/${encodeURIComponent(id)}`)}
+              onView={(id) => navigate(`/notes/${encodeURIComponent(id)}`, { state: digestNoteState })}
               onKeep={(id) => keepMutation.mutate(id)}
               onDismiss={(id) => dismissMutation.mutate(id)}
               keepingId={keepMutation.variables}
@@ -142,7 +152,7 @@ export function DigestPage() {
               isLoading={isLoading}
               selectedIds={selectedIds}
               onToggleSelected={toggleSelected}
-              onView={(id) => navigate(`/notes/${encodeURIComponent(id)}`)}
+              onView={(id) => navigate(`/notes/${encodeURIComponent(id)}`, { state: digestNoteState })}
               onKeep={(id) => keepMutation.mutate(id)}
               onDismiss={(id) => dismissMutation.mutate(id)}
               keepingId={keepMutation.variables}

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "react-router-dom";
-import { FileText, Sparkles, Download, CheckCircle2, Plus, ScrollText } from "lucide-react";
+import { FileText, Sparkles, Download, CheckCircle2, Plus, ScrollText, Trash2 } from "lucide-react";
 import { assetsApi, notesApi, sourcesApi, type Asset, type AssetStatus, type AssetType } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -187,6 +187,9 @@ export function AssetsPage() {
   const [selectedNoteIds, setSelectedNoteIds] = useState<string[]>([]);
   const [opinionNotes, setOpinionNotes] = useState("");
   const [styleNotes, setStyleNotes] = useState("");
+  const [newsletterWindowDays, setNewsletterWindowDays] = useState(2);
+  const [newsletterMaxSources, setNewsletterMaxSources] = useState(12);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [exportedMarkdown, setExportedMarkdown] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
@@ -228,6 +231,32 @@ export function AssetsPage() {
   const createMutation = useMutation({
     mutationFn: () => assetsApi.create({ asset_type: assetType, title, brief, source_refs: selectedSourceIds, note_refs: selectedNoteIds, opinion_notes: opinionNotes, style_notes: styleNotes }),
     onSuccess: async (asset) => {
+      setCreateError(null);
+      loadEditorState(asset);
+      setTitle("");
+      setBrief("");
+      setAssetType("blog_post");
+      setSelectedSourceIds([]);
+      setSelectedNoteIds([]);
+      setOpinionNotes("");
+      setStyleNotes("");
+      setSelectedId(asset.id);
+      await queryClient.invalidateQueries({ queryKey: ["assets"] });
+    },
+  });
+
+  const createRecentNewsletterMutation = useMutation({
+    mutationFn: () => assetsApi.createRecentNewsletter({
+      title,
+      brief: brief || undefined,
+      opinion_notes: opinionNotes,
+      style_notes: styleNotes || undefined,
+      window_days: newsletterWindowDays,
+      max_sources: newsletterMaxSources,
+    }),
+    onSuccess: async (asset) => {
+      setCreateError(null);
+      loadEditorState(asset);
       setTitle("");
       setBrief("");
       setAssetType("blog_post");
@@ -244,9 +273,27 @@ export function AssetsPage() {
     checked ? [...current, id] : current.filter((item) => item !== id)
   );
 
+  const validateCreate = () => {
+    if (!title.trim()) {
+      setCreateError("Title is required.");
+      return false;
+    }
+    if (assetType === "research_brief" && selectedSourceIds.length === 0 && selectedNoteIds.length === 0) {
+      setCreateError("Research brief requires at least one source or note as input.");
+      return false;
+    }
+    setCreateError(null);
+    return true;
+  };
+
   const refreshAsset = async (assetId: string) => {
     await queryClient.invalidateQueries({ queryKey: ["assets"] });
     setSelectedId(assetId);
+  };
+
+  const refreshGeneratedAsset = async (asset: Asset) => {
+    loadEditorState(asset);
+    await refreshAsset(asset.id);
   };
 
   const saveMutation = useMutation({
@@ -255,6 +302,16 @@ export function AssetsPage() {
     onSuccess: async (asset) => {
       await refreshAsset(asset.id);
       setSelectedId(asset.id);
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (assetId: string) => assetsApi.delete(assetId),
+    onSuccess: async (_result, assetId) => {
+      if (selectedId === assetId) {
+        setSelectedId(null);
+      }
+      await queryClient.invalidateQueries({ queryKey: ["assets"] });
     },
   });
 
@@ -285,17 +342,17 @@ export function AssetsPage() {
 
   const generateOutlineMutation = useMutation({
     mutationFn: (assetId: string) => assetsApi.generateOutline(assetId, true),
-    onSuccess: async (asset) => refreshAsset(asset.id),
+    onSuccess: async (asset) => refreshGeneratedAsset(asset),
   });
 
   const generateDraftMutation = useMutation({
     mutationFn: (assetId: string) => assetsApi.generateDraft(assetId, true),
-    onSuccess: async (asset) => refreshAsset(asset.id),
+    onSuccess: async (asset) => refreshGeneratedAsset(asset),
   });
 
   const attachReferencesMutation = useMutation({
     mutationFn: (assetId: string) => assetsApi.attachReferences(assetId, true),
-    onSuccess: async (asset) => refreshAsset(asset.id),
+    onSuccess: async (asset) => refreshGeneratedAsset(asset),
   });
 
   const readinessMutation = useMutation({
@@ -389,7 +446,41 @@ export function AssetsPage() {
             <p className="text-xs text-muted-foreground">{assetTypeBriefGuidance(assetType)}</p>
             <Textarea placeholder="Opinion / thesis" value={opinionNotes} onChange={(e) => setOpinionNotes(e.target.value)} rows={3} />
             <Textarea placeholder="Style notes / tone instructions" value={styleNotes} onChange={(e) => setStyleNotes(e.target.value)} rows={3} />
-            <div className="grid gap-4 md:grid-cols-2">
+            {assetType === "newsletter_issue" && (
+              <div className="rounded-md border border-primary/30 bg-primary/5 p-3 space-y-3">
+                <div>
+                  <p className="text-sm font-medium">Recent-source newsletter mode</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Create a newsletter from sources ingested in the last few days plus your opinion above. No manual source or note picking required.
+                  </p>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium">Source window days</p>
+                    <Input type="number" min={1} max={14} value={newsletterWindowDays} onChange={(e) => setNewsletterWindowDays(Number(e.target.value) || 2)} />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium">Max sources</p>
+                    <Input type="number" min={1} max={50} value={newsletterMaxSources} onChange={(e) => setNewsletterMaxSources(Number(e.target.value) || 12)} />
+                  </div>
+                </div>
+                <Button
+                  variant="outline"
+                  onClick={() => createRecentNewsletterMutation.mutate()}
+                  disabled={!title.trim() || !opinionNotes.trim() || createRecentNewsletterMutation.isPending}
+                >
+                  {createRecentNewsletterMutation.isPending
+                    ? "Creating…"
+                    : `Create from last ${newsletterWindowDays} days of sources`}
+                </Button>
+                {createRecentNewsletterMutation.isError && (
+                  <p className="text-xs text-destructive">
+                    Failed to create recent-source newsletter. Make sure recent sources exist.
+                  </p>
+                )}
+              </div>
+            )}
+            {assetType !== "newsletter_issue" && <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2 rounded-md border p-3">
                 <p className="text-sm font-medium">Source refs</p>
                 <div className="max-h-40 space-y-2 overflow-auto pr-1 text-sm">
@@ -427,10 +518,11 @@ export function AssetsPage() {
                   ))}
                 </div>
               </div>
-            </div>
-            <Button onClick={() => createMutation.mutate()} disabled={!title.trim() || createMutation.isPending}>
+            </div>}
+            {createError && <p className="text-xs text-destructive">{createError}</p>}
+            <Button onClick={() => { if (validateCreate()) createMutation.mutate(); }} disabled={!title.trim() || assetType === "newsletter_issue" || createMutation.isPending}>
               <Plus className="mr-2 h-4 w-4" />
-              Create Asset
+              {assetType === "newsletter_issue" ? "Use Recent-Source Newsletter Mode" : "Create Asset"}
             </Button>
           </CardContent>
         </Card>
@@ -459,11 +551,25 @@ export function AssetsPage() {
                     <p className="text-sm font-medium">{asset.title}</p>
                     <Link
                       to={`/assets/${encodeURIComponent(asset.id)}`}
+                      state={{ backTo: "/assets", backLabel: "Back to Assets" }}
                       className="text-[11px] text-primary hover:underline"
                       onClick={(e) => e.stopPropagation()}
                     >
                       Open
                     </Link>
+                    <button
+                      type="button"
+                      className="text-[11px] text-destructive hover:underline"
+                      disabled={deleteMutation.isPending}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (window.confirm(`Delete asset \"${asset.title}\"? This cannot be undone.`)) {
+                          deleteMutation.mutate(asset.id);
+                        }
+                      }}
+                    >
+                      Delete
+                    </button>
                   </div>
                   {asset.brief && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{asset.brief}</p>}
                 </button>
@@ -562,6 +668,18 @@ export function AssetsPage() {
                     <Button variant="outline" onClick={() => exportMutation.mutate(selectedAsset.id)}>
                       <Download className="mr-2 h-4 w-4" />
                       Export Markdown
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        if (window.confirm(`Delete asset \"${selectedAsset.title}\"? This cannot be undone.`)) {
+                          deleteMutation.mutate(selectedAsset.id);
+                        }
+                      }}
+                      disabled={deleteMutation.isPending}
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      {deleteMutation.isPending ? "Deleting…" : "Delete"}
                     </Button>
                   </div>
 

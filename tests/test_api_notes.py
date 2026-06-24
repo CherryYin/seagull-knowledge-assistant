@@ -101,6 +101,75 @@ class TestListNotes:
         mock_session.delete.assert_awaited_with(expired)
         mock_session.commit.assert_awaited()
 
+    @patch("pkg.api.notes.get_storage_service")
+    def test_digest_cleanup_deletes_minio_object(self, mock_storage_factory, client, mock_session, fake_user):
+        expired = _make_note("digest-expired", fake_user.id, file_path="minio://bucket/notes/digest-expired/note.md")
+        expired.note_type = "digest"
+        expired.status = "pending_review"
+        expired.expires_at = datetime.now(timezone.utc) - timedelta(days=1)
+        storage = MagicMock()
+        storage.delete_object = AsyncMock()
+        mock_storage_factory.return_value = storage
+        cleanup_rows = MagicMock()
+        cleanup_rows.scalars.return_value = [expired]
+        mock_count = MagicMock()
+        mock_count.scalar.return_value = 0
+        mock_rows = MagicMock()
+        mock_rows.scalars.return_value = []
+        mock_session.execute.side_effect = [cleanup_rows, mock_count, mock_rows]
+        mock_session.get.return_value = None
+
+        resp = client.get("/notes?note_type=digest")
+
+        assert resp.status_code == 200
+        storage.delete_object.assert_awaited_once_with("minio://bucket/notes/digest-expired/note.md")
+
+    @patch("pkg.api.notes.get_storage_service")
+    def test_digest_cleanup_skips_non_minio_object(self, mock_storage_factory, client, mock_session, fake_user):
+        expired = _make_note("digest-expired", fake_user.id, file_path="/tmp/digest.md")
+        expired.note_type = "digest"
+        expired.status = "pending_review"
+        expired.expires_at = datetime.now(timezone.utc) - timedelta(days=1)
+        storage = MagicMock()
+        storage.delete_object = AsyncMock()
+        mock_storage_factory.return_value = storage
+        cleanup_rows = MagicMock()
+        cleanup_rows.scalars.return_value = [expired]
+        mock_count = MagicMock()
+        mock_count.scalar.return_value = 0
+        mock_rows = MagicMock()
+        mock_rows.scalars.return_value = []
+        mock_session.execute.side_effect = [cleanup_rows, mock_count, mock_rows]
+        mock_session.get.return_value = None
+
+        resp = client.get("/notes?note_type=digest")
+
+        assert resp.status_code == 200
+        storage.delete_object.assert_not_called()
+
+    @patch("pkg.api.notes.get_storage_service")
+    def test_digest_cleanup_continues_on_storage_delete_error(self, mock_storage_factory, client, mock_session, fake_user):
+        expired = _make_note("digest-expired", fake_user.id, file_path="minio://bucket/notes/digest-expired/note.md")
+        expired.note_type = "digest"
+        expired.status = "pending_review"
+        expired.expires_at = datetime.now(timezone.utc) - timedelta(days=1)
+        storage = MagicMock()
+        storage.delete_object = AsyncMock(side_effect=RuntimeError("boom"))
+        mock_storage_factory.return_value = storage
+        cleanup_rows = MagicMock()
+        cleanup_rows.scalars.return_value = [expired]
+        mock_count = MagicMock()
+        mock_count.scalar.return_value = 0
+        mock_rows = MagicMock()
+        mock_rows.scalars.return_value = []
+        mock_session.execute.side_effect = [cleanup_rows, mock_count, mock_rows]
+        mock_session.get.return_value = None
+
+        resp = client.get("/notes?note_type=digest")
+
+        assert resp.status_code == 200
+        mock_session.delete.assert_awaited_with(expired)
+
 
 # ---------------------------------------------------------------------------
 # DELETE /notes/{note_id}

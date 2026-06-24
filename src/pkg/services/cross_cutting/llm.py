@@ -46,20 +46,35 @@ class _MiniMaxChatCompletions:
         }
         if "temperature" in kwargs and kwargs["temperature"] is not None:
             payload["temperature"] = kwargs["temperature"]
+        if "thinking" in kwargs and kwargs["thinking"] is not None:
+            payload["thinking"] = kwargs["thinking"]
+        if "max_completion_tokens" in kwargs and kwargs["max_completion_tokens"] is not None:
+            payload["max_completion_tokens"] = kwargs["max_completion_tokens"]
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             resp = await client.post(
-                f"{self.base_url}/text/chatcompletion_v2",
+                f"{self.base_url}/chat/completions",
                 json=payload,
                 headers={"Authorization": f"Bearer {self.api_key}"},
             )
             resp.raise_for_status()
             data = resp.json()
-        text = (
-            data.get("choices", [{}])[0].get("message", {}).get("content")
-            or data.get("reply")
-            or data.get("output_text")
-            or ""
-        )
+        choices = data.get("choices") or []
+        first_choice = choices[0] if choices else {}
+        if not isinstance(first_choice, dict):
+            first_choice = {}
+        message = first_choice.get("message") or {}
+        if not isinstance(message, dict):
+            message = {}
+        content = message.get("content")
+        if isinstance(content, list):
+            content = "\n".join(
+                item.get("text", "")
+                for item in content
+                if isinstance(item, dict) and isinstance(item.get("text"), str)
+            ).strip()
+        if not isinstance(content, str):
+            content = None
+        text = content or data.get("reply") or data.get("output_text") or ""
         return SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content=text))],
             raw=data,

@@ -42,6 +42,30 @@ export function WikiSuggestionsPage() {
     },
   });
 
+  const createUpdateDraftMutation = useMutation({
+    mutationFn: ({ wikiId, memoryNodeId }: { wikiId: string; memoryNodeId: string }) =>
+      wikiApi.createUpdateDraftFromMemory({
+        wiki_id: wikiId,
+        memory_node_id: memoryNodeId,
+        section: "Open Questions",
+      }),
+    onSuccess: (draft) => {
+      queryClient.invalidateQueries({ queryKey: ["wiki-suggestions"] });
+      queryClient.invalidateQueries({ queryKey: ["wiki-mining-runs"] });
+      queryClient.invalidateQueries({ queryKey: ["wiki-pages"] });
+      const targetWikiId = String((draft.metadata_?.target_wiki_id as string | undefined) || "");
+      if (targetWikiId) {
+        navigate(`/wiki/${encodeURIComponent(targetWikiId)}`, {
+          state: {
+            backTo: "/review/wiki-suggestions",
+            backLabel: "Back to Wiki Refresh",
+            flashMessage: `Created editable update draft \"${draft.title}\". Review the draft content below and merge it into this wiki manually.`,
+          },
+        });
+      }
+    },
+  });
+
   const updateInsightMutation = useMutation({
     mutationFn: ({ id, status }: { id: number; status: "accepted" | "rejected" | "converted_to_draft" }) =>
       wikiApi.updateMiningInsight(id, status),
@@ -122,6 +146,11 @@ export function WikiSuggestionsPage() {
                 {getReviewConflictMessage(updateMutation.error, "Failed to update wiki review item.")}
               </p>
             )}
+            {createUpdateDraftMutation.isError && (
+              <p className="text-sm text-destructive">
+                {getReviewConflictMessage(createUpdateDraftMutation.error, "Failed to create wiki update draft.")}
+              </p>
+            )}
             {!isLoading && suggestions.length === 0 && (
               <div className="rounded-lg border border-dashed py-12 text-center text-sm text-muted-foreground">
                 No refresh reminders yet. New source, note, or memory updates that may affect a wiki will appear here.
@@ -133,10 +162,17 @@ export function WikiSuggestionsPage() {
                 suggestion={suggestion}
                 isUpdating={updateMutation.isPending}
                 isCloningDraft={cloneDraftMutation.isPending}
+                isCreatingUpdateDraft={createUpdateDraftMutation.isPending}
                 onAccept={() => updateMutation.mutate({ id: suggestion.id, status: "accepted" })}
                 onReject={() => updateMutation.mutate({ id: suggestion.id, status: "rejected" })}
                 onApply={() => updateMutation.mutate({ id: suggestion.id, status: "applied" })}
                 onCloneDraft={() => cloneDraftMutation.mutate({ wikiId: suggestion.wiki_id })}
+                onCreateUpdateDraft={() =>
+                  createUpdateDraftMutation.mutate({
+                    wikiId: suggestion.wiki_id,
+                    memoryNodeId: suggestion.trigger_id,
+                  })
+                }
               />
             ))}
           </CardContent>
@@ -148,7 +184,7 @@ export function WikiSuggestionsPage() {
               <CardTitle className="flex items-center gap-2 text-base">
                 <Sparkles className="h-4 w-4 text-primary" /> Wiki Mining Candidates
               </CardTitle>
-              <p className="mt-1 text-sm text-muted-foreground">Recent mining runs that produced candidate insights and article drafts. Use these as draft-first inputs for canonical wiki pages.</p>
+              <p className="mt-1 text-sm text-muted-foreground">Recent mining runs that produced generic candidate articles. Topic/entity concept discovery now lives in the dedicated Discovery page.</p>
             </div>
             {miningLoading && <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />}
           </CardHeader>
@@ -158,6 +194,9 @@ export function WikiSuggestionsPage() {
                 No wiki mining candidates yet. Run wiki mining to surface candidate articles and insights here.
               </div>
             )}
+            <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+              Looking for discovered topics and entities? Open <Link to="/wiki/discovery" className="text-primary underline-offset-4 hover:underline">Wiki Discovery</Link>.
+            </div>
             {miningArticles.map((run) => (
               <MiningRunCard
                 key={run.id}
@@ -482,20 +521,25 @@ function SuggestionCard({
   suggestion,
   isUpdating,
   isCloningDraft,
+  isCreatingUpdateDraft,
   onAccept,
   onReject,
   onApply,
   onCloneDraft,
+  onCreateUpdateDraft,
 }: {
   suggestion: WikiRecompileSuggestion;
   isUpdating: boolean;
   isCloningDraft: boolean;
+  isCreatingUpdateDraft: boolean;
   onAccept: () => void;
   onReject: () => void;
   onApply: () => void;
   onCloneDraft: () => void;
+  onCreateUpdateDraft: () => void;
 }) {
   const score = typeof suggestion.metadata_?.score === "number" ? suggestion.metadata_.score : null;
+  const canCreateMemoryUpdateDraft = suggestion.trigger_type === "memory" && !!suggestion.trigger_id;
   return (
     <div className="rounded-lg border border-border bg-card p-4">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -531,6 +575,11 @@ function SuggestionCard({
               <Button size="sm" variant="outline" onClick={onReject} disabled={isUpdating}>
                 <XCircle className="mr-1 h-4 w-4" /> Dismiss
               </Button>
+              {canCreateMemoryUpdateDraft && (
+                <Button size="sm" variant="outline" onClick={onCreateUpdateDraft} disabled={isCreatingUpdateDraft}>
+                  <FileSearch className="mr-1 h-4 w-4" /> {isCreatingUpdateDraft ? "Creating…" : "Create Update Draft"}
+                </Button>
+              )}
               <Button size="sm" variant="outline" onClick={onCloneDraft} disabled={isCloningDraft}>
                 <Copy className="mr-1 h-4 w-4" /> {isCloningDraft ? "Cloning…" : "Clone Draft"}
               </Button>
@@ -541,6 +590,11 @@ function SuggestionCard({
           )}
           {suggestion.status === "accepted" && (
             <>
+              {canCreateMemoryUpdateDraft && (
+                <Button size="sm" variant="outline" onClick={onCreateUpdateDraft} disabled={isCreatingUpdateDraft}>
+                  <FileSearch className="mr-1 h-4 w-4" /> {isCreatingUpdateDraft ? "Creating…" : "Create Update Draft"}
+                </Button>
+              )}
               <Button size="sm" variant="outline" onClick={onCloneDraft} disabled={isCloningDraft}>
                 <Copy className="mr-1 h-4 w-4" /> {isCloningDraft ? "Cloning…" : "Clone Draft"}
               </Button>

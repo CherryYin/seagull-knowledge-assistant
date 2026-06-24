@@ -1,10 +1,15 @@
+import hashlib
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
+from sqlalchemy import select
+
+from pkg.db import async_session
+from pkg.models.foundation.source import Source
 
 
 WEB_FETCH_HEADERS = {
@@ -16,6 +21,29 @@ WEB_FETCH_HEADERS = {
 WEB_FETCH_TIMEOUT_SECONDS = 20
 WEB_FETCH_MAX_BYTES = 5 * 1024 * 1024
 BLOCK_TAGS = {"p", "div", "section", "article", "main", "li", "blockquote", "pre", "h1", "h2", "h3", "h4"}
+NOISE_CONTAINER_TAGS = {"nav", "header", "footer", "aside"}
+NOISE_TEXT_MARKERS = {
+    "api reference",
+    "search",
+    "send feedback",
+    "user documentation",
+    "all rights reserved",
+    "privacy statement",
+    "terms of use",
+    "cookie settings",
+    "cookies statement",
+    "index",
+    "libraries",
+    "next",
+    "previous",
+}
+DOCS_NOISE_LINE_PATTERNS = (
+    "transforms-python •",
+    "api reference",
+    "user documentation",
+    "send feedback",
+    "© ",
+)
 
 
 class WebPageFetchError(Exception):
@@ -31,23 +59,70 @@ class WebPageFetchResult:
     metadata: dict[str, Any]
 
 
+def web_refresh_metadata(source: Source) -> dict:
+    return dict(source.metadata_ or {})
+
+
+def is_web_auto_refresh_enabled(source: Source) -> bool:
+    return web_refresh_metadata(source).get("auto_refresh") is True
+
+
+def web_refresh_interval_days(source: Source) -> int:
+    value = web_refresh_metadata(source).get("refresh_interval_days")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = 7
+    return max(parsed, 1)
+
+
+def is_web_refresh_due(source: Source, *, now: datetime | None = None) -> bool:
+    metadata = web_refresh_metadata(source)
+    if source.source_type != "web" or not source.url or not is_web_auto_refresh_enabled(source):
+        return False
+    if metadata.get("feed_source_id") is not None or metadata.get("web_directory") is True or metadata.get("content_source") == "web_directory":
+        return False
+    now = now or datetime.now(timezone.utc)
+    last_checked = metadata.get("last_checked_at") or metadata.get("last_refreshed_at")
+    if not last_checked:
+        return True
+    try:
+        last_dt = datetime.fromisoformat(str(last_checked).replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if last_dt.tzinfo is None:
+        last_dt = last_dt.replace(tzinfo=timezone.utc)
+    return now >= last_dt + timedelta(days=web_refresh_interval_days(source))
+
+
 class _ReadableTextParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
         self._skip_depth = 0
         self._title_depth = 0
         self._main_depth = 0
+        self._noise_depth = 0
         self.title_parts: list[str] = []
         self.text_parts: list[str] = []
         self.main_text_parts: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = {key.lower(): value for key, value in attrs if value}
         if tag in {"script", "style", "noscript", "svg", "canvas"}:
             self._skip_depth += 1
         if tag == "title":
             self._title_depth += 1
         if tag in {"article", "main"}:
             self._main_depth += 1
+        if tag in NOISE_CONTAINER_TAGS:
+            self._noise_depth += 1
+        role = (attributes.get("role") or "").lower()
+        element_id = (attributes.get("id") or "").lower()
+        class_name = (attributes.get("class") or "").lower()
+        if role in {"navigation", "banner", "contentinfo", "complementary"}:
+            self._noise_depth += 1
+        elif any(token in f" {class_name} {element_id} " for token in (" sidebar ", " sidenav ", " toc ", " table-of-contents ", " breadcrumb ", " pagination ", " navbar ", " header ", " footer ", " search ")):
+            self._noise_depth += 1
         if tag == "br":
             self._append_text("\n")
         elif tag in BLOCK_TAGS:
@@ -60,6 +135,8 @@ class _ReadableTextParser(HTMLParser):
             self._title_depth -= 1
         if tag in {"article", "main"} and self._main_depth:
             self._main_depth -= 1
+        if tag in NOISE_CONTAINER_TAGS and self._noise_depth:
+            self._noise_depth -= 1
         if tag in BLOCK_TAGS:
             self._append_text("\n\n")
 
@@ -74,6 +151,8 @@ class _ReadableTextParser(HTMLParser):
         self._append_text(text)
 
     def _append_text(self, text: str) -> None:
+        if self._noise_depth:
+            return
         self.text_parts.append(text)
         if self._main_depth:
             self.main_text_parts.append(text)
@@ -138,6 +217,29 @@ def _strip_common_page_chrome(text: str) -> str:
     return text.strip()
 
 
+def _strip_docs_page_chrome(text: str) -> str:
+    paragraphs = [paragraph.strip() for paragraph in text.split("\n\n") if paragraph.strip()]
+    cleaned: list[str] = []
+
+    for paragraph in paragraphs:
+        normalized = " ".join(paragraph.lower().split())
+        if normalized in NOISE_TEXT_MARKERS:
+            continue
+        if any(normalized.startswith(pattern) for pattern in DOCS_NOISE_LINE_PATTERNS):
+            continue
+        if normalized.count(" • ") >= 2:
+            continue
+        if len(paragraph.split()) <= 3 and normalized in {"index", "libraries", "rest api", "python", "overview", "exceptions", "functions", "classes"}:
+            continue
+        if paragraph.count(" AB XY") >= 2:
+            continue
+        if normalized.startswith("copyright ") or normalized.startswith("© "):
+            continue
+        cleaned.append(paragraph)
+
+    return "\n\n".join(cleaned).strip()
+
+
 def _validate_web_url(url: str) -> str:
     normalized = url.strip()
     parsed = urlparse(normalized)
@@ -177,7 +279,7 @@ def _extract_text(html: str, *, url: str) -> str | None:
     parser = _ReadableTextParser()
     parser.feed(html)
     parts = parser.main_text_parts if parser.main_text_parts else parser.text_parts
-    text = _format_readable_text(_strip_common_page_chrome("\n".join(parts)))
+    text = _format_readable_text(_strip_docs_page_chrome(_strip_common_page_chrome("\n".join(parts))))
     if text:
         return text
     return None
@@ -277,3 +379,63 @@ async def fetch_web_page(url: str) -> WebPageFetchResult:
         text=text,
         metadata=metadata,
     )
+
+
+async def run_web_refresh_step() -> dict:
+    from pkg.services.foundation.rss_fetcher import _update_source_content
+
+    now = datetime.now(timezone.utc)
+    stats = {
+        "sources_considered": 0,
+        "sources_due": 0,
+        "sources_checked": 0,
+        "sources_refreshed": 0,
+        "sources_unchanged": 0,
+        "errors": 0,
+        "reason": None,
+    }
+
+    async with async_session() as session:
+        rows = await session.execute(select(Source).where(Source.source_type == "web").order_by(Source.ingested_at.desc()))
+        sources = list(rows.scalars())
+
+    due_sources = [source for source in sources if is_web_refresh_due(source, now=now)]
+    stats["sources_considered"] = len(sources)
+    stats["sources_due"] = len(due_sources)
+    if not due_sources:
+        stats["reason"] = "no_due_web_sources"
+        return stats
+
+    async with async_session() as session:
+        for source in due_sources:
+            source_obj = await session.get(Source, source.id)
+            if not source_obj or not source_obj.url:
+                continue
+            metadata = web_refresh_metadata(source_obj)
+            try:
+                page = await fetch_web_page(source_obj.url)
+                stats["sources_checked"] += 1
+                metadata["last_checked_at"] = now.isoformat()
+                new_hash = hashlib.sha256(page.text.encode()).hexdigest()
+                if source_obj.content_hash == new_hash:
+                    source_obj.metadata_ = metadata
+                    await session.commit()
+                    stats["sources_unchanged"] += 1
+                    continue
+
+                source_obj.title = page.title or source_obj.title
+                source_obj.url = page.final_url
+                metadata.update(page.metadata)
+                metadata["last_refreshed_at"] = now.isoformat()
+                metadata["auto_refresh"] = metadata.get("auto_refresh") is True
+                source_obj.metadata_ = metadata
+                await _update_source_content(source_obj, page.text, session)
+                await session.commit()
+                stats["sources_refreshed"] += 1
+            except Exception:
+                stats["errors"] += 1
+                await session.rollback()
+
+    if stats["sources_checked"] > 0 and stats["sources_refreshed"] == 0 and stats["errors"] == 0:
+        stats["reason"] = "no_web_content_changes"
+    return stats

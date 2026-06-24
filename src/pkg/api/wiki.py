@@ -17,6 +17,7 @@ from pkg.models.foundation.wiki import (
     WikiArticleDraft,
     WikiEmbedding,
     WikiInsightCandidate,
+    WikiMiningRun,
     WikiPage,
     WikiPageMemory,
     WikiPageSource,
@@ -29,6 +30,7 @@ from pkg.schemas.wiki import (
     WikiCloneDraftRequest,
     WikiCompileRequest,
     WikiFromMemoryRequest,
+    WikiUpdateDraftFromMemoryRequest,
     WikiInsightCandidateRead,
     WikiInsightCandidateStatusUpdate,
     WikiMiningRunCreate,
@@ -137,6 +139,19 @@ async def update_wiki_insight_candidate_status(
     return insight
 
 
+@router.delete("/mining/insights/{insight_id}", status_code=204)
+async def delete_wiki_insight_candidate(
+    insight_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    insight = await session.get(WikiInsightCandidate, insight_id)
+    if not insight or insight.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Wiki insight candidate not found")
+    await session.delete(insight)
+    await session.commit()
+
+
 @router.patch("/mining/articles/{article_id}", response_model=WikiArticleDraftRead)
 async def update_wiki_article_draft_status(
     article_id: int,
@@ -179,6 +194,52 @@ async def update_wiki_article_draft_status(
 
     await session.refresh(article)
     return article
+
+
+@router.delete("/mining/articles/{article_id}", status_code=204)
+async def delete_wiki_article_draft(
+    article_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    article = await session.get(WikiArticleDraft, article_id)
+    if not article or article.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Wiki article draft not found")
+    await session.delete(article)
+    await session.commit()
+
+
+@router.get("/update-drafts", response_model=list[WikiArticleDraftRead])
+async def list_wiki_update_drafts(
+    wiki_id: str = Query(...),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    rows = await session.execute(
+        select(WikiArticleDraft)
+        .where(
+            WikiArticleDraft.user_id == user.id,
+            WikiArticleDraft.metadata_["origin"].astext == "wiki_update_draft",
+            WikiArticleDraft.metadata_["target_wiki_id"].astext == wiki_id,
+        )
+        .order_by(WikiArticleDraft.created_at.desc(), WikiArticleDraft.id.desc())
+    )
+    return list(rows.scalars())
+
+
+@router.delete("/update-drafts/{article_id}", status_code=204)
+async def delete_wiki_update_draft(
+    article_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    article = await session.get(WikiArticleDraft, article_id)
+    if not article or article.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Wiki update draft not found")
+    if (article.metadata_ or {}).get("origin") != "wiki_update_draft":
+        raise HTTPException(status_code=400, detail="Only wiki update drafts can be deleted here")
+    await session.delete(article)
+    await session.commit()
 
 
 @router.post("/mining/articles/{article_id}/merge", response_model=WikiArticleDraftRead)
@@ -780,9 +841,134 @@ async def create_wiki_draft_from_memory(
     return wiki
 
 
+@router.post("/update-drafts/from-memory", response_model=WikiArticleDraftRead, status_code=201)
+async def create_wiki_update_draft_from_memory(
+    body: WikiUpdateDraftFromMemoryRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    wiki = await session.get(WikiPage, body.wiki_id)
+    if not wiki or wiki.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Wiki page not found")
+
+    memory = await session.get(MemoryNode, body.memory_node_id)
+    if not memory or memory.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Memory node not found")
+
+    section = (body.section or "Open Questions").strip() or "Open Questions"
+    run = WikiMiningRun(
+        user_id=user.id,
+        status="completed",
+        metadata_={
+            "origin": "wiki_update_draft",
+            "trigger_type": "memory",
+            "trigger_id": memory.id,
+            "target_wiki_id": wiki.id,
+            "target_wiki_title": wiki.title,
+        },
+    )
+    session.add(run)
+    await session.flush()
+
+    wiki_summary = (wiki.summary or "").strip()
+    relevant_existing_content = _extract_section_excerpt(wiki.content, section)
+    memory_summary = (memory.summary or memory.title or "").strip()
+    memory_content = _trim_text(memory.content, limit=1200)
+    proposed_update = "\n\n".join(
+        part
+        for part in [
+            f"Update the **{section}** section of **{wiki.title}** only if the new evidence is clearly relevant to the page's current topic boundary.",
+            "Keep the page focused on its canonical subject. Prefer additive or corrective edits rather than turning this page into a new topic.",
+            f"New evidence summary: {memory_summary}" if memory_summary else None,
+            memory_content or None,
+        ]
+        if part
+    )
+    content = (
+        f"# Wiki Refresh Proposal: {wiki.title}\n\n"
+        f"<!-- Draft generated from memory {memory.id} for wiki {wiki.id}. Review before applying. -->\n\n"
+        f"## Target Wiki\n\n- `{wiki.id}` · {wiki.title}\n- Suggested Section: {section}\n\n"
+        f"## Current Wiki Summary\n\n{wiki_summary or 'No wiki summary yet.'}\n\n"
+        f"## Relevant Existing Content\n\n{relevant_existing_content or 'No directly matching section found in the current wiki content.'}\n\n"
+        f"## New Evidence\n\n- Memory: `{memory.id}` · {memory.title}\n- Summary: {memory_summary or 'No memory summary available.'}\n\n{memory_content or 'No additional memory content available.'}\n\n"
+        "## Why This Matters\n\n"
+        "Explain whether this new evidence changes, clarifies, or extends the current wiki page without drifting away from the existing wiki topic.\n\n"
+        f"## Proposed Update\n\n{proposed_update}\n\n"
+        "## Suggested Diff\n\n"
+        f"- Where should this be inserted or revised inside `{section}`?\n"
+        "- Which current claim should be updated, clarified, or kept unchanged?\n"
+        "- What wording should be added to preserve the wiki's scope?\n\n"
+        "## Open Questions\n\n"
+        "- Is this evidence important enough to change the current wiki page?\n"
+        f"- Should this stay in `{section}`, or does it belong in a different section?\n"
+        "- Does this evidence imply a separate wiki page instead of an update here?\n"
+    )
+    article = WikiArticleDraft(
+        run_id=run.id,
+        user_id=user.id,
+        title=f"Update {wiki.title} from memory",
+        page_type=body.page_type,
+        summary=memory.summary or memory.title,
+        content=content,
+        evidence_refs=[
+            {"ref_type": "memory", "ref_id": memory.id, "title": memory.title, "excerpt": memory.summary or memory.content[:240] if memory.content else None},
+        ],
+        metadata_={
+            "origin": "wiki_update_draft",
+            "target_wiki_id": wiki.id,
+            "target_wiki_title": wiki.title,
+            "trigger_type": "memory",
+            "trigger_id": memory.id,
+            "suggested_section": section,
+        },
+        status="draft",
+    )
+    session.add(article)
+    await session.commit()
+    await session.refresh(article)
+    return article
+
+
 def _wiki_title_from_memory(memory: MemoryNode) -> str:
     title = memory.title.removeprefix("Topic Memory - ").strip()
     return title or memory.title
+
+
+def _trim_text(value: str | None, limit: int = 1200) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "\n\n...[truncated]"
+
+
+def _extract_section_excerpt(content: str | None, section: str, limit: int = 1200) -> str:
+    text = (content or "").strip()
+    if not text:
+        return ""
+    section_name = section.strip().lower()
+    if not section_name:
+        return _trim_text(text, limit=limit)
+
+    lines = text.splitlines()
+    capture = False
+    collected: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            heading = stripped.removeprefix("## ").strip().lower()
+            if capture:
+                break
+            capture = heading == section_name
+            if capture:
+                collected.append(line)
+            continue
+        if capture:
+            collected.append(line)
+
+    excerpt = "\n".join(collected).strip()
+    return _trim_text(excerpt or text, limit=limit)
 
 
 def _wiki_draft_content_from_memory(memory: MemoryNode) -> str:

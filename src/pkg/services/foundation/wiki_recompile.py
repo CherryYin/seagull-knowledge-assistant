@@ -14,6 +14,9 @@ from pkg.models.foundation.wiki import WikiPage, WikiPageMemory, WikiRecompileSu
 from pkg.services.foundation.memory_retriever import retrieve_for_wiki
 
 
+MIN_WIKI_RECOMPILE_SCORE = 3
+
+
 @dataclass
 class TriggerPayload:
     trigger_type: str
@@ -52,7 +55,7 @@ async def suggest_wiki_recompile_for_trigger(
     suggestions: list[WikiRecompileSuggestion] = []
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     for wiki, score, matched_terms in candidates:
-        if score <= 0:
+        if score < MIN_WIKI_RECOMPILE_SCORE:
             continue
         existing = await _get_existing_pending_suggestion(
             session,

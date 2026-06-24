@@ -1,12 +1,13 @@
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from time import perf_counter
 from typing import AsyncIterator
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.db import async_session
+from pkg.config import settings
 from pkg.models.system_job import SystemJob
 
 
@@ -146,3 +147,33 @@ async def mark_stale_running_jobs_failed(*, older_than_seconds: int = 300) -> in
         )
         await session.commit()
         return result.rowcount or 0
+
+
+async def cleanup_system_jobs(retention_days: int = settings.SYSTEM_JOB_RETENTION_DAYS) -> int:
+    cutoff_dt = _utc_now_naive() - timedelta(days=max(retention_days, 0))
+    terminal_statuses = ("completed", "failed")
+    async with async_session() as session:
+        result = await session.execute(
+            delete(SystemJob).where(
+                SystemJob.status.in_(terminal_statuses),
+                SystemJob.ended_at.is_not(None),
+                SystemJob.ended_at < cutoff_dt,
+            )
+        )
+        await session.commit()
+        return result.rowcount or 0
+
+
+async def get_last_terminal_job_run(job_type: str) -> datetime | None:
+    async with async_session() as session:
+        row = await session.execute(
+            select(SystemJob.ended_at)
+            .where(
+                SystemJob.job_type == job_type,
+                SystemJob.status.in_(("completed", "failed")),
+                SystemJob.ended_at.is_not(None),
+            )
+            .order_by(SystemJob.ended_at.desc())
+            .limit(1)
+        )
+        return row.scalar_one_or_none()

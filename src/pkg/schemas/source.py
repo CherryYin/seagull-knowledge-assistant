@@ -30,6 +30,7 @@ class SourceUpdate(BaseModel):
         pattern=r"^(pdf|article|conversation|video|web|github|code)$",
     )
     url: str | None = None
+    metadata: dict | None = None
 
 
 class SourceRead(BaseModel):

@@ -1,5 +1,6 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import logging
 
 from fastapi import HTTPException
 from sqlalchemy import func, select
@@ -10,11 +11,13 @@ from pkg.models.foundation.memory import MemoryNode
 from pkg.models.foundation.note import Note
 from pkg.models.foundation.source import Source
 from pkg.models.foundation.wiki import WikiPage
-from pkg.schemas.application.asset import AssetCreate, AssetUpdate
-from pkg.services.application.blog_generation import check_readiness
+from pkg.schemas.application.asset import AssetCreate, AssetUpdate, RecentNewsletterCreate
+from pkg.services.application.blog_generation import attach_references, check_readiness, generate_draft, generate_outline
 from pkg.services.application.production_memory import record_asset_production_event
 
 ALLOWED_ASSET_STATUSES = {"draft", "in_review", "ready_to_export", "exported", "published", "archived"}
+
+logger = logging.getLogger(__name__)
 
 
 def make_asset_id(title: str, explicit_id: str | None = None) -> str:
@@ -89,6 +92,68 @@ async def create_asset(session: AsyncSession, *, user_id: str, body: AssetCreate
     return asset
 
 
+async def create_recent_newsletter_asset(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    body: RecentNewsletterCreate,
+) -> Asset:
+    window_end = datetime.now(timezone.utc).replace(tzinfo=None)
+    window_start = window_end - timedelta(days=body.window_days)
+    rows = await session.execute(
+        select(Source)
+        .where(
+            Source.user_id == user_id,
+            Source.ingested_at >= window_start,
+            Source.ingested_at <= window_end,
+        )
+        .order_by(Source.ingested_at.desc())
+        .limit(body.max_sources)
+    )
+    sources = list(rows.scalars())
+    if not sources:
+        raise HTTPException(status_code=404, detail=f"No sources ingested in the past {body.window_days} days")
+
+    brief = body.brief or (
+        f"Write a newsletter issue based on sources ingested in the past {body.window_days} days. "
+        "Do not require manually selected notes. Use the author's point of view as the editorial frame, "
+        "choose the most important themes from the recent sources, and cite the attached source references."
+    )
+    metadata = {
+        "opinion_notes": body.opinion_notes,
+        "style_notes": body.style_notes or "",
+        "auto_source_window": {
+            "kind": "recent_sources",
+            "window_days": body.window_days,
+            "max_sources": body.max_sources,
+            "window_start": window_start.isoformat(),
+            "window_end": window_end.isoformat(),
+            "source_count": len(sources),
+        },
+    }
+    asset = await create_asset(
+        session,
+        user_id=user_id,
+        body=AssetCreate(
+            title=body.title,
+            brief=brief,
+            asset_type="newsletter_issue",
+            status=body.status,
+            source_refs=[source.id for source in sources],
+            note_refs=[],
+            opinion_notes=body.opinion_notes,
+            style_notes=body.style_notes,
+            metadata=metadata,
+        ),
+    )
+    asset.outline = await generate_outline(session, asset=asset)
+    asset.draft_content = await generate_draft(session, asset=asset)
+    asset.reference_notes = await attach_references(session, asset=asset)
+    await session.commit()
+    await session.refresh(asset)
+    return asset
+
+
 async def list_assets(session: AsyncSession, *, user_id: str, asset_type: str | None = None, status: str | None = None, limit: int = 50, offset: int = 0) -> tuple[list[Asset], int]:
     filters = [Asset.user_id == user_id]
     if asset_type:
@@ -104,6 +169,7 @@ async def get_asset(session: AsyncSession, *, user_id: str, asset_id: str) -> As
     row = await session.execute(select(Asset).where(Asset.id == asset_id, Asset.user_id == user_id))
     asset = row.scalar_one_or_none()
     if not asset:
+        logger.warning("Asset not found for user", extra={"asset_id": asset_id, "user_id": user_id})
         raise HTTPException(status_code=404, detail="Asset not found")
     metadata = dict(asset.metadata_ or {})
     setattr(asset, "opinion_notes", metadata.get("opinion_notes"))
@@ -215,6 +281,12 @@ async def update_asset(session: AsyncSession, *, user_id: str, asset_id: str, bo
     setattr(asset, "opinion_notes", metadata.get("opinion_notes"))
     setattr(asset, "style_notes", metadata.get("style_notes"))
     return asset
+
+
+async def delete_asset(session: AsyncSession, *, user_id: str, asset_id: str) -> None:
+    asset = await get_asset(session, user_id=user_id, asset_id=asset_id)
+    await session.delete(asset)
+    await session.commit()
 
 
 async def _inject_wiki_claims_metadata(

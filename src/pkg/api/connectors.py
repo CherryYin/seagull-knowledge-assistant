@@ -22,6 +22,7 @@ from pkg.services.foundation.connectors import (
     get_github_repo,
     import_arxiv_paper,
     import_github_repo,
+    NewsProviderError,
     ArxivRateLimitError,
     NewsRateLimitError,
     import_news_article,
@@ -190,6 +191,9 @@ async def search_news_connector(
         )
     except NewsRateLimitError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except NewsProviderError as exc:
+        status_code = 401 if exc.status_code == 401 else 502
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"News search failed: {exc}") from exc
     cached = await upsert_connector_search_items(session, user_id=user.id, provider="news", items=items)

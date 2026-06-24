@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Plus, StickyNote, Upload, ChevronDown, ChevronRight, FolderOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,9 +16,13 @@ const NOTE_TYPES = ["inbox", "architecture", "case-study", "concept", "how-to", 
 
 export function NotesPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
-  const [typeFilter, setTypeFilter] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState<number | null>(null);
+  const [typeFilter, setTypeFilter] = useState(searchParams.get("type") || "");
+  const [categoryFilter, setCategoryFilter] = useState<number | null>(() => {
+    const raw = searchParams.get("category");
+    return raw ? Number(raw) : null;
+  });
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<NoteCreate>({ title: "", category_id: 1, note_type: "inbox", content: "", domains: [], tags: [] });
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -69,6 +73,27 @@ export function NotesPage() {
       else next.add(name);
       return next;
     });
+  };
+
+  const noteDetailState = useMemo(() => ({
+    backTo: `/notes${searchParams.toString() ? `?${searchParams.toString()}` : ""}`,
+    backLabel: "Back to Notes",
+  }), [searchParams]);
+
+  const updateTypeFilter = (value: string) => {
+    setTypeFilter(value);
+    const next = new URLSearchParams(searchParams);
+    if (value) next.set("type", value);
+    else next.delete("type");
+    setSearchParams(next, { replace: true });
+  };
+
+  const updateCategoryFilter = (value: number | null) => {
+    setCategoryFilter(value);
+    const next = new URLSearchParams(searchParams);
+    if (value !== null) next.set("category", String(value));
+    else next.delete("category");
+    setSearchParams(next, { replace: true });
   };
 
   const createMutation = useMutation({
@@ -231,7 +256,7 @@ export function NotesPage() {
         {/* Category filter */}
         <div className="flex gap-2 mb-2 flex-wrap">
           <button
-            onClick={() => setCategoryFilter(null)}
+              onClick={() => updateCategoryFilter(null)}
             className={`px-3 py-1 rounded-md text-xs cursor-pointer transition-colors ${
               categoryFilter === null ? "bg-emerald-500/20 text-emerald-600 font-medium" : "text-muted-foreground hover:bg-accent"
             }`}
@@ -254,7 +279,7 @@ export function NotesPage() {
         {/* Type filter */}
         <div className="flex gap-2 mb-4 flex-wrap">
           <button
-            onClick={() => setTypeFilter("")}
+              onClick={() => updateTypeFilter("")}
             className={`px-3 py-1 rounded-md text-xs cursor-pointer transition-colors ${
               !typeFilter ? "bg-primary/20 text-primary font-medium" : "text-muted-foreground hover:bg-accent"
             }`}
@@ -264,7 +289,7 @@ export function NotesPage() {
           {NOTE_TYPES.map((t) => (
             <button
               key={t}
-              onClick={() => setTypeFilter(t)}
+              onClick={() => updateTypeFilter(t)}
               className={`px-3 py-1 rounded-md text-xs cursor-pointer transition-colors ${
                 typeFilter === t ? "bg-primary/20 text-primary font-medium" : "text-muted-foreground hover:bg-accent"
               }`}
@@ -306,7 +331,7 @@ export function NotesPage() {
                   {!isCollapsed && (
                     <div className="grid gap-3 md:grid-cols-2">
                       {group.notes.map((note) => (
-                        <NoteCard key={note.id} note={note} onClick={() => navigate(`/notes/${encodeURIComponent(note.id)}`)} />
+                        <NoteCard key={note.id} note={note} onClick={() => navigate(`/notes/${encodeURIComponent(note.id)}`, { state: noteDetailState })} />
                       ))}
                     </div>
                   )}
@@ -318,7 +343,7 @@ export function NotesPage() {
           /* Flat list (filtered by category or only one category) */
           <div className="grid gap-3 md:grid-cols-2">
             {data?.items.map((note) => (
-              <NoteCard key={note.id} note={note} onClick={() => navigate(`/notes/${encodeURIComponent(note.id)}`)} />
+              <NoteCard key={note.id} note={note} onClick={() => navigate(`/notes/${encodeURIComponent(note.id)}`, { state: noteDetailState })} />
             ))}
           </div>
         )}

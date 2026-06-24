@@ -6,6 +6,7 @@ import pytest
 from pkg.schemas.connector import ArxivPaper, GitHubRepo, NewsArticle
 from pkg.services.foundation.connectors import (
     ArxivRateLimitError,
+    NewsProviderError,
     NewsRateLimitError,
     _canonicalize_news_url,
     arxiv_source_id,
@@ -448,6 +449,35 @@ async def test_search_news_articles_raises_rate_limit(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_search_news_articles_raises_friendly_auth_error(monkeypatch):
+    class Response:
+        status_code = 401
+
+        def json(self):
+            return {"status": "error", "code": "apiKeyInvalid", "message": "Your API key is invalid or incorrect."}
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url, params):
+            return Response()
+
+    monkeypatch.setattr("pkg.services.foundation.connectors.httpx.AsyncClient", Client)
+
+    with pytest.raises(NewsProviderError, match="apiKeyInvalid") as exc_info:
+        await search_news_articles(query="claude")
+
+    assert exc_info.value.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_import_news_article_creates_article_source_with_news_metadata():
     mock_session = AsyncMock()
     mock_session.get.return_value = None
@@ -508,6 +538,28 @@ async def test_news_search_api_returns_cached_items(fake_user, mock_session, mon
 
     assert response.total == 1
     assert response.items[0].cache_status == "cached"
+
+
+@pytest.mark.asyncio
+async def test_news_search_api_returns_401_for_provider_auth_error(fake_user, mock_session, monkeypatch):
+    from fastapi import HTTPException
+    from pkg.api import connectors as connectors_api
+    from pkg.schemas.connector import NewsSearchRequest
+
+    async def fake_search_news_articles(**kwargs):
+        raise NewsProviderError("News provider error: apiKeyInvalid - Your API key is invalid or incorrect.", status_code=401, provider_code="apiKeyInvalid")
+
+    monkeypatch.setattr(connectors_api, "search_news_articles", fake_search_news_articles)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await connectors_api.search_news_connector(
+            NewsSearchRequest(query="claude", max_results=5),
+            user=fake_user,
+            session=mock_session,
+        )
+
+    assert exc_info.value.status_code == 401
+    assert "apiKeyInvalid" in str(exc_info.value.detail)
 
 
 @pytest.mark.asyncio

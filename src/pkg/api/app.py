@@ -1,8 +1,7 @@
-import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+import asyncio
 from pathlib import Path
 
 try:
@@ -107,153 +106,6 @@ async def _enforce_admin_init_password_if_needed() -> None:
     raise RuntimeError("ADMIN_INIT_PASSWORD must be set to a strong password of at least 12 characters before initializing the first admin")
 
 
-async def _daily_summarizer_loop():
-    """Run the temporary-notes summarizer once per day at ~02:00 UTC."""
-    from pkg.services.foundation.daily_summarizer import summarize_temporary_notes
-
-    while True:
-        now = datetime.now(timezone.utc)
-        next_run = now.replace(hour=2, minute=0, second=0, microsecond=0)
-        if next_run <= now:
-            next_run += timedelta(days=1)
-        delay = (next_run - now).total_seconds()
-        logger.info("Daily summarizer: next run in %.0f seconds (%s)", delay, next_run.isoformat())
-        await asyncio.sleep(delay)
-        try:
-            from pkg.services.cross_cutting.system_jobs import record_system_job
-
-            async with record_system_job(job_type="daily_summarizer", title="Daily summarizer"):
-                await summarize_temporary_notes()
-        except Exception:
-            logger.exception("Daily summarization failed")
-
-
-async def _user_profiler_loop():
-    """Run user profiling once per week (configurable day, 03:00 UTC)."""
-    from pkg.config import settings
-    from pkg.services.cross_cutting.user_profiler import profile_all_users
-
-    while True:
-        now = datetime.now(timezone.utc)
-        target_day = settings.PROFILE_UPDATE_DAY  # 0=Monday
-        days_ahead = (target_day - now.weekday()) % 7
-        if days_ahead == 0 and now.hour >= 3:
-            days_ahead = 7
-        next_run = (now + timedelta(days=days_ahead)).replace(hour=3, minute=0, second=0, microsecond=0)
-        delay = (next_run - now).total_seconds()
-        logger.info("User profiler: next run in %.0f seconds (%s)", delay, next_run.isoformat())
-        await asyncio.sleep(delay)
-        try:
-            from pkg.services.cross_cutting.system_jobs import record_system_job
-
-            async with record_system_job(job_type="user_profiler", title="Weekly user profiling"):
-                await profile_all_users()
-        except Exception:
-            logger.exception("User profiling failed")
-
-
-async def _rss_fetcher_loop():
-    """Fetch RSS feeds every RSS_FETCH_INTERVAL_HOURS (first run ~60s after startup)."""
-    from pkg.services.foundation.rss_fetcher import cleanup_old_rss_articles, fetch_all_feeds
-
-    await asyncio.sleep(60)
-    while True:
-        try:
-            from pkg.services.cross_cutting.system_jobs import record_system_job
-
-            async with record_system_job(job_type="rss_fetch", title="RSS fetch and cleanup") as job:
-                stats = await fetch_all_feeds()
-                deleted = await cleanup_old_rss_articles()
-                job.metadata_ = {"stats": stats, "deleted": deleted}
-            logger.info("RSS fetch complete: %s, cleaned %d old articles", stats, deleted)
-        except Exception:
-            logger.exception("RSS fetch loop failed")
-        await asyncio.sleep(settings.RSS_FETCH_INTERVAL_HOURS * 3600)
-
-
-async def _rss_summary_loop():
-    """Summarize RSS articles every RSS_SUMMARY_INTERVAL_HOURS (first run ~5min after startup)."""
-    from pkg.services.foundation.rss_summarizer import summarize_rss_by_topic
-
-    await asyncio.sleep(300)
-    while True:
-        try:
-            from pkg.services.cross_cutting.system_jobs import record_system_job
-
-            async with record_system_job(job_type="rss_summary", title="RSS topic summarization") as job:
-                note_ids = await summarize_rss_by_topic()
-                job.metadata_ = {"note_ids": note_ids, "created": len(note_ids)}
-            logger.info("RSS summary complete: created %d topic notes", len(note_ids))
-        except Exception:
-            logger.exception("RSS summary loop failed")
-        await asyncio.sleep(settings.RSS_SUMMARY_INTERVAL_HOURS * 3600)
-
-
-async def _connector_trends_loop():
-    """Collect arXiv/GitHub daily trends when explicitly enabled."""
-    from pkg.services.foundation.connector_trends import collect_daily_connector_trends
-
-    await asyncio.sleep(300)
-    while True:
-        try:
-            from pkg.services.cross_cutting.system_jobs import record_system_job
-
-            async with record_system_job(job_type="connector_trends", title="Connector trend discovery") as job:
-                stats = await collect_daily_connector_trends()
-                job.metadata_ = {"stats": stats}
-            logger.info("Connector trend discovery complete: %s", stats)
-        except Exception:
-            logger.exception("Connector trend discovery failed")
-        await asyncio.sleep(settings.CONNECTOR_TRENDS_INTERVAL_HOURS * 3600)
-
-
-async def _discovery_generate_loop():
-    """Generate personalized discovery items from existing connector/RSS/web inputs."""
-    from sqlalchemy import select
-
-    from pkg.db import async_session
-    from pkg.models.user import User
-    from pkg.services.foundation.discovery import generate_discovery_items
-    from pkg.services.cross_cutting.system_jobs import record_system_job
-
-    await asyncio.sleep(180)
-    while True:
-        try:
-            async with record_system_job(job_type="discovery_generate", title="Discovery item generation") as job:
-                async with async_session() as session:
-                    rows = await session.execute(select(User.id).where(User.is_active.is_(True)))
-                    user_ids = list(rows.scalars())
-                totals = {"users": len(user_ids), "created": 0, "updated": 0, "skipped": 0}
-                for user_id in user_ids:
-                    async with async_session() as session:
-                        created, updated, skipped = await generate_discovery_items(session, user_id=user_id, limit=100)
-                        totals["created"] += created
-                        totals["updated"] += updated
-                        totals["skipped"] += skipped
-                        logger.info("Discovery generated for user %s: created=%d updated=%d skipped=%d", user_id, created, updated, skipped)
-                job.metadata_ = totals
-        except Exception:
-            logger.exception("Discovery generation failed")
-        await asyncio.sleep(settings.DISCOVERY_GENERATE_INTERVAL_HOURS * 3600)
-
-
-async def _paper_discovery_loop():
-    from pkg.db import async_session
-    from pkg.services.foundation.paper_discovery_jobs import run_scheduled_paper_discovery_profiles
-    from pkg.services.cross_cutting.system_jobs import record_system_job
-
-    await asyncio.sleep(60)
-    while True:
-        try:
-            async with record_system_job(job_type="paper_discovery", title="Scheduled paper discovery") as job:
-                async with async_session() as session:
-                    stats = await run_scheduled_paper_discovery_profiles(session)
-                    job.metadata_ = stats
-        except Exception:
-            logger.exception("Scheduled paper discovery failed")
-        await asyncio.sleep(settings.PAPER_DISCOVERY_INTERVAL_HOURS * 3600)
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if not settings.JWT_SECRET_KEY or len(settings.JWT_SECRET_KEY) < 32:
@@ -278,30 +130,13 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Failed to recover stale running system jobs during startup")
 
-    background_tasks = [
-        asyncio.create_task(_daily_summarizer_loop()),
-        asyncio.create_task(_user_profiler_loop()),
-    ]
-    if settings.RSS_AUTO_FETCH_ENABLED:
-        background_tasks.append(asyncio.create_task(_rss_fetcher_loop()))
-    else:
-        logger.info("RSS auto-fetch loop disabled. Set RSS_AUTO_FETCH_ENABLED=true to enable it.")
-    if settings.RSS_AUTO_SUMMARY_ENABLED:
-        background_tasks.append(asyncio.create_task(_rss_summary_loop()))
-    else:
-        logger.info("RSS auto-summary loop disabled. Set RSS_AUTO_SUMMARY_ENABLED=true to enable it.")
-    if settings.CONNECTOR_TRENDS_AUTO_ENABLED:
-        background_tasks.append(asyncio.create_task(_connector_trends_loop()))
-    else:
-        logger.info("Connector trend discovery disabled. Set CONNECTOR_TRENDS_AUTO_ENABLED=true to enable it.")
-    if settings.DISCOVERY_AUTO_GENERATE_ENABLED:
-        background_tasks.append(asyncio.create_task(_discovery_generate_loop()))
-    else:
-        logger.info("Discovery auto-generation disabled. Set DISCOVERY_AUTO_GENERATE_ENABLED=true to enable it.")
-    if settings.PAPER_DISCOVERY_AUTO_ENABLED:
-        background_tasks.append(asyncio.create_task(_paper_discovery_loop()))
-    else:
-        logger.info("Paper discovery auto-run disabled. Set PAPER_DISCOVERY_AUTO_ENABLED=true to enable it.")
+    from pkg.services.cross_cutting.scheduler import get_scheduled_tasks, scheduled_pipeline_loop
+
+    for task in get_scheduled_tasks():
+        if not task.enabled:
+            logger.info("Scheduled task %s disabled.", task.name)
+
+    background_tasks = [asyncio.create_task(scheduled_pipeline_loop())]
     yield
     for background_task in background_tasks:
         background_task.cancel()

@@ -121,6 +121,13 @@ class WikiFromMemoryRequest(BaseModel):
     tags: list[str] = []
 
 
+class WikiUpdateDraftFromMemoryRequest(BaseModel):
+    wiki_id: str
+    memory_node_id: str
+    section: str = "Open Questions"
+    page_type: str = Field(default="topic", pattern=r"^(topic|entity|concept|project|comparison)$")
+
+
 class WikiRecompileSuggestionRead(BaseModel):
     model_config = {"from_attributes": True}
 
@@ -162,7 +169,7 @@ class WikiCloneDraftRequest(BaseModel):
 
 
 class WikiMiningRunCreate(BaseModel):
-    window_days: int = Field(default=7, ge=1, le=30)
+    window_days: int = Field(default=2, ge=1, le=30)
     max_new_items: int = Field(default=24, ge=1, le=100)
     max_related_items: int = Field(default=12, ge=1, le=50)
 
@@ -239,7 +246,7 @@ class WikiInsightCandidateStatusUpdate(BaseModel):
 
 
 class WikiArticleDraftStatusUpdate(BaseModel):
-    status: str = Field(pattern=r"^(candidate|draft|in_review|accepted|rejected|merged)$")
+    status: str = Field(pattern=r"^(candidate|draft|in_review|accepted|rejected|merged|applied)$")
     reviewer_note: str | None = None
     wiki_title: str | None = None
     page_type: str | None = Field(default=None, pattern=r"^(topic|entity|concept|project|comparison)$")

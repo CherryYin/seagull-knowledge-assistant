@@ -398,6 +398,64 @@ _VLM_SYSTEM_PROMPT = """\
 - 不要添加任何解释或总结，只输出原文内容"""
 
 
+def _extract_vlm_response_text(response) -> str:
+    if response is None:
+        return ""
+
+    choices = getattr(response, "choices", None) or []
+    if not choices:
+        return ""
+
+    first = choices[0]
+    message = getattr(first, "message", None)
+    if message is None and isinstance(first, dict):
+        message = first.get("message")
+    if message is None:
+        return ""
+
+    content = getattr(message, "content", None)
+    if content is None and isinstance(message, dict):
+        content = message.get("content")
+
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text = item.get("text") or item.get("content")
+                if isinstance(text, str):
+                    parts.append(text)
+            else:
+                text = getattr(item, "text", None) or getattr(item, "content", None)
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(part for part in parts if part).strip()
+
+    return ""
+
+
+def _summarize_vlm_response(response) -> str:
+    if response is None:
+        return "response=None"
+    choices = getattr(response, "choices", None)
+    if choices is None:
+        return f"type={type(response).__name__}, choices=None"
+    if not choices:
+        return f"type={type(response).__name__}, choices=0"
+    first = choices[0]
+    message = getattr(first, "message", None) if not isinstance(first, dict) else first.get("message")
+    content = getattr(message, "content", None) if not isinstance(message, dict) else (message or {}).get("content")
+    return (
+        f"type={type(response).__name__}, choices={len(choices)}, "
+        f"first_type={type(first).__name__}, message_type={type(message).__name__ if message is not None else 'None'}, "
+        f"content_type={type(content).__name__ if content is not None else 'None'}"
+    )
+
+
 async def _vlm_describe_page(
     client,
     model: str,
@@ -426,29 +484,30 @@ async def _vlm_describe_page(
                                 "role": "user",
                                 "content": [
                                     {
-                                        "type": "image_url",
-                                        "image_url": {"url": f"data:image/png;base64,{page_b64}"},
-                                    },
-                                    {
                                         "type": "text",
                                         "text": "请完整转录这一页的所有文字内容。",
+                                    },
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {"url": f"data:image/png;base64,{page_b64}"},
                                     },
                                 ],
                             },
                         ],
-                    ) if not getattr(client, "_minimax_vision_mode", False) else client.chat.completions.create(
-                        model=model,
-                        messages=[
-                            {"role": "system", "content": _VLM_SYSTEM_PROMPT},
-                            {
-                                "role": "user",
-                                "content": f"请完整转录这一页的所有文字内容。\n\n图片(data url): data:image/png;base64,{page_b64}",
-                            },
-                        ],
+                        thinking={"type": "adaptive"},
+                        max_completion_tokens=500,
                     ),
                     timeout=120,
                 )
-                text = response.choices[0].message.content or ""
+                logger.info(
+                    "[vlm] page %d/%d response summary: %s",
+                    page_num,
+                    total_pages,
+                    _summarize_vlm_response(response),
+                )
+                text = _extract_vlm_response_text(response)
+                if not text:
+                    raise ValueError("empty VLM response content")
                 counter["done"] += 1
                 done = counter["done"]
                 pct = int(100 * done / total_pages) if total_pages else 0
@@ -515,7 +574,12 @@ async def extract_content_vlm(
 
     # Create LLM client with MiniMax M3 first for VLM parsing
     client, model = create_async_client(provider_id="minimax", model_id=settings.MINIMAX_MODEL or "MiniMax-M3")
-    setattr(client, "_minimax_vision_mode", True)
+    logger.info(
+        "[vlm] using provider=%s model=%s request_format=%s",
+        "minimax",
+        model,
+        "official_chat_completions_multimodal",
+    )
 
     # Process pages in parallel with concurrency limit
     semaphore = asyncio.Semaphore(4)

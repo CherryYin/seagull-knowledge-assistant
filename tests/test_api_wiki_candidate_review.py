@@ -136,3 +136,63 @@ class TestWikiCandidateReviewAPI:
         assert result.article_id == 4
         assert result.status == "placeholder"
         assert result.note_title == "Candidate Article"
+
+    @pytest.mark.asyncio
+    async def test_mark_article_applied(self, mock_session, fake_user):
+        from pkg.api.wiki import update_wiki_article_draft_status
+        from pkg.schemas.wiki import WikiArticleDraftStatusUpdate
+
+        article = WikiArticleDraft(
+            id=5,
+            run_id=1,
+            user_id=fake_user.id,
+            title="Update Draft",
+            page_type="topic",
+            summary="summary",
+            content="content",
+            evidence_refs=[],
+            metadata_={"origin": "wiki_update_draft", "target_wiki_id": "wiki-1"},
+            status="draft",
+            reviewer_note=None,
+            created_at=datetime(2026, 6, 8, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 6, 8, tzinfo=timezone.utc),
+        )
+        mock_session.get.return_value = article
+        mock_session.refresh = AsyncMock(side_effect=lambda obj: None)
+
+        result = await update_wiki_article_draft_status(
+            5,
+            WikiArticleDraftStatusUpdate(status="applied", reviewer_note="copied into wiki"),
+            user=fake_user,
+            session=mock_session,
+        )
+
+        assert result.status == "applied"
+        assert result.reviewer_note == "copied into wiki"
+        mock_session.commit.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_delete_update_draft(self, mock_session, fake_user):
+        from pkg.api.wiki import delete_wiki_update_draft
+
+        article = WikiArticleDraft(
+            id=6,
+            run_id=1,
+            user_id=fake_user.id,
+            title="Update Draft",
+            page_type="topic",
+            summary="summary",
+            content="content",
+            evidence_refs=[],
+            metadata_={"origin": "wiki_update_draft", "target_wiki_id": "wiki-1"},
+            status="draft",
+            reviewer_note=None,
+            created_at=datetime(2026, 6, 8, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 6, 8, tzinfo=timezone.utc),
+        )
+        mock_session.get.return_value = article
+
+        await delete_wiki_update_draft(6, user=fake_user, session=mock_session)
+
+        mock_session.delete.assert_awaited_once_with(article)
+        mock_session.commit.assert_awaited()

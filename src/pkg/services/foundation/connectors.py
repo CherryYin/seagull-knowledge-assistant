@@ -37,6 +37,13 @@ class NewsRateLimitError(RuntimeError):
     pass
 
 
+class NewsProviderError(RuntimeError):
+    def __init__(self, message: str, *, status_code: int | None = None, provider_code: str | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.provider_code = provider_code
+
+
 async def _throttle_arxiv_request() -> None:
     global _last_arxiv_request_at
     min_interval = max(float(settings.ARXIV_MIN_REQUEST_INTERVAL_SECONDS), 0.0)
@@ -454,6 +461,29 @@ def _canonicalize_news_url(url: str) -> str:
     return urlunsplit(normalized)
 
 
+def _parse_newsapi_error(response: httpx.Response) -> NewsProviderError:
+    message = f"News provider request failed with HTTP {response.status_code}."
+    provider_code: str | None = None
+    try:
+        payload = response.json()
+    except Exception:
+        payload = {}
+    if isinstance(payload, dict):
+        provider_code = str(payload.get("code") or "").strip() or None
+        provider_message = str(payload.get("message") or "").strip()
+        status = str(payload.get("status") or "").strip()
+        parts = []
+        if provider_code:
+            parts.append(provider_code)
+        if provider_message:
+            parts.append(provider_message)
+        if parts:
+            message = "News provider error: " + " - ".join(parts)
+        elif status:
+            message = f"News provider error: {status}"
+    return NewsProviderError(message, status_code=response.status_code, provider_code=provider_code)
+
+
 def parse_newsapi_article(item: dict, *, query: str | None = None, language: str | None = None, country: str | None = None) -> NewsArticle:
     source = item.get("source") or {}
     return NewsArticle(
@@ -493,8 +523,10 @@ async def search_news_articles(*, query: str, language: str | None = None, count
     async with httpx.AsyncClient(timeout=settings.NEWS_FETCH_TIMEOUT, headers=_news_headers()) as client:
         response = await client.get(f"{base_url}{NEWSAPI_EVERYTHING_PATH}", params=params)
         if response.status_code == 429:
-            raise NewsRateLimitError("News provider rate limit exceeded; please retry later.")
-        response.raise_for_status()
+            error = _parse_newsapi_error(response)
+            raise NewsRateLimitError(str(error))
+        if response.status_code >= 400:
+            raise _parse_newsapi_error(response)
     payload = response.json()
     articles = payload.get("articles") or []
     return [parse_newsapi_article(item, query=query, language=language, country=country) for item in articles if item.get("title") and item.get("url")]

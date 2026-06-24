@@ -38,6 +38,7 @@ export const reviewNavItems: SectionNavItem[] = [
 	{ label: "Review", to: "/review" },
 	{ label: "Digest", to: "/review/digest" },
 	{ label: "Wiki Review", to: "/review/wiki-suggestions" },
+	{ label: "Wiki Discovery", to: "/wiki/discovery" },
 	{ label: "Suggestions", to: "/review/suggestions" },
 ];
 

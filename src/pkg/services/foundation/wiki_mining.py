@@ -11,6 +11,10 @@ from pkg.models.foundation.memory import MemoryNode
 from pkg.models.foundation.note import Note
 from pkg.models.foundation.source import Source
 from pkg.models.foundation.wiki import WikiArticleDraft, WikiInsightCandidate, WikiMiningRun, WikiPage
+from pkg.services.foundation.wiki_concept_discovery import (
+    KnowledgeEntityCandidate,
+    discover_knowledge_entities,
+)
 from pkg.services.foundation.wiki_templates import build_wiki_template
 
 InsightType = Literal["new_insight", "connection", "contradiction", "open_question"]
@@ -73,7 +77,7 @@ async def run_wiki_mining(
     session: AsyncSession,
     *,
     user_id: str,
-    window_days: int = 7,
+    window_days: int = 2,
     max_new_items: int = 24,
     max_related_items: int = 12,
 ) -> WikiMiningResult:
@@ -95,8 +99,19 @@ async def run_wiki_mining(
         limit=max_related_items,
     )
 
+    concept_candidates = await discover_knowledge_entities(
+        session,
+        user_id=user_id,
+        records=new_records + related_records,
+    )
     mined_insights = _mine_insights(new_records, related_records)
+    mined_insights.extend(_concept_to_insight(candidate) for candidate in concept_candidates)
     mined_articles = _draft_articles(mined_insights, new_records, related_records)
+    mined_articles.extend(
+        _concept_to_article(candidate)
+        for candidate in concept_candidates
+        if candidate.should_create_article
+    )
 
     run = WikiMiningRun(
         user_id=user_id,
@@ -117,6 +132,12 @@ async def run_wiki_mining(
             "input_refs": {
                 "new": [_record_ref(record) for record in new_records],
                 "related": [_record_ref(record) for record in related_records],
+            },
+            "concept_discovery": {
+                "enabled": True,
+                "candidate_count": len(concept_candidates),
+                "article_draft_count": sum(1 for candidate in concept_candidates if candidate.should_create_article),
+                "llm_refinement_used": any(candidate.signals.get("llm_refined") for candidate in concept_candidates),
             },
         },
     )
@@ -454,6 +475,85 @@ def _draft_articles(
             },
         )
     ]
+
+
+def _concept_to_insight(candidate: KnowledgeEntityCandidate) -> MiningInsight:
+    return MiningInsight(
+        insight_type="connection" if candidate.signals.get("layer_count", 0) >= 2 else "new_insight",
+        title=f"{candidate.display_name} is a discovered concept",
+        summary=(
+            f"{candidate.display_name} appears as a reusable {candidate.entity_type} across "
+            f"{candidate.signals.get('unique_record_count', 0)} records and is recommended for "
+            f"{candidate.recommendation.replace('_', ' ')}."
+        ),
+        evidence_refs=candidate.evidence_refs,
+        metadata={
+            "origin": "wiki_concept_discovery",
+            "candidate_kind": "knowledge_entity",
+            "canonical_name": candidate.canonical_name,
+            "display_name": candidate.display_name,
+            "entity_type": candidate.entity_type,
+            "definition": candidate.definition,
+            "aliases": candidate.aliases,
+            "signals": candidate.signals,
+            "recommendation": candidate.recommendation,
+            "related_wiki_ids": candidate.related_wiki_ids,
+            "related_memory_ids": candidate.related_memory_ids,
+            "record_refs": candidate.record_refs,
+            "claims": _build_claims_for_insight(
+                title=f"{candidate.display_name} is a discovered concept",
+                summary=candidate.definition,
+                evidence_refs=candidate.evidence_refs,
+            ),
+        },
+    )
+
+
+def _concept_to_article(candidate: KnowledgeEntityCandidate) -> MiningArticle:
+    title = candidate.display_name
+    sections = [line for line in build_wiki_template(title, "concept").split("\n")]
+    sections.extend(
+        [
+            "",
+            "## Discovery Summary",
+            candidate.definition,
+            "",
+            "## Evidence",
+        ]
+    )
+    for ref in candidate.evidence_refs[:5]:
+        sections.append(f"- {ref.get('ref_type')}: {ref.get('title')} — {ref.get('excerpt', '')}")
+    sections.extend(
+        [
+            "",
+            "## Aliases",
+            *[f"- {alias}" for alias in candidate.aliases[:8]],
+            "",
+            "## Review Notes",
+            "- Confirm the definition and decide whether this should remain a concept page or be merged into a broader topic wiki.",
+        ]
+    )
+    return MiningArticle(
+        title=title,
+        summary=candidate.definition,
+        content="\n".join(sections),
+        page_type="concept",
+        evidence_refs=candidate.evidence_refs,
+        metadata={
+            "origin": "wiki_concept_discovery",
+            "candidate_kind": "knowledge_entity",
+            "canonical_name": candidate.canonical_name,
+            "display_name": candidate.display_name,
+            "entity_type": candidate.entity_type,
+            "aliases": candidate.aliases,
+            "signals": candidate.signals,
+            "recommendation": candidate.recommendation,
+            "related_wiki_ids": candidate.related_wiki_ids,
+            "related_memory_ids": candidate.related_memory_ids,
+            "source_candidate_refs": candidate.record_refs,
+        },
+        status="candidate",
+    )
 
 
 def _build_claims_for_insight(*, title: str, summary: str, evidence_refs: list[dict]) -> list[dict]:

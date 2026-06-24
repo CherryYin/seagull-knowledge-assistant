@@ -16,10 +16,11 @@ from pkg.schemas.application.asset import (
     AttachReferencesRequest,
     GenerateDraftRequest,
     GenerateOutlineRequest,
+    RecentNewsletterCreate,
     ReadinessCheckResult,
 )
 from pkg.schemas.note import NoteCreate
-from pkg.services.application.assets import create_asset, get_asset, list_assets, update_asset
+from pkg.services.application.assets import create_asset, create_recent_newsletter_asset, delete_asset, get_asset, list_assets, update_asset
 from pkg.services.application.blog_generation import (
     attach_references,
     check_readiness,
@@ -38,7 +39,47 @@ async def create_asset_route(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    return await create_asset(session, user_id=user.id, body=body)
+    if (
+        body.asset_type == "newsletter_issue"
+        and not body.source_refs
+        and not body.note_refs
+        and not body.memory_refs
+        and not body.wiki_refs
+        and body.opinion_notes
+    ):
+        return await create_recent_newsletter_asset(
+            session,
+            user_id=user.id,
+            body=RecentNewsletterCreate(
+                title=body.title,
+                brief=body.brief,
+                opinion_notes=body.opinion_notes,
+                style_notes=body.style_notes,
+                status=body.status,
+            ),
+        )
+    asset = await create_asset(session, user_id=user.id, body=body)
+    if body.asset_type == "research_brief":
+        asset = await update_asset(
+            session,
+            user_id=user.id,
+            asset_id=asset.id,
+            body=AssetUpdate(
+                outline=await generate_outline(session, asset=asset),
+                draft_content=await generate_draft(session, asset=asset),
+                reference_notes=await attach_references(session, asset=asset),
+            ),
+        )
+    return asset
+
+
+@router.post("/newsletter/recent-sources", response_model=AssetRead)
+async def create_recent_newsletter_route(
+    body: RecentNewsletterCreate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await create_recent_newsletter_asset(session, user_id=user.id, body=body)
 
 
 @router.get("", response_model=AssetList)
@@ -71,6 +112,15 @@ async def update_asset_route(
     session: AsyncSession = Depends(get_session),
 ):
     return await update_asset(session, user_id=user.id, asset_id=asset_id, body=body)
+
+
+@router.delete("/{asset_id}", status_code=204)
+async def delete_asset_route(
+    asset_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await delete_asset(session, user_id=user.id, asset_id=asset_id)
 
 
 @router.post("/{asset_id}/generate-outline", response_model=AssetRead)

@@ -54,11 +54,13 @@ class TestWikiMiningAPI:
         )
         mock_run.return_value = type("MiningResult", (), {"run": run, "insights": [insight], "articles": [article]})()
 
-        result = await create_wiki_mining_run(WikiMiningRunCreate(window_days=7), user=fake_user, session=mock_session)
+        result = await create_wiki_mining_run(WikiMiningRunCreate(window_days=2), user=fake_user, session=mock_session)
 
         assert result.run.id == 1
         assert result.insights[0].evidence_refs[0].ref_id == "src-1"
         assert result.articles[0].status == "candidate"
+        mock_run.assert_awaited_once()
+        assert mock_run.await_args.kwargs["window_days"] == 2
 
     @pytest.mark.asyncio
     async def test_get_run_not_found(self, mock_session, fake_user):

@@ -314,6 +314,13 @@ def _fallback_draft(asset: Asset) -> str:
         )
     else:
         sections.extend(["", "## Draft", "", "Expand this draft with source-backed evidence."])
+    sections.extend(
+        [
+            "",
+            "## References",
+            asset.reference_notes.strip() if asset.reference_notes else "Attach references to ground this draft in source material.",
+        ]
+    )
     return "\n".join(sections)
 
 

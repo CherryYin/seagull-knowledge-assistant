@@ -47,6 +47,100 @@ async def test_create_asset_route_delegates_to_service():
 
 
 @pytest.mark.asyncio
+async def test_create_recent_newsletter_route_delegates_to_service():
+    from pkg.api.assets import create_recent_newsletter_route
+    from pkg.schemas.application.asset import RecentNewsletterCreate
+
+    fake_user = MagicMock()
+    fake_user.id = "user-1"
+    session = AsyncMock()
+    created = _make_asset("asset-newsletter", fake_user.id)
+    created.asset_type = "newsletter_issue"
+
+    with patch("pkg.api.assets.create_recent_newsletter_asset", new=AsyncMock(return_value=created)) as mock_create:
+        result = await create_recent_newsletter_route(
+            RecentNewsletterCreate(title="Daily newsletter", opinion_notes="My take", window_days=2),
+            user=fake_user,
+            session=session,
+        )
+
+    assert result.id == "asset-newsletter"
+    mock_create.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_create_asset_route_auto_creates_recent_newsletter_without_manual_refs():
+    from pkg.api.assets import create_asset_route
+    from pkg.schemas.application.asset import AssetCreate
+
+    fake_user = MagicMock()
+    fake_user.id = "user-1"
+    session = AsyncMock()
+    created = _make_asset("asset-newsletter", fake_user.id)
+    created.asset_type = "newsletter_issue"
+
+    with patch("pkg.api.assets.create_recent_newsletter_asset", new=AsyncMock(return_value=created)) as mock_create:
+        result = await create_asset_route(
+            AssetCreate(
+                asset_type="newsletter_issue",
+                title="Daily newsletter",
+                opinion_notes="My take",
+            ),
+            user=fake_user,
+            session=session,
+        )
+
+    assert result.id == "asset-newsletter"
+    mock_create.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_create_asset_route_auto_generates_research_brief_content():
+    from pkg.api.assets import create_asset_route
+    from pkg.schemas.application.asset import AssetCreate
+
+    fake_user = MagicMock()
+    fake_user.id = "user-1"
+    session = AsyncMock()
+    created = _make_asset("asset-brief", fake_user.id)
+    created.asset_type = "research_brief"
+    created.source_refs = ["src-1"]
+    created.note_refs = ["note-1"]
+
+    updated = _make_asset("asset-brief", fake_user.id)
+    updated.asset_type = "research_brief"
+    updated.outline = "# Outline"
+    updated.draft_content = "# Draft"
+    updated.reference_notes = "# References"
+
+    with (
+        patch("pkg.api.assets.create_asset", new=AsyncMock(return_value=created)) as mock_create,
+        patch("pkg.api.assets.generate_outline", new=AsyncMock(return_value="# Outline")) as mock_outline,
+        patch("pkg.api.assets.generate_draft", new=AsyncMock(return_value="# Draft")) as mock_draft,
+        patch("pkg.api.assets.attach_references", new=AsyncMock(return_value="# References")) as mock_refs,
+        patch("pkg.api.assets.update_asset", new=AsyncMock(return_value=updated)) as mock_update,
+    ):
+        result = await create_asset_route(
+            AssetCreate(
+                asset_type="research_brief",
+                title="Daily brief",
+                opinion_notes="My take",
+                source_refs=["src-1"],
+                note_refs=["note-1"],
+            ),
+            user=fake_user,
+            session=session,
+        )
+
+    assert result.id == "asset-brief"
+    mock_create.assert_awaited_once()
+    mock_outline.assert_awaited_once()
+    mock_draft.assert_awaited_once()
+    mock_refs.assert_awaited_once()
+    mock_update.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_list_assets_route_returns_items_and_total():
     from pkg.api.assets import list_assets_route
 
@@ -136,6 +230,37 @@ async def test_update_asset_route_accepts_title_and_editor_fields():
 
     assert result.title == "Updated title"
     mock_update.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_delete_asset_route_delegates_to_service():
+    from pkg.api.assets import delete_asset_route
+
+    fake_user = MagicMock()
+    fake_user.id = "user-1"
+    session = AsyncMock()
+
+    with patch("pkg.api.assets.delete_asset", new=AsyncMock()) as mock_delete:
+        result = await delete_asset_route("asset-1", user=fake_user, session=session)
+
+    assert result is None
+    mock_delete.assert_awaited_once_with(session, user_id="user-1", asset_id="asset-1")
+
+
+@pytest.mark.asyncio
+async def test_delete_asset_service_deletes_owned_asset():
+    from pkg.services.application.assets import delete_asset
+
+    session = AsyncMock()
+    asset = _make_asset("asset-1", "user-1")
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = asset
+    session.execute.return_value = mock_result
+
+    await delete_asset(session, user_id="user-1", asset_id="asset-1")
+
+    session.delete.assert_awaited_once_with(asset)
+    session.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio

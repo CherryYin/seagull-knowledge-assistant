@@ -4,8 +4,9 @@ import pytest
 from fastapi import HTTPException
 
 from pkg.models.application.asset import Asset
-from pkg.schemas.application.asset import AssetCreate, AssetUpdate
-from pkg.services.application.assets import create_asset, update_asset
+from pkg.models.foundation.source import Source
+from pkg.schemas.application.asset import AssetCreate, AssetUpdate, RecentNewsletterCreate
+from pkg.services.application.assets import create_asset, create_recent_newsletter_asset, update_asset
 
 
 class _ScalarResult:
@@ -77,6 +78,86 @@ async def test_create_asset_raises_when_source_ref_missing():
 
     assert exc.value.status_code == 404
     assert "Unknown source refs" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_create_recent_newsletter_asset_uses_recent_sources(monkeypatch):
+    session = AsyncMock()
+    session.add = MagicMock()
+    source = Source(
+        id="src-recent-1",
+        user_id="user-1",
+        is_shared=False,
+        category_id=1,
+        title="Recent source",
+        source_type="web",
+        url="https://example.com/recent",
+        content_hash=None,
+        raw_content="Recent article content",
+        file_path=None,
+        metadata_={},
+    )
+    source_rows = MagicMock()
+    source_rows.scalars.return_value = [source]
+    session.execute.side_effect = [source_rows, _ScalarResult(["src-recent-1"])]
+
+    async def _fake_record(*args, **kwargs):
+        return None
+
+    async def _fake_outline(*args, **kwargs):
+        return "# Recent source newsletter\n\n## Issue Overview"
+
+    async def _fake_draft(*args, **kwargs):
+        return "# Recent source newsletter\n\n## Featured Items\n\n- Recent source"
+
+    async def _fake_references(*args, **kwargs):
+        return "## Source References\n- Source: Recent source (src-recent-1)"
+
+    monkeypatch.setattr("pkg.services.application.assets.record_asset_production_event", _fake_record)
+    monkeypatch.setattr("pkg.services.application.assets.generate_outline", _fake_outline)
+    monkeypatch.setattr("pkg.services.application.assets.generate_draft", _fake_draft)
+    monkeypatch.setattr("pkg.services.application.assets.attach_references", _fake_references)
+
+    asset = await create_recent_newsletter_asset(
+        session,
+        user_id="user-1",
+        body=RecentNewsletterCreate(
+            title="Recent source newsletter",
+            opinion_notes="My editorial take",
+            style_notes="Concise and sharp",
+            window_days=2,
+            max_sources=10,
+        ),
+    )
+
+    assert asset.asset_type == "newsletter_issue"
+    assert asset.source_refs == ["src-recent-1"]
+    assert asset.note_refs == []
+    assert asset.outline.startswith("# Recent source newsletter")
+    assert "Featured Items" in asset.draft_content
+    assert "Source References" in asset.reference_notes
+    assert asset.metadata_["opinion_notes"] == "My editorial take"
+    assert asset.metadata_["auto_source_window"]["window_days"] == 2
+    session.add.assert_called_once()
+    assert session.commit.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_create_recent_newsletter_asset_raises_without_recent_sources():
+    session = AsyncMock()
+    source_rows = MagicMock()
+    source_rows.scalars.return_value = []
+    session.execute.return_value = source_rows
+
+    with pytest.raises(HTTPException) as exc:
+        await create_recent_newsletter_asset(
+            session,
+            user_id="user-1",
+            body=RecentNewsletterCreate(title="Recent source newsletter", opinion_notes="My take"),
+        )
+
+    assert exc.value.status_code == 404
+    assert "No sources ingested" in exc.value.detail
 
 
 @pytest.mark.asyncio

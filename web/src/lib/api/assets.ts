@@ -47,6 +47,16 @@ export interface AssetCreate {
   metadata?: Record<string, unknown>;
 }
 
+export interface RecentNewsletterCreate {
+  title: string;
+  opinion_notes: string;
+  style_notes?: string;
+  brief?: string;
+  window_days?: number;
+  max_sources?: number;
+  status?: AssetStatus;
+}
+
 export interface AssetUpdate {
   title?: string;
   brief?: string;
@@ -101,7 +111,9 @@ export const assetsApi = {
   },
   get: (id: string) => request<Asset>(`/assets/${encodeURIComponent(id)}`),
   create: (body: AssetCreate) => request<Asset>("/assets", { method: "POST", body: JSON.stringify(body) }),
+  createRecentNewsletter: (body: RecentNewsletterCreate) => request<Asset>("/assets/newsletter/recent-sources", { method: "POST", body: JSON.stringify(body) }),
   update: (id: string, body: AssetUpdate) => request<Asset>(`/assets/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(body) }),
+  delete: (id: string) => request<void>(`/assets/${encodeURIComponent(id)}`, { method: "DELETE" }),
   generateOutline: (id: string, regenerate = false) => request<Asset>(`/assets/${encodeURIComponent(id)}/generate-outline`, { method: "POST", body: JSON.stringify({ regenerate }) }),
   generateDraft: (id: string, regenerate = false) => request<Asset>(`/assets/${encodeURIComponent(id)}/generate-draft`, { method: "POST", body: JSON.stringify({ regenerate }) }),
   attachReferences: (id: string, include_reference_notes = true) => request<Asset>(`/assets/${encodeURIComponent(id)}/attach-references`, { method: "POST", body: JSON.stringify({ include_reference_notes }) }),

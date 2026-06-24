@@ -20,6 +20,16 @@ class AssetCreate(BaseModel):
     metadata: dict | None = None
 
 
+class RecentNewsletterCreate(BaseModel):
+    title: str
+    opinion_notes: str
+    style_notes: str | None = None
+    brief: str | None = None
+    window_days: int = Field(default=2, ge=1, le=14)
+    max_sources: int = Field(default=12, ge=1, le=50)
+    status: str = Field(default="draft", pattern=ASSET_STATUS_PATTERN)
+
+
 class AssetUpdate(BaseModel):
     title: str | None = None
     brief: str | None = None

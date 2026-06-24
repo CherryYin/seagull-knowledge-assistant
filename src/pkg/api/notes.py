@@ -46,6 +46,7 @@ def apply_digest_retention(note: Note, *, now: datetime | None = None) -> None:
 
 async def delete_expired_digest_notes(session: AsyncSession, *, user_id: str, now: datetime | None = None) -> None:
     now = now or datetime.now(timezone.utc)
+    storage = get_storage_service()
     rows = await session.execute(
         select(Note).where(
             Note.user_id == user_id,
@@ -57,6 +58,12 @@ async def delete_expired_digest_notes(session: AsyncSession, *, user_id: str, no
     )
     expired = list(rows.scalars())
     for note in expired:
+        file_path = (note.file_path or "").strip()
+        if file_path.startswith("minio://"):
+            try:
+                await storage.delete_object(file_path)
+            except Exception:
+                logger.warning("Failed to delete digest note object during expiry cleanup", extra={"note_id": note.id})
         emb = await session.get(NoteEmbedding, note.id)
         if emb:
             await session.delete(emb)

@@ -114,6 +114,23 @@ class StorageService:
     async def get_object(self, storage_uri: str) -> bytes:
         return await asyncio.to_thread(self._get_object_sync, storage_uri)
 
+    def _list_object_uris_sync(self, prefix: str | None = None) -> list[str]:
+        self._ensure_bucket()
+        paginator = self.client.get_paginator("list_objects_v2")
+        params = {"Bucket": self.bucket}
+        if prefix:
+            params["Prefix"] = prefix
+        uris: list[str] = []
+        for page in paginator.paginate(**params):
+            for item in page.get("Contents", []):
+                key = item.get("Key")
+                if key:
+                    uris.append(self.to_storage_uri(key))
+        return uris
+
+    async def list_object_uris(self, prefix: str | None = None) -> list[str]:
+        return await asyncio.to_thread(self._list_object_uris_sync, prefix)
+
 
 @lru_cache(maxsize=1)
 def get_storage_service() -> StorageService:
