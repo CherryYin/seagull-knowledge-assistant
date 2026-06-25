@@ -5,76 +5,116 @@
 <h1 align="center">Seagull — Personal Knowledge Graph</h1>
 
 <p align="center">
-  三层架构的个人知识挖掘系统，将 Markdown 笔记、PDF 文档、网页等原始资料转化为可搜索、可对话的智能知识库。
+  一个面向个人研究与知识运营的知识图谱工作台，把 Markdown、PDF、网页、RSS、GitHub、arXiv 和新闻等资料转成可搜索、可追踪、可编排的知识资产。
 </p>
 
 <p align="center">
   <a href="README.md">中文</a> | <a href="README.en.md">English</a>
 </p>
 
-## 架构概览
+## 项目定位
 
-```
-L1 Sources (原始资料)  →  L2 Notes (结构化笔记)  →  L3 Insights (洞察) [planned]
-         ↓                        ↓
-   向量嵌入 + 分块嵌入         向量嵌入 + 结构化元数据
-   + 全文索引                  + 全文索引
-         ↓                        ↓
-              ┌─────────────────────┐
-              │   Retriever Agent   │  (确定性检索: SQL / 向量 / 混合)
-              └─────────┬───────────┘
-                        ↓
-              ┌─────────────────────┐
-              │    Action Agent     │  (模型驱动: Strands Agent + LLM)
-              │   9 个内置工具       │
-              │   + 动态加载 Skills  │
-              └─────────────────────┘
-```
+Seagull 不是单纯的“资料库”或“聊天工具”，而是一个把原始信息持续沉淀为长期知识资产的系统：
 
-- **Retriever Agent** — 确定性检索层，支持 SQL 过滤、向量语义搜索和混合检索
-- **Action Agent** — 基于 Strands Agents 的 LLM Agent，自主调用知识库工具完成复杂任务
+- `Sources`：原始资料，来自本地文件、网页、RSS、GitHub、arXiv、新闻等
+- `Notes`：基于资料整理出的结构化笔记
+- `Memory`：可持续组织的记忆节点与关系
+- `Wiki`：围绕主题持续编译的知识页与更新草稿
+- `Assets`：面向输出的内容资产，例如 digest、博客草稿、可下载文档
+- `Agent Workflows`：围绕总结、整理、研究、刷新 wiki 的半自动工作流
 
-## 核心特性
+系统目标是：**确定性检索 + LLM 驱动工作流 + 可持续积累的个人知识图谱**。
 
-- **多格式文档摄入** — 支持 PDF、DOCX、PPTX、XLSX、HTML、图片，自动 OCR 识别扫描件（Tesseract / RapidOCR）
-- **智能分块与嵌入** — 长文档自动分块（512 字符，64 字符重叠），每个块独立嵌入，支持细粒度语义检索
-- **三模式搜索** — 向量语义搜索、SQL 结构化过滤、混合检索，自动选择最优模式
-- **AI Agent 对话** — 支持多轮对话，Agent 可自主搜索知识库、读取文档、处理文件、搜索互联网
-- **Web 搜索** — 集成 Tavily API，Agent 可实时检索互联网信息
-- **Skills 系统** — 可复用的 prompt 模板（20+ 内置 skill），支持自定义 Python 工具扩展
-- **文件存储** — MinIO / S3 兼容对象存储，支持文件上传和预签名 URL 下载
-- **多轮会话持久化** — 对话历史存储在数据库中，支持会话管理和历史回放
-- **Agent Profile** — 用户可创建多个 Agent 配置（自定义指令、模型选择、工具/技能白名单、temperature），在对话中自由切换
+## 当前核心能力
+
+### 1. 多来源知识摄入
+
+- 导入 Markdown、PDF、DOCX、PPTX、XLSX、HTML、图片等文件
+- 直接创建网页型 `source`，当正文留空时自动抓取并抽取可读内容
+- 将博客索引页或站点目录作为 `web directory` 导入，自动发现并创建子文章来源
+- 搜索并导入 GitHub 仓库、arXiv 论文、新闻结果
+- 拉取 RSS 订阅并生成摘要
+
+### 2. 检索与知识组织
+
+- SQL 过滤、向量检索、混合检索
+- 文档分块、嵌入与细粒度语义召回
+- Notes、Sources、Memory、Wiki 之间可交叉引用
+- Memory Tree 维护主题、实体、关系与用户偏好
+- Review Suggestions 帮助识别值得回顾和整理的知识项
+- Discover / Paper Discovery 帮助发现外部候选资料
+
+### 3. Agent 与工作流
+
+- 内置 Action Agent，支持普通响应和流式响应
+- Agent 可搜索知识、读取资料、创建记忆、处理文档、调用网页搜索
+- 支持 Agent Profiles：模型、提示词、工具白名单、技能白名单、温度等可配置
+- 支持 Skills 体系，复用提示模板和任务说明
+- 支持持久化 Chat Sessions 与 Agent Run 日志
+- 前端提供预设工作流，用于来源总结、最近导入整理、专题研究、Wiki 刷新草稿等
+
+### 4. Wiki / 资产 / 调度能力
+
+- Wiki 页面创建、更新、克隆草稿、编译、关联 sources / memories
+- Wiki mining：从近期知识材料中挖掘概念、证据和候选文章草稿
+- Wiki suggestions：为已有 wiki 提供增量更新建议
+- Assets：生成内容资产并提供下载/详情页
+- Digest / Blog generation：基于时间窗口内资料与用户视角生成输出草稿
+- System Jobs：观察后台任务、失败信息和运行状态
+- 定时任务：支持 RSS 抓取、连接器趋势、发现流程、清理与维护任务
+- 定时新闻抓取：可按固定关键词每日搜索过去 24 小时新闻，并按语言批量导入为 news sources
+
+## 典型使用流程
+
+1. 导入资料：上传文件、保存网页、订阅 RSS、搜索导入 GitHub/arXiv/新闻
+2. 检索与整理：通过 Search、Notes、Memory Tree、Review 页面进行初步归档
+3. 让 Agent 工作：在 Chat 或 Agent Workspace 中调用知识和工具完成总结、研究、转换
+4. 沉淀主题知识：把候选概念与资料编译成 Wiki 页面与更新草稿
+5. 对外输出：生成 Digest、博客草稿、导出文档等资产
+
+## 主要页面
+
+前端当前包含这些核心页面：
+
+- `Sources` / `Source Detail`：资料管理与查看
+- `Notes` / `Note Detail`：笔记整理与导出
+- `Search`：统一检索入口
+- `Chat` / `Agent Workspace`：Agent 对话与工作流入口
+- `Memory Tree`：长期记忆结构
+- `Discover` / `Review` / `Paper Discovery`：发现与回顾
+- `Wiki` / `Wiki Discovery` / `Wiki Suggestions` / `Wiki Rules`：Wiki 编译与挖掘
+- `Assets` / `Digest` / `Writing`：知识资产与输出页
+- `System Jobs`：后台任务观测
+- `Settings` / `User Profile` / `Admin Users`：配置与管理
 
 ## 技术栈
 
 | 层 | 技术 |
 |---|---|
 | 后端框架 | FastAPI + Uvicorn |
-| 数据库 | PostgreSQL 16 + pgvector (HNSW 索引) |
+| 数据库 | PostgreSQL + pgvector |
 | ORM | SQLAlchemy 2.0 (async) + Alembic |
-| 嵌入模型 | Qwen `text-embedding-v4` (1024 维) |
-| LLM | Azure OpenAI / 通义千问 (可切换) |
+| 检索 | SQL 过滤 + Embedding + Hybrid Retrieval |
+| LLM / Embedding | OpenAI-compatible providers, Azure OpenAI, Qwen, MiniMax 等 |
 | Agent 框架 | Strands Agents |
-| 文档解析 | Docling (PDF/DOCX/PPTX/XLSX) + Tesseract OCR |
-| Web 搜索 | Tavily API |
-| 文件存储 | MinIO (S3 兼容) |
-| CLI | Typer + Rich |
-| 前端 | React 19 + TypeScript + Tailwind CSS 4 + Vite |
+| 文档解析 | Docling + OCR（RapidOCR / Tesseract） |
+| 文件存储 | MinIO / S3-compatible storage |
+| 前端 | React 19 + TypeScript + Vite |
+| 测试 | Pytest |
 
 ## 快速开始
 
-### 1. 启动基础服务
+### 1. 启动基础设施
 
 ```bash
 docker compose up -d
 ```
 
-启动 PostgreSQL 和 MinIO：
+默认会启动：
 
-- PostgreSQL: `localhost:5433`
-- MinIO API: `http://127.0.0.1:9000`
-- MinIO Console: `http://127.0.0.1:9001`
+- PostgreSQL：`localhost:5433`
+- MinIO API：`http://127.0.0.1:9000`
+- MinIO Console：`http://127.0.0.1:9001`
 
 ### 2. 安装依赖
 
@@ -84,10 +124,11 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-Tesseract OCR（可选，用于扫描件识别）：
+前端依赖：
 
 ```bash
-sudo apt install tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-sim libtesseract-dev
+cd web
+npm install
 ```
 
 ### 3. 配置环境变量
@@ -96,29 +137,29 @@ sudo apt install tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-sim libtesser
 cp .env.example .env
 ```
 
-主要配置项：
+建议至少配置：
 
-| 变量 | 说明 | 默认值 |
-|---|---|---|
-| `LLM_PROVIDER` | LLM 提供商 (`azure` / `qwen`) | `qwen` |
-| `QWEN_API_KEY` | 通义千问 API Key | — |
-| `MINIMAX_API_KEY` | MiniMax API Key | — |
-| `LLM_PROVIDERS` | OpenAI-compatible 多模型提供方 JSON 配置 | `[]` |
-| `MANUAL_LLM_MODELS` | 手动注册模型列表（用于不支持 `/models` 的 provider） | `[]` |
-| `EMBEDDING_API_KEY` | Embedding API Key | — |
-| `EMBEDDING_MODEL` | 嵌入模型 | `text-embedding-v4` |
-| `TAVILY_API_KEY` | Tavily Web 搜索 API Key | — |
-| `AZURE_OPENAI_API_KEY` | Azure OpenAI Key（使用 Azure 时） | — |
-| `DATABASE_URL` | 数据库连接 | `postgresql+asyncpg://...localhost:5433/knowledge_graph` |
-| `POSTGRES_PASSWORD` | PostgreSQL 密码（Docker Compose 使用） | — |
-| `MINIO_ENDPOINT` | MinIO 端点 | `http://127.0.0.1:9000` |
-| `MINIO_ROOT_PASSWORD` | MinIO 密码（Docker Compose 使用） | — |
-| `DOCLING_OCR_ENGINE` | OCR 引擎 (`tesseract` / `rapidocr`) | `tesseract` |
-| `CHUNK_SIZE` | 分块大小（字符） | `512` |
-| `CHUNK_OVERLAP` | 分块重叠（字符） | `64` |
-| `ALLOWED_MODELS` | 用户可选的 LLM 模型列表（JSON 数组） | `["qwen-plus","qwen-max","qwen-turbo"]` |
-| `JWT_SECRET_KEY` | JWT 签名密钥（至少 32 字符） | — |
-| `ADMIN_INIT_PASSWORD` | 管理员初始密码 | — |
+| 变量 | 说明 |
+|---|---|
+| `DATABASE_URL` | 后端数据库连接 |
+| `DATABASE_URL_SYNC` | Alembic / 同步场景连接 |
+| `JWT_SECRET_KEY` | JWT 签名密钥 |
+| `ADMIN_INIT_PASSWORD` | 管理员初始化密码 |
+| `MINIO_ENDPOINT` / `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | 对象存储配置 |
+| `EMBEDDING_API_KEY` | 向量嵌入所需密钥 |
+| `LLM_PROVIDER` | 默认 LLM provider |
+| `QWEN_API_KEY` / `AZURE_OPENAI_API_KEY` / `MINIMAX_API_KEY` | 对应模型提供方密钥 |
+| `LLM_PROVIDERS` | OpenAI-compatible provider 注册表 |
+| `TAVILY_API_KEY` | Discover / Web 搜索能力 |
+| `NEWSAPI_API_KEY` | 新闻连接器 |
+| `NEWS_AUTO_SEARCH_ENABLED` | 是否启用每日新闻自动搜索 |
+| `NEWS_AUTO_SEARCH_QUERY` | 每日新闻检索关键词，默认 `AI, LLM, Agent, workflow` |
+| `NEWS_AUTO_SEARCH_WINDOW_HOURS` | 检索回看时间窗，默认 `24` 小时 |
+| `NEWS_AUTO_SEARCH_EN_LIMIT` / `NEWS_AUTO_SEARCH_ZH_LIMIT` | 英文 / 中文新闻每日导入上限 |
+| `NEWS_AUTO_SEARCH_DAILY_TIME_UTC` | 每日执行时间（UTC），默认 `01:30` |
+| `SEMANTIC_SCHOLAR_API_KEY` / `OPENALEX_API_KEY` | 学术与论文发现 |
+
+> 不要把真实 `.env` 提交到仓库。仓库已忽略 `.env`，请自行保管和轮换密钥。
 
 ### 4. 初始化数据库
 
@@ -126,156 +167,91 @@ cp .env.example .env
 alembic upgrade head
 ```
 
-### 5. 导入知识
+### 5. 启动服务
 
-将文件放入 `data/sources/`（原始资料）和 `data/notes/`（笔记），支持 Markdown 和二进制文档（PDF、DOCX 等）：
-
-```bash
-pkg sync
-```
-
-### 6. 启动服务
-
-**后端 API:**
+后端：
 
 ```bash
-# 方式一：使用 CLI 命令（推荐开发时使用，自带 hot reload）
 pkg serve
-
-# 方式二：直接使用 uvicorn
-uvicorn pkg.api.app:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-后端默认运行在 `http://localhost:8000`，Swagger 文档在 `http://localhost:8000/docs`。
+或按项目实际入口运行 FastAPI。
 
-**前端:**
+前端：
 
 ```bash
 cd web
-npm install    # 首次运行或依赖变更时
 npm run dev
 ```
 
-前端默认运行在 `http://localhost:8005`，已配置代理转发 `/api` 请求到后端。联调脚本会让前后端都监听 `0.0.0.0`，方便从服务器外部访问。
-
-**一键联调（前后端一起跑）:**
+## 常用开发命令
 
 ```bash
-npm run install:web   # 首次运行或前端依赖变更时
-npm run dev:all       # 前台同时启动前后端
-npm run dev:all-bg    # 后台同时启动前后端
-npm run dev:status    # 查看后台前后端状态与最近日志
-npm run dev:stop      # 停止后台前后端进程
+# 后端测试
+.venv/bin/python -m pytest
+
+# 运行指定测试
+.venv/bin/python -m pytest tests/test_connectors.py
+
+# Python 文件快速语法检查
+python -m py_compile src/pkg/api/app.py
+
+# 数据库迁移
+alembic upgrade head
 ```
 
-后台联跑日志默认写入：
+## 关键后端模块
 
-- `tmp/dev/backend.log`
-- `tmp/dev/frontend.log`
+- `src/pkg/api/app.py`：FastAPI 应用与路由装配
+- `src/pkg/api/action.py`：Action Agent 普通/流式接口
+- `src/pkg/api/sources.py` / `src/pkg/api/notes.py` / `src/pkg/api/wiki.py`：资料、笔记、Wiki 主接口
+- `src/pkg/api/connectors.py`：GitHub、arXiv、新闻等连接器接口
+- `src/pkg/api/system_jobs.py`：后台任务观测接口
+- `src/pkg/services/action_agent.py`：Agent 构建与工具绑定
+- `src/pkg/services/foundation/web_extractor.py`：网页抽取
+- `src/pkg/services/foundation/web_directory.py`：网页目录发现与子文章导入
+- `src/pkg/services/foundation/wiki_concept_discovery.py`：Wiki 概念发现与候选推荐
+- `src/pkg/services/cross_cutting/scheduler.py`：调度能力
 
-## CLI 使用
+## API 概览
 
-```bash
-pkg sync                                          # 同步文件到数据库
-pkg search "知识图谱"                              # 搜索知识库
-pkg search "embedding" --mode vector --top-k 10   # 向量搜索
-pkg add-note "会议纪要" --content "..." --tags meeting   # 添加笔记
-pkg add-source "论文标题" --source-type article    # 添加资料
-pkg stats                                          # 查看统计
-pkg ask "帮我总结关于三层架构的设计思路"            # 单轮问答
-pkg chat                                           # 多轮对话
-pkg skills                                         # 列出可用 skills
-pkg serve                                          # 启动 API 服务
-```
+当前主要路由分组包括：
 
-## Agent 工具
+- `/auth`
+- `/sources`
+- `/notes`
+- `/search`
+- `/action`
+- `/chat-sessions`
+- `/agent-profiles`
+- `/assets`
+- `/wiki`
+- `/memory`
+- `/connectors`
+- `/calendar/reminders`
+- `/review`
+- `/discovery`
+- `/paper-discovery`
+- `/system/jobs`
+- `/models`
 
-Action Agent 拥有以下内置工具，可根据任务自主选择调用：
+## 适合谁用
 
-| 工具 | 说明 |
-|---|---|
-| `search_knowledge` | 语义/结构化搜索知识库 |
-| `read_note` | 读取笔记全文 |
-| `read_source` | 读取资料全文 |
-| `list_notes` | 按领域/标签/项目浏览笔记 |
-| `list_sources` | 按类型浏览资料 |
-| `knowledge_stats` | 知识库统计信息 |
-| `process_document` | 文档处理（PDF/DOCX/XLSX/PPTX 操作） |
-| `web_search` | 互联网搜索（Tavily） |
+Seagull 适合这些场景：
 
-此外，Agent 还会动态加载 `skills/` 目录下的 Skill 工具。
+- 持续收集和整理研究资料的个人研究者
+- 同时管理网页、论文、RSS、GitHub 信息流的技术从业者
+- 希望把零散输入沉淀成长期知识库、主题 Wiki 和写作资产的人
+- 想要在个人知识库上运行可控 Agent 工作流的开发者
 
-## API 端点
+## 开发说明
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| `GET` | `/health` | 健康检查 |
-| `GET/POST` | `/sources` | 资料列表 / 创建 |
-| `POST` | `/sources/upload` | 上传资料文件 |
-| `GET` | `/sources/{id}` | 获取资料详情 |
-| `GET` | `/sources/{id}/file` | 下载资料原文件 |
-| `GET/POST` | `/notes` | 笔记列表 / 创建 |
-| `PATCH` | `/notes/{id}` | 更新笔记 |
-| `POST` | `/notes/upload` | 上传笔记文件 |
-| `POST` | `/search` | 搜索知识库 |
-| `POST` | `/action` | 调用 Action Agent |
-| `POST` | `/action/stream` | 流式调用 Action Agent |
-| `GET/POST` | `/chat-sessions` | 会话管理 |
-| `GET/PATCH/DELETE` | `/chat-sessions/{id}` | 会话详情/更新/删除 |
-| `GET/POST` | `/agent-profiles` | Agent Profile 管理 |
-| `GET/PATCH/DELETE` | `/agent-profiles/{id}` | Profile 详情/更新/删除 |
-| `POST` | `/agent-profiles/{id}/set-default` | 设为默认 Profile |
-| `GET` | `/agent-profiles/available-tools` | 可用工具列表 |
-| `GET` | `/agent-profiles/allowed-models` | 可选模型列表 |
-| `GET/POST` | `/skills` | Skills 管理 |
-| `POST` | `/sync` | 触发文件同步 |
-
-## 项目结构
-
-```
-src/pkg/
-├── api/                    # FastAPI 路由
-│   ├── app.py              # 应用入口 & 中间件
-│   ├── sources.py          # 资料 CRUD + 文件上传
-│   ├── notes.py            # 笔记 CRUD + 文件上传
-│   ├── search.py           # 搜索 + 同步接口
-│   ├── action.py           # Action Agent 接口（同步/流式）
-│   ├── chat_sessions.py    # 多轮对话会话管理
-│   ├── agent_profiles.py   # Agent Profile CRUD
-│   └── skills.py           # Skills CRUD
-├── models/                 # SQLAlchemy 模型
-│   ├── source.py           # Source + SourceEmbedding + SourceChunk
-│   ├── note.py             # Note + NoteEmbedding
-│   ├── chat_session.py     # ChatSession
-│   ├── agent_profile.py    # AgentProfile
-│   └── skill.py            # Skill
-├── schemas/                # Pydantic 验证模型
-├── services/
-│   ├── retriever.py        # 检索 Agent (SQL/向量/混合)
-│   ├── action_agent.py     # Action Agent + 系统提示词
-│   ├── llm.py              # LLM 客户端工厂 (Azure/Qwen)
-│   ├── embedding.py        # 嵌入服务（批量自动分片）
-│   ├── chunking.py         # 文档分块
-│   ├── document_extractor.py  # Docling 文档提取 + OCR
-│   ├── storage.py          # MinIO 对象存储
-│   ├── sync_pipeline.py    # 文件同步管道
-│   ├── tools.py            # 知识库工具（搜索/读取/统计）
-│   ├── tools_web.py        # Web 搜索工具（Tavily）
-│   ├── tools_document.py   # 文档处理工具
-│   └── skills.py           # Skill 加载与展开
-├── cli.py                  # Typer CLI
-├── config.py               # 配置管理
-└── db.py                   # 数据库连接
-web/                        # React 前端
-├── src/pages/              # 页面：Chat, Search, Notes, Sources, Skills, Profiles
-├── src/components/         # 组件：ChatMessage, SearchResultCard, Layout
-└── src/lib/                # API 客户端, 工具函数
-skills/                     # Skill 模板（20+ 内置）
-data/
-├── sources/                # 原始资料
-└── notes/                  # 结构化笔记
-```
+- 保持改动聚焦，优先修根因
+- 数据模型变化需同步 Alembic migration
+- API schema 变化需同步前端 client 和页面
+- 涉及 Agent 工具、工作流、连接器、后台任务的变更，请同步更新 `AGENTS.md`
+- 项目文档请放在 `docs/` 下的主题目录中
 
 ## License
 
-Private project.
+如需开源/内部分发策略，请按你的实际仓库策略补充许可证说明。

@@ -189,6 +189,12 @@ class Settings(BaseSettings):
     NEWS_FETCH_TIMEOUT: int = 20
     NEWS_DEFAULT_LANGUAGE: str = "en"
     NEWS_DEFAULT_MAX_RESULTS: int = 10
+    NEWS_AUTO_SEARCH_ENABLED: bool = False
+    NEWS_AUTO_SEARCH_QUERY: str = "AI, LLM, Agent, workflow"
+    NEWS_AUTO_SEARCH_WINDOW_HOURS: int = 24
+    NEWS_AUTO_SEARCH_EN_LIMIT: int = 20
+    NEWS_AUTO_SEARCH_ZH_LIMIT: int = 20
+    NEWS_AUTO_SEARCH_DAILY_TIME_UTC: str = "01:30"
     
     @property
     def resolved_embedding_api_base(self) -> str:

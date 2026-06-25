@@ -509,6 +509,36 @@ async def test_import_news_article_creates_article_source_with_news_metadata():
 
 
 @pytest.mark.asyncio
+async def test_import_news_article_uses_web_page_text_field_for_full_text_fetch():
+    mock_session = AsyncMock()
+    mock_session.get.return_value = None
+    article = NewsArticle(
+        provider="newsapi",
+        title="OpenAI launches feature",
+        url="https://example.com/story",
+        description="Summary",
+    )
+    mock_source = MagicMock()
+    mock_source.id = "src-news-newsapi-example"
+
+    class FakePage:
+        text = "Full extracted content"
+
+    with (
+        patch("pkg.services.foundation.connectors.persist_source", new_callable=AsyncMock, return_value=mock_source) as mock_persist,
+        patch("pkg.services.foundation.connectors.fetch_web_page", new_callable=AsyncMock, return_value=FakePage()),
+    ):
+        source, created, dedupe_key = await import_news_article(mock_session, user_id="user-1", article=article, fetch_full_text=True)
+
+    assert source is mock_source
+    assert created is True
+    assert dedupe_key == "newsapi:https://example.com/story"
+    body = mock_persist.await_args.kwargs["body"]
+    assert "Full extracted content" in (body.raw_content or "")
+    assert body.metadata["fetch_status"] == "full_text_fetched"
+
+
+@pytest.mark.asyncio
 async def test_news_search_api_returns_cached_items(fake_user, mock_session, monkeypatch):
     from pkg.api import connectors as connectors_api
     from pkg.schemas.connector import NewsSearchRequest

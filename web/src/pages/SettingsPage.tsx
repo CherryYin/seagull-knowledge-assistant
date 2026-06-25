@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { BarChart3, Bot, Brain, DatabaseZap, MonitorCog, Settings, Shield, Zap } from "lucide-react";
+import { BarChart3, Bot, Brain, DatabaseZap, MonitorCog, Rss, Settings, Shield, Zap } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
@@ -8,6 +8,7 @@ import { SectionNav, settingsNavItems } from "@/components/SectionNav";
 export function SettingsPage() {
   const { isAdmin } = useAuth();
 	const items = [
+		{ title: "Connectors", description: "Configure scheduled GitHub trend and news search queries.", to: "/settings/connectors", icon: Rss },
 		{ title: "User Profile", description: "Review the learned profile used to adapt answers.", to: "/settings/profile", icon: Brain },
 		{ title: "Agent Profiles", description: "Configure how agents operate.", to: "/settings/agents", icon: Bot },
 		{ title: "Skills", description: "Manage reusable chat skills.", to: "/settings/skills", icon: Zap },

@@ -559,7 +559,7 @@ async def import_news_article(session: AsyncSession, *, user_id: str, article: N
     if fetch_full_text and canonical_url:
         try:
             page = await fetch_web_page(canonical_url)
-            extracted_text = page.text_content
+            extracted_text = page.text
             fetch_status = "full_text_fetched"
         except WebPageFetchError as exc:
             fetch_error = str(exc)

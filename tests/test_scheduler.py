@@ -9,10 +9,12 @@ from pkg.services.cross_cutting.scheduler import (
     ScheduledTask,
     TaskRunResult,
     get_scheduler_status,
+    get_scheduled_tasks,
     is_task_due,
     next_task_run_at,
     run_daily_summarizer_step,
     run_discovery_generate_step,
+    run_news_auto_search_step,
     run_paper_discovery_step,
     run_rss_fetch_step,
     run_rss_summary_step,
@@ -508,6 +510,78 @@ async def test_run_paper_discovery_step_reports_stats_without_reason_when_runs_e
     assert result["runs"] == 2
     assert result["created"] == 5
     assert result["updated"] == 1
+    assert result["reason"] is None
+
+
+def test_get_scheduled_tasks_includes_news_auto_search_when_enabled(monkeypatch):
+    monkeypatch.setattr("pkg.services.cross_cutting.scheduler.settings.NEWS_AUTO_SEARCH_ENABLED", True)
+    monkeypatch.setattr("pkg.services.cross_cutting.scheduler.settings.NEWS_AUTO_SEARCH_DAILY_TIME_UTC", "05:45")
+
+    tasks = get_scheduled_tasks()
+    task = next(task for task in tasks if task.name == "news_auto_search")
+
+    assert task.enabled is True
+    assert task.schedule_type == "daily"
+    assert task.daily_time_utc == time(hour=5, minute=45)
+
+
+@pytest.mark.asyncio
+async def test_run_news_auto_search_step_reports_no_active_users():
+    user_lookup_session = AsyncMock()
+    user_lookup_session.execute.return_value = _ScalarRows([])
+    session_cm = MagicMock(__aenter__=AsyncMock(return_value=user_lookup_session), __aexit__=AsyncMock(return_value=None))
+
+    with patch("pkg.services.cross_cutting.scheduler.async_session", return_value=session_cm):
+        result = await run_news_auto_search_step()
+
+    assert result["reason"] == "no_active_users"
+    assert result["active_users"] == 0
+    assert result["searched"] == 0
+
+
+@pytest.mark.asyncio
+async def test_run_news_auto_search_step_searches_en_and_zh_and_imports_articles():
+    class _Article:
+        def __init__(self, title: str, language: str):
+            self.title = title
+            self.language = language
+
+    user_lookup_session = AsyncMock()
+    user_lookup_session.execute.return_value = _ScalarRows(["user-1"])
+    worker_session_1 = AsyncMock()
+    worker_session_2 = AsyncMock()
+    worker_session_3 = AsyncMock()
+    settings_session = AsyncMock()
+    sessions = [
+        MagicMock(__aenter__=AsyncMock(return_value=user_lookup_session), __aexit__=AsyncMock(return_value=None)),
+        MagicMock(__aenter__=AsyncMock(return_value=settings_session), __aexit__=AsyncMock(return_value=None)),
+        MagicMock(__aenter__=AsyncMock(return_value=worker_session_1), __aexit__=AsyncMock(return_value=None)),
+        MagicMock(__aenter__=AsyncMock(return_value=worker_session_2), __aexit__=AsyncMock(return_value=None)),
+        MagicMock(__aenter__=AsyncMock(return_value=worker_session_3), __aexit__=AsyncMock(return_value=None)),
+    ]
+
+    search_mock = AsyncMock(side_effect=[[_Article("en-a", "en")], [_Article("zh-a", "zh"), _Article("zh-b", "zh")]])
+    import_mock = AsyncMock(side_effect=[(object(), True, "a"), (object(), False, "b"), (object(), True, "c")])
+
+    with (
+        patch("pkg.services.cross_cutting.scheduler.async_session", side_effect=sessions),
+        patch("pkg.services.cross_cutting.scheduler.get_user_setting_str", AsyncMock(return_value="custom news query")),
+        patch("pkg.services.foundation.connectors.search_news_articles", search_mock),
+        patch("pkg.services.foundation.connectors.import_news_article", import_mock),
+        patch("pkg.services.cross_cutting.scheduler.settings.NEWS_AUTO_SEARCH_QUERY", "AI, LLM, Agent, workflow"),
+        patch("pkg.services.cross_cutting.scheduler.settings.NEWS_AUTO_SEARCH_WINDOW_HOURS", 24),
+        patch("pkg.services.cross_cutting.scheduler.settings.NEWS_AUTO_SEARCH_EN_LIMIT", 20),
+        patch("pkg.services.cross_cutting.scheduler.settings.NEWS_AUTO_SEARCH_ZH_LIMIT", 20),
+    ):
+        result = await run_news_auto_search_step()
+
+    assert search_mock.await_count == 2
+    assert search_mock.await_args_list[0].kwargs["query"] == "custom news query"
+    assert import_mock.await_count == 3
+    assert result["searched"] == 3
+    assert result["created"] == 2
+    assert result["updated"] == 1
+    assert result["languages"] == {"en": 1, "zh": 2}
     assert result["reason"] is None
 
 

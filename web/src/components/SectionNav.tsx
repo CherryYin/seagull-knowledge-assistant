@@ -48,6 +48,7 @@ export const discoverNavItems: SectionNavItem[] = [
 
 export const settingsNavItems: SectionNavItem[] = [
 	{ label: "Settings", to: "/settings" },
+	{ label: "Connectors", to: "/settings/connectors" },
 	{ label: "Profile", to: "/settings/profile" },
 	{ label: "Agents", to: "/settings/agents" },
 	{ label: "Skills", to: "/settings/skills" },

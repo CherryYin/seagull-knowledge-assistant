@@ -90,6 +90,11 @@ export interface UserActivityRecord {
   created_at: string;
 }
 
+export interface UserSettingsRecord {
+  settings: Record<string, unknown>;
+  updated_at: string;
+}
+
 export const authApi = {
   register: (body: RegisterRequest) =>
     request<RegisterResponse>("/auth/register", {
@@ -131,5 +136,11 @@ export const authApi = {
   generateMyProfile: () =>
     request<GenerateUserProfileResponse>("/auth/me/profile/generate", {
       method: "POST",
+    }),
+  getMySettings: () => request<UserSettingsRecord>("/auth/me/settings"),
+  updateMySettings: (settings: Record<string, unknown>) =>
+    request<UserSettingsRecord>("/auth/me/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ settings }),
     }),
 };

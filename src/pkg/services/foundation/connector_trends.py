@@ -11,6 +11,7 @@ from pkg.db import async_session
 from pkg.models.connector_trend import ConnectorTrendItem
 from pkg.models.user import User
 from pkg.schemas.connector import ArxivPaper, GitHubRepo
+from pkg.services.cross_cutting.user_settings import get_user_setting_str
 from pkg.services.foundation.connectors import (
     ArxivRateLimitError,
     canonical_arxiv_id,
@@ -228,8 +229,9 @@ async def collect_github_trends_for_user(
     top_k: int = 5,
 ) -> list[ConnectorTrendItem]:
     trend_date = trend_date or today_key()
+    resolved_query = query or await get_user_setting_str(session, user_id, "github_trend_query", settings.CONNECTOR_TRENDS_GITHUB_QUERY)
     repos = await search_github_repos(
-        query=query or settings.CONNECTOR_TRENDS_GITHUB_QUERY,
+        query=resolved_query,
         language=language or settings.CONNECTOR_TRENDS_GITHUB_LANGUAGE or None,
         pushed_after=one_year_ago_date(),
         max_results=candidate_count,

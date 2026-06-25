@@ -13,6 +13,7 @@ from pkg.db import async_session
 from pkg.models.user import User
 from pkg.services.cross_cutting.system_jobs import record_system_job
 from pkg.services.cross_cutting.system_jobs import get_last_terminal_job_run
+from pkg.services.cross_cutting.user_settings import get_user_setting_str
 
 
 ScheduleKind = Literal["interval", "daily", "weekly"]
@@ -227,6 +228,107 @@ async def run_web_refresh_step() -> dict:
     return await run_step()
 
 
+def _parse_daily_time_utc(value: str, *, fallback: time) -> time:
+    raw = (value or "").strip()
+    if not raw:
+        return fallback
+    try:
+        hour_text, minute_text = raw.split(":", 1)
+        return time(hour=int(hour_text), minute=int(minute_text))
+    except Exception:
+        logger.warning("Invalid daily UTC time %r; fallback to %s", value, fallback.isoformat(timespec="minutes"))
+        return fallback
+
+
+async def run_news_auto_search_step() -> dict:
+    from pkg.services.foundation.connectors import import_news_article, search_news_articles
+
+    now = datetime.now(timezone.utc)
+    window_hours = max(int(settings.NEWS_AUTO_SEARCH_WINDOW_HOURS or 24), 1)
+    from_date = (now - timedelta(hours=window_hours)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    to_date = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    searches = [
+        ("en", max(int(settings.NEWS_AUTO_SEARCH_EN_LIMIT or 20), 1)),
+        ("zh", max(int(settings.NEWS_AUTO_SEARCH_ZH_LIMIT or 20), 1)),
+    ]
+
+    async with async_session() as session:
+        rows = await session.execute(select(User.id).where(User.is_active.is_(True)))
+        user_ids = list(rows.scalars())
+
+    if not user_ids:
+        return {
+            "reason": "no_active_users",
+            "query": settings.NEWS_AUTO_SEARCH_QUERY,
+            "from_date": from_date,
+            "to_date": to_date,
+            "active_users": 0,
+            "searched": 0,
+            "created": 0,
+            "updated": 0,
+            "skipped": 0,
+            "languages": {},
+        }
+
+    searched = 0
+    created = 0
+    updated = 0
+    skipped = 0
+    languages: dict[str, int] = {}
+
+    for user_id in user_ids:
+        async with async_session() as settings_session:
+            query = await get_user_setting_str(settings_session, user_id, "news_auto_search_query", settings.NEWS_AUTO_SEARCH_QUERY)
+
+        if not query:
+            skipped += 1
+            continue
+
+        for language, limit in searches:
+            articles = await search_news_articles(
+                query=query,
+                language=language,
+                from_date=from_date,
+                to_date=to_date,
+                max_results=limit,
+            )
+            languages[language] = languages.get(language, 0) + len(articles)
+            searched += len(articles)
+
+            for article in articles:
+                async with async_session() as session:
+                    try:
+                        _, was_created, _ = await import_news_article(
+                            session,
+                            user_id=user_id,
+                            article=article,
+                            fetch_full_text=True,
+                        )
+                        await session.commit()
+                    except ValueError:
+                        await session.rollback()
+                        skipped += 1
+                        continue
+
+                if was_created:
+                    created += 1
+                else:
+                    updated += 1
+
+    return {
+        "reason": None if searched else "no_results",
+        "query": settings.NEWS_AUTO_SEARCH_QUERY,
+        "from_date": from_date,
+        "to_date": to_date,
+        "active_users": len(user_ids),
+        "searched": searched,
+        "created": created,
+        "updated": updated,
+        "skipped": skipped,
+        "languages": languages,
+    }
+
+
 def get_scheduled_tasks() -> list[ScheduledTask]:
     tasks = [
         ScheduledTask(
@@ -313,6 +415,15 @@ def get_scheduled_tasks() -> list[ScheduledTask]:
             interval_seconds=settings.PAPER_DISCOVERY_INTERVAL_HOURS * 3600,
             initial_delay_seconds=60,
             enabled=settings.PAPER_DISCOVERY_AUTO_ENABLED,
+        ),
+        ScheduledTask(
+            name="news_auto_search",
+            job_type="news_auto_search",
+            title="Scheduled news auto search",
+            handler=run_news_auto_search_step,
+            schedule_type="daily",
+            daily_time_utc=_parse_daily_time_utc(settings.NEWS_AUTO_SEARCH_DAILY_TIME_UTC, fallback=time(hour=1, minute=30)),
+            enabled=settings.NEWS_AUTO_SEARCH_ENABLED,
         ),
     ]
     return tasks

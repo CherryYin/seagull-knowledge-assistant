@@ -117,6 +117,25 @@ async def test_collect_github_trends_uses_growth_snapshot():
 
 
 @pytest.mark.asyncio
+async def test_collect_github_trends_uses_user_settings_query_override():
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.execute.side_effect = [MagicMock(scalar_one_or_none=MagicMock(return_value=None)), MagicMock(scalar_one_or_none=MagicMock(return_value=None))]
+    repo = GitHubRepo(full_name="owner/repo", owner="owner", name="repo", html_url="https://github.com/owner/repo", stars=130, forks=15, pushed_at=datetime.now(timezone.utc))
+    source = MagicMock()
+    source.id = "src-github-owner-repo"
+
+    with patch("pkg.services.foundation.connector_trends.get_user_setting_str", new_callable=AsyncMock, return_value="custom agent query") as mock_setting, \
+         patch("pkg.services.foundation.connector_trends.search_github_repos", new_callable=AsyncMock, return_value=[repo]) as mock_search, \
+         patch("pkg.services.foundation.connector_trends.get_github_repo", new_callable=AsyncMock, return_value=repo), \
+         patch("pkg.services.foundation.connector_trends.import_github_repo", new_callable=AsyncMock, return_value=(source, True, "github:owner/repo")):
+        await collect_github_trends_for_user(session, user_id="user-1", trend_date="2026-05-22", top_k=1)
+
+    mock_setting.assert_awaited_once()
+    assert mock_search.await_args.kwargs["query"] == "custom agent query"
+
+
+@pytest.mark.asyncio
 async def test_collect_github_trends_filters_old_repositories():
     session = AsyncMock()
     session.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=None))
