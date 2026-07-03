@@ -6,10 +6,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.config import settings
+from pkg.db import async_session
 from pkg.models.connector_cache import ConnectorSearchItem
 from pkg.models.connector_trend import ConnectorTrendItem
 from pkg.models.discovery import DiscoveryItem
 from pkg.models.foundation.source import Source
+from pkg.services.cross_cutting.user_api_credentials import get_default_user_api_credential_secret
 from pkg.services.foundation.connectors import import_github_repo
 from pkg.services.foundation.connector_cache import connector_cache_key
 from pkg.services.foundation.discovery_imports import domain_from_url, import_discovery_item, normalize_http_url
@@ -94,12 +96,18 @@ async def apply_discovery_feedback(
     return source, created
 
 
-async def search_external_web_results(query: str, *, max_results: int = 10) -> list[dict]:
-    if not settings.TAVILY_API_KEY:
+async def search_external_web_results(query: str, *, max_results: int = 10, user_id: str | None = None) -> list[dict]:
+    resolved_api_key = settings.TAVILY_API_KEY
+    if user_id:
+        async with async_session() as session:
+            user_secret, _user_config = await get_default_user_api_credential_secret(session, user_id=user_id, provider="tavily")
+        if user_secret:
+            resolved_api_key = user_secret
+    if not resolved_api_key:
         raise ValueError("TAVILY_API_KEY is not configured")
     from tavily import TavilyClient
 
-    client = TavilyClient(api_key=settings.TAVILY_API_KEY)
+    client = TavilyClient(api_key=resolved_api_key)
     response = await asyncio.wait_for(
         asyncio.to_thread(
             client.search,

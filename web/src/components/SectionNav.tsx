@@ -48,6 +48,7 @@ export const discoverNavItems: SectionNavItem[] = [
 
 export const settingsNavItems: SectionNavItem[] = [
 	{ label: "Settings", to: "/settings" },
+	{ label: "API Keys", to: "/settings/api-keys" },
 	{ label: "Connectors", to: "/settings/connectors" },
 	{ label: "Profile", to: "/settings/profile" },
 	{ label: "Agents", to: "/settings/agents" },

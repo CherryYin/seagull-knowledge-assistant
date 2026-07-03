@@ -23,12 +23,39 @@ from pkg.schemas.user import (
     UserUpdate,
     USER_MEMORY_TYPE_PATTERN,
 )
+from pkg.schemas.user_api_credential import (
+    UserApiCredentialCreate,
+    UserApiCredentialList,
+    UserApiCredentialRead,
+    UserApiCredentialUpdate,
+)
 from pkg.services.cross_cutting.auth import create_access_token, hash_password, verify_password
+from pkg.services.cross_cutting.credentials_crypto import CredentialsCryptoConfigError, CredentialsCryptoValueError
+from pkg.services.cross_cutting.user_api_credentials import (
+    create_user_api_credential,
+    delete_user_api_credential,
+    get_user_api_credential,
+    list_user_api_credentials,
+    update_user_api_credential,
+    UserApiCredentialsStorageUnavailableError,
+)
 
 router = APIRouter()
 
 _ALLOWED_ROLES = {"user", "admin"}
 _ALLOWED_APPROVAL_STATUSES = {"pending", "approved", "rejected"}
+
+
+def _raise_api_credential_crypto_error(exc: Exception) -> None:
+    if isinstance(exc, CredentialsCryptoConfigError):
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if isinstance(exc, CredentialsCryptoValueError):
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    raise exc
+
+
+def _raise_api_credential_storage_error(exc: UserApiCredentialsStorageUnavailableError) -> None:
+    raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 # --- Public ---
@@ -272,6 +299,79 @@ async def update_settings(
     await session.commit()
     await session.refresh(obj)
     return obj
+
+
+@router.get("/me/api-credentials", response_model=UserApiCredentialList)
+async def list_api_credentials(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    items = await list_user_api_credentials(session, user_id=user.id)
+    return UserApiCredentialList(items=[UserApiCredentialRead.model_validate(item) for item in items], total=len(items))
+
+
+@router.post("/me/api-credentials", response_model=UserApiCredentialRead, status_code=201)
+async def create_api_credential(
+    body: UserApiCredentialCreate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    try:
+        item = await create_user_api_credential(session, user_id=user.id, body=body)
+    except (CredentialsCryptoConfigError, CredentialsCryptoValueError) as exc:
+        await session.rollback()
+        _raise_api_credential_crypto_error(exc)
+    except UserApiCredentialsStorageUnavailableError as exc:
+        _raise_api_credential_storage_error(exc)
+    except ValueError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return UserApiCredentialRead.model_validate(item)
+
+
+@router.get("/me/api-credentials/{credential_id}", response_model=UserApiCredentialRead)
+async def get_api_credential(
+    credential_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    item = await get_user_api_credential(session, user_id=user.id, credential_id=credential_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="API credential not found")
+    return UserApiCredentialRead.model_validate(item)
+
+
+@router.patch("/me/api-credentials/{credential_id}", response_model=UserApiCredentialRead)
+async def patch_api_credential(
+    credential_id: int,
+    body: UserApiCredentialUpdate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    try:
+        item = await update_user_api_credential(session, user_id=user.id, credential_id=credential_id, body=body)
+    except (CredentialsCryptoConfigError, CredentialsCryptoValueError) as exc:
+        await session.rollback()
+        _raise_api_credential_crypto_error(exc)
+    except UserApiCredentialsStorageUnavailableError as exc:
+        _raise_api_credential_storage_error(exc)
+    except ValueError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if item is None:
+        raise HTTPException(status_code=404, detail="API credential not found")
+    return UserApiCredentialRead.model_validate(item)
+
+
+@router.delete("/me/api-credentials/{credential_id}", status_code=204)
+async def remove_api_credential(
+    credential_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    deleted = await delete_user_api_credential(session, user_id=user.id, credential_id=credential_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="API credential not found")
 
 
 # --- Activity Log ---

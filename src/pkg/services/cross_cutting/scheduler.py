@@ -291,6 +291,7 @@ async def run_news_auto_search_step() -> dict:
                 from_date=from_date,
                 to_date=to_date,
                 max_results=limit,
+                user_id=user_id,
             )
             languages[language] = languages.get(language, 0) + len(articles)
             searched += len(articles)

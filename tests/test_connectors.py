@@ -258,6 +258,44 @@ async def test_search_arxiv_uses_configured_user_agent(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_search_arxiv_prefers_user_configured_user_agent(monkeypatch):
+    captured = {}
+
+    class Response:
+        status_code = 200
+        text = '<feed xmlns="http://www.w3.org/2005/Atom" />'
+        headers = {}
+
+        def raise_for_status(self):
+            return None
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            captured["headers"] = kwargs.get("headers")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url, params):
+            return Response()
+
+    async def fake_get_default_user_api_credential_secret(session, *, user_id, provider):
+        assert user_id == "user-1"
+        assert provider == "arxiv"
+        return "ignored-secret", {"user_agent": "pkg-user/1.0 contact@example.com"}
+
+    monkeypatch.setattr("pkg.services.foundation.connectors.httpx.AsyncClient", Client)
+    monkeypatch.setattr("pkg.services.foundation.connectors.get_default_user_api_credential_secret", fake_get_default_user_api_credential_secret)
+
+    await search_arxiv(query="agentic rag", user_id="user-1")
+
+    assert captured["headers"] == {"User-Agent": "pkg-user/1.0 contact@example.com"}
+
+
+@pytest.mark.asyncio
 async def test_search_github_defaults_to_past_year(monkeypatch):
     captured = {}
 
@@ -288,6 +326,50 @@ async def test_search_github_defaults_to_past_year(monkeypatch):
     await search_github_repos(query="agent framework")
 
     assert captured["params"]["q"] == "agent framework pushed:>=2025-05-28"
+
+
+@pytest.mark.asyncio
+async def test_search_github_prefers_user_db_token(monkeypatch):
+    captured = {}
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"items": []}
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            captured["headers"] = kwargs.get("headers") or {}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url, params):
+            captured["url"] = url
+            captured["params"] = params
+            return Response()
+
+    monkeypatch.setattr("pkg.services.foundation.connectors.httpx.AsyncClient", Client)
+    monkeypatch.setattr("pkg.services.foundation.connectors.settings.GITHUB_TOKEN", "env-token")
+
+    async def fake_get_default_user_api_credential_secret(session, *, user_id, provider):
+        assert user_id == "user-1"
+        assert provider == "github"
+        return "db-token", {}
+
+    monkeypatch.setattr(
+        "pkg.services.foundation.connectors.get_default_user_api_credential_secret",
+        fake_get_default_user_api_credential_secret,
+    )
+
+    await search_github_repos(query="agent framework", user_id="user-1")
+
+    assert captured["headers"]["Authorization"] == "Bearer db-token"
 
 
 @pytest.mark.asyncio
@@ -419,6 +501,60 @@ async def test_search_news_articles_maps_newsapi_payload(monkeypatch):
     assert items[0].source_name == "Example News"
     assert items[0].title == "Test headline"
     assert items[0].language == "en"
+
+
+@pytest.mark.asyncio
+async def test_search_news_articles_prefers_user_db_credential(monkeypatch):
+    captured = {}
+
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return {
+                "articles": [
+                    {
+                        "source": {"name": "Example News"},
+                        "title": "Headline",
+                        "url": "https://example.com/news/1",
+                    }
+                ]
+            }
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            captured["headers"] = kwargs.get("headers") or {}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url, params):
+            captured["url"] = url
+            captured["params"] = params
+            return Response()
+
+    monkeypatch.setattr("pkg.services.foundation.connectors.httpx.AsyncClient", Client)
+    monkeypatch.setattr("pkg.services.foundation.connectors.settings.NEWSAPI_API_KEY", "env-key")
+    monkeypatch.setattr("pkg.services.foundation.connectors.settings.NEWSAPI_BASE_URL", "https://newsapi.org/v2")
+
+    async def fake_get_default_user_api_credential_secret(session, *, user_id, provider):
+        assert user_id == "user-1"
+        assert provider == "newsapi"
+        return "db-key", {"base_url": "https://example.news/v2"}
+
+    monkeypatch.setattr(
+        "pkg.services.foundation.connectors.get_default_user_api_credential_secret",
+        fake_get_default_user_api_credential_secret,
+    )
+
+    items = await search_news_articles(query="openai", user_id="user-1")
+
+    assert len(items) == 1
+    assert captured["headers"]["X-Api-Key"] == "db-key"
+    assert captured["url"] == "https://example.news/v2/everything"
 
 
 @pytest.mark.asyncio
@@ -568,6 +704,64 @@ async def test_news_search_api_returns_cached_items(fake_user, mock_session, mon
 
     assert response.total == 1
     assert response.items[0].cache_status == "cached"
+
+
+@pytest.mark.asyncio
+async def test_github_search_api_passes_user_id_to_service(fake_user, mock_session, monkeypatch):
+    from pkg.api import connectors as connectors_api
+    from pkg.schemas.connector import GitHubRepoSearchRequest
+
+    captured = {}
+
+    async def fake_search_github_repos(**kwargs):
+        captured.update(kwargs)
+        return []
+
+    async def fake_upsert_connector_search_items(*args, **kwargs):
+        return {}
+
+    async def fake_generate_discovery_items(*args, **kwargs):
+        return 0, 0, 0
+
+    monkeypatch.setattr(connectors_api, "search_github_repos", fake_search_github_repos)
+    monkeypatch.setattr(connectors_api, "upsert_connector_search_items", fake_upsert_connector_search_items)
+    monkeypatch.setattr(connectors_api, "generate_discovery_items", fake_generate_discovery_items)
+
+    response = await connectors_api.search_github_connector(
+        GitHubRepoSearchRequest(query="agent framework", max_results=3),
+        user=fake_user,
+        session=mock_session,
+    )
+
+    assert response.total == 0
+    assert captured["user_id"] == fake_user.id
+
+
+@pytest.mark.asyncio
+async def test_news_search_api_passes_user_id_to_news_service(fake_user, mock_session, monkeypatch):
+    from pkg.api import connectors as connectors_api
+    from pkg.schemas.connector import NewsSearchRequest
+
+    captured = {}
+
+    async def fake_search_news_articles(**kwargs):
+        captured.update(kwargs)
+        return []
+
+    async def fake_upsert_connector_search_items(*args, **kwargs):
+        return {}
+
+    monkeypatch.setattr(connectors_api, "search_news_articles", fake_search_news_articles)
+    monkeypatch.setattr(connectors_api, "upsert_connector_search_items", fake_upsert_connector_search_items)
+
+    response = await connectors_api.search_news_connector(
+        NewsSearchRequest(query="openai", max_results=3),
+        user=fake_user,
+        session=mock_session,
+    )
+
+    assert response.total == 0
+    assert captured["user_id"] == fake_user.id
 
 
 @pytest.mark.asyncio

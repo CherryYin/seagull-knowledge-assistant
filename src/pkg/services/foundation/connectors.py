@@ -14,11 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.api.sources import persist_source, upsert_source_embeddings
 from pkg.config import settings
+from pkg.db import async_session
 from pkg.models.foundation.source import Source
 from pkg.schemas.connector import ArxivPaper, GitHubRepo, NewsArticle
 from pkg.schemas.source import SourceCreate
 from pkg.services.foundation.source_memory import upsert_source_memory_node
 from pkg.services.foundation.web_extractor import WebPageFetchError, fetch_web_page
+from pkg.services.cross_cutting.user_api_credentials import get_default_user_api_credential_secret
 
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
 GITHUB_API_URL = "https://api.github.com"
@@ -172,12 +174,16 @@ def parse_arxiv_feed(payload: str) -> list[ArxivPaper]:
     return papers
 
 
-async def search_arxiv(*, query: str | None = None, author: str | None = None, category: str | None = None, paper_id: str | None = None, date_from: str | None = None, date_to: str | None = None, max_results: int = 10, retries: int = 2) -> list[ArxivPaper]:
+async def search_arxiv(*, query: str | None = None, author: str | None = None, category: str | None = None, paper_id: str | None = None, date_from: str | None = None, date_to: str | None = None, max_results: int = 10, retries: int = 2, user_id: str | None = None) -> list[ArxivPaper]:
     if not paper_id and not date_from and not date_to:
         date_from = one_year_ago_date()
     search_query = build_arxiv_query(query=query, author=author, category=category, paper_id=paper_id, date_from=date_from, date_to=date_to)
     params = {"search_query": search_query, "start": 0, "max_results": max_results, "sortBy": "submittedDate", "sortOrder": "descending"}
     user_agent = settings.ARXIV_USER_AGENT or CONNECTOR_USER_AGENT
+    if user_id:
+        async with async_session() as session:
+            user_secret, user_config = await get_default_user_api_credential_secret(session, user_id=user_id, provider="arxiv")
+        user_agent = str(user_config.get("user_agent") or user_secret or user_agent).strip() or user_agent
     async with httpx.AsyncClient(timeout=20, headers={"User-Agent": user_agent}) as client:
         for attempt in range(retries + 1):
             await _throttle_arxiv_request()
@@ -284,9 +290,19 @@ def build_github_query(*, query: str, language: str | None = None, topic: str | 
     return " ".join(part for part in parts if part)
 
 
-def _github_headers() -> dict[str, str]:
-    headers = {"Accept": "application/vnd.github+json", "User-Agent": CONNECTOR_USER_AGENT}
+async def _resolve_github_token(user_id: str | None = None) -> str | None:
     token = getattr(settings, "GITHUB_TOKEN", None)
+    if user_id:
+        async with async_session() as session:
+            user_secret, _user_config = await get_default_user_api_credential_secret(session, user_id=user_id, provider="github")
+        if user_secret:
+            token = user_secret
+    return token
+
+
+async def _github_headers(user_id: str | None = None) -> dict[str, str]:
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": CONNECTOR_USER_AGENT}
+    token = await _resolve_github_token(user_id)
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return headers
@@ -313,8 +329,8 @@ def parse_github_repo(item: dict, readme: str | None = None) -> GitHubRepo:
     )
 
 
-async def fetch_github_readme(full_name: str) -> str | None:
-    async with httpx.AsyncClient(timeout=20, headers=_github_headers()) as client:
+async def fetch_github_readme(full_name: str, *, user_id: str | None = None) -> str | None:
+    async with httpx.AsyncClient(timeout=20, headers=await _github_headers(user_id)) as client:
         response = await client.get(f"{GITHUB_API_URL}/repos/{full_name}/readme")
         if response.status_code == 404:
             return None
@@ -329,23 +345,23 @@ async def fetch_github_readme(full_name: str) -> str | None:
         return None
 
 
-async def search_github_repos(*, query: str, language: str | None = None, topic: str | None = None, min_stars: int | None = None, pushed_after: str | None = None, max_results: int = 10) -> list[GitHubRepo]:
+async def search_github_repos(*, query: str, language: str | None = None, topic: str | None = None, min_stars: int | None = None, pushed_after: str | None = None, max_results: int = 10, user_id: str | None = None) -> list[GitHubRepo]:
     pushed_after = pushed_after or one_year_ago_date()
     q = build_github_query(query=query, language=language, topic=topic, min_stars=min_stars, pushed_after=pushed_after)
     params = {"q": q, "sort": "stars", "order": "desc", "per_page": max_results}
-    async with httpx.AsyncClient(timeout=20, headers=_github_headers()) as client:
+    async with httpx.AsyncClient(timeout=20, headers=await _github_headers(user_id)) as client:
         response = await client.get(f"{GITHUB_API_URL}/search/repositories", params=params)
         response.raise_for_status()
     payload = response.json()
     return [parse_github_repo(item) for item in payload.get("items", [])]
 
 
-async def get_github_repo(full_name: str, *, fetch_readme: bool = True) -> GitHubRepo:
-    async with httpx.AsyncClient(timeout=20, headers=_github_headers()) as client:
+async def get_github_repo(full_name: str, *, fetch_readme: bool = True, user_id: str | None = None) -> GitHubRepo:
+    async with httpx.AsyncClient(timeout=20, headers=await _github_headers(user_id)) as client:
         response = await client.get(f"{GITHUB_API_URL}/repos/{full_name}")
         response.raise_for_status()
         item = response.json()
-    readme = await fetch_github_readme(full_name) if fetch_readme else None
+    readme = await fetch_github_readme(full_name, user_id=user_id) if fetch_readme else None
     return parse_github_repo(item, readme=readme)
 
 
@@ -443,9 +459,9 @@ async def import_github_repo(session: AsyncSession, *, user_id: str, repo: GitHu
     return source, True, dedupe_key
 
 
-def _news_headers() -> dict[str, str]:
+def _news_headers(api_key: str | None = None) -> dict[str, str]:
     headers = {"User-Agent": CONNECTOR_USER_AGENT}
-    api_key = getattr(settings, "NEWSAPI_API_KEY", "")
+    api_key = api_key if api_key is not None else getattr(settings, "NEWSAPI_API_KEY", "")
     if api_key:
         headers["X-Api-Key"] = api_key
     return headers
@@ -502,10 +518,19 @@ def parse_newsapi_article(item: dict, *, query: str | None = None, language: str
     )
 
 
-async def search_news_articles(*, query: str, language: str | None = None, country: str | None = None, from_date: str | None = None, to_date: str | None = None, sources: list[str] | None = None, domains: list[str] | None = None, max_results: int | None = None) -> list[NewsArticle]:
+async def search_news_articles(*, query: str, language: str | None = None, country: str | None = None, from_date: str | None = None, to_date: str | None = None, sources: list[str] | None = None, domains: list[str] | None = None, max_results: int | None = None, user_id: str | None = None) -> list[NewsArticle]:
     provider = (settings.NEWS_PROVIDER or "newsapi").strip().lower()
     if provider != "newsapi":
         raise ValueError(f"Unsupported news provider: {provider}")
+    resolved_api_key = getattr(settings, "NEWSAPI_API_KEY", "")
+    resolved_base_url = (settings.NEWSAPI_BASE_URL or "https://newsapi.org/v2").rstrip("/")
+    if user_id:
+        async with async_session() as session:
+            user_secret, user_config = await get_default_user_api_credential_secret(session, user_id=user_id, provider="newsapi")
+        if user_secret:
+            resolved_api_key = user_secret
+        if user_config.get("base_url"):
+            resolved_base_url = str(user_config["base_url"]).rstrip("/")
     params = {
         "q": query,
         "language": language or settings.NEWS_DEFAULT_LANGUAGE or None,
@@ -519,9 +544,8 @@ async def search_news_articles(*, query: str, language: str | None = None, count
     if domains:
         params["domains"] = ",".join(domains)
     params = {key: value for key, value in params.items() if value not in (None, "", [])}
-    base_url = (settings.NEWSAPI_BASE_URL or "https://newsapi.org/v2").rstrip("/")
-    async with httpx.AsyncClient(timeout=settings.NEWS_FETCH_TIMEOUT, headers=_news_headers()) as client:
-        response = await client.get(f"{base_url}{NEWSAPI_EVERYTHING_PATH}", params=params)
+    async with httpx.AsyncClient(timeout=settings.NEWS_FETCH_TIMEOUT, headers=_news_headers(resolved_api_key)) as client:
+        response = await client.get(f"{resolved_base_url}{NEWSAPI_EVERYTHING_PATH}", params=params)
         if response.status_code == 429:
             error = _parse_newsapi_error(response)
             raise NewsRateLimitError(str(error))

@@ -50,6 +50,7 @@ async def search_arxiv_connector(
             date_to=body.date_to,
             max_results=body.max_results,
             retries=0,
+            user_id=user.id,
         )
     except ArxivRateLimitError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
@@ -79,7 +80,7 @@ async def import_arxiv_connector(
         if not body.paper_id:
             raise HTTPException(status_code=422, detail="paper or paper_id is required")
         try:
-            matches = await search_arxiv(paper_id=body.paper_id, max_results=1, retries=0)
+            matches = await search_arxiv(paper_id=body.paper_id, max_results=1, retries=0, user_id=user.id)
         except ArxivRateLimitError as exc:
             raise HTTPException(status_code=429, detail=str(exc)) from exc
         except Exception as exc:
@@ -122,6 +123,7 @@ async def search_github_connector(
             min_stars=body.min_stars,
             pushed_after=body.pushed_after,
             max_results=body.max_results,
+            user_id=user.id,
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"GitHub search failed: {exc}") from exc
@@ -149,7 +151,7 @@ async def import_github_connector(
         if not body.full_name:
             raise HTTPException(status_code=422, detail="repo or full_name is required")
         try:
-            repo = await get_github_repo(body.full_name, fetch_readme=body.fetch_readme)
+            repo = await get_github_repo(body.full_name, fetch_readme=body.fetch_readme, user_id=user.id)
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"GitHub repo lookup failed: {exc}") from exc
 
@@ -188,6 +190,7 @@ async def search_news_connector(
             sources=body.sources,
             domains=body.domains,
             max_results=body.max_results,
+            user_id=user.id,
         )
     except NewsRateLimitError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc

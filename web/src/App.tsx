@@ -29,6 +29,7 @@ const AgentProfilesPage = lazy(() => import("./pages/AgentProfilesPage").then((m
 const AgentWorkspacePage = lazy(() => import("./pages/AgentWorkspacePage").then((m) => ({ default: m.AgentWorkspacePage })));
 const UserProfilePage = lazy(() => import("./pages/UserProfilePage").then((m) => ({ default: m.UserProfilePage })));
 const ConnectorSettingsPage = lazy(() => import("./pages/ConnectorSettingsPage").then((m) => ({ default: m.ConnectorSettingsPage })));
+const ApiKeysPage = lazy(() => import("./pages/ApiKeysPage").then((m) => ({ default: m.ApiKeysPage })));
 const MemoryTreePage = lazy(() => import("./pages/MemoryTreePage").then((m) => ({ default: m.MemoryTreePage })));
 const DiscoverPage = lazy(() => import("./pages/DiscoverPage").then((m) => ({ default: m.DiscoverPage })));
 const ReviewPage = lazy(() => import("./pages/ReviewPage").then((m) => ({ default: m.ReviewPage })));
@@ -104,6 +105,7 @@ export default function App() {
             <Route path="/discover" element={<LazyPage><DiscoverPage /></LazyPage>} />
             <Route path="/review" element={<LazyPage><ReviewPage /></LazyPage>} />
             <Route path="/settings" element={<LazyPage><SettingsPage /></LazyPage>} />
+            <Route path="/settings/api-keys" element={<LazyPage><ApiKeysPage /></LazyPage>} />
             <Route path="/settings/connectors" element={<LazyPage><ConnectorSettingsPage /></LazyPage>} />
             <Route path="/settings/skills" element={<LazyPage><SkillsPage /></LazyPage>} />
             <Route path="/settings/agents" element={<LazyPage><AgentProfilesPage /></LazyPage>} />

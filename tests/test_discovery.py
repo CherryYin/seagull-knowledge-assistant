@@ -560,6 +560,40 @@ async def test_search_external_web_results_maps_tavily_response(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_search_external_web_results_prefers_user_db_tavily_key(monkeypatch):
+    from pkg.config import settings
+    from pkg.services.foundation.discovery import search_external_web_results
+
+    class FakeTavilyClient:
+        def __init__(self, api_key):
+            assert api_key == "db-key"
+
+        def search(self, **kwargs):
+            return {"results": []}
+
+    monkeypatch.setattr(settings, "TAVILY_API_KEY", "env-key")
+    import types
+    import sys
+
+    fake_module = types.SimpleNamespace(TavilyClient=FakeTavilyClient)
+    monkeypatch.setitem(sys.modules, "tavily", fake_module)
+
+    async def fake_get_default_user_api_credential_secret(session, *, user_id, provider):
+        assert user_id == "user-1"
+        assert provider == "tavily"
+        return "db-key", {}
+
+    monkeypatch.setattr(
+        "pkg.services.foundation.discovery.get_default_user_api_credential_secret",
+        fake_get_default_user_api_credential_secret,
+    )
+
+    items = await search_external_web_results("agent memory", max_results=3, user_id="user-1")
+
+    assert items == []
+
+
+@pytest.mark.asyncio
 async def test_ingest_web_discovery_results_rejects_non_http_url():
     from pkg.services.foundation.discovery import ingest_web_discovery_results
 

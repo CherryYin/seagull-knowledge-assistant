@@ -235,6 +235,7 @@ async def collect_github_trends_for_user(
         language=language or settings.CONNECTOR_TRENDS_GITHUB_LANGUAGE or None,
         pushed_after=one_year_ago_date(),
         max_results=candidate_count,
+        user_id=user_id,
     )
     repos = [repo for repo in repos if _is_within_last_year(repo.pushed_at)]
     scored: list[tuple[GitHubRepo, int | None, int | None, float]] = []
@@ -245,7 +246,7 @@ async def collect_github_trends_for_user(
 
     results: list[ConnectorTrendItem] = []
     for rank, (repo, previous_stars, previous_forks, score) in enumerate(scored[:top_k], start=1):
-        repo_for_import = await get_github_repo(repo.full_name, fetch_readme=True)
+        repo_for_import = await get_github_repo(repo.full_name, fetch_readme=True, user_id=user_id)
         source, _created, _dedupe = await import_github_repo(session, user_id=user_id, repo=repo_for_import)
         results.append(await upsert_trend_item(
             session,

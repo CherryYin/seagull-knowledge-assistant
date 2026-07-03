@@ -77,7 +77,7 @@ async def search_web_results(
     session: AsyncSession = Depends(get_session),
 ):
     try:
-        items = await search_external_web_results(body.query, max_results=body.max_results)
+        items = await search_external_web_results(body.query, max_results=body.max_results, user_id=user.id)
         created, updated, skipped = await ingest_web_discovery_results(
             session,
             user_id=user.id,

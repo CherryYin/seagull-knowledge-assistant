@@ -95,6 +95,33 @@ export interface UserSettingsRecord {
   updated_at: string;
 }
 
+export interface UserApiCredentialRecord {
+  id: number;
+  user_id: string;
+  provider: string;
+  label: string;
+  secret_masked: string;
+  config: Record<string, unknown>;
+  is_enabled: boolean;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UserApiCredentialListResponse {
+  items: UserApiCredentialRecord[];
+  total: number;
+}
+
+export interface UserApiCredentialCreateRequest {
+  provider: string;
+  label?: string;
+  secret: string;
+  config?: Record<string, unknown>;
+  is_enabled?: boolean;
+  is_default?: boolean;
+}
+
 export const authApi = {
   register: (body: RegisterRequest) =>
     request<RegisterResponse>("/auth/register", {
@@ -142,5 +169,15 @@ export const authApi = {
     request<UserSettingsRecord>("/auth/me/settings", {
       method: "PATCH",
       body: JSON.stringify({ settings }),
+    }),
+  listMyApiCredentials: () => request<UserApiCredentialListResponse>("/auth/me/api-credentials"),
+  createMyApiCredential: (body: UserApiCredentialCreateRequest) =>
+    request<UserApiCredentialRecord>("/auth/me/api-credentials", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  deleteMyApiCredential: (id: number) =>
+    request<void>(`/auth/me/api-credentials/${id}`, {
+      method: "DELETE",
     }),
 };

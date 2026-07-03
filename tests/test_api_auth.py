@@ -234,3 +234,154 @@ class TestUserMemoryApi:
         assert data["memory_type"] == "activity_profile"
         assert data["key"] == "user_profile"
         assert mock_session._created.memory_type == "activity_profile"
+
+
+class TestUserApiCredentialApi:
+    def test_list_api_credentials_returns_items(self, auth_client, mock_session, fake_user):
+        from pkg.models.user_api_credential import UserApiCredential
+
+        item = UserApiCredential(
+            id=1,
+            user_id=fake_user.id,
+            provider="newsapi",
+            label="default",
+            secret_encrypted="enc",
+            secret_masked="****1234",
+            config={"base_url": "https://newsapi.org/v2"},
+            is_enabled=True,
+            is_default=True,
+            created_at=datetime(2026, 6, 25, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 6, 25, tzinfo=timezone.utc),
+        )
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = [item]
+        mock_session.execute.return_value = mock_result
+
+        resp = auth_client.get("/auth/me/api-credentials")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 1
+        assert data["items"][0]["provider"] == "newsapi"
+        assert data["items"][0]["secret_masked"] == "****1234"
+
+    def test_create_api_credential_returns_masked_record(self, auth_client, mock_session, fake_user):
+        mock_session.add = MagicMock()
+        mock_session.execute.return_value = MagicMock(scalars=MagicMock(return_value=[]))
+
+        async def fake_refresh(obj):
+            obj.id = 1
+            obj.created_at = datetime(2026, 6, 25, tzinfo=timezone.utc)
+            obj.updated_at = datetime(2026, 6, 25, tzinfo=timezone.utc)
+
+        mock_session.refresh = AsyncMock(side_effect=fake_refresh)
+
+        resp = auth_client.post(
+            "/auth/me/api-credentials",
+            json={
+                "provider": "newsapi",
+                "label": "default",
+                "secret": "super-secret-value",
+                "config": {"base_url": "https://newsapi.org/v2"},
+                "is_enabled": True,
+                "is_default": True,
+            },
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["provider"] == "newsapi"
+        assert data["secret_masked"].endswith("alue")
+        assert "secret" not in data
+
+    @pytest.mark.asyncio
+    async def test_create_api_credential_returns_503_when_crypto_key_missing(self, mock_session, fake_user):
+        from fastapi import HTTPException
+        from pkg.api.auth import create_api_credential
+        from pkg.schemas.user_api_credential import UserApiCredentialCreate
+
+        with patch("pkg.services.cross_cutting.credentials_crypto.settings.CREDENTIAL_ENCRYPTION_KEY", ""):
+            with pytest.raises(HTTPException) as exc_info:
+                await create_api_credential(
+                    UserApiCredentialCreate(provider="newsapi", label="default", secret="super-secret-value"),
+                    user=fake_user,
+                    session=mock_session,
+                )
+
+        assert exc_info.value.status_code == 503
+        assert exc_info.value.detail == "CREDENTIAL_ENCRYPTION_KEY is not configured"
+        mock_session.rollback.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_create_api_credential_returns_503_when_storage_unavailable(self, mock_session, fake_user):
+        from fastapi import HTTPException
+        from pkg.api.auth import create_api_credential
+        from pkg.schemas.user_api_credential import UserApiCredentialCreate
+        from pkg.services.cross_cutting.user_api_credentials import UserApiCredentialsStorageUnavailableError
+
+        with patch(
+            "pkg.api.auth.create_user_api_credential",
+            side_effect=UserApiCredentialsStorageUnavailableError("User API credentials table is missing; run database migrations"),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await create_api_credential(
+                    UserApiCredentialCreate(provider="newsapi", label="default", secret="super-secret-value"),
+                    user=fake_user,
+                    session=mock_session,
+                )
+
+        assert exc_info.value.status_code == 503
+        assert exc_info.value.detail == "User API credentials table is missing; run database migrations"
+
+    def test_get_api_credential_returns_404_when_missing(self, auth_client, mock_session):
+        mock_session.get.return_value = None
+
+        resp = auth_client.get("/auth/me/api-credentials/1")
+        assert resp.status_code == 404
+
+    def test_patch_api_credential_updates_record(self, auth_client, mock_session, fake_user):
+        from pkg.models.user_api_credential import UserApiCredential
+
+        item = UserApiCredential(
+            id=1,
+            user_id=fake_user.id,
+            provider="newsapi",
+            label="default",
+            secret_encrypted="enc",
+            secret_masked="****1234",
+            config={},
+            is_enabled=True,
+            is_default=False,
+            created_at=datetime(2026, 6, 25, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 6, 25, tzinfo=timezone.utc),
+        )
+        mock_session.get.return_value = item
+
+        resp = auth_client.patch(
+            "/auth/me/api-credentials/1",
+            json={"label": "work", "is_default": True},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["label"] == "work"
+        assert data["is_default"] is True
+
+    def test_delete_api_credential_returns_204(self, auth_client, mock_session, fake_user):
+        from pkg.models.user_api_credential import UserApiCredential
+
+        item = UserApiCredential(
+            id=1,
+            user_id=fake_user.id,
+            provider="newsapi",
+            label="default",
+            secret_encrypted="enc",
+            secret_masked="****1234",
+            config={},
+            is_enabled=True,
+            is_default=False,
+            created_at=datetime(2026, 6, 25, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 6, 25, tzinfo=timezone.utc),
+        )
+        mock_session.get.return_value = item
+
+        resp = auth_client.delete("/auth/me/api-credentials/1")
+        assert resp.status_code == 204
+        mock_session.delete.assert_awaited_once()
