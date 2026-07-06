@@ -18,12 +18,20 @@ export function getEnabledModules({ isAdmin = false, settings = {} }: { isAdmin?
 
 export function getPrimaryNavSections({ isAdmin = false, settings = {} }: { isAdmin?: boolean; settings?: UserModuleSettings } = {}): ModuleNavSection[] {
   const enabled = getEnabledModules({ isAdmin, settings }).filter((module) => module.nav?.primary);
-  return MODULE_GROUP_ORDER.map((group) => {
+  const enabledById = new Map(enabled.map((module) => [module.id, module]));
+  const pinnedItems = (settings.pinned ?? [])
+    .map((moduleId) => enabledById.get(moduleId))
+    .filter((module): module is AppModuleConfig => !!module && !!module.nav?.primary);
+  const pinnedIds = new Set(pinnedItems.map((module) => module.id));
+  const sections: ModuleNavSection[] = pinnedItems.length ? [{ label: "Pinned", items: pinnedItems }] : [];
+  const groupedSections = MODULE_GROUP_ORDER.map((group) => {
     const items = enabled
+      .filter((module) => !pinnedIds.has(module.id))
       .filter((module) => module.group === group)
       .sort((left, right) => (left.nav?.order ?? 0) - (right.nav?.order ?? 0));
     return { label: MODULE_GROUP_LABELS[group], items };
   }).filter((section) => section.items.length > 0);
+  return [...sections, ...groupedSections];
 }
 
 export function getSectionNavItems(parent: NonNullable<AppModuleConfig["nav"]>["parent"], { isAdmin = false, settings = {} }: { isAdmin?: boolean; settings?: UserModuleSettings } = {}): SectionNavItem[] {

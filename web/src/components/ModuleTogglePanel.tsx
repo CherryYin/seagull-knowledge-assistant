@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { CheckCircle2, Loader2, Sparkles } from "lucide-react";
+import { CheckCircle2, Loader2, Pin, PinOff, Sparkles } from "lucide-react";
 
 import { APP_MODULES, MODULE_GROUP_LABELS, MODULE_GROUP_ORDER } from "@/config/modules";
 import { getModulePreset, MODULE_PRESETS, type ModulePresetId } from "@/config/module-presets";
@@ -47,11 +47,26 @@ export function ModuleTogglePanel({ compact = false }: { compact?: boolean }) {
   });
   const [selectedPreset, setSelectedPreset] = useState<ModulePresetId>(getModulePreset(moduleState.settings.preset).id);
   const enabledIds = useMemo(() => new Set(moduleState.modules.map((module) => module.id)), [moduleState.modules]);
+  const pinnedIds = useMemo(() => new Set(moduleState.settings.pinned ?? []), [moduleState.settings.pinned]);
   const capabilities = capabilitiesQuery.data?.modules ?? {};
 
   useEffect(() => {
     setSelectedPreset(getModulePreset(moduleState.settings.preset).id);
   }, [moduleState.settings.preset]);
+
+  const togglePinned = (moduleId: string) => {
+    const pinned = new Set(moduleState.settings.pinned ?? []);
+    if (pinned.has(moduleId)) {
+      pinned.delete(moduleId);
+    } else {
+      pinned.add(moduleId);
+    }
+    return moduleState.saveModuleSettings({
+      ...moduleState.settings,
+      pinned: [...pinned].filter((pinnedModuleId) => enabledIds.has(pinnedModuleId) || moduleState.isAdmin),
+      onboarding_completed: moduleState.settings.onboarding_completed ?? true,
+    });
+  };
 
   if (moduleState.isAdmin) {
     return (
@@ -59,8 +74,30 @@ export function ModuleTogglePanel({ compact = false }: { compact?: boolean }) {
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base"><CheckCircle2 className="h-4 w-4" /> Admin Modules</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">Admin users see all modules by default. Module presets only affect non-admin workspaces.</p>
+          {!compact ? (
+            <div className="space-y-3">
+              <p className="text-sm font-medium">Pin primary modules</p>
+              <div className="flex flex-wrap gap-2">
+                {moduleState.modules.filter((module) => module.nav?.primary).map((module) => (
+                  <button
+                    key={module.id}
+                    type="button"
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-muted-foreground hover:border-primary/40 hover:text-primary",
+                      pinnedIds.has(module.id) && "border-primary/40 bg-primary/10 text-primary"
+                    )}
+                    onClick={() => togglePinned(module.id)}
+                    disabled={moduleState.saving}
+                  >
+                    {pinnedIds.has(module.id) ? <PinOff className="h-3 w-3" /> : <Pin className="h-3 w-3" />}
+                    {module.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
     );
@@ -186,6 +223,18 @@ export function ModuleTogglePanel({ compact = false }: { compact?: boolean }) {
                         <span key={module.id} className="inline-flex items-center gap-1">
                           <Badge variant={module.visibility.advanced ? "secondary" : "outline"}>{module.label}</Badge>
                           <ModuleCapabilityBadge capability={capabilities[module.id]} />
+                          {module.nav?.primary ? (
+                            <button
+                              type="button"
+                              className="inline-flex h-6 items-center gap-1 rounded-md border px-2 text-xs text-muted-foreground hover:border-primary/40 hover:text-primary"
+                              onClick={() => togglePinned(module.id)}
+                              disabled={moduleState.saving}
+                              title={pinnedIds.has(module.id) ? "Unpin from sidebar" : "Pin to sidebar"}
+                            >
+                              {pinnedIds.has(module.id) ? <PinOff className="h-3 w-3" /> : <Pin className="h-3 w-3" />}
+                              {pinnedIds.has(module.id) ? "Unpin" : "Pin"}
+                            </button>
+                          ) : null}
                         </span>
                       ))}
                     </div>
