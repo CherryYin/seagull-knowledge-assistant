@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { knowledgeApi, type DashboardData } from "@/lib/api/knowledge";
 import { systemApi, type ModuleCapability } from "@/lib/api/system";
 
 function mergePresetSettings(presetId: ModulePresetId, current: UserModuleSettings, completeOnboarding: boolean): UserModuleSettings {
@@ -38,6 +39,56 @@ function ModuleCapabilityBadge({ capability }: { capability?: ModuleCapability }
   );
 }
 
+interface ModuleRecommendation {
+  moduleId: string;
+  title: string;
+  reason: string;
+}
+
+function buildRecommendations(dashboard: DashboardData | undefined, enabledIds: Set<string>): ModuleRecommendation[] {
+  if (!dashboard) return [];
+  const { notes, sources, chats, digest_pending: digestPending } = dashboard.counts;
+  const recommendations: ModuleRecommendation[] = [];
+
+  if (!enabledIds.has("wiki") && notes + sources >= 20) {
+    recommendations.push({
+      moduleId: "wiki",
+      title: "Enable Wiki for stable synthesis",
+      reason: `You already have ${notes} notes and ${sources} sources. Wiki can turn repeated knowledge into canonical pages.`,
+    });
+  }
+  if (!enabledIds.has("memory-tree") && notes + sources >= 30) {
+    recommendations.push({
+      moduleId: "memory-tree",
+      title: "Enable Knowledge Tree",
+      reason: "Your workspace has enough material to benefit from graph-style topic organization.",
+    });
+  }
+  if (!enabledIds.has("digest-review") && digestPending > 0) {
+    recommendations.push({
+      moduleId: "digest-review",
+      title: "Review pending digest notes",
+      reason: `${digestPending} digest note${digestPending === 1 ? " is" : "s are"} waiting for review or merge.`,
+    });
+  }
+  if (!enabledIds.has("assets") && (chats >= 10 || notes >= 15)) {
+    recommendations.push({
+      moduleId: "assets",
+      title: "Enable Assets for output workflows",
+      reason: "You have enough notes or agent activity to start producing briefs, newsletters, or topic reports.",
+    });
+  }
+  if (!enabledIds.has("api-keys") && !enabledIds.has("connectors")) {
+    recommendations.push({
+      moduleId: "api-keys",
+      title: "Set up personal provider keys",
+      reason: "API Keys unlock per-user news, paper, and search provider credentials without changing global config.",
+    });
+  }
+
+  return recommendations.slice(0, 4);
+}
+
 export function ModuleTogglePanel({ compact = false }: { compact?: boolean }) {
   const moduleState = useResolvedModules();
   const capabilitiesQuery = useQuery({
@@ -45,10 +96,16 @@ export function ModuleTogglePanel({ compact = false }: { compact?: boolean }) {
     queryFn: () => systemApi.capabilities(),
     enabled: !moduleState.isAdmin,
   });
+  const dashboardQuery = useQuery({
+    queryKey: ["module-recommendation-dashboard"],
+    queryFn: () => knowledgeApi.dashboard(),
+    enabled: !moduleState.isAdmin && !compact,
+  });
   const [selectedPreset, setSelectedPreset] = useState<ModulePresetId>(getModulePreset(moduleState.settings.preset).id);
   const enabledIds = useMemo(() => new Set(moduleState.modules.map((module) => module.id)), [moduleState.modules]);
   const pinnedIds = useMemo(() => new Set(moduleState.settings.pinned ?? []), [moduleState.settings.pinned]);
   const capabilities = capabilitiesQuery.data?.modules ?? {};
+  const recommendations = useMemo(() => buildRecommendations(dashboardQuery.data, enabledIds), [dashboardQuery.data, enabledIds]);
 
   useEffect(() => {
     setSelectedPreset(getModulePreset(moduleState.settings.preset).id);
@@ -126,6 +183,8 @@ export function ModuleTogglePanel({ compact = false }: { compact?: boolean }) {
     });
   };
 
+  const enableRecommendedModule = (moduleId: string) => toggleModule(moduleId, true);
+
   return (
     <Card className={cn(moduleState.onboardingRequired && "border-primary/50 bg-primary/5")}>
       <CardHeader>
@@ -170,6 +229,34 @@ export function ModuleTogglePanel({ compact = false }: { compact?: boolean }) {
 
         {!compact ? (
           <div className="space-y-5">
+            {recommendations.length ? (
+              <div className="space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-4">
+                <div>
+                  <p className="text-sm font-medium">Recommended next modules</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Suggestions are based on your current workspace counts. They never enable modules automatically.</p>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {recommendations.map((recommendation) => {
+                    const recommendedModule = APP_MODULES.find((module) => module.id === recommendation.moduleId);
+                    if (!recommendedModule) return null;
+                    return (
+                      <div key={recommendation.moduleId} className="rounded-lg border bg-background/70 p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-medium">{recommendation.title}</p>
+                            <p className="mt-1 text-xs leading-5 text-muted-foreground">{recommendation.reason}</p>
+                          </div>
+                          <Button size="sm" variant="outline" onClick={() => enableRecommendedModule(recommendation.moduleId)} disabled={moduleState.saving}>
+                            Enable
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+
             <div className="space-y-3">
               <div>
                 <p className="text-sm font-medium">Custom module toggles</p>
