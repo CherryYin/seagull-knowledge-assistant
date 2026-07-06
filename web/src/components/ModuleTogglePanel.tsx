@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { CheckCircle2, Loader2, Pin, PinOff, Sparkles } from "lucide-react";
+import { ArrowDown, ArrowUp, CheckCircle2, Loader2, Pin, PinOff, Sparkles } from "lucide-react";
 
 import { APP_MODULES, MODULE_GROUP_LABELS, MODULE_GROUP_ORDER } from "@/config/modules";
 import { getModulePreset, MODULE_PRESETS, type ModulePresetId } from "@/config/module-presets";
@@ -104,6 +104,12 @@ export function ModuleTogglePanel({ compact = false }: { compact?: boolean }) {
   const [selectedPreset, setSelectedPreset] = useState<ModulePresetId>(getModulePreset(moduleState.settings.preset).id);
   const enabledIds = useMemo(() => new Set(moduleState.modules.map((module) => module.id)), [moduleState.modules]);
   const pinnedIds = useMemo(() => new Set(moduleState.settings.pinned ?? []), [moduleState.settings.pinned]);
+  const pinnedPrimaryModules = useMemo(() => {
+    const primaryById = new Map(moduleState.modules.filter((module) => module.nav?.primary).map((module) => [module.id, module]));
+    return (moduleState.settings.pinned ?? [])
+      .map((moduleId) => primaryById.get(moduleId))
+      .filter((module): module is NonNullable<ReturnType<typeof primaryById.get>> => !!module);
+  }, [moduleState.modules, moduleState.settings.pinned]);
   const capabilities = capabilitiesQuery.data?.modules ?? {};
   const recommendations = useMemo(() => buildRecommendations(dashboardQuery.data, enabledIds), [dashboardQuery.data, enabledIds]);
 
@@ -125,6 +131,20 @@ export function ModuleTogglePanel({ compact = false }: { compact?: boolean }) {
     });
   };
 
+  const movePinned = (moduleId: string, direction: -1 | 1) => {
+    const pinned = (moduleState.settings.pinned ?? []).filter((pinnedModuleId) => enabledIds.has(pinnedModuleId) || moduleState.isAdmin);
+    const index = pinned.indexOf(moduleId);
+    const nextIndex = index + direction;
+    if (index < 0 || nextIndex < 0 || nextIndex >= pinned.length) return Promise.resolve();
+    const nextPinned = [...pinned];
+    [nextPinned[index], nextPinned[nextIndex]] = [nextPinned[nextIndex], nextPinned[index]];
+    return moduleState.saveModuleSettings({
+      ...moduleState.settings,
+      pinned: nextPinned,
+      onboarding_completed: moduleState.settings.onboarding_completed ?? true,
+    });
+  };
+
   if (moduleState.isAdmin) {
     return (
       <Card>
@@ -134,7 +154,28 @@ export function ModuleTogglePanel({ compact = false }: { compact?: boolean }) {
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">Admin users see all modules by default. Module presets only affect non-admin workspaces.</p>
           {!compact ? (
-            <div className="space-y-3">
+            <div className="space-y-4">
+              {pinnedPrimaryModules.length ? (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Pinned order</p>
+                  <div className="space-y-2">
+                    {pinnedPrimaryModules.map((module, index) => (
+                      <div key={module.id} className="flex items-center justify-between gap-3 rounded-lg border bg-background/60 px-3 py-2">
+                        <span className="text-sm">{module.label}</span>
+                        <div className="flex items-center gap-1">
+                          <Button size="sm" variant="outline" onClick={() => movePinned(module.id, -1)} disabled={moduleState.saving || index === 0}>
+                            <ArrowUp className="h-3 w-3" />
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => movePinned(module.id, 1)} disabled={moduleState.saving || index === pinnedPrimaryModules.length - 1}>
+                            <ArrowDown className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
               <p className="text-sm font-medium">Pin primary modules</p>
               <div className="flex flex-wrap gap-2">
                 {moduleState.modules.filter((module) => module.nav?.primary).map((module) => (
@@ -299,6 +340,26 @@ export function ModuleTogglePanel({ compact = false }: { compact?: boolean }) {
 
             <div className="space-y-3">
               <p className="text-sm font-medium">Current visible modules</p>
+              {pinnedPrimaryModules.length ? (
+                <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Pinned order</p>
+                  <div className="space-y-2">
+                    {pinnedPrimaryModules.map((module, index) => (
+                      <div key={module.id} className="flex items-center justify-between gap-3 rounded-lg border bg-background/70 px-3 py-2">
+                        <span className="text-sm font-medium">{module.label}</span>
+                        <div className="flex items-center gap-1">
+                          <Button size="sm" variant="outline" onClick={() => movePinned(module.id, -1)} disabled={moduleState.saving || index === 0}>
+                            <ArrowUp className="h-3 w-3" />
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => movePinned(module.id, 1)} disabled={moduleState.saving || index === pinnedPrimaryModules.length - 1}>
+                            <ArrowDown className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               {MODULE_GROUP_ORDER.map((group) => {
                 const modules = APP_MODULES.filter((module) => module.group === group && enabledIds.has(module.id));
                 if (!modules.length) return null;
