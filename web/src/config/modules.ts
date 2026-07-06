@@ -51,6 +51,11 @@ export interface AppModuleConfig {
     experimental?: boolean;
   };
   dependencies?: string[];
+  settingsCard?: {
+    title?: string;
+    description?: string;
+    order?: number;
+  };
 }
 
 export const MODULE_GROUP_LABELS: Record<ProductModuleGroup, string> = {
@@ -282,6 +287,10 @@ export const APP_MODULES: AppModuleConfig[] = [
     description: "Manage provider credentials.",
     nav: { section: true, parent: "settings", order: 20 },
     visibility: { defaultEnabled: false, configurable: true, advanced: true },
+    settingsCard: {
+      description: "Store your own provider credentials for news, web search, and LLM services.",
+      order: 20,
+    },
   },
   {
     id: "connectors",
@@ -292,6 +301,10 @@ export const APP_MODULES: AppModuleConfig[] = [
     description: "Configure external connectors.",
     nav: { section: true, parent: "settings", order: 30 },
     visibility: { defaultEnabled: false, configurable: true, advanced: true },
+    settingsCard: {
+      description: "Configure scheduled GitHub trend and news search queries.",
+      order: 30,
+    },
   },
   {
     id: "profile",
@@ -302,6 +315,11 @@ export const APP_MODULES: AppModuleConfig[] = [
     description: "User profile and personalization.",
     nav: { section: true, parent: "settings", order: 40 },
     visibility: { defaultEnabled: false, configurable: true, advanced: true },
+    settingsCard: {
+      title: "User Profile",
+      description: "Review the learned profile used to adapt answers.",
+      order: 40,
+    },
   },
   {
     id: "agent-profiles",
@@ -313,6 +331,11 @@ export const APP_MODULES: AppModuleConfig[] = [
     nav: { section: true, parent: "settings", order: 50 },
     visibility: { defaultEnabled: false, configurable: true, advanced: true },
     dependencies: ["agent-chat"],
+    settingsCard: {
+      title: "Agent Profiles",
+      description: "Configure how agents operate.",
+      order: 50,
+    },
   },
   {
     id: "skills",
@@ -324,6 +347,10 @@ export const APP_MODULES: AppModuleConfig[] = [
     nav: { section: true, parent: "settings", order: 60 },
     visibility: { defaultEnabled: false, configurable: true, advanced: true },
     dependencies: ["agent-chat"],
+    settingsCard: {
+      description: "Manage reusable chat skills.",
+      order: 60,
+    },
   },
   {
     id: "workspace",
@@ -335,6 +362,11 @@ export const APP_MODULES: AppModuleConfig[] = [
     nav: { section: true, parent: "settings", order: 70 },
     visibility: { defaultEnabled: false, configurable: true, advanced: true },
     dependencies: ["agent-chat"],
+    settingsCard: {
+      title: "Agent Workspace",
+      description: "Inspect advanced agent runs and workspace data.",
+      order: 70,
+    },
   },
   {
     id: "system-jobs",
@@ -345,6 +377,11 @@ export const APP_MODULES: AppModuleConfig[] = [
     description: "Inspect background jobs.",
     nav: { section: true, parent: "settings", order: 80 },
     visibility: { defaultEnabled: false, configurable: true, advanced: true },
+    settingsCard: {
+      title: "System Jobs",
+      description: "Inspect background work, failed jobs, and stuck processing with next-step guidance.",
+      order: 80,
+    },
   },
   {
     id: "dashboard",
@@ -355,6 +392,11 @@ export const APP_MODULES: AppModuleConfig[] = [
     description: "System dashboard and statistics.",
     nav: { primary: true, section: true, parent: "settings", order: 90 },
     visibility: { defaultEnabled: false, configurable: true, advanced: true },
+    settingsCard: {
+      title: "System Dashboard",
+      description: "Inspect operational stats and knowledge rankings outside the daily Home workflow.",
+      order: 90,
+    },
   },
   {
     id: "admin-users",
@@ -364,5 +406,10 @@ export const APP_MODULES: AppModuleConfig[] = [
     icon: Users,
     description: "Manage users.",
     visibility: { defaultEnabled: false, configurable: false, adminOnly: true },
+    settingsCard: {
+      title: "Admin Users",
+      description: "Manage user approvals and roles.",
+      order: 100,
+    },
   },
 ];

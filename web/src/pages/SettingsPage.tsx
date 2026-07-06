@@ -1,11 +1,12 @@
 import { Link, useLocation } from "react-router-dom";
-import { BarChart3, Bot, Brain, DatabaseZap, KeyRound, MonitorCog, Rss, Settings, Shield, Zap } from "lucide-react";
+import { Settings } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
 import { ModuleSectionNav } from "@/components/SectionNav";
 import { ModuleTogglePanel } from "@/components/ModuleTogglePanel";
 import { useResolvedModules } from "@/lib/modules/module-settings";
+import { APP_MODULES } from "@/config/modules";
 
 export function SettingsPage() {
   const { isAdmin } = useAuth();
@@ -13,17 +14,16 @@ export function SettingsPage() {
 	const moduleState = useResolvedModules();
 	const visibleRoutes = new Set(moduleState.modules.map((module) => module.route));
 	const gatedPath = typeof location.state === "object" && location.state && "from" in location.state ? String((location.state as { from?: unknown }).from ?? "") : "";
-	const items = [
-		{ title: "API Keys", description: "Store your own provider credentials for news, web search, and LLM services.", to: "/settings/api-keys", icon: KeyRound },
-		{ title: "Connectors", description: "Configure scheduled GitHub trend and news search queries.", to: "/settings/connectors", icon: Rss },
-		{ title: "User Profile", description: "Review the learned profile used to adapt answers.", to: "/settings/profile", icon: Brain },
-		{ title: "Agent Profiles", description: "Configure how agents operate.", to: "/settings/agents", icon: Bot },
-		{ title: "Skills", description: "Manage reusable chat skills.", to: "/settings/skills", icon: Zap },
-		{ title: "Agent Workspace", description: "Inspect advanced agent runs and workspace data.", to: "/settings/workspace", icon: MonitorCog },
-		{ title: "System Jobs", description: "Inspect background work, failed jobs, and stuck processing with next-step guidance.", to: "/settings/jobs", icon: DatabaseZap },
-		{ title: "System Dashboard", description: "Inspect operational stats and knowledge rankings outside the daily Home workflow.", to: "/stats", icon: BarChart3 },
-		...(isAdmin ? [{ title: "Admin Users", description: "Manage user approvals and roles.", to: "/admin/users", icon: Shield }] : []),
-	].filter((item) => isAdmin || visibleRoutes.has(item.to));
+	const items = APP_MODULES
+		.filter((module) => module.settingsCard)
+		.filter((module) => isAdmin || visibleRoutes.has(module.route))
+		.sort((left, right) => (left.settingsCard?.order ?? 0) - (right.settingsCard?.order ?? 0))
+		.map((module) => ({
+			title: module.settingsCard?.title ?? module.label,
+			description: module.settingsCard?.description ?? module.description,
+			to: module.route,
+			icon: module.icon,
+		}));
 
 	return (
 		<div className="h-full overflow-y-auto">
