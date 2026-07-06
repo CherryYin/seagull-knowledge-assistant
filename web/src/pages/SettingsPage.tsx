@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { BarChart3, Bot, Brain, DatabaseZap, KeyRound, MonitorCog, Rss, Settings, Shield, Zap } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,8 +9,10 @@ import { useResolvedModules } from "@/lib/modules/module-settings";
 
 export function SettingsPage() {
   const { isAdmin } = useAuth();
+	const location = useLocation();
 	const moduleState = useResolvedModules();
 	const visibleRoutes = new Set(moduleState.modules.map((module) => module.route));
+	const gatedPath = typeof location.state === "object" && location.state && "from" in location.state ? String((location.state as { from?: unknown }).from ?? "") : "";
 	const items = [
 		{ title: "API Keys", description: "Store your own provider credentials for news, web search, and LLM services.", to: "/settings/api-keys", icon: KeyRound },
 		{ title: "Connectors", description: "Configure scheduled GitHub trend and news search queries.", to: "/settings/connectors", icon: Rss },
@@ -40,6 +42,13 @@ export function SettingsPage() {
         </section>
 
         <ModuleTogglePanel />
+
+				{gatedPath ? (
+					<section className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-900">
+						<p className="font-medium">That module is hidden until you finish choosing a workspace mode.</p>
+						<p className="mt-1 text-amber-800/90">You were redirected here from <code>{gatedPath}</code>. Choose a preset below to keep the workspace simple, then enable advanced modules whenever you need them.</p>
+					</section>
+				) : null}
 
         <div className="grid gap-4 md:grid-cols-2">
           {items.map(({ title, description, to, icon: Icon }) => (
