@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { notesApi, type Note } from "@/lib/api";
 import { getReviewStatusLabel } from "@/lib/reviewStatus";
-import { SectionNav, reviewNavItems } from "@/components/SectionNav";
+import { ModuleSectionNav } from "@/components/SectionNav";
 
 type DigestTab = "pending" | "kept";
 
@@ -84,7 +84,7 @@ export function DigestPage() {
 	return (
 		<div className="h-full overflow-y-auto">
 			<div className="max-w-5xl mx-auto px-6 py-8">
-				<SectionNav items={reviewNavItems} active="Digest" />
+				<ModuleSectionNav parent="review" active="Digest" />
 				<div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold">Digest</h1>

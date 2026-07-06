@@ -3,10 +3,14 @@ import { BarChart3, Bot, Brain, DatabaseZap, KeyRound, MonitorCog, Rss, Settings
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
-import { SectionNav, settingsNavItems } from "@/components/SectionNav";
+import { ModuleSectionNav } from "@/components/SectionNav";
+import { ModuleTogglePanel } from "@/components/ModuleTogglePanel";
+import { useResolvedModules } from "@/lib/modules/module-settings";
 
 export function SettingsPage() {
   const { isAdmin } = useAuth();
+	const moduleState = useResolvedModules();
+	const visibleRoutes = new Set(moduleState.modules.map((module) => module.route));
 	const items = [
 		{ title: "API Keys", description: "Store your own provider credentials for news, web search, and LLM services.", to: "/settings/api-keys", icon: KeyRound },
 		{ title: "Connectors", description: "Configure scheduled GitHub trend and news search queries.", to: "/settings/connectors", icon: Rss },
@@ -17,12 +21,12 @@ export function SettingsPage() {
 		{ title: "System Jobs", description: "Inspect background work, failed jobs, and stuck processing with next-step guidance.", to: "/settings/jobs", icon: DatabaseZap },
 		{ title: "System Dashboard", description: "Inspect operational stats and knowledge rankings outside the daily Home workflow.", to: "/stats", icon: BarChart3 },
 		...(isAdmin ? [{ title: "Admin Users", description: "Manage user approvals and roles.", to: "/admin/users", icon: Shield }] : []),
-	];
+	].filter((item) => isAdmin || visibleRoutes.has(item.to));
 
 	return (
 		<div className="h-full overflow-y-auto">
 			<div className="mx-auto max-w-5xl space-y-6 px-6 py-8">
-				<SectionNav items={settingsNavItems} active="Settings" />
+				<ModuleSectionNav parent="settings" active="Settings" />
 				<section className="rounded-3xl border bg-card p-6 shadow-sm">
           <div className="flex items-start gap-4">
             <div className="rounded-xl bg-primary/10 p-3 text-primary"><Settings className="h-6 w-6" /></div>
@@ -34,6 +38,8 @@ export function SettingsPage() {
             </div>
           </div>
         </section>
+
+        <ModuleTogglePanel />
 
         <div className="grid gap-4 md:grid-cols-2">
           {items.map(({ title, description, to, icon: Icon }) => (

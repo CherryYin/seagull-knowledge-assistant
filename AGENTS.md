@@ -56,6 +56,7 @@ The core product goal is a durable personal knowledge graph with deterministic r
 - `src/pkg/services/foundation/wiki_concept_discovery.py`: reusable knowledge concept/entity discovery for wiki mining recommendations, with rule-based recall and optional top-K LLM refinement.
 - `src/pkg/services/system_jobs.py` and `web/src/pages/SystemJobsPage.tsx`: background job observability, failure inspection, and troubleshooting entry points.
 - System jobs are user-scoped when attached to a user; global jobs are for admin/system inspection and must not leak to ordinary users.
+- `src/pkg/api/system.py`: authenticated system capability/status endpoint used by the frontend module settings UI to distinguish visible-by-preference from unavailable-by-setup modules.
 
 ## Agent Capabilities In This Project
 

@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, BriefcaseBusiness, Clock, DatabaseZap, RotateCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { SectionNav, settingsNavItems } from "@/components/SectionNav";
+import { ModuleSectionNav } from "@/components/SectionNav";
 import { StateMessage } from "@/components/StateMessage";
 import { StatusBadge } from "@/components/StatusBadge";
 import { systemJobsApi, type SchedulerTaskStatus, type SystemJob } from "@/lib/api/system-jobs";
@@ -175,7 +175,7 @@ export function SystemJobsPage() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-5xl space-y-6 px-6 py-8">
-        <SectionNav items={settingsNavItems} active="Jobs" />
+        <ModuleSectionNav parent="settings" active="Jobs" />
 
         <section className="rounded-3xl border bg-card p-6 shadow-sm">
           <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">

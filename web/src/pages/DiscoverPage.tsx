@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { discoveryApi, DiscoveryItem, DiscoveryProvider } from "@/lib/api";
 import { paperDiscoveryApi, type PaperDiscoveryProfile } from "@/lib/api/paper-discovery";
-import { SectionNav, discoverNavItems } from "@/components/SectionNav";
+import { ModuleSectionNav } from "@/components/SectionNav";
 import { StateMessage } from "@/components/StateMessage";
 import { DiscoveryDetailDialog, type DiscoveryDetailData } from "@/components/DiscoveryDetailDialog";
 import { toDiscoveryDetail } from "@/lib/discovery-detail";
@@ -123,7 +123,7 @@ export function DiscoverPage() {
     <>
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-6xl space-y-6 px-6 py-8">
-		<SectionNav items={discoverNavItems} active="Recommended" />
+		<ModuleSectionNav parent="discover" active="Recommended" />
         <section className="rounded-3xl border bg-card p-6 shadow-sm">
           <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
             <div className="flex items-start gap-4">

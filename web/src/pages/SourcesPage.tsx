@@ -15,7 +15,7 @@ import { getSourceProcessingState } from "@/lib/sourceProcessingStatus";
 import { sourcesApi, categoriesApi, connectorsApi, type ArxivPaper, type GitHubRepo, type NewsArticle, type SourceCreate, type Source } from "@/lib/api";
 import { discoveryApi, type DiscoveryItem } from "@/lib/api";
 import { paperDiscoveryApi } from "@/lib/api/paper-discovery";
-import { SectionNav, knowledgeNavItems } from "@/components/SectionNav";
+import { ModuleSectionNav } from "@/components/SectionNav";
 
 const SOURCE_TYPES = ["pdf", "article", "conversation", "video", "web", "github"];
 const FEED_VIEWS = [
@@ -329,7 +329,7 @@ export function SourcesPage() {
     <>
     <div className="h-full overflow-y-auto">
       <div className="max-w-5xl mx-auto px-6 py-8">
-        <SectionNav items={knowledgeNavItems} active="Sources" />
+        <ModuleSectionNav parent="knowledge" active="Sources" />
 
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold">Sources</h1>

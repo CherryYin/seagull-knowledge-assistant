@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { skillsApi, type Skill, type SkillArg, type SkillCreateRequest } from "@/lib/api";
-import { SectionNav, settingsNavItems } from "@/components/SectionNav";
+import { ModuleSectionNav } from "@/components/SectionNav";
 
 const DEFAULT_TEMPLATE = `Use this skill when the user asks for help with this domain or workflow.
 
@@ -75,7 +75,7 @@ export function SkillsPage() {
 	return (
 		<div className="h-full overflow-y-auto">
 			<div className="max-w-5xl mx-auto px-6 py-8 space-y-6">
-				<SectionNav items={settingsNavItems} active="Skills" />
+				<ModuleSectionNav parent="settings" active="Skills" />
 				<div className="mb-6 overflow-hidden rounded-2xl border border-primary/20 bg-gradient-to-br from-slate-950 via-blue-950 to-cyan-950 p-6 text-white shadow-xl shadow-primary/10">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>

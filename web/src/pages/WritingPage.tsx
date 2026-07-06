@@ -4,7 +4,7 @@ import { PenLine, ExternalLink, FileDown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { notesApi, type Note } from "@/lib/api";
-import { SectionNav, knowledgeNavItems } from "@/components/SectionNav";
+import { ModuleSectionNav } from "@/components/SectionNav";
 
 export function WritingPage() {
   const navigate = useNavigate();
@@ -21,7 +21,7 @@ export function WritingPage() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-5xl mx-auto px-6 py-8">
-        <SectionNav items={knowledgeNavItems} active="Documents" />
+        <ModuleSectionNav parent="knowledge" active="Documents" />
 
         <div className="flex items-center justify-between mb-6">
           <div>

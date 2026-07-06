@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Loader2, Save, Settings2 } from "lucide-react";
 
-import { SectionNav, settingsNavItems } from "@/components/SectionNav";
+import { ModuleSectionNav } from "@/components/SectionNav";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -73,7 +73,7 @@ export function ConnectorSettingsPage() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-4xl space-y-6 px-6 py-8">
-        <SectionNav items={settingsNavItems} active="Connectors" />
+        <ModuleSectionNav parent="settings" active="Connectors" />
         <section className="rounded-3xl border bg-card p-6 shadow-sm">
           <div className="flex items-start gap-4">
             <div className="rounded-xl bg-primary/10 p-3 text-primary"><Settings2 className="h-6 w-6" /></div>

@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { knowledgeApi, type KnowledgeStatsItem, type DashboardData } from "@/lib/api";
-import { SectionNav, settingsNavItems } from "@/components/SectionNav";
+import { ModuleSectionNav } from "@/components/SectionNav";
 import {
   BarChart,
   Bar,
@@ -80,7 +80,7 @@ export function StatsPage() {
 	return (
 		<div className="h-full overflow-y-auto">
 			<div className="max-w-6xl mx-auto px-6 py-8">
-				<SectionNav items={settingsNavItems} active="Dashboard" />
+				<ModuleSectionNav parent="settings" active="Dashboard" />
 				<div className="mb-6 mt-6">
 					<h1 className="text-2xl font-bold">System Dashboard</h1>
 					<p className="mt-2 text-sm text-muted-foreground">

@@ -47,6 +47,7 @@ from pkg.api.calendar_reminders import router as calendar_reminders_router
 from pkg.api.review import router as review_router
 from pkg.api.discovery import router as discovery_router
 from pkg.api.paper_discovery import router as paper_discovery_router
+from pkg.api.system import router as system_router
 from pkg.api.system_jobs import router as system_jobs_router
 
 # Configure root logger so all app loggers (pkg.*) output to console.
@@ -177,6 +178,7 @@ app.include_router(calendar_reminders_router, prefix="/calendar/reminders", tags
 app.include_router(review_router, prefix="/review", tags=["review"])
 app.include_router(discovery_router, prefix="/discovery", tags=["discovery"])
 app.include_router(paper_discovery_router, prefix="/paper-discovery", tags=["paper-discovery"])
+app.include_router(system_router, prefix="/system", tags=["system"])
 app.include_router(system_jobs_router, prefix="/system/jobs", tags=["system-jobs"])
 
 

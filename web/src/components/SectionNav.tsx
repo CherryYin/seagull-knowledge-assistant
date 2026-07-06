@@ -1,5 +1,8 @@
 import { Link } from "react-router-dom";
 import { cn } from "@/lib/utils";
+import { getSectionNavItems } from "@/lib/modules/resolve-modules";
+import { useAuth } from "@/lib/auth";
+import { useResolvedModules } from "@/lib/modules/module-settings";
 
 export interface SectionNavItem {
   label: string;
@@ -7,9 +10,10 @@ export interface SectionNavItem {
 }
 
 export function SectionNav({ items, active }: { items: SectionNavItem[]; active: string }) {
+	const visibleItems = items.some((item) => item.label === active) ? items : [...items, { label: active, to: "#" }];
 	return (
 		<div className="grid gap-2 rounded-xl border bg-card p-3 text-xs text-muted-foreground sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-6">
-      {items.map((item) => (
+      {visibleItems.map((item) => (
         <Link
           key={item.to}
           to={item.to}
@@ -25,35 +29,8 @@ export function SectionNav({ items, active }: { items: SectionNavItem[]; active:
   );
 }
 
-export const knowledgeNavItems: SectionNavItem[] = [
-	{ label: "Search", to: "/search" },
-	{ label: "Sources", to: "/sources" },
-	{ label: "Notes", to: "/notes" },
-	{ label: "Documents", to: "/documents" },
-	{ label: "Knowledge Tree", to: "/memory" },
-	{ label: "Wiki", to: "/wiki" },
-];
-
-export const reviewNavItems: SectionNavItem[] = [
-	{ label: "Review", to: "/review" },
-	{ label: "Digest", to: "/review/digest" },
-	{ label: "Wiki Review", to: "/review/wiki-suggestions" },
-	{ label: "Wiki Discovery", to: "/wiki/discovery" },
-	{ label: "Suggestions", to: "/review/suggestions" },
-];
-
-export const discoverNavItems: SectionNavItem[] = [
-	{ label: "Recommended", to: "/discover" },
-];
-
-export const settingsNavItems: SectionNavItem[] = [
-	{ label: "Settings", to: "/settings" },
-	{ label: "API Keys", to: "/settings/api-keys" },
-	{ label: "Connectors", to: "/settings/connectors" },
-	{ label: "Profile", to: "/settings/profile" },
-	{ label: "Agents", to: "/settings/agents" },
-	{ label: "Skills", to: "/settings/skills" },
-	{ label: "Workspace", to: "/settings/workspace" },
-	{ label: "Jobs", to: "/settings/jobs" },
-	{ label: "Dashboard", to: "/stats" },
-];
+export function ModuleSectionNav({ parent, active }: { parent: "knowledge" | "review" | "discover" | "settings"; active: string }) {
+  const { isAdmin } = useAuth();
+  const moduleState = useResolvedModules();
+  return <SectionNav items={getSectionNavItems(parent, { isAdmin, settings: moduleState.settings })} active={active} />;
+}

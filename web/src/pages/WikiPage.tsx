@@ -12,7 +12,7 @@ import { StateMessage } from "@/components/StateMessage";
 import { wikiApi, type WikiPage, type WikiPageCreate } from "@/lib/api";
 import { getWikiOrigin, getWikiRole } from "@/lib/wikiLifecycle";
 import { buildWikiTemplate, wikiTemplates } from "@/lib/wikiTemplates";
-import { SectionNav, knowledgeNavItems } from "@/components/SectionNav";
+import { ModuleSectionNav } from "@/components/SectionNav";
 
 const PAGE_TYPES = ["topic", "entity", "concept", "project", "comparison"];
 
@@ -139,7 +139,7 @@ export function WikiPage() {
   return (
     <div className="h-full overflow-y-auto bg-gradient-to-b from-background via-background to-muted/20 p-6">
       <div className="mx-auto max-w-6xl space-y-6">
-        <SectionNav items={knowledgeNavItems} active="Wiki" />
+        <ModuleSectionNav parent="knowledge" active="Wiki" />
 
         <div className="overflow-hidden rounded-3xl border border-border/70 bg-card shadow-sm">
           <div className="bg-gradient-to-r from-primary/10 via-primary/5 to-transparent p-6 md:p-8">

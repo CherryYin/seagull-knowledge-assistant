@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { SearchResultCard } from "@/components/SearchResultCard";
 import { StateMessage } from "@/components/StateMessage";
 import { searchApi, type SearchResult } from "@/lib/api";
-import { SectionNav, knowledgeNavItems } from "@/components/SectionNav";
+import { ModuleSectionNav } from "@/components/SectionNav";
 
 const MODES = ["auto", "vector", "sql", "hybrid"] as const;
 
@@ -31,7 +31,7 @@ export function SearchPage() {
 	return (
 		<div className="h-full overflow-y-auto">
 			<div className="max-w-3xl mx-auto px-6 py-8 space-y-6">
-				<SectionNav items={knowledgeNavItems} active="Search" />
+				<ModuleSectionNav parent="knowledge" active="Search" />
 				<div>
 					<h1 className="text-2xl font-bold">Search Knowledge</h1>
 					<p className="mt-2 text-sm text-muted-foreground">

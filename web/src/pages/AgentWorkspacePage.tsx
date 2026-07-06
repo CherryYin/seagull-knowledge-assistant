@@ -14,7 +14,7 @@ import {
 	type AgentRunStatusItem,
 } from "@/lib/api/agent-runs";
 import { systemJobsApi, type SystemJob } from "@/lib/api/system-jobs";
-import { SectionNav, settingsNavItems } from "@/components/SectionNav";
+import { ModuleSectionNav } from "@/components/SectionNav";
 
 const STATUS_STYLES: Record<AgentRunStatus, string> = {
   idle: "bg-muted text-muted-foreground border-border",
@@ -77,7 +77,7 @@ export function AgentWorkspacePage() {
 	return (
 		<div className="h-full overflow-y-auto">
 			<div className="max-w-6xl mx-auto px-6 py-8 space-y-6">
-				<SectionNav items={settingsNavItems} active="Workspace" />
+				<ModuleSectionNav parent="settings" active="Workspace" />
 				<div className="flex flex-wrap items-start justify-between gap-4 mb-6">
           <div>
 						<h1 className="text-2xl font-bold">Agent Workspace</h1>

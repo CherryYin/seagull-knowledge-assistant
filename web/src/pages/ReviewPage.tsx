@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { memoryApi, notesApi, reviewApi, sourcesApi, wikiApi } from "@/lib/api";
 import { SUMMARY_LAYER_DESCRIPTION } from "@/lib/summaryLayer";
-import { SectionNav, reviewNavItems } from "@/components/SectionNav";
+import { ModuleSectionNav } from "@/components/SectionNav";
 
 export function ReviewPage() {
   const navigate = useNavigate();
@@ -49,7 +49,7 @@ export function ReviewPage() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-6xl space-y-6 px-6 py-8">
-		<SectionNav items={reviewNavItems} active="Review" />
+		<ModuleSectionNav parent="review" active="Review" />
         <section className="rounded-3xl border bg-card p-6 shadow-sm">
           <div className="flex items-start gap-4">
             <div className="rounded-xl bg-primary/10 p-3 text-primary"><Bell className="h-6 w-6" /></div>

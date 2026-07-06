@@ -19,7 +19,7 @@ import {
   getMemoryUsageCount,
   isMemoryStale,
 } from "@/lib/memoryStatus";
-import { SectionNav, knowledgeNavItems } from "@/components/SectionNav";
+import { ModuleSectionNav } from "@/components/SectionNav";
 import { buildAssetHandoffState } from "@/lib/asset-handoff";
 
 const PAGE_SIZE = 25;
@@ -199,7 +199,7 @@ export function MemoryTreePage() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
-		<SectionNav items={knowledgeNavItems} active="Knowledge Tree" />
+		<ModuleSectionNav parent="knowledge" active="Knowledge Tree" />
 
         <section className="rounded-3xl border bg-card p-6 shadow-sm">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">

@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { SectionNav, settingsNavItems } from "@/components/SectionNav";
+import { ModuleSectionNav } from "@/components/SectionNav";
 
 const PROFILE_QUERY_KEY = ["user-profile"] as const;
 const USER_MEMORIES_QUERY_KEY = ["user-memories"] as const;
@@ -157,7 +157,7 @@ export function UserProfilePage() {
 	return (
 		<div className="h-full overflow-y-auto p-6">
 			<div className="mx-auto max-w-5xl space-y-6">
-				<SectionNav items={settingsNavItems} active="Profile" />
+				<ModuleSectionNav parent="settings" active="Profile" />
 				<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-xl font-semibold">User Profile</h1>

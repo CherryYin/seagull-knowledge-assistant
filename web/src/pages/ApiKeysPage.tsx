@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Loader2, Plus, Save, Trash2 } from "lucide-react";
 
-import { SectionNav, settingsNavItems } from "@/components/SectionNav";
+import { ModuleSectionNav } from "@/components/SectionNav";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -93,7 +93,7 @@ export function ApiKeysPage() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-5xl space-y-6 px-6 py-8">
-        <SectionNav items={settingsNavItems} active="API Keys" />
+        <ModuleSectionNav parent="settings" active="API Keys" />
         <section className="rounded-3xl border bg-card p-6 shadow-sm">
           <div className="flex items-start gap-4">
             <div className="rounded-xl bg-primary/10 p-3 text-primary"><KeyRound className="h-6 w-6" /></div>

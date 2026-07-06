@@ -1,28 +1,17 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useState, useEffect, useRef } from "react";
 import {
-	MessageSquare,
-	Search,
-	StickyNote,
-	FileText,
-	BarChart3,
 	RefreshCw,
 	ChevronLeft,
 	Palette,
 	LogOut,
-	Users,
 	User,
-	Brain,
-	BookOpen,
-	CalendarDays,
-	CalendarCheck2,
-	Compass,
-	Bell,
-	Settings,
-	Home,
+	Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { ModuleTogglePanel } from "@/components/ModuleTogglePanel";
+import { ModuleRouteHint } from "@/components/ModuleRouteHint";
 import { syncApi } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import {
@@ -32,59 +21,8 @@ import {
   saveBackgroundPresetId,
   type BackgroundPresetId,
 } from "@/lib/uiBackground";
-
-const navSections = [
-	{
-		label: "Home",
-		items: [
-			{ to: "/", icon: Home, label: "Home" },
-			{ to: "/calendar", icon: CalendarDays, label: "Calendar" },
-			{ to: "/completed", icon: CalendarCheck2, label: "Completed" },
-		],
-	},
-	{
-		label: "Knowledge Foundation",
-		items: [
-			{ to: "/search", icon: Search, label: "Search" },
-			{ to: "/sources", icon: FileText, label: "Sources" },
-			{ to: "/notes", icon: StickyNote, label: "Notes" },
-			{ to: "/memory", icon: Brain, label: "Knowledge Tree" },
-			{ to: "/wiki", icon: BookOpen, label: "Wiki" },
-		],
-	},
-	{
-		label: "Assets & Consumption",
-		items: [
-			{ to: "/assets", icon: FileText, label: "Assets" },
-			{ to: "/documents", icon: BookOpen, label: "Documents (Legacy)" },
-		],
-	},
-	{
-		label: "Review",
-		items: [
-			{ to: "/review", icon: Bell, label: "Review" },
-		],
-	},
-	{
-		label: "Discover",
-		items: [
-			{ to: "/discover", icon: Compass, label: "Discover" },
-		],
-	},
-	{
-		label: "Agent",
-		items: [
-			{ to: "/chat", icon: MessageSquare, label: "Agent Chat" },
-		],
-	},
-	{
-		label: "Settings",
-		items: [
-			{ to: "/settings", icon: Settings, label: "Settings" },
-			{ to: "/stats", icon: BarChart3, label: "System Dashboard" },
-		],
-	},
-];
+import { getPrimaryNavSections } from "@/lib/modules/resolve-modules";
+import { useResolvedModules } from "@/lib/modules/module-settings";
 
 export function Layout() {
   const [collapsed, setCollapsed] = useState(false);
@@ -97,6 +35,8 @@ export function Layout() {
   const userMenuRef = useRef<HTMLDivElement>(null);
   const { user, logout, isAdmin } = useAuth();
   const navigate = useNavigate();
+  const moduleState = useResolvedModules();
+  const navSections = getPrimaryNavSections({ isAdmin, settings: moduleState.settings });
 
   useEffect(() => {
     saveBackgroundPresetId(backgroundId);
@@ -169,11 +109,11 @@ export function Layout() {
                 </p>
               )}
               <div className="space-y-1">
-                {section.items.map(({ to, icon: Icon, label }) => (
-                  <NavLink
-                    key={to}
-                    to={to}
-                    end={to === "/"}
+					{section.items.map(({ route, icon: Icon, label }) => (
+					  <NavLink
+						key={route}
+						to={route}
+						end={route === "/"}
                     title={collapsed ? label : undefined}
                     className={({ isActive }) =>
                       cn(
@@ -330,9 +270,15 @@ export function Layout() {
 
       {/* Main content */}
       <main
-        className="flex-1 overflow-hidden transition-[background-color] duration-300 ease-out"
+        className="relative flex-1 overflow-hidden transition-[background-color] duration-300 ease-out"
         style={{ backgroundColor: mainBg }}
       >
+        {moduleState.onboardingRequired ? (
+          <div className="absolute inset-x-4 top-4 z-20 mx-auto max-w-5xl">
+            <ModuleTogglePanel compact />
+          </div>
+        ) : null}
+        {!moduleState.onboardingRequired ? <ModuleRouteHint /> : null}
         <Outlet />
       </main>
     </div>

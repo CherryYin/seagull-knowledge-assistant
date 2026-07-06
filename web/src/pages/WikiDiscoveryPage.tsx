@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ReferenceList } from "@/components/ReferenceList";
 import { type ReferenceItem } from "@/components/ReferenceChips";
-import { SectionNav, reviewNavItems } from "@/components/SectionNav";
+import { ModuleSectionNav } from "@/components/SectionNav";
 import { wikiApi, type WikiArticleDraft, type WikiInsightCandidate, type WikiMiningRunDetail } from "@/lib/api";
 
 export function WikiDiscoveryPage() {
@@ -128,7 +128,7 @@ export function WikiDiscoveryPage() {
   return (
     <div className="h-full overflow-y-auto p-6">
       <div className="mx-auto max-w-6xl space-y-6">
-        <SectionNav items={reviewNavItems} active="Wiki Discovery" />
+        <ModuleSectionNav parent="review" active="Wiki Discovery" />
         <section className="rounded-3xl border bg-card p-6 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>

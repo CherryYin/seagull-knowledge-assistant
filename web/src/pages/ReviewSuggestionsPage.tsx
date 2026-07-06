@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { reviewApi, ReviewSuggestion, ReviewSuggestionType } from "@/lib/api";
 import { getReviewConflictMessage, getReviewStatusLabel } from "@/lib/reviewStatus";
-import { SectionNav, reviewNavItems } from "@/components/SectionNav";
+import { ModuleSectionNav } from "@/components/SectionNav";
 
 const titles: Record<ReviewSuggestionType, string> = {
   low_confidence_fact: "Low-Confidence Facts",
@@ -40,7 +40,7 @@ export function ReviewSuggestionsPage() {
   return (
     <div className="h-full overflow-y-auto p-6">
       <div className="mx-auto max-w-5xl space-y-5">
-		<SectionNav items={reviewNavItems} active="Suggestions" />
+		<ModuleSectionNav parent="review" active="Suggestions" />
         <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div>
             <div className="flex items-center gap-2 text-primary">
