@@ -12,6 +12,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { knowledgeApi, type DashboardData } from "@/lib/api/knowledge";
 import { systemApi, type ModuleCapability } from "@/lib/api/system";
 
+function sanitizePinnedModules(pinned: string[] | undefined, enabledModuleIds: string[], { isAdmin = false }: { isAdmin?: boolean } = {}) {
+  if (!pinned?.length) return [];
+  if (isAdmin) return pinned;
+  const enabled = new Set(enabledModuleIds);
+  return pinned.filter((moduleId) => enabled.has(moduleId));
+}
+
 function mergePresetSettings(presetId: ModulePresetId, current: UserModuleSettings, completeOnboarding: boolean): UserModuleSettings {
   const preset = getModulePreset(presetId);
   return {
@@ -19,6 +26,7 @@ function mergePresetSettings(presetId: ModulePresetId, current: UserModuleSettin
     preset: preset.id,
     enabled: preset.enabledModuleIds,
     disabled: [],
+    pinned: sanitizePinnedModules(current.pinned, preset.enabledModuleIds),
     onboarding_completed: completeOnboarding ? true : current.onboarding_completed,
   };
 }
@@ -220,6 +228,7 @@ export function ModuleTogglePanel({ compact = false }: { compact?: boolean }) {
       ...moduleState.settings,
       enabled: [...enabled],
       disabled: [...disabled],
+      pinned: sanitizePinnedModules(moduleState.settings.pinned, [...enabled]),
       onboarding_completed: moduleState.settings.onboarding_completed ?? true,
     });
   };
