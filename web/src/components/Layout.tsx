@@ -10,7 +10,6 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { ModuleTogglePanel } from "@/components/ModuleTogglePanel";
 import { ModuleRouteHint } from "@/components/ModuleRouteHint";
 import { syncApi } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -273,11 +272,6 @@ export function Layout() {
         className="relative flex-1 overflow-hidden transition-[background-color] duration-300 ease-out"
         style={{ backgroundColor: mainBg }}
       >
-        {moduleState.onboardingRequired ? (
-          <div className="absolute inset-x-4 top-4 z-20 mx-auto max-w-5xl">
-            <ModuleTogglePanel compact />
-          </div>
-        ) : null}
         {!moduleState.onboardingRequired ? <ModuleRouteHint /> : null}
         <Outlet />
       </main>

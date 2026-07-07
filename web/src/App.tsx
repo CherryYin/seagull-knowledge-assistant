@@ -37,6 +37,7 @@ const ReviewPage = lazy(() => import("./pages/ReviewPage").then((m) => ({ defaul
 const ReviewSuggestionsPage = lazy(() => import("./pages/ReviewSuggestionsPage").then((m) => ({ default: m.ReviewSuggestionsPage })));
 const SettingsPage = lazy(() => import("./pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
 const SystemJobsPage = lazy(() => import("./pages/SystemJobsPage").then((m) => ({ default: m.SystemJobsPage })));
+const OnboardingPage = lazy(() => import("./pages/OnboardingPage").then((m) => ({ default: m.OnboardingPage })));
 
 function PageLoader() {
   return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Loading...</div>;
@@ -107,6 +108,7 @@ export default function App() {
             <Route path="/completed-todos" element={<Navigate to="/completed" replace />} />
             <Route path="/discover" element={<LazyPage><DiscoverPage /></LazyPage>} />
             <Route path="/review" element={<LazyPage><ReviewPage /></LazyPage>} />
+            <Route path="/onboarding" element={<LazyPage><OnboardingPage /></LazyPage>} />
             <Route path="/settings" element={<LazyPage><SettingsPage /></LazyPage>} />
             <Route path="/settings/api-keys" element={<LazyPage><ApiKeysPage /></LazyPage>} />
             <Route path="/settings/connectors" element={<LazyPage><ConnectorSettingsPage /></LazyPage>} />
