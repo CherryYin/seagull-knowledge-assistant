@@ -50,7 +50,7 @@ export function LoginPage() {
           email: email || undefined,
           password,
         });
-        setMessage(res.detail || "Registration submitted. Please wait for administrator approval before signing in.");
+        setMessage(res.detail || "Registration submitted. After administrator approval, sign in to choose your workspace mode.");
         setMode("login");
         setPassword("");
       }
@@ -68,7 +68,7 @@ export function LoginPage() {
           <img src="/seagull.png" alt="Seagull" className="mb-2 h-16 w-16" />
           <CardTitle className="text-xl">Seagull</CardTitle>
           <p className="text-sm text-muted-foreground">
-            {mode === "login" ? "Sign in to your knowledge base" : "Register and wait for admin approval"}
+            {mode === "login" ? "Sign in to your knowledge base" : "Register, wait for approval, then choose your workspace on first sign-in"}
           </p>
         </CardHeader>
         <CardContent>
@@ -135,6 +135,11 @@ export function LoginPage() {
             >
               {mode === "login" ? "Need an account? Register" : "Already approved? Sign in"}
             </Button>
+            {mode === "register" ? (
+              <p className="text-center text-xs leading-5 text-muted-foreground">
+                Workspace modules are chosen after approval, during your first sign-in.
+              </p>
+            ) : null}
           </form>
         </CardContent>
       </Card>
