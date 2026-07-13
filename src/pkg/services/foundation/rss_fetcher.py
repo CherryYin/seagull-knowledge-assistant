@@ -70,6 +70,19 @@ def _mark_fetch_meta(meta: dict, status: str, **extra) -> None:
             meta[key] = value
 
 
+def _is_repeated_http_status(meta: dict, status_code: int) -> bool:
+    return meta.get("last_fetch_status") == "error" and meta.get("http_status") == status_code
+
+
+def _describe_feed_http_error(feed_url: str, status_code: int) -> str:
+    host = (feed_url or "").lower()
+    if status_code == 403:
+        if "linux.do" in host:
+            return "HTTP 403 forbidden; this feed may require login, cookies, or is blocked by site bot protection"
+        return "HTTP 403 forbidden; this feed may require auth or be blocked by the origin site"
+    return f"HTTP {status_code}"
+
+
 def _should_use_conditional_request(meta: dict) -> bool:
     return meta.get("use_conditional_requests") is True
 
@@ -322,11 +335,14 @@ async def fetch_single_feed(feed_source: Source, session: AsyncSession) -> int:
         return 0
 
     if resp.status_code >= 400:
-        logger.error(
-            "RSS fetch failed: source=%s status=%d url=%s",
-            feed_source.id, resp.status_code, feed_url,
+        repeated = _is_repeated_http_status(meta, resp.status_code)
+        message = _describe_feed_http_error(feed_url, resp.status_code)
+        log_fn = logger.warning if repeated else logger.error
+        log_fn(
+            "RSS fetch failed: source=%s status=%d url=%s reason=%s",
+            feed_source.id, resp.status_code, feed_url, message,
         )
-        _mark_fetch_meta(meta, "error", http_status=resp.status_code)
+        _mark_fetch_meta(meta, "error", http_status=resp.status_code, last_fetch_error=message)
         feed_source.metadata_ = meta
         await session.commit()
         return 0
