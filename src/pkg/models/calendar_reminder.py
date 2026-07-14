@@ -18,6 +18,8 @@ class CalendarReminder(Base):
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
     date: Mapped[str] = mapped_column(String(10), nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
+    note_id: Mapped[str | None] = mapped_column(String, ForeignKey("notes.id"), nullable=True)
+    recurrence: Mapped[str] = mapped_column(String(20), nullable=False, server_default="once")
     is_done: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())

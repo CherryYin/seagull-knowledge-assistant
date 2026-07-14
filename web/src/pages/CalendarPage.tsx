@@ -8,6 +8,17 @@ import { Input } from "@/components/ui/input";
 import { calendarRemindersApi, notesApi, sourcesApi, type CalendarReminder, type Note, type Source } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
+const RECURRENCE_OPTIONS = [
+  { value: "once", label: "Once" },
+  { value: "daily", label: "Daily" },
+  { value: "weekly", label: "Weekly" },
+  { value: "biweekly", label: "Every 2 weeks" },
+] as const;
+
+function recurrenceLabel(recurrence: CalendarReminder["recurrence"]) {
+  return RECURRENCE_OPTIONS.find((option) => option.value === recurrence)?.label ?? recurrence;
+}
+
 type CalendarItem = {
   id: string;
   title: string;
@@ -93,6 +104,8 @@ export function CalendarPage() {
   const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(new Date()));
   const [selectedKey, setSelectedKey] = useState(() => dateKey(new Date()));
   const [newReminder, setNewReminder] = useState("");
+  const [newReminderRecurrence, setNewReminderRecurrence] = useState<CalendarReminder["recurrence"]>("once");
+  const [linkedNoteId, setLinkedNoteId] = useState<string>("");
 
   const days = useMemo(() => buildCalendarDays(visibleMonth), [visibleMonth]);
   const gridStart = dateKey(days[0]);
@@ -143,16 +156,23 @@ export function CalendarPage() {
   const activeDays = new Set([...itemsByDay.keys(), ...remindersByDay.keys()]).size;
 
   const createReminderMutation = useMutation({
-    mutationFn: () => calendarRemindersApi.create({ date: selectedKey, text: newReminder.trim() }),
+    mutationFn: () => calendarRemindersApi.create({
+      date: selectedKey,
+      text: newReminder.trim(),
+      recurrence: newReminderRecurrence,
+      note_id: linkedNoteId || null,
+    }),
     onSuccess: () => {
       setNewReminder("");
+      setNewReminderRecurrence("once");
+      setLinkedNoteId("");
       queryClient.invalidateQueries({ queryKey: ["calendar-reminders"] });
       queryClient.invalidateQueries({ queryKey: ["calendar-reminders-overdue"] });
     },
   });
 
   const updateReminderMutation = useMutation({
-    mutationFn: ({ id, is_done }: { id: string; is_done: boolean }) => calendarRemindersApi.update(id, { is_done }),
+    mutationFn: ({ id, is_done, occurrence_date }: { id: string; is_done: boolean; occurrence_date?: string }) => calendarRemindersApi.update(id, { is_done, occurrence_date }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["calendar-reminders"] });
       queryClient.invalidateQueries({ queryKey: ["calendar-reminders-overdue"] });
@@ -352,13 +372,32 @@ export function CalendarPage() {
                   <span className="text-xs text-muted-foreground">{selectedReminders.filter((reminder) => !reminder.is_done).length} open</span>
                 </div>
                 <form
-                  className="flex gap-2"
+                  className="flex flex-col gap-2 sm:flex-row"
                   onSubmit={(event) => {
                     event.preventDefault();
                     submitReminder();
                   }}
                 >
                   <Input value={newReminder} onChange={(event) => setNewReminder(event.target.value)} placeholder="Add a todo for this day..." />
+                  <select
+                    className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+                    value={linkedNoteId}
+                    onChange={(event) => setLinkedNoteId(event.target.value)}
+                  >
+                    <option value="">No linked note</option>
+                    {(notesData?.items ?? []).slice(0, 100).map((note) => (
+                      <option key={note.id} value={note.id}>{note.title}</option>
+                    ))}
+                  </select>
+                  <select
+                    className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+                    value={newReminderRecurrence}
+                    onChange={(event) => setNewReminderRecurrence(event.target.value as CalendarReminder["recurrence"])}
+                  >
+                    {RECURRENCE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
                   <Button type="submit" size="icon" disabled={!newReminder.trim() || createReminderMutation.isPending}>
                     <Plus className="h-4 w-4" />
                   </Button>
@@ -372,14 +411,19 @@ export function CalendarPage() {
                         <button
                           type="button"
                           className={cn("mt-0.5 rounded-full", reminder.is_done ? "text-emerald-600" : "text-muted-foreground hover:text-emerald-600")}
-                          onClick={() => updateReminderMutation.mutate({ id: reminder.id, is_done: !reminder.is_done })}
+                          onClick={() => updateReminderMutation.mutate({ id: reminder.id, is_done: !reminder.is_done, occurrence_date: reminder.date })}
                           title={reminder.is_done ? "Mark as open" : "Mark as done"}
                         >
                           <CheckCircle2 className="h-4 w-4" />
                         </button>
                         <div className="min-w-0 flex-1">
                           <p className={cn("text-sm", reminder.is_done && "line-through")}>{reminder.text}</p>
-                          <p className="mt-1 text-xs text-muted-foreground">{reminder.date}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">{reminder.date} · {recurrenceLabel(reminder.recurrence)}</p>
+                          {reminder.note_id ? (
+                            <Link to={`/notes/${encodeURIComponent(reminder.note_id)}`} className="mt-1 inline-flex text-xs text-primary hover:underline">
+                              Open linked note
+                            </Link>
+                          ) : null}
                         </div>
                         <button
                           type="button"

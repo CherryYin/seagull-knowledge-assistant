@@ -5,6 +5,8 @@ export interface CalendarReminder {
   user_id: string;
   date: string;
   text: string;
+  note_id?: string | null;
+  recurrence: "once" | "daily" | "weekly" | "biweekly";
   is_done: boolean;
   created_at: string;
   updated_at: string;
@@ -19,11 +21,16 @@ export interface CalendarReminderList {
 export interface CalendarReminderCreate {
   date: string;
   text: string;
+  note_id?: string | null;
+  recurrence?: "once" | "daily" | "weekly" | "biweekly";
 }
 
 export interface CalendarReminderUpdate {
   text?: string;
+  note_id?: string | null;
+  recurrence?: "once" | "daily" | "weekly" | "biweekly";
   is_done?: boolean;
+  occurrence_date?: string;
 }
 
 export const calendarRemindersApi = {
