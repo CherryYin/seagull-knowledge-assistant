@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
-      '@deepseek-ai/dsh-session-persistence-postgres-shadow':
-        specifier: link:../../../dsh-harness/packages/session/session-persistence-postgres-shadow
-        version: link:../../../dsh-harness/packages/session/session-persistence-postgres-shadow
+      '@deepseek-ai/dsh-session-persistence-jsonl-shadow':
+        specifier: link:../../../dsh-harness/packages/session/session-persistence-jsonl-shadow
+        version: link:../../../dsh-harness/packages/session/session-persistence-jsonl-shadow
+      '@deepseek-ai/dsh-session-persistence-postgres':
+        specifier: link:../../../dsh-harness/packages/session/session-persistence-postgres
+        version: link:../../../dsh-harness/packages/session/session-persistence-postgres

@@ -5,12 +5,14 @@ import { resolve } from "node:path";
 const root = resolve(import.meta.dirname, "..");
 const cli = resolve(root, "dsh-harness/apps/cli/lib/bin.js");
 const dshHome = resolve(root, ".dsh");
-const shadowPackage = "@deepseek-ai/dsh-session-persistence-postgres-shadow";
+const shadowPackage = "@deepseek-ai/dsh-session-persistence-jsonl-shadow";
+const primaryPackage = "@deepseek-ai/dsh-session-persistence-postgres";
 
 for (const profile of ["headless", "web"]) {
   const profileDir = resolve(dshHome, "profiles", profile);
   const require = createRequire(resolve(profileDir, "package.json"));
   require.resolve(shadowPackage);
+  require.resolve(primaryPackage);
 
   const result = spawnSync(process.execPath, [cli, "--profile", profile, "--dump-config"], {
     cwd: root,
@@ -22,9 +24,9 @@ for (const profile of ["headless", "web"]) {
     process.stderr.write(result.stderr);
     process.exit(result.status ?? 1);
   }
-  if (!result.stdout.includes("session-persistence-postgres-shadow")) {
+  if (!result.stdout.includes("session-persistence-jsonl-shadow") || !result.stdout.includes("session-persistence-postgres")) {
     throw new Error(`${profile} profile does not compose ${shadowPackage}`);
   }
 }
 
-console.log("headless and web profiles compose the PostgreSQL shadow backend");
+console.log("headless and web profiles compose PostgreSQL primary with JSONL shadow");

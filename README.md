@@ -100,4 +100,4 @@ deepseek-knowledge-lab/
 - `PKG_DATABASE_URL`：Stage C PostgreSQL shadow write 连接串；必须是 `postgresql://` 格式
 - 模型和参数在 `config/settings.yaml` 中配置，或在 dsh UI 中实时修改
 
-当前 Session 持久化处于 Stage C：JSONL 仍是主存储和请求成功边界，Harness 每次完成提交后异步将完整 Session 对账到 PKG PostgreSQL。PostgreSQL 写入失败只触发重试与告警，不会使已经落盘的 JSONL 请求失败。
+当前 Session 持久化处于 Stage D：PKG PostgreSQL 是主存储和请求成功边界，Harness 每次完成提交后异步将完整 Session 对账到 JSONL 回滚副本。JSONL 写入失败只触发重试与告警，不会使已经提交的 PostgreSQL 请求失败。

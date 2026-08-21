@@ -20,6 +20,9 @@
 - id: llm-deepseek
   disabled: true
 
+- id: session-persistence-jsonl
+  disabled: true
+
 # Agent presets — 加载 knowledge-lab 实验台 preset
 - id: agent-presets
   config:
@@ -33,12 +36,17 @@
     - id: kobo-client
       name: ../../../plugins/kobo-client/src/index.js
       inject: [tools]
-    - id: session-persistence-postgres-shadow
-      name: '@deepseek-ai/dsh-session-persistence-postgres-shadow'
-      inject: [sessionPersistence]
+    - id: session-persistence-postgres
+      name: '@deepseek-ai/dsh-session-persistence-postgres'
       config:
         connectionString: !!js process.env.PKG_DATABASE_URL
         schema: public
-        sourceBackend: session-persistence-jsonl
+    - id: session-persistence-jsonl-shadow
+      name: '@deepseek-ai/dsh-session-persistence-jsonl-shadow'
+      inject: [sessionPersistence]
+      config:
+        root: !!js dshHomePath('sessions')
+        compression: zstd
+        sourceBackend: session-persistence-postgres
         maxAttempts: 3
         retryDelayMs: 250

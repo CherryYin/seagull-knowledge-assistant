@@ -2,7 +2,8 @@
   "name": "dsh-profile-web",
   "private": true,
   "dependencies": {
-    "@deepseek-ai/dsh-session-persistence-postgres-shadow": "link:../../../dsh-harness/packages/session/session-persistence-postgres-shadow"
+    "@deepseek-ai/dsh-session-persistence-jsonl-shadow": "link:../../../dsh-harness/packages/session/session-persistence-jsonl-shadow",
+    "@deepseek-ai/dsh-session-persistence-postgres": "link:../../../dsh-harness/packages/session/session-persistence-postgres"
   },
   "dsh": {
     "profile": {
