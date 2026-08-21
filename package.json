@@ -12,6 +12,8 @@
     "dev": "npx @deepseek-ai/dsh web",
     "profiles:install": "pnpm --dir dsh-harness run build:lib:host && pnpm --dir .dsh/profiles/headless install && pnpm --dir .dsh/profiles/web install",
     "profiles:check": "node scripts/check-profiles.mjs",
+    "sessions:verify-shadow": "node scripts/verify-session-shadow.mjs",
+    "test:sessions:verify-shadow": "node --test scripts/verify-session-shadow.test.mjs",
     "run-headless": "DSH_HOME=./.dsh node dsh-harness/apps/cli/lib/bin.js --profile headless",
     "run-web": "DSH_HOME=./.dsh node dsh-harness/apps/cli/lib/bin.js --profile web"
   },
