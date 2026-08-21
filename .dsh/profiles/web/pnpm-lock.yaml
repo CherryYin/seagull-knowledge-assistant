@@ -1,0 +1,13 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      '@deepseek-ai/dsh-session-persistence-postgres-shadow':
+        specifier: link:../../../dsh-harness/packages/session/session-persistence-postgres-shadow
+        version: link:../../../dsh-harness/packages/session/session-persistence-postgres-shadow

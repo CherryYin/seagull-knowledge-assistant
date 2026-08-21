@@ -5,5 +5,7 @@ node_modules/
 .dsh/migration-reports/
 dist/
 *.tsbuildinfo
-.dsh/profiles/
+.dsh/profiles/node_modules/
+.dsh/profiles/*/node_modules/
+.dsh/profiles/*/cordis.yml
 temp/

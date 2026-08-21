@@ -19,6 +19,7 @@
 1. Node.js >= 22.19.0
 2. PKG 后端运行中（`http://localhost:8000`）
 3. DeepSeek API Key
+4. PKG PostgreSQL 可访问（Stage C shadow write）
 
 ### 安装 & 启动
 
@@ -30,7 +31,13 @@ cp .dsh/.env.example .dsh/.env
 # 2. 安装 dsh（首次）
 npm install
 
-# 3. 启动 DeepSeek Harness Web UI
+# 3. 安装 web/headless profile 的本地插件依赖
+npm run profiles:install
+
+# 4. 验证两个 profile 可以完成配置组装
+npm run profiles:check
+
+# 5. 启动 DeepSeek Harness Web UI
 npm run dev
 # 或：npx @deepseek-ai/dsh web --profile knowledge-agent
 ```
@@ -90,4 +97,7 @@ deepseek-knowledge-lab/
 
 - `PKG_GATEWAY_URL`：Harness 的 PKG 工具代理地址，默认 `http://127.0.0.1:4000/internal/pkg`
 - `HARNESS_SERVICE_TOKEN`：Harness 调用 BFF 内部 PKG Proxy 的服务密钥；非回环部署必须设置随机值
+- `PKG_DATABASE_URL`：Stage C PostgreSQL shadow write 连接串；必须是 `postgresql://` 格式
 - 模型和参数在 `config/settings.yaml` 中配置，或在 dsh UI 中实时修改
+
+当前 Session 持久化处于 Stage C：JSONL 仍是主存储和请求成功边界，Harness 每次完成提交后异步将完整 Session 对账到 PKG PostgreSQL。PostgreSQL 写入失败只触发重试与告警，不会使已经落盘的 JSONL 请求失败。

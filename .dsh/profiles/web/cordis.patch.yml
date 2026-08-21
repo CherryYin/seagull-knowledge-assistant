@@ -1,0 +1,44 @@
+# Web profile: Qwen provider + pkg-client + kobo-client + agent-presets
+
+- id: llm-pi-ai
+  config:
+    defaultRoute: qwen
+    providers:
+      qwen:
+        api: openai-completions
+        baseURL: https://dashscope.aliyuncs.com/compatible-mode/v1
+        apiKeyEnv: QWEN_API_KEY
+        defaultModel: qwen-plus
+        models:
+          - id: qwen-plus
+            name: Qwen-Plus
+          - id: qwen-max
+            name: Qwen-Max
+          - id: qwen3.7-plus
+            name: Qwen-3.7-Plus
+
+- id: llm-deepseek
+  disabled: true
+
+# Agent presets — 加载 knowledge-lab 实验台 preset
+- id: agent-presets
+  config:
+    default: knowledge-lab
+    includeUserRoot: true
+
+- insert:
+    - id: pkg-client
+      name: ../../../plugins/pkg-client/src/index.js
+      inject: [tools]
+    - id: kobo-client
+      name: ../../../plugins/kobo-client/src/index.js
+      inject: [tools]
+    - id: session-persistence-postgres-shadow
+      name: '@deepseek-ai/dsh-session-persistence-postgres-shadow'
+      inject: [sessionPersistence]
+      config:
+        connectionString: '${PKG_DATABASE_URL}'
+        schema: public
+        sourceBackend: session-persistence-jsonl
+        maxAttempts: 3
+        retryDelayMs: 250
