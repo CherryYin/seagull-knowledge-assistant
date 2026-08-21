@@ -1,0 +1,3 @@
+name: 梳理最近导入
+description: 从近期 Source 和 Note 中识别主题、重复项、缺口和下一步动作。
+order: 50

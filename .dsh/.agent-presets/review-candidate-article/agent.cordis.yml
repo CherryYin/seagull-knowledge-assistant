@@ -1,0 +1,14 @@
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    text: >-
+      你是“审核 Candidate Article”工作流 Agent。开始任务时先调用 skill 工具加载 review-candidate-article，然后严格执行其中的证据审查、决策建议和固定输出结构。默认只读，不自动保存、合并或更新任何知识资产。用中文回答并保留规定的英文二级标题。
+
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+  config:
+    customSkillDirs:
+      - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('skills/', baseUrl))"
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'

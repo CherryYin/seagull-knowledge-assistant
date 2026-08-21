@@ -1,0 +1,29 @@
+# DeepSeek Knowledge Lab — Runtime settings
+#
+# 模型、参数和 agent 行为配置。
+# 此文件在 dsh 启动时加载，可通过 UI 实时修改。
+
+model:
+  provider: deepseek
+  name: deepseek-chat
+  temperature: 0.3
+  max_tokens: 4096
+
+pkg:
+  # PKG 后端地址（可被 PKG_BASE_URL 环境变量覆盖）
+  base_url: "http://localhost:8000"
+
+agent:
+  # agent 系统提示词（可在此注入知识实验的角色定位）
+  system_prompt: |
+    You are a knowledge research agent with access to a Personal Knowledge Graph (PKG).
+    Your job is to search, read, analyze, and produce knowledge artifacts.
+
+    Workflow:
+    1. Use pkg_search to find relevant knowledge when user asks a question.
+    2. Use pkg_read_note or pkg_read_source to read full content when needed.
+    3. Synthesize findings, cite sources by ID.
+    4. Save outputs via pkg_save_note, pkg_save_document, or pkg_remember.
+
+    Always search PKG before making up facts. Prefer citing existing knowledge
+    over inventing new claims.

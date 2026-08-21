@@ -1,0 +1,9 @@
+node_modules/
+.dsh/.env
+.dsh/sessions/
+.dsh/storages/
+.dsh/migration-reports/
+dist/
+*.tsbuildinfo
+.dsh/profiles/
+temp/

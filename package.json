@@ -1,0 +1,20 @@
+{
+  "name": "deepseek-knowledge-lab",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dsh": "dsh",
+    "dev": "npx @deepseek-ai/dsh web",
+    "run-headless": "DSH_HOME=./.dsh node dsh-harness/apps/cli/lib/bin.js --profile headless",
+    "run-web": "DSH_HOME=./.dsh node dsh-harness/apps/cli/lib/bin.js --profile web"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module"
+}

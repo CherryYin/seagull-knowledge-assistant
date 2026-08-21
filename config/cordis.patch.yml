@@ -1,0 +1,16 @@
+# DeepSeek Knowledge Lab — Cordis plugin patch
+#
+# 注入自定义 PKG 客户端插件，使 agent 可以调用 PKG 知识库的
+# 检索、阅读和写入能力。
+#
+# 使用方式：
+#   dsh web --profile knowledge-agent
+
+profiles:
+  knowledge-agent:
+    plugins:
+      # 从本地 plugins 目录加载 pkg-client
+      - path: ./plugins/pkg-client/src/index.js
+    settings:
+      # 默认模型（可在 settings.yaml 中覆盖）
+      model: deepseek-chat

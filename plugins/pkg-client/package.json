@@ -1,0 +1,13 @@
+{
+  "name": "@knowledge-lab/pkg-client",
+  "version": "0.1.0",
+  "description": "PKG (Personal Knowledge Graph) API client plugin for DeepSeek Harness",
+  "type": "module",
+  "main": "src/index.js",
+  "types": "src/index.d.ts",
+  "dependencies": {
+    "@deepseek-ai/cordis": "*"
+  },
+  "keywords": ["deepseek-harness", "plugin", "knowledge-graph", "pkg"],
+  "license": "MIT"
+}

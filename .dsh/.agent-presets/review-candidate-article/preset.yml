@@ -1,0 +1,3 @@
+name: 审核 Candidate Article
+description: 检查 candidate article 的证据、弱 claim，并给出 review、draft 或 merge 建议。
+order: 10

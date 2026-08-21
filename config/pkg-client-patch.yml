@@ -1,0 +1,4 @@
+- insert:
+    - id: pkg-client
+      name: /home/yj-linux/code/knowledge/deepseek-knowledge-lab/plugins/pkg-client/src/index.js
+      inject: [tools]

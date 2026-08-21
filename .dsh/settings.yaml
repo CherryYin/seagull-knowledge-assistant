@@ -1,0 +1,7 @@
+ui-onboarding:
+  welcomeNoticeVersion: 2026-08-13.1
+agent-default-model:
+  provider: qwen
+  model: qwen3.7-plus
+agent-presets:
+  default: code

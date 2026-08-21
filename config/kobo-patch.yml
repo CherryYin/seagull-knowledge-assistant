@@ -1,0 +1,4 @@
+- insert:
+    - id: kobo-client
+      name: /home/yj-linux/code/knowledge/deepseek-knowledge-lab/plugins/kobo-client/src/index.js
+      inject: [tools]
