@@ -36,7 +36,7 @@
       name: '@deepseek-ai/dsh-session-persistence-postgres-shadow'
       inject: [sessionPersistence]
       config:
-        connectionString: '${PKG_DATABASE_URL}'
+        connectionString: !!js process.env.PKG_DATABASE_URL
         schema: public
         sourceBackend: session-persistence-jsonl
         maxAttempts: 3
