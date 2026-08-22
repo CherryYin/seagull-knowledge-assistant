@@ -2,7 +2,7 @@ import asyncio
 import hashlib
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.config import settings
@@ -44,13 +44,25 @@ async def generate_discovery_items(
     created = 0
     updated = 0
     skipped = 0
+    recommended_count = await _recommended_discovery_count(session, user_id=user_id)
+    recommended_capacity = max(settings.DISCOVERY_MAX_RECOMMENDED_PER_USER - recommended_count, 0)
     candidates = await _load_candidates(session, user_id=user_id, providers=providers, limit=limit)
     for candidate in candidates[:limit]:
-        item, was_created = await _upsert_discovery_item(session, user_id=user_id, candidate=candidate, profile=profile)
+        item, was_created = await _upsert_discovery_item(
+            session,
+            user_id=user_id,
+            candidate=candidate,
+            profile=profile,
+            allow_recommended_create=recommended_capacity > 0,
+        )
+        if item is None:
+            skipped += 1
+            continue
         if item.status in {"kept", "saved", "dismissed"}:
             skipped += 1
         elif was_created:
             created += 1
+            recommended_capacity -= 1
         else:
             updated += 1
     if commit:
@@ -153,6 +165,8 @@ async def ingest_web_discovery_results(
     created = 0
     updated = 0
     skipped = 0
+    recommended_count = await _recommended_discovery_count(session, user_id=user_id)
+    recommended_capacity = max(settings.DISCOVERY_MAX_RECOMMENDED_PER_USER - recommended_count, 0)
     for raw_item in items:
         url = normalize_http_url(str(raw_item.get("url") or "").strip())
         title = str(raw_item.get("title") or url or "").strip()
@@ -178,11 +192,21 @@ async def ingest_web_discovery_results(
             "base_score": 12,
             "source_id": None,
         }
-        item, was_created = await _upsert_discovery_item(session, user_id=user_id, candidate=candidate, profile=profile)
+        item, was_created = await _upsert_discovery_item(
+            session,
+            user_id=user_id,
+            candidate=candidate,
+            profile=profile,
+            allow_recommended_create=recommended_capacity > 0,
+        )
+        if item is None:
+            skipped += 1
+            continue
         if item.status in {"kept", "saved", "dismissed"}:
             skipped += 1
         elif was_created:
             created += 1
+            recommended_capacity -= 1
         else:
             updated += 1
     if commit:
@@ -329,7 +353,24 @@ async def _load_cache_payloads(session: AsyncSession, *, user_id: str, providers
     return {(item.provider, item.item_key): item.payload for item in rows.scalars()}
 
 
-async def _upsert_discovery_item(session: AsyncSession, *, user_id: str, candidate: dict, profile: dict) -> tuple[DiscoveryItem, bool]:
+async def _recommended_discovery_count(session: AsyncSession, *, user_id: str) -> int:
+    rows = await session.execute(
+        select(func.count()).select_from(DiscoveryItem).where(
+            DiscoveryItem.user_id == user_id,
+            DiscoveryItem.status == "recommended",
+        )
+    )
+    return int(rows.scalar_one_or_none() or 0)
+
+
+async def _upsert_discovery_item(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    candidate: dict,
+    profile: dict,
+    allow_recommended_create: bool = True,
+) -> tuple[DiscoveryItem | None, bool]:
     score, why = await score_candidate(session, user_id=user_id, candidate=candidate, profile=profile)
     if candidate.get("source") == "trend":
         score += 20
@@ -374,6 +415,9 @@ async def _upsert_discovery_item(session: AsyncSession, *, user_id: str, candida
         item.why = list(dict.fromkeys(why))[:6]
         item.source_id = candidate.get("source_id") or item.source_id
         return item, False
+
+    if not allow_recommended_create:
+        return None, False
 
     item = DiscoveryItem(
         user_id=user_id,

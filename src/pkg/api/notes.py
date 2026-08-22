@@ -44,7 +44,12 @@ def apply_digest_retention(note: Note, *, now: datetime | None = None) -> None:
             note.kept_at = now or datetime.now(timezone.utc)
 
 
-async def delete_expired_digest_notes(session: AsyncSession, *, user_id: str, now: datetime | None = None) -> None:
+async def delete_expired_digest_notes(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    now: datetime | None = None,
+) -> dict[str, int]:
     now = now or datetime.now(timezone.utc)
     storage = get_storage_service()
     rows = await session.execute(
@@ -57,12 +62,16 @@ async def delete_expired_digest_notes(session: AsyncSession, *, user_id: str, no
         )
     )
     expired = list(rows.scalars())
+    storage_objects_deleted = 0
+    storage_delete_errors = 0
     for note in expired:
         file_path = (note.file_path or "").strip()
         if file_path.startswith("minio://"):
             try:
                 await storage.delete_object(file_path)
+                storage_objects_deleted += 1
             except Exception:
+                storage_delete_errors += 1
                 logger.warning("Failed to delete digest note object during expiry cleanup", extra={"note_id": note.id})
         emb = await session.get(NoteEmbedding, note.id)
         if emb:
@@ -70,6 +79,11 @@ async def delete_expired_digest_notes(session: AsyncSession, *, user_id: str, no
         await session.delete(note)
     if expired:
         await session.commit()
+    return {
+        "notes_deleted": len(expired),
+        "storage_objects_deleted": storage_objects_deleted,
+        "storage_delete_errors": storage_delete_errors,
+    }
 
 
 def split_csv(value: str | None) -> list[str]:

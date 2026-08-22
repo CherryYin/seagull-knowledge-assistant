@@ -260,8 +260,12 @@ class TestDeleteSource:
         mock_chunks.scalars.return_value = []
         mock_session.execute.return_value = mock_chunks
 
-        resp = client.delete("/sources/src-1")
+        cleanup = AsyncMock(return_value={"deleted_nodes": 1, "updated_nodes": 0})
+        with patch("pkg.api.sources.delete_source_memory_derivatives", cleanup):
+            resp = client.delete("/sources/src-1")
+
         assert resp.status_code == 204
+        cleanup.assert_awaited_once_with(mock_session, user_id=fake_user.id, source_id="src-1")
         mock_session.commit.assert_awaited()
 
     def test_not_found(self, client, mock_session):
@@ -282,9 +286,12 @@ class TestDeleteSource:
         mock_chunks.scalars.return_value = []
         mock_session.execute.return_value = mock_chunks
 
-        await delete_source_by_id(legacy_id, user=fake_user, session=mock_session)
+        cleanup = AsyncMock(return_value={"deleted_nodes": 1, "updated_nodes": 0})
+        with patch("pkg.api.sources.delete_source_memory_derivatives", cleanup):
+            await delete_source_by_id(legacy_id, user=fake_user, session=mock_session)
 
         assert mock_session.get.await_args_list[0].args == (Source, legacy_id)
+        cleanup.assert_awaited_once_with(mock_session, user_id=fake_user.id, source_id=legacy_id)
         mock_session.delete.assert_awaited_with(source)
         mock_session.commit.assert_awaited_once()
 

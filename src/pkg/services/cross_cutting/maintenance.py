@@ -15,9 +15,34 @@ from pkg.api.notes import delete_expired_digest_notes
 logger = logging.getLogger(__name__)
 
 
+async def cleanup_expired_digest_notes_all_users(
+    *,
+    now: datetime | None = None,
+) -> dict[str, int]:
+    totals = {
+        "users_checked": 0,
+        "notes_deleted": 0,
+        "storage_objects_deleted": 0,
+        "storage_delete_errors": 0,
+    }
+    cleanup_time = now or datetime.now(timezone.utc)
+    async with async_session() as session:
+        rows = await session.execute(select(User.id))
+        user_ids = list(rows.scalars())
+        totals["users_checked"] = len(user_ids)
+        for user_id in user_ids:
+            result = await delete_expired_digest_notes(session, user_id=user_id, now=cleanup_time)
+            totals["notes_deleted"] += result["notes_deleted"]
+            totals["storage_objects_deleted"] += result["storage_objects_deleted"]
+            totals["storage_delete_errors"] += result["storage_delete_errors"]
+    return totals
+
+
 async def run_maintenance_cleanup_step() -> dict:
     stats = {
         "digest_notes_deleted": 0,
+        "digest_storage_objects_deleted": 0,
+        "digest_storage_delete_errors": 0,
         "rss_articles_deleted": 0,
         "system_jobs_deleted": 0,
         "discovery_items_deleted": 0,
@@ -29,14 +54,10 @@ async def run_maintenance_cleanup_step() -> dict:
     }
 
     try:
-        async with async_session() as session:
-            rows = await session.execute(select(User.id))
-            user_ids = list(rows.scalars())
-            now = datetime.now(timezone.utc)
-            for user_id in user_ids:
-                before = len(session.deleted)
-                await delete_expired_digest_notes(session, user_id=user_id, now=now)
-                stats["digest_notes_deleted"] += max(len(session.deleted) - before, 0)
+        digest_stats = await cleanup_expired_digest_notes_all_users()
+        stats["digest_notes_deleted"] = digest_stats["notes_deleted"]
+        stats["digest_storage_objects_deleted"] = digest_stats["storage_objects_deleted"]
+        stats["digest_storage_delete_errors"] = digest_stats["storage_delete_errors"]
     except Exception:
         stats["errors"] += 1
         logger.exception("Maintenance cleanup failed during digest note cleanup")

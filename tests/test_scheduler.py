@@ -14,6 +14,7 @@ from pkg.services.cross_cutting.scheduler import (
     next_task_run_at,
     run_daily_summarizer_step,
     run_discovery_generate_step,
+    run_maintenance_step,
     run_news_auto_search_step,
     run_paper_discovery_step,
     run_rss_fetch_step,
@@ -465,6 +466,24 @@ async def test_run_daily_summarizer_step_reports_created_note_ids():
     assert result["created"] == 2
     assert result["note_ids"] == ["note-a", "note-b"]
     assert result["reason"] is None
+
+
+@pytest.mark.asyncio
+async def test_run_maintenance_step_delegates_to_cleanup_service():
+    cleanup = AsyncMock(return_value={"expired_digest_notes_deleted": 4})
+    with patch("pkg.services.cross_cutting.maintenance.run_maintenance_cleanup_step", cleanup):
+        result = await run_maintenance_step()
+
+    assert result == {"expired_digest_notes_deleted": 4}
+    cleanup.assert_awaited_once_with()
+
+
+def test_get_scheduled_tasks_includes_daily_maintenance_cleanup():
+    task = next(task for task in get_scheduled_tasks() if task.name == "maintenance_cleanup")
+
+    assert task.handler is run_maintenance_step
+    assert task.schedule_type == "daily"
+    assert task.daily_time_utc == time(hour=4, minute=0)
 
 
 @pytest.mark.asyncio

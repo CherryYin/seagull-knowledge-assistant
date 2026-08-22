@@ -119,6 +119,12 @@ async def run_daily_summarizer_step() -> dict:
     }
 
 
+async def run_maintenance_step() -> dict:
+    from pkg.services.cross_cutting.maintenance import run_maintenance_cleanup_step
+
+    return await run_maintenance_cleanup_step()
+
+
 async def run_user_profiler_step() -> dict:
     from pkg.services.cross_cutting.user_profiler import profile_all_users
 
@@ -339,6 +345,14 @@ def get_scheduled_tasks() -> list[ScheduledTask]:
             handler=run_daily_summarizer_step,
             schedule_type="daily",
             daily_time_utc=time(hour=2, minute=0),
+        ),
+        ScheduledTask(
+            name="maintenance_cleanup",
+            job_type="maintenance_cleanup",
+            title="Maintenance cleanup",
+            handler=run_maintenance_step,
+            schedule_type="daily",
+            daily_time_utc=time(hour=4, minute=0),
         ),
         ScheduledTask(
             name="user_profiler",

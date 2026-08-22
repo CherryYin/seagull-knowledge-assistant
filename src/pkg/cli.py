@@ -1,4 +1,5 @@
 import asyncio
+import json
 from typing import Optional
 
 import typer
@@ -432,6 +433,53 @@ def cleanup_rss(
 
         if days is not None:
             settings.RSS_RETENTION_DAYS = original  # type: ignore[possibly-undefined]
+
+    _run(_cleanup())
+
+
+@app.command(name="audit-core")
+def audit_core(
+    id_limit: int = typer.Option(1000, min=0, help="Maximum IDs included per audit section"),
+):
+    """Print a read-only Phase A audit without knowledge content."""
+
+    async def _audit():
+        from pkg.db import async_session
+        from pkg.services.cross_cutting.core_audit import collect_core_simplification_audit
+
+        async with async_session() as session:
+            report = await collect_core_simplification_audit(session, id_limit=id_limit)
+        console.print_json(json.dumps(report, ensure_ascii=False))
+
+    _run(_audit())
+
+
+@app.command(name="cleanup-expired-digests")
+def cleanup_expired_digests(
+    apply: bool = typer.Option(False, "--apply", help="Delete expired Digest notes and linked MinIO objects"),
+    id_limit: int = typer.Option(20, min=0, help="Maximum IDs shown in dry-run mode"),
+):
+    """Dry-run or explicitly delete expired pending-review Digest notes."""
+
+    async def _cleanup():
+        from pkg.db import async_session
+        from pkg.services.cross_cutting.core_audit import collect_core_simplification_audit
+        from pkg.services.cross_cutting.maintenance import cleanup_expired_digest_notes_all_users
+
+        if not apply:
+            async with async_session() as session:
+                report = await collect_core_simplification_audit(session, id_limit=id_limit)
+            result = {
+                "mode": "dry-run",
+                "apply_required": True,
+                "expired_digest_notes": report["expired_digest_notes"],
+            }
+        else:
+            result = {
+                "mode": "apply",
+                **await cleanup_expired_digest_notes_all_users(),
+            }
+        console.print_json(json.dumps(result, ensure_ascii=False))
 
     _run(_cleanup())
 

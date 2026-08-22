@@ -40,10 +40,42 @@ def _select_router(*, profile=None, preferences=None, cached=None, sources=None,
         if 'FROM sources' in sql:
             return _ScalarResult(sources or [])
         if 'FROM discovery_items' in sql:
+            if "count(" in sql.lower():
+                pending_count = sum(
+                    1 for item in (discovery_items or []) if item.status == "recommended"
+                )
+                return _ScalarResult([pending_count])
             return _ScalarResult(discovery_items or [])
         return _ScalarResult([])
 
     return _execute
+
+
+@pytest.mark.asyncio
+async def test_generate_discovery_items_applies_recommended_capacity(monkeypatch):
+    session = AsyncMock()
+    session.commit = AsyncMock()
+    first_item = MagicMock(status="recommended")
+    upsert = AsyncMock(side_effect=[(first_item, True), (None, False)])
+    candidates = [
+        {"provider": "web", "item_key": "one"},
+        {"provider": "web", "item_key": "two"},
+    ]
+    monkeypatch.setattr("pkg.services.foundation.discovery.settings.DISCOVERY_MAX_RECOMMENDED_PER_USER", 2)
+
+    with (
+        patch("pkg.services.foundation.discovery.load_discovery_profile", AsyncMock(return_value={})),
+        patch("pkg.services.foundation.discovery.load_discovery_preferences", AsyncMock(return_value={})),
+        patch("pkg.services.foundation.discovery._recommended_discovery_count", AsyncMock(return_value=1)),
+        patch("pkg.services.foundation.discovery._load_candidates", AsyncMock(return_value=candidates)),
+        patch("pkg.services.foundation.discovery._upsert_discovery_item", upsert),
+    ):
+        result = await generate_discovery_items(session, user_id="user-1", providers=["web"])
+
+    assert result == (1, 0, 1)
+    assert upsert.await_args_list[0].kwargs["allow_recommended_create"] is True
+    assert upsert.await_args_list[1].kwargs["allow_recommended_create"] is False
+    session.commit.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio

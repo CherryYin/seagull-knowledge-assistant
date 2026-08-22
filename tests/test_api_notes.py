@@ -171,6 +171,36 @@ class TestListNotes:
         mock_session.delete.assert_awaited_with(expired)
 
 
+@pytest.mark.asyncio
+@patch("pkg.api.notes.get_storage_service")
+async def test_delete_expired_digest_notes_returns_exact_cleanup_stats(mock_storage_factory, mock_session, fake_user):
+    from pkg.api.notes import delete_expired_digest_notes
+
+    expired = _make_note(
+        "digest-expired",
+        fake_user.id,
+        file_path="minio://bucket/notes/digest-expired/note.md",
+    )
+    expired.note_type = "digest"
+    expired.status = "pending_review"
+    expired.expires_at = datetime.now(timezone.utc) - timedelta(days=1)
+    rows = MagicMock()
+    rows.scalars.return_value = [expired]
+    mock_session.execute.return_value = rows
+    mock_session.get.return_value = None
+    storage = MagicMock(delete_object=AsyncMock())
+    mock_storage_factory.return_value = storage
+
+    result = await delete_expired_digest_notes(mock_session, user_id=fake_user.id)
+
+    assert result == {
+        "notes_deleted": 1,
+        "storage_objects_deleted": 1,
+        "storage_delete_errors": 0,
+    }
+    storage.delete_object.assert_awaited_once_with(expired.file_path)
+
+
 # ---------------------------------------------------------------------------
 # DELETE /notes/{note_id}
 # ---------------------------------------------------------------------------
