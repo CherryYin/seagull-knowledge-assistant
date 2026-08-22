@@ -28,7 +28,7 @@ export const MODULE_PRESETS: ModulePreset[] = [
   {
     id: "researcher",
     label: "Researcher",
-    description: "Adds wiki synthesis, digest review, and assets while keeping Memory Tree optional.",
+    description: "Adds wiki synthesis, digest review, and assets on top of the core knowledge workflow.",
     enabledModuleIds: [
       ...BASIC_MODULE_IDS,
       "wiki",
@@ -40,10 +40,9 @@ export const MODULE_PRESETS: ModulePreset[] = [
   {
     id: "knowledge_graph",
     label: "Knowledge Graph",
-    description: "Enables the full memory tree, wiki, and advanced refinement queues.",
+    description: "Enables canonical wiki and advanced refinement queues.",
     enabledModuleIds: [
       ...BASIC_MODULE_IDS,
-      "memory-tree",
       "wiki",
       "digest-review",
       "wiki-review",

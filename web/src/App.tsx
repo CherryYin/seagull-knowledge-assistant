@@ -31,7 +31,6 @@ const AgentWorkspacePage = lazy(() => import("./pages/AgentWorkspacePage").then(
 const UserProfilePage = lazy(() => import("./pages/UserProfilePage").then((m) => ({ default: m.UserProfilePage })));
 const ConnectorSettingsPage = lazy(() => import("./pages/ConnectorSettingsPage").then((m) => ({ default: m.ConnectorSettingsPage })));
 const ApiKeysPage = lazy(() => import("./pages/ApiKeysPage").then((m) => ({ default: m.ApiKeysPage })));
-const MemoryTreePage = lazy(() => import("./pages/MemoryTreePage").then((m) => ({ default: m.MemoryTreePage })));
 const DiscoverPage = lazy(() => import("./pages/DiscoverPage").then((m) => ({ default: m.DiscoverPage })));
 const ReviewPage = lazy(() => import("./pages/ReviewPage").then((m) => ({ default: m.ReviewPage })));
 const ReviewSuggestionsPage = lazy(() => import("./pages/ReviewSuggestionsPage").then((m) => ({ default: m.ReviewSuggestionsPage })));
@@ -122,7 +121,6 @@ export default function App() {
             <Route path="/workspace" element={<Navigate to="/settings/workspace" replace />} />
             <Route path="/profile" element={<Navigate to="/settings/profile" replace />} />
             <Route path="/wiki" element={<LazyPage><WikiPage /></LazyPage>} />
-            <Route path="/memory" element={<LazyPage><MemoryTreePage /></LazyPage>} />
             <Route path="/wiki/:id" element={<LazyPage><WikiDetailPage /></LazyPage>} />
             <Route path="/review/digest" element={<LazyPage><DigestPage /></LazyPage>} />
             <Route path="/documents" element={<LazyPage><WritingPage /></LazyPage>} />

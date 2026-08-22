@@ -41,7 +41,6 @@ from pkg.api.agent_profiles import router as agent_profiles_router
 from pkg.api.assets import router as assets_router
 from pkg.api.agent_runs import router as agent_runs_router
 from pkg.api.wiki import router as wiki_router
-from pkg.api.memory import router as memory_router
 from pkg.api.connectors import router as connectors_router
 from pkg.api.calendar_reminders import router as calendar_reminders_router
 from pkg.api.review import router as review_router
@@ -172,7 +171,6 @@ app.include_router(agent_profiles_router, prefix="/agent-profiles", tags=["agent
 app.include_router(assets_router, prefix="/assets", tags=["assets"])
 app.include_router(agent_runs_router, prefix="/agent-runs", tags=["agent-runs"])
 app.include_router(wiki_router, prefix="/wiki", tags=["wiki"])
-app.include_router(memory_router, prefix="/memory", tags=["memory"])
 app.include_router(connectors_router, prefix="/connectors", tags=["connectors"])
 app.include_router(calendar_reminders_router, prefix="/calendar/reminders", tags=["calendar"])
 app.include_router(review_router, prefix="/review", tags=["review"])

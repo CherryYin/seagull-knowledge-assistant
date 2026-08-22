@@ -65,13 +65,6 @@ function buildRecommendations(dashboard: DashboardData | undefined, enabledIds: 
       reason: `You already have ${notes} notes and ${sources} sources. Wiki can turn repeated knowledge into canonical pages.`,
     });
   }
-  if (!enabledIds.has("memory-tree") && notes + sources >= 30) {
-    recommendations.push({
-      moduleId: "memory-tree",
-      title: "Enable Knowledge Tree",
-      reason: "Your workspace has enough material to benefit from graph-style topic organization.",
-    });
-  }
   if (!enabledIds.has("digest-review") && digestPending > 0) {
     recommendations.push({
       moduleId: "digest-review",

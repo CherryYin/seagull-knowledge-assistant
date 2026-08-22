@@ -1,10 +1,10 @@
 import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Bell, BookOpenCheck, Brain, FileSearch, GitPullRequestArrow, Sparkles, UserRoundCheck } from "lucide-react";
+import { Bell, BookOpenCheck, FileSearch, GitPullRequestArrow, Sparkles, UserRoundCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { memoryApi, notesApi, reviewApi, sourcesApi, wikiApi } from "@/lib/api";
+import { notesApi, reviewApi, sourcesApi, wikiApi } from "@/lib/api";
 import { SUMMARY_LAYER_DESCRIPTION } from "@/lib/summaryLayer";
 import { ModuleSectionNav } from "@/components/SectionNav";
 
@@ -25,10 +25,6 @@ export function ReviewPage() {
   const { data: sourceData, isLoading: sourcesLoading } = useQuery({
     queryKey: ["review-source-imported"],
     queryFn: () => sourcesApi.list({ limit: 100, feed_view: "parents" }),
-  });
-  const { data: memoryData, isLoading: memoryLoading } = useQuery({
-    queryKey: ["review-memory-pending"],
-    queryFn: () => memoryApi.list({ status: "pending_review", limit: 5 }),
   });
   const { data: lowConfidenceData, isLoading: lowConfidenceLoading } = useQuery({
     queryKey: ["review-low-confidence-facts"],
@@ -56,7 +52,7 @@ export function ReviewPage() {
             <div>
               <h1 className="text-3xl font-semibold tracking-tight">Review Center</h1>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-					Review is the unified queue for items that need your confirmation before they become durable knowledge or change source, memory, wiki, or profile state.
+					Review is the unified queue for items that need your confirmation before they become durable knowledge or change source, note, wiki, or profile state.
 				</p>
 				<p className="mt-2 max-w-2xl text-xs leading-5 text-muted-foreground">
 					{SUMMARY_LAYER_DESCRIPTION}
@@ -77,7 +73,7 @@ export function ReviewPage() {
           />
           <ReviewQueueCard
             title="Wiki Refresh Review"
-            description="Review reminders for stable wiki pages that may need updates after new source, note, or memory changes."
+            description="Review reminders for stable wiki pages that may need updates after new source or note changes."
             to="/review/wiki-suggestions"
             icon={BookOpenCheck}
             count={suggestionData?.total ?? 0}
@@ -117,7 +113,7 @@ export function ReviewPage() {
           />
           <ReviewQueueCard
             title="Imported Source Review"
-            description="Imported external evidence waiting for keep or discard before deeper memory and wiki use."
+            description="Imported external evidence waiting for keep or discard before deeper note and wiki use."
             to="/sources?review=imported"
             icon={GitPullRequestArrow}
             count={sourceReviewCount}
@@ -125,17 +121,8 @@ export function ReviewPage() {
             items={reviewableSources.map((source) => ({ title: source.title, meta: source.source_type }))}
           />
           <ReviewQueueCard
-            title="Knowledge Tree Review"
-            description="Agent-created knowledge tree candidates waiting for accept, archive, or merge."
-            to="/memory?status=pending_review"
-            icon={Brain}
-            count={memoryData?.total ?? 0}
-            loading={memoryLoading}
-            items={(memoryData?.items ?? []).map((item) => ({ title: item.title, meta: item.summary || item.level }))}
-          />
-          <ReviewQueueCard
             title="Low-Confidence Fact Review"
-            description="Memory facts with weak confidence that need confirmation before they should be trusted."
+            description="Profile facts with weak confidence that need confirmation before they should be trusted."
             to="/review/suggestions?type=low_confidence_fact"
             icon={Sparkles}
             count={lowConfidenceData?.total ?? 0}

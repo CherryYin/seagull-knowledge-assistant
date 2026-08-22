@@ -273,7 +273,7 @@ Output exactly these sections:
     ],
     promptTemplate: `Draft a wiki refresh proposal.
 The existing wiki is stable knowledge; do not overwrite it.
-Use new source/note/memory evidence to propose changes.
+Use new source/note evidence to propose changes.
 Separate proposed changes from the current wiki content.
 Cite referenced Source/Note/Memory/Wiki IDs when available.
 Do not save or apply anything automatically.

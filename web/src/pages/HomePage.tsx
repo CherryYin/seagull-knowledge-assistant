@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   Bell,
   BookOpen,
-  Brain,
   CalendarDays,
   CheckCircle2,
   Compass,
@@ -23,7 +22,6 @@ import {
   chatSessionsApi,
   discoveryApi,
   knowledgeApi,
-  memoryApi,
   notesApi,
   reviewApi,
   sourcesApi,
@@ -109,10 +107,6 @@ export function HomePage() {
     queryKey: ["home-system-jobs-pending"],
     queryFn: () => systemJobsApi.list({ status: "pending", limit: 5 }),
   });
-  const { data: pendingMemory } = useQuery({
-    queryKey: ["home-memory-pending"],
-    queryFn: () => memoryApi.list({ status: "pending_review", limit: 5 }),
-  });
   const { data: staleWikis } = useQuery({
     queryKey: ["home-wiki-stale"],
     queryFn: () => wikiApi.list({ needs_recompile: true, limit: 5 }),
@@ -133,7 +127,6 @@ export function HomePage() {
   });
   const digestPending = counts?.digest_pending ?? 0;
   const pendingNotesCount = pendingNoteData?.total ?? 0;
-  const pendingMemoryCount = pendingMemory?.total ?? 0;
   const keptDiscoveryCount = keptDiscoveries?.total ?? 0;
   const recommendedDiscoveryCount = recommendedDiscoveries?.total ?? 0;
   const failedJobItems = failedJobs?.items ?? [];
@@ -159,7 +152,6 @@ export function HomePage() {
     reviewSuggestionCount > 0 && card("review-suggestions", "Review Suggestions", "Profile or knowledge suggestions need confirmation.", "Pending review suggestions", "/review/suggestions", "Open Suggestions", "medium", Bell, reviewSuggestionCount),
     reviewableSources.length > 0 && card("review-sources", "Imported Sources", "Connector imports are saved but still need review.", "Imported reviewable sources", "/sources?review=imported", "Review Sources", "medium", BookOpen, reviewableSources.length),
     pendingNotesCount > 0 && card("pending-notes", "Pending Notes", "Generated notes need confirmation before becoming stable knowledge.", "Notes with pending_review status", "/notes?status=pending_review", "Review Notes", "medium", FileText, pendingNotesCount),
-    pendingMemoryCount > 0 && card("pending-memory", "Pending Knowledge Tree", "Knowledge tree candidates need confirmation before becoming active context.", "Knowledge Tree pending review", "/memory?status=pending_review", "Review Knowledge Tree", "medium", Brain, pendingMemoryCount),
     unprocessedSources.length > 0 && card("unprocessed-sources", "Unprocessed Sources", "Some sources are still raw and need extraction, chunking, or summarization before they become easy to use.", "Source processing still incomplete", "/sources", "Open Sources", "medium", BookOpen, unprocessedSources.length),
   ].filter(Boolean) as TodayCardData[];
 

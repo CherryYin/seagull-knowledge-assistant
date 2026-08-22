@@ -23,7 +23,7 @@ export function SearchResultCard({ result }: Props) {
     } else if (result.type === "wiki") {
       navigate(`/wiki/${encodeURIComponent(result.id)}`, { state: backState });
     } else if (result.type === "memory") {
-      navigate(`/memory?node=${encodeURIComponent(result.id)}`);
+      return;
     } else {
       navigate(`/sources/${encodeURIComponent(result.id)}`, { state: backState });
     }
@@ -119,9 +119,11 @@ export function SearchResultCard({ result }: Props) {
             <p>{matchReason}</p>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
-            <Button type="button" size="sm" variant="outline" onClick={(event) => { event.stopPropagation(); handleClick(); }}>
-              <ExternalLink className="h-3.5 w-3.5" /> Open
-            </Button>
+            {result.type !== "memory" && (
+              <Button type="button" size="sm" variant="outline" onClick={(event) => { event.stopPropagation(); handleClick(); }}>
+                <ExternalLink className="h-3.5 w-3.5" /> Open
+              </Button>
+            )}
             {result.type !== "memory" && (
               <Button type="button" size="sm" variant="outline" onClick={createAsset}>
                 <FileText className="h-3.5 w-3.5" /> Create Asset
@@ -145,12 +147,12 @@ export function SearchResultCard({ result }: Props) {
 function getResultLayer(layer: string | null | undefined, type: string) {
   if (layer === "raw_evidence") return "Raw Evidence";
   if (layer === "user_note") return "User Note";
-  if (layer === "knowledge_tree") return "Knowledge Tree";
+  if (layer === "knowledge_tree") return "Legacy Memory";
   if (layer === "stable_wiki") return "Stable Wiki";
   if (layer === "asset") return "Asset";
   if (type === "source" || type === "source_chunk") return "Raw Evidence";
   if (type === "note") return "User Note";
-  if (type === "memory") return "Knowledge Tree";
+  if (type === "memory") return "Legacy Memory";
   if (type === "wiki") return "Stable Wiki";
   if (type === "asset") return "Asset";
   return "Knowledge";
