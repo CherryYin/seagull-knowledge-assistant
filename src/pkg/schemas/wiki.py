@@ -93,13 +93,6 @@ class WikiCompileRequest(BaseModel):
     instructions: str | None = None
 
 
-class WikiUpdateDraftFromMemoryRequest(BaseModel):
-    wiki_id: str
-    memory_node_id: str
-    section: str = "Open Questions"
-    page_type: str = Field(default="topic", pattern=r"^(topic|entity|concept|project|comparison)$")
-
-
 class WikiUpdateDraftFromSourceRequest(BaseModel):
     wiki_id: str
     source_id: str

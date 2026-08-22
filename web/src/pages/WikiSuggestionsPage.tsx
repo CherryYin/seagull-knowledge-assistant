@@ -43,20 +43,12 @@ export function WikiSuggestionsPage() {
   });
 
   const createUpdateDraftMutation = useMutation({
-    mutationFn: ({ wikiId, triggerType, triggerId }: { wikiId: string; triggerType: string; triggerId: string }) => {
-      if (triggerType === "source") {
-        return wikiApi.createUpdateDraftFromSource({
-          wiki_id: wikiId,
-          source_id: triggerId,
-          section: "Open Questions",
-        });
-      }
-      return wikiApi.createUpdateDraftFromMemory({
+    mutationFn: ({ wikiId, triggerId }: { wikiId: string; triggerId: string }) =>
+      wikiApi.createUpdateDraftFromSource({
         wiki_id: wikiId,
-        memory_node_id: triggerId,
+        source_id: triggerId,
         section: "Open Questions",
-      });
-    },
+      }),
     onSuccess: (draft) => {
       queryClient.invalidateQueries({ queryKey: ["wiki-suggestions"] });
       queryClient.invalidateQueries({ queryKey: ["wiki-mining-runs"] });
@@ -178,7 +170,6 @@ export function WikiSuggestionsPage() {
                 onCreateUpdateDraft={() =>
                   createUpdateDraftMutation.mutate({
                     wikiId: suggestion.wiki_id,
-                    triggerType: suggestion.trigger_type,
                     triggerId: suggestion.trigger_id,
                   })
                 }
@@ -548,7 +539,7 @@ function SuggestionCard({
   onCreateUpdateDraft: () => void;
 }) {
   const score = typeof suggestion.metadata_?.score === "number" ? suggestion.metadata_.score : null;
-  const canCreateUpdateDraft = ["source", "memory"].includes(suggestion.trigger_type) && !!suggestion.trigger_id;
+  const canCreateUpdateDraft = suggestion.trigger_type === "source" && !!suggestion.trigger_id;
   return (
     <div className="rounded-lg border border-border bg-card p-4">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
