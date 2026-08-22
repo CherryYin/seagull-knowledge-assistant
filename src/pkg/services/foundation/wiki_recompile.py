@@ -1,4 +1,4 @@
-"""Suggest wiki recompiles from new notes, sources, or memory nodes."""
+"""Suggest wiki recompiles from new notes or sources."""
 
 import re
 from dataclasses import dataclass
@@ -7,11 +7,9 @@ from datetime import datetime, timezone
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pkg.models.foundation.memory import MemoryNode
 from pkg.models.foundation.note import Note
 from pkg.models.foundation.source import Source
-from pkg.models.foundation.wiki import WikiPage, WikiPageMemory, WikiRecompileSuggestion
-from pkg.services.foundation.memory_retriever import retrieve_for_wiki
+from pkg.models.foundation.wiki import WikiPage, WikiRecompileSuggestion
 
 
 MIN_WIKI_RECOMPILE_SCORE = 3
@@ -45,13 +43,6 @@ async def suggest_wiki_recompile_for_trigger(
         return []
 
     candidates = await _find_candidate_wikis(session, user_id=user_id, payload=payload, limit=limit)
-    related_memories = await retrieve_for_wiki(
-        session,
-        user_id=user_id,
-        topic=payload.title,
-        source_ids=payload.source_ids,
-        limit=limit,
-    )
     suggestions: list[WikiRecompileSuggestion] = []
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     for wiki, score, matched_terms in candidates:
@@ -67,8 +58,6 @@ async def suggest_wiki_recompile_for_trigger(
         metadata = {
             "score": score,
             "matched_terms": matched_terms[:20],
-            "related_memory_ids": [result.node.id for result in related_memories[:5]],
-            "memory_reasons": [result.matched_reason for result in related_memories[:5]],
         }
         if existing:
             existing.reason = reason
@@ -101,18 +90,6 @@ async def _load_trigger_payload(
     trigger_type: str,
     trigger_id: str,
 ) -> TriggerPayload | None:
-    if trigger_type == "memory":
-        node = await session.get(MemoryNode, trigger_id)
-        if not node or node.user_id != user_id:
-            return None
-        return TriggerPayload(
-            trigger_type=trigger_type,
-            trigger_id=trigger_id,
-            title=node.title,
-            text="\n\n".join(part for part in [node.title, node.summary or "", node.content or ""] if part),
-            source_ids=node.derived_from_sources or [],
-            note_ids=node.derived_from_notes or [],
-        )
     if trigger_type == "source":
         source = await session.get(Source, trigger_id)
         if not source or source.user_id != user_id:
@@ -149,18 +126,10 @@ async def _find_candidate_wikis(
 ) -> list[tuple[WikiPage, int, list[str]]]:
     stmt = select(WikiPage).where(WikiPage.user_id == user_id)
     clauses = []
-    attached_wiki_ids: set[str] = set()
     if payload.source_ids:
         clauses.append(WikiPage.derived_from_sources.overlap(payload.source_ids))
     if payload.note_ids:
         clauses.append(WikiPage.derived_from_notes.overlap(payload.note_ids))
-    if payload.trigger_type == "memory":
-        attached_rows = await session.execute(
-            select(WikiPageMemory.wiki_id).where(WikiPageMemory.memory_node_id == payload.trigger_id)
-        )
-        attached_wiki_ids = set(attached_rows.scalars())
-        if attached_wiki_ids:
-            clauses.append(WikiPage.id.in_(attached_wiki_ids))
 
     keywords = _keywords(payload.title + "\n" + payload.text[:4000])
     for keyword in keywords[:12]:
@@ -188,9 +157,6 @@ async def _find_candidate_wikis(
         if payload.note_ids and set(payload.note_ids) & set(wiki.derived_from_notes or []):
             score += 8
             matched_terms.append("shared note")
-        if wiki.id in attached_wiki_ids:
-            score += 12
-            matched_terms.append("attached memory evidence")
         if wiki.title.lower() in payload.text.lower():
             score += 5
             matched_terms.append("wiki title")

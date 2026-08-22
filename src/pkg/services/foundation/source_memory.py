@@ -143,12 +143,13 @@ async def upsert_source_batch_memory_node(
         existing.metadata_ = metadata
         await upsert_memory_embedding(session, existing)
         await sync_memory_edges_for_node(session, existing)
-        await suggest_wiki_recompile_for_trigger(
-            session,
-            user_id=user_id,
-            trigger_type="memory",
-            trigger_id=existing.id,
-        )
+        for source in valid_sources:
+            await suggest_wiki_recompile_for_trigger(
+                session,
+                user_id=user_id,
+                trigger_type="source",
+                trigger_id=source.id,
+            )
         return existing
 
     node = MemoryNode(
@@ -170,12 +171,13 @@ async def upsert_source_batch_memory_node(
     session.add(node)
     await upsert_memory_embedding(session, node)
     await sync_memory_edges_for_node(session, node)
-    await suggest_wiki_recompile_for_trigger(
-        session,
-        user_id=user_id,
-        trigger_type="memory",
-        trigger_id=node.id,
-    )
+    for source in valid_sources:
+        await suggest_wiki_recompile_for_trigger(
+            session,
+            user_id=user_id,
+            trigger_type="source",
+            trigger_id=source.id,
+        )
     return node
 
 
@@ -216,8 +218,8 @@ async def upsert_source_memory_node(session: AsyncSession, source: Source) -> Me
         await suggest_wiki_recompile_for_trigger(
             session,
             user_id=source.user_id,
-            trigger_type="memory",
-            trigger_id=existing.id,
+            trigger_type="source",
+            trigger_id=source.id,
         )
         return existing
 
@@ -243,8 +245,8 @@ async def upsert_source_memory_node(session: AsyncSession, source: Source) -> Me
     await suggest_wiki_recompile_for_trigger(
         session,
         user_id=source.user_id,
-        trigger_type="memory",
-        trigger_id=node.id,
+        trigger_type="source",
+        trigger_id=source.id,
     )
     return node
 

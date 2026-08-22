@@ -3,28 +3,27 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from pkg.models.memory import MemoryNode
+from pkg.models.source import Source
 from pkg.models.wiki import WikiPage
+from pkg.schemas.wiki import WikiSuggestRequest
 from pkg.services.foundation.wiki_recompile import suggest_wiki_recompile_for_trigger
 
 
+def test_wiki_suggest_request_rejects_memory_trigger():
+    with pytest.raises(ValueError):
+        WikiSuggestRequest(trigger_type="memory", trigger_id="mem-1")
+
+
 @pytest.mark.asyncio
-async def test_suggest_wiki_recompile_for_memory_marks_related_wiki():
-    memory = MemoryNode(
-        id="mem-topic-memory-tree",
+async def test_suggest_wiki_recompile_for_source_marks_related_wiki():
+    source = Source(
+        id="src-memory-tree",
         user_id="user-1",
-        node_type="topic",
-        scope_id="memory-tree",
-        level="topic",
-        title="Topic Memory - Memory Tree",
-        summary="Memory tree changed",
-        content="Memory Tree now includes source memory and topic memory.",
-        child_node_ids=[],
-        derived_from_notes=["note-1"],
-        derived_from_sources=["src-1"],
-        derived_from_chunks=[],
+        category_id=1,
+        title="Memory Tree",
+        source_type="article",
+        raw_content="Memory Tree now includes source memory and topic memory.",
         metadata_={},
-        confidence_score=None,
     )
     wiki = WikiPage(
         id="wiki-memory-tree",
@@ -36,7 +35,7 @@ async def test_suggest_wiki_recompile_for_memory_marks_related_wiki():
         domains=[],
         tags=["memory"],
         derived_from_notes=[],
-        derived_from_sources=["src-1"],
+        derived_from_sources=["src-memory-tree"],
         open_questions=[],
         confidence_score=None,
         needs_recompile=False,
@@ -45,30 +44,29 @@ async def test_suggest_wiki_recompile_for_memory_marks_related_wiki():
         last_compiled_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
 
-    attached_rows = MagicMock()
-    attached_rows.scalars.return_value = []
     trigger_rows = MagicMock()
     trigger_rows.scalars.return_value = [wiki]
     existing_rows = MagicMock()
     existing_rows.scalar_one_or_none.return_value = None
 
     session = AsyncMock()
-    session.get = AsyncMock(return_value=memory)
-    session.execute = AsyncMock(side_effect=[attached_rows, trigger_rows, existing_rows])
+    session.get = AsyncMock(return_value=source)
+    session.execute = AsyncMock(side_effect=[trigger_rows, existing_rows])
     session.add = MagicMock()
 
     suggestions = await suggest_wiki_recompile_for_trigger(
         session,
         user_id="user-1",
-        trigger_type="memory",
-        trigger_id="mem-topic-memory-tree",
+        trigger_type="source",
+        trigger_id="src-memory-tree",
     )
 
     assert len(suggestions) == 1
     assert suggestions[0].wiki_id == "wiki-memory-tree"
-    assert suggestions[0].trigger_type == "memory"
-    assert suggestions[0].trigger_id == "mem-topic-memory-tree"
+    assert suggestions[0].trigger_type == "source"
+    assert suggestions[0].trigger_id == "src-memory-tree"
     assert suggestions[0].status == "pending"
+    assert "related_memory_ids" not in suggestions[0].metadata_
     assert wiki.needs_recompile is True
     session.add.assert_called_once_with(suggestions[0])
 
@@ -81,7 +79,7 @@ async def test_suggest_wiki_recompile_ignores_missing_trigger():
     suggestions = await suggest_wiki_recompile_for_trigger(
         session,
         user_id="user-1",
-        trigger_type="memory",
+        trigger_type="source",
         trigger_id="missing",
     )
 
@@ -90,26 +88,19 @@ async def test_suggest_wiki_recompile_ignores_missing_trigger():
 
 @pytest.mark.asyncio
 async def test_suggest_wiki_recompile_filters_low_score_suggestions():
-    memory = MemoryNode(
-        id="mem-low-score",
+    source = Source(
+        id="src-low-score",
         user_id="user-1",
-        node_type="topic",
-        scope_id="misc",
-        level="topic",
-        title="Topic Memory - Alpha",
-        summary="Tiny overlap",
-        content="Alpha mention only.",
-        child_node_ids=[],
-        derived_from_notes=[],
-        derived_from_sources=[],
-        derived_from_chunks=[],
+        category_id=1,
+        title="Alpha",
+        source_type="article",
+        raw_content="Alpha mention only.",
         metadata_={},
-        confidence_score=None,
     )
     wiki = WikiPage(
         id="wiki-alpha",
         user_id="user-1",
-        title="Alpha",
+        title="Beta",
         page_type="topic",
         summary="Unrelated summary",
         content="Current wiki",
@@ -125,21 +116,19 @@ async def test_suggest_wiki_recompile_filters_low_score_suggestions():
         last_compiled_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
 
-    attached_rows = MagicMock()
-    attached_rows.scalars.return_value = []
     trigger_rows = MagicMock()
     trigger_rows.scalars.return_value = [wiki]
 
     session = AsyncMock()
-    session.get = AsyncMock(return_value=memory)
-    session.execute = AsyncMock(side_effect=[attached_rows, trigger_rows])
+    session.get = AsyncMock(return_value=source)
+    session.execute = AsyncMock(side_effect=[trigger_rows])
     session.add = MagicMock()
 
     suggestions = await suggest_wiki_recompile_for_trigger(
         session,
         user_id="user-1",
-        trigger_type="memory",
-        trigger_id="mem-low-score",
+        trigger_type="source",
+        trigger_id="src-low-score",
     )
 
     assert suggestions == []

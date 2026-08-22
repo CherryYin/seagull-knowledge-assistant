@@ -145,7 +145,7 @@ export interface WikiRecompileSuggestionList {
 }
 
 export interface WikiSuggestRequest {
-  trigger_type: "source" | "note" | "memory";
+  trigger_type: "source" | "note";
   trigger_id: string;
   limit?: number;
 }

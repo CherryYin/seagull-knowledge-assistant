@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { Archive, Brain, Bot, ChevronRight, FileText, GitMerge, RefreshCw, RotateCcw, ScrollText, Search, Sparkles, XCircle } from "lucide-react";
+import { Archive, Brain, Bot, ChevronRight, FileText, GitMerge, RotateCcw, ScrollText, Search, Sparkles, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -42,7 +42,6 @@ export function MemoryTreePage() {
   const [nodeType, setNodeType] = useState((searchParams.get("type") as (typeof MEMORY_TYPES)[number]) || "");
   const [page, setPage] = useState(Math.max(1, Number(searchParams.get("page") || 1)));
   const [selectedId, setSelectedId] = useState<string | null>(searchParams.get("node"));
-  const [queuedRefreshCount, setQueuedRefreshCount] = useState<number | null>(null);
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>(() => {
     const expanded = searchParams.get("expanded");
     if (!expanded) return {};
@@ -98,15 +97,6 @@ export function MemoryTreePage() {
     onSuccess: (node) => {
       queryClient.invalidateQueries({ queryKey: ["memory-nodes"] });
       setSelectedId(node.id);
-    },
-  });
-
-  const queueWikiRefreshMutation = useMutation({
-    mutationFn: ({ id }: { id: string }) => wikiApi.suggest({ trigger_type: "memory", trigger_id: id, limit: 5 }),
-    onSuccess: (suggestions) => {
-      setQueuedRefreshCount(suggestions.length);
-      queryClient.invalidateQueries({ queryKey: ["wiki-suggestions"] });
-      queryClient.invalidateQueries({ queryKey: ["wiki-pages"] });
     },
   });
 
@@ -293,13 +283,10 @@ export function MemoryTreePage() {
                   childNodes={childNodes}
                   relatedNodes={relatedNodes}
                   isUpdating={updateMutation.isPending || mergeMutation.isPending}
-                  isQueueingRefresh={queueWikiRefreshMutation.isPending}
-                  queuedRefreshCount={queuedRefreshCount}
                   candidates={nodes.filter((node) => node.id !== selectedNode.id && String(node.metadata_?.status || "active") === "active")}
                   onArchive={() => updateMutation.mutate({ id: selectedNode.id, body: { status: "archived" } })}
                   onRestore={() => updateMutation.mutate({ id: selectedNode.id, body: { status: "active" } })}
                   onReject={() => updateMutation.mutate({ id: selectedNode.id, body: { status: "rejected" } })}
-                  onQueueWikiRefresh={() => queueWikiRefreshMutation.mutate({ id: selectedNode.id })}
                   onCreateWikiDraft={() => createWikiDraftMutation.mutate({ id: selectedNode.id, title: selectedNode.title })}
                   onAskAgent={() =>
                     navigate("/chat", {
@@ -484,13 +471,10 @@ function MemoryDetail({
   childNodes,
   relatedNodes,
   isUpdating,
-  isQueueingRefresh,
-  queuedRefreshCount,
   candidates,
   onArchive,
   onRestore,
   onReject,
-  onQueueWikiRefresh,
   onCreateWikiDraft,
   onAskAgent,
   onCreateAsset,
@@ -506,13 +490,10 @@ function MemoryDetail({
   childNodes: MemoryNode[];
   relatedNodes: MemoryNode[];
   isUpdating: boolean;
-  isQueueingRefresh: boolean;
-  queuedRefreshCount: number | null;
   candidates: MemoryNode[];
   onArchive: () => void;
   onRestore: () => void;
   onReject: () => void;
-  onQueueWikiRefresh: () => void;
   onCreateWikiDraft: () => void;
   onAskAgent: () => void;
   onCreateAsset: () => void;
@@ -541,9 +522,6 @@ function MemoryDetail({
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Next Step</p>
         <p className="mt-1 text-sm text-muted-foreground">Use the quickest action for this node: draft a wiki page, turn it into an asset, or ask the agent to reason over it.</p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Button variant="outline" disabled={isQueueingRefresh} onClick={onQueueWikiRefresh}>
-            <RefreshCw className={`h-4 w-4 ${isQueueingRefresh ? "animate-spin" : ""}`} /> Queue Wiki Refresh
-          </Button>
           <Button variant="outline" onClick={onCreateWikiDraft}>
             <FileText className="h-4 w-4" /> Create Wiki Draft
           </Button>
@@ -565,13 +543,6 @@ function MemoryDetail({
           <Button variant="outline" onClick={onCreateReport}>
             <ScrollText className="h-4 w-4" /> Create Report
           </Button>
-          {queuedRefreshCount !== null && (
-            <Link to="/review/wiki-suggestions" className="text-xs text-primary hover:underline">
-              {queuedRefreshCount > 0
-                ? `Queued ${queuedRefreshCount} refresh reminder${queuedRefreshCount === 1 ? "" : "s"}. View queue.`
-                : "No matching wiki pages found yet."}
-            </Link>
-          )}
         </div>
       </div>
       <details className="rounded-lg border p-3">

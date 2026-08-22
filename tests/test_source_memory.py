@@ -117,8 +117,8 @@ async def test_upsert_source_memory_node_creates_node(mock_llm_client, mock_embe
     mock_suggest.assert_awaited_once_with(
         session,
         user_id=source.user_id,
-        trigger_type="memory",
-        trigger_id=node.id,
+        trigger_type="source",
+        trigger_id=source.id,
     )
 
 
@@ -212,11 +212,18 @@ async def test_upsert_source_batch_memory_node_creates_batch(mock_llm_client, mo
     session.add.assert_called_once_with(node)
     mock_embedding.assert_awaited_once_with(session, node)
     mock_sync_edges.assert_awaited_once_with(session, node)
-    mock_suggest.assert_awaited_once_with(
+    assert mock_suggest.await_count == 2
+    mock_suggest.assert_any_await(
         session,
         user_id="user-1",
-        trigger_type="memory",
-        trigger_id=node.id,
+        trigger_type="source",
+        trigger_id="src-1",
+    )
+    mock_suggest.assert_any_await(
+        session,
+        user_id="user-1",
+        trigger_type="source",
+        trigger_id="src-2",
     )
 
 

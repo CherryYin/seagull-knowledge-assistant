@@ -159,7 +159,7 @@ class WikiSuggestionStatusUpdate(BaseModel):
 
 
 class WikiSuggestRequest(BaseModel):
-    trigger_type: str = Field(pattern=r"^(source|note|memory)$")
+    trigger_type: str = Field(pattern=r"^(source|note)$")
     trigger_id: str
     limit: int = Field(default=5, ge=1, le=20)
 
