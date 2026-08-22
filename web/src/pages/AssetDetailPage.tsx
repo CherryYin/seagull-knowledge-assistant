@@ -637,7 +637,7 @@ export function AssetDetailPage() {
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Production Timeline</CardTitle>
-                <CardDescription>Asset generation, export, publish, and feedback events recorded in production memory.</CardDescription>
+                <CardDescription>Asset creation, export, publication, and feedback events recorded in Production History.</CardDescription>
               </CardHeader>
               <CardContent>
                 {productionEvents.length === 0 ? (

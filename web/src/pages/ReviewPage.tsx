@@ -87,12 +87,12 @@ export function ReviewPage() {
               navigate("/chat", {
                 state: {
                   objectRef: {
-                    object_type: "production_memory",
+                    object_type: "production_history",
                     object_id: "production_memory",
-                    title: "Production Memory",
+                    title: "Production History",
                   },
                   workflowId: "production-retrospective",
-                  promptSeed: "Use my production memory and profile-related review context to understand what I have been producing, what channels are active, and what this suggests about the next best content moves.",
+                  promptSeed: "Use my Production History and profile-related review context to understand what I have been producing, what channels are active, and what this suggests about the next best content moves.",
                 },
               })
             }

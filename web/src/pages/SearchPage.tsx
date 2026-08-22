@@ -35,7 +35,7 @@ export function SearchPage() {
 				<div>
 					<h1 className="text-2xl font-bold">Search Knowledge</h1>
 					<p className="mt-2 text-sm text-muted-foreground">
-						Search across saved sources, notes, documents, memory, and wiki knowledge from one Knowledge workspace.
+						Search across saved Sources, Notes, Wiki Pages, and Assets from one Knowledge workspace.
 					</p>
 				</div>
 
@@ -77,7 +77,7 @@ export function SearchPage() {
         {/* Results */}
 				<div className="space-y-3">
           {isLoading && (
-            <StateMessage title="Searching knowledge" description="Checking sources, notes, memory, wiki, and documents." />
+            <StateMessage title="Searching knowledge" description="Checking Sources, Notes, Wiki Pages, and Assets." />
           )}
 
           {isError && (
@@ -101,7 +101,7 @@ export function SearchPage() {
 
           {results && results.length > 0 && (
             <div className="space-y-1 text-xs text-muted-foreground">
-              <p>Results show knowledge layers so you can tell raw evidence from user notes, knowledge tree context, and stable wiki pages.</p>
+              <p>Results identify each Knowledge Record so you can distinguish raw Source evidence, user Notes, maintained Wiki Pages, and writing Assets.</p>
               <p>Use the quick actions to open, ask Agent, or turn a result into an asset draft without copying IDs around.</p>
             </div>
           )}

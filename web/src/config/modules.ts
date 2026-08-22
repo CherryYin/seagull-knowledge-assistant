@@ -198,7 +198,7 @@ export const APP_MODULES: AppModuleConfig[] = [
     group: "refinement",
     route: "/review/suggestions",
     icon: Bell,
-    description: "Review low-confidence memory and profile suggestions.",
+    description: "Review low-confidence Profile Fact and Preference suggestions.",
     nav: { section: true, parent: "review", order: 50 },
     visibility: { defaultEnabled: false, configurable: true, advanced: true },
     dependencies: ["review"],

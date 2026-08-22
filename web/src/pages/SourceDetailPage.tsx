@@ -207,7 +207,7 @@ export function SourceDetailPage() {
         workflowId: "summarize-source",
         promptSeed: chunk
           ? `Use source "${source.title}" (${source.id}) and this selected chunk to help me:\n\n${chunk.content.slice(0, 2000)}`
-          : `Use source "${source.title}" (${source.id}) to help me summarize, analyze, or turn it into a summary draft, note, memory, or wiki candidate.`,
+          : `Use source "${source.title}" (${source.id}) to help me summarize, analyze, or turn it into a Note, Wiki Draft, or Asset proposal.`,
       },
     });
   }
@@ -464,7 +464,7 @@ export function SourceDetailPage() {
               </div>
               <h1 className="text-2xl font-bold">{source.title}</h1>
               <p className="mt-1 text-sm text-muted-foreground">
-                External evidence with provenance. Use this as raw material, then create notes, memory, or wiki knowledge from it.
+                External evidence with provenance. Use this as raw material, then explicitly create Notes, Wiki Pages, or Assets from it.
               </p>
               <p className="mt-2 text-xs text-muted-foreground">
                 Processing status: {processing.detail}

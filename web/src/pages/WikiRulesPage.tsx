@@ -65,7 +65,7 @@ export function WikiRulesPage() {
           <CardContent>
             <ul className="space-y-3 text-sm text-muted-foreground">
               <li className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" /><span>The page has a clear page type and follows that template’s structure.</span></li>
-              <li className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" /><span>Important claims are backed by readable Source, Note, Memory, or Wiki references.</span></li>
+              <li className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" /><span>Important claims are backed by readable Source, Note, or Wiki references.</span></li>
               <li className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" /><span>Open questions stay explicit rather than being hidden inside confident prose.</span></li>
               <li className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" /><span>Draft or candidate pages should be reviewed before being treated as stable canonical knowledge.</span></li>
             </ul>

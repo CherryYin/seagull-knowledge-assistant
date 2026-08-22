@@ -196,7 +196,7 @@ export function ChatMessage({
           {!isUser && content.length > 200 && (!metadata?.references || metadata.references.length === 0) && (
             <div className="mt-2 flex items-start gap-1.5 border-t border-border/50 pt-2 text-[10px] text-muted-foreground">
               <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
-              No explicit Source/Note/Memory/Wiki references were attached. Verify important claims before saving durable knowledge.
+              No explicit Source/Note/Wiki references were attached. Verify important claims before saving a Knowledge Record.
             </div>
           )}
         </div>

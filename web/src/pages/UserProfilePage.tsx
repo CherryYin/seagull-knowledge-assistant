@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { ModuleSectionNav } from "@/components/SectionNav";
 
 const PROFILE_QUERY_KEY = ["user-profile"] as const;
-const USER_MEMORIES_QUERY_KEY = ["user-memories"] as const;
+const PROFILE_RECORDS_QUERY_KEY = ["profile-records"] as const;
 const USER_ACTIVITY_QUERY_KEY = ["user-activity"] as const;
 
 const DEPTH_LABELS: Record<string, string> = {
@@ -42,6 +42,14 @@ function depthClassName(depth: UserProfileDepth | undefined) {
   return "bg-secondary text-secondary-foreground";
 }
 
+function profileRecordTypeLabel(recordType: string) {
+  if (recordType === "profile") return "Profile Fact";
+  if (recordType === "preference") return "Preference";
+  if (recordType === "activity_profile") return "Profile Signal";
+  if (recordType === "production_memory") return "Production History";
+  return recordType;
+}
+
 function isNotFound(error: unknown) {
   return error instanceof Error && error.message.startsWith("404:");
 }
@@ -60,8 +68,8 @@ function isProductionEvent(value: unknown): value is ProductionEvent {
   return Boolean(value && typeof value === "object");
 }
 
-function toProductionEvents(memories: UserMemoryRecord[]): ProductionEvent[] {
-  return memories
+function toProductionEvents(profileRecords: UserMemoryRecord[]): ProductionEvent[] {
+  return profileRecords
     .filter((item) => item.memory_type === "production_memory")
     .flatMap((item) => {
       const events = (item.value as { events?: unknown[] } | undefined)?.events;
@@ -123,8 +131,8 @@ export function UserProfilePage() {
     queryFn: authApi.getMyProfile,
     retry: (failureCount, error) => !isNotFound(error) && failureCount < 2,
   });
-  const memoriesQuery = useQuery({
-    queryKey: USER_MEMORIES_QUERY_KEY,
+  const profileRecordsQuery = useQuery({
+    queryKey: PROFILE_RECORDS_QUERY_KEY,
     queryFn: () => authApi.listMyMemories(),
   });
   const activityQuery = useQuery({
@@ -136,20 +144,20 @@ export function UserProfilePage() {
     mutationFn: authApi.generateMyProfile,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: PROFILE_QUERY_KEY }),
   });
-  const updateMemoryMutation = useMutation({
+  const updateProfileRecordMutation = useMutation({
     mutationFn: ({ key, memory_type, value }: { key: string; memory_type: string; value: Record<string, unknown> }) =>
       authApi.updateMyMemory(key, { memory_type, value }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: USER_MEMORIES_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: PROFILE_RECORDS_QUERY_KEY });
       queryClient.invalidateQueries({ queryKey: PROFILE_QUERY_KEY });
     },
   });
 
   const profile = profileQuery.data?.value;
-  const allMemories = memoriesQuery.data ?? [];
-  const explicitMemories = allMemories.filter((item) => item.memory_type === "profile" || item.memory_type === "preference");
-  const activityMemories = allMemories.filter((item) => item.memory_type === "activity_profile");
-  const productionEvents = useMemo(() => toProductionEvents(allMemories), [allMemories]);
+  const profileRecords = profileRecordsQuery.data ?? [];
+  const explicitProfileRecords = profileRecords.filter((item) => item.memory_type === "profile" || item.memory_type === "preference");
+  const profileSignalRecords = profileRecords.filter((item) => item.memory_type === "activity_profile");
+  const productionEvents = useMemo(() => toProductionEvents(profileRecords), [profileRecords]);
   const activityItems = activityQuery.data ?? [];
   const hasProfile = Boolean(profile && Object.keys(profile).length > 0);
   const showEmptyState = !profileQuery.isLoading && (!hasProfile || isNotFound(profileQuery.error));
@@ -194,8 +202,8 @@ export function UserProfilePage() {
             </CardHeader>
             <CardContent className="space-y-3">
               <p className="text-sm text-muted-foreground">
-                The profile is stored in your personal memory and helps the agent adapt its answers to
-                your interests and preferred interaction style.
+                The profile stores explicit Profile Facts, Preferences, and revisable Profile Signals so
+                the agent can adapt without treating profile data as factual knowledge evidence.
               </p>
               <Button
                 onClick={() => generateMutation.mutate()}
@@ -221,24 +229,24 @@ export function UserProfilePage() {
 
         {hasProfile && profile && (
           <div className="space-y-6">
-            <MemoryTypeOverviewCard
-              explicitCount={explicitMemories.length}
-              activityCount={activityMemories.length}
+            <ProfileLayersOverviewCard
+              explicitCount={explicitProfileRecords.length}
+              activityCount={profileSignalRecords.length}
               productionCount={productionEvents.length}
             />
             <SummaryCard profile={profile} updatedAt={profileQuery.data?.updated_at} />
-            <ProductionMemoryCard
+            <ProductionHistoryCard
               events={productionEvents}
               onAskAgent={() =>
                 navigate("/chat", {
                   state: {
                     objectRef: {
-                      object_type: "production_memory",
+                      object_type: "production_history",
                       object_id: "production_memory",
-                      title: "Production Memory",
+                      title: "Production History",
                     },
                     workflowId: "production-retrospective",
-                    promptSeed: "Review my recent production memory, including generated, exported, published, and feedback events. Identify what is working, what is weak, and what I should produce next.",
+                    promptSeed: "Review my recent production history, including generated, exported, published, and feedback events. Identify what is working, what is weak, and what I should produce next.",
                   },
                 })
               }
@@ -251,26 +259,26 @@ export function UserProfilePage() {
             <BehaviorCard profile={profile} />
             <ProfileExplainabilityCard profile={profile} />
             <div className="grid gap-6 lg:grid-cols-2">
-              <MemoryListCard
-                title="Explicit Profile & Preferences"
+              <ProfileRecordListCard
+                title="Profile Facts & Preferences"
                 description="These are user-saved settings or self-declared preferences. They should outweigh inferred signals."
                 icon={UserRound}
-                items={explicitMemories}
-                emptyLabel="No explicit profile or preference memories yet."
-                onUpdateMemoryType={(key, memory_type, value) => updateMemoryMutation.mutate({ key, memory_type, value })}
-                isUpdating={updateMemoryMutation.isPending}
+                items={explicitProfileRecords}
+                emptyLabel="No explicit Profile Facts or Preferences yet."
+                onUpdateProfileRecordType={(key, memory_type, value) => updateProfileRecordMutation.mutate({ key, memory_type, value })}
+                isUpdating={updateProfileRecordMutation.isPending}
               />
-              <MemoryListCard
-                title="Activity-Derived Signals"
+              <ProfileRecordListCard
+                title="Inferred Profile Signals"
                 description="These are inferred from usage activity. Treat them as weak signals, not hard instructions."
                 icon={WandSparkles}
-                items={activityMemories}
+                items={profileSignalRecords}
                 emptyLabel="No activity-derived profile signals yet."
-                onUpdateMemoryType={(key, memory_type, value) => updateMemoryMutation.mutate({ key, memory_type, value })}
-                isUpdating={updateMemoryMutation.isPending}
+                onUpdateProfileRecordType={(key, memory_type, value) => updateProfileRecordMutation.mutate({ key, memory_type, value })}
+                isUpdating={updateProfileRecordMutation.isPending}
               />
             </div>
-            <ActivityMemoryCard items={activityItems} activityMemories={activityMemories} />
+            <ActivitySignalsCard items={activityItems} profileSignalRecords={profileSignalRecords} />
           </div>
         )}
       </div>
@@ -328,22 +336,22 @@ function ProfileExplainabilityCard({ profile }: { profile: UserProfileValue }) {
   );
 }
 
-function ActivityMemoryCard({
+function ActivitySignalsCard({
   items,
-  activityMemories,
+  profileSignalRecords,
 }: {
   items: UserActivityRecord[];
-  activityMemories: UserMemoryRecord[];
+  profileSignalRecords: UserMemoryRecord[];
 }) {
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <History className="h-5 w-5 text-primary" />
-          Activity Memory View
+          Profile Signal Evidence
         </CardTitle>
         <CardDescription>
-          This view connects recent activity logs with the activity-derived memory layer, so users can see why the system inferred a profile.
+          This view connects recent activity logs with inferred Profile Signals so users can inspect why the profile changed.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -371,11 +379,11 @@ function ActivityMemoryCard({
             )}
           </div>
           <div className="space-y-3">
-            <h3 className="text-sm font-semibold">Derived Activity Memories</h3>
-            {activityMemories.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No activity-derived memories available.</p>
+            <h3 className="text-sm font-semibold">Inferred Profile Signals</h3>
+            {profileSignalRecords.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No inferred Profile Signals available.</p>
             ) : (
-              activityMemories.map((item) => (
+              profileSignalRecords.map((item) => (
                 <div key={`${item.memory_type}-${item.key}`} className="rounded-lg border border-border p-3">
                   <div className="font-medium">{item.key}</div>
                   <div className="mt-1 text-xs text-muted-foreground">{item.memory_type}</div>
@@ -392,7 +400,7 @@ function ActivityMemoryCard({
   );
 }
 
-function MemoryTypeOverviewCard({
+function ProfileLayersOverviewCard({
   explicitCount,
   activityCount,
   productionCount,
@@ -404,24 +412,24 @@ function MemoryTypeOverviewCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>User Memory Layers</CardTitle>
+        <CardTitle>User Profile Layers</CardTitle>
         <CardDescription>
-          P4 memory now includes explicit preferences, inferred signals, and production history.
+          Profile data is separated into explicit facts and preferences, inferred signals, and Asset activity history.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-3 sm:grid-cols-3">
         <div className="rounded-lg border border-border p-4">
-          <div className="text-sm font-medium">Explicit Profile / Preferences</div>
+          <div className="text-sm font-medium">Profile Facts / Preferences</div>
           <p className="mt-1 text-2xl font-semibold">{explicitCount}</p>
           <p className="mt-2 text-sm text-muted-foreground">User-provided or explicitly saved context.</p>
         </div>
         <div className="rounded-lg border border-border p-4">
-          <div className="text-sm font-medium">Activity-Derived</div>
+          <div className="text-sm font-medium">Profile Signals</div>
           <p className="mt-1 text-2xl font-semibold">{activityCount}</p>
           <p className="mt-2 text-sm text-muted-foreground">Inferred from searches, notes, sources, and chats.</p>
         </div>
         <div className="rounded-lg border border-border p-4">
-          <div className="text-sm font-medium">Production Memory</div>
+          <div className="text-sm font-medium">Production History</div>
           <p className="mt-1 text-2xl font-semibold">{productionCount}</p>
           <p className="mt-2 text-sm text-muted-foreground">Timeline of generation, export, publish, and feedback events.</p>
         </div>
@@ -430,7 +438,7 @@ function MemoryTypeOverviewCard({
   );
 }
 
-function ProductionMemoryCard({ events, onAskAgent }: { events: ProductionEvent[]; onAskAgent: () => void }) {
+function ProductionHistoryCard({ events, onAskAgent }: { events: ProductionEvent[]; onAskAgent: () => void }) {
   const recentEvents = events.slice(0, 8);
   const eventCounts = useMemo(() => {
     return events.reduce<Record<string, number>>((acc, event) => {
@@ -451,7 +459,7 @@ function ProductionMemoryCard({ events, onAskAgent }: { events: ProductionEvent[
           <div>
             <CardTitle className="flex items-center gap-2">
               <Rocket className="h-5 w-5 text-primary" />
-              Production Memory
+              Production History
             </CardTitle>
             <CardDescription>
               Recent production events captured from asset generation, export, publishing, and feedback.
@@ -466,7 +474,7 @@ function ProductionMemoryCard({ events, onAskAgent }: { events: ProductionEvent[
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {topEventTypes.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground sm:col-span-2 lg:col-span-4">
-              No production memory yet. Generate or publish an asset to start building your production timeline.
+              No production history yet. Generate or publish an Asset to start building the activity timeline.
             </div>
           ) : (
             topEventTypes.map(([eventType, count]) => (
@@ -612,13 +620,13 @@ function ProductionSignalsCard({ profile, events }: { profile: UserProfileValue;
   );
 }
 
-function MemoryListCard({
+function ProfileRecordListCard({
   title,
   description,
   icon: Icon,
   items,
   emptyLabel,
-  onUpdateMemoryType,
+  onUpdateProfileRecordType,
   isUpdating,
 }: {
   title: string;
@@ -626,7 +634,7 @@ function MemoryListCard({
   icon: typeof Brain;
   items: UserMemoryRecord[];
   emptyLabel: string;
-  onUpdateMemoryType: (key: string, memoryType: string, value: Record<string, unknown>) => void;
+  onUpdateProfileRecordType: (key: string, profileRecordType: string, value: Record<string, unknown>) => void;
   isUpdating: boolean;
 }) {
   return (
@@ -644,10 +652,10 @@ function MemoryListCard({
         ) : (
           <div className="space-y-3">
             {items.map((item) => (
-              <MemoryItemCard
+              <ProfileRecordItemCard
                 key={`${item.memory_type}-${item.key}`}
                 item={item}
-                onUpdateMemoryType={onUpdateMemoryType}
+                onUpdateProfileRecordType={onUpdateProfileRecordType}
                 isUpdating={isUpdating}
               />
             ))}
@@ -658,48 +666,48 @@ function MemoryListCard({
   );
 }
 
-function MemoryItemCard({
+function ProfileRecordItemCard({
   item,
-  onUpdateMemoryType,
+  onUpdateProfileRecordType,
   isUpdating,
 }: {
   item: UserMemoryRecord;
-  onUpdateMemoryType: (key: string, memoryType: string, value: Record<string, unknown>) => void;
+  onUpdateProfileRecordType: (key: string, profileRecordType: string, value: Record<string, unknown>) => void;
   isUpdating: boolean;
 }) {
-  const [memoryType, setMemoryType] = useState(item.memory_type);
-  const changed = useMemo(() => memoryType !== item.memory_type, [memoryType, item.memory_type]);
+  const [profileRecordType, setProfileRecordType] = useState(item.memory_type);
+  const changed = useMemo(() => profileRecordType !== item.memory_type, [profileRecordType, item.memory_type]);
 
   return (
     <div className="rounded-lg border border-border p-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="font-medium">{item.key}</div>
-          <div className="text-xs text-muted-foreground">Current type: {item.memory_type}</div>
+          <div className="text-xs text-muted-foreground">Current type: {profileRecordTypeLabel(item.memory_type)}</div>
         </div>
         <Badge variant="outline">{new Date(item.updated_at).toLocaleDateString()}</Badge>
       </div>
       <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
         <label className="text-xs text-muted-foreground" htmlFor={`memory-type-${item.key}`}>
-          Memory type
+          Profile record type
         </label>
         <select
           id={`memory-type-${item.key}`}
-          value={memoryType}
-          onChange={(event) => setMemoryType(event.target.value)}
+          value={profileRecordType}
+          onChange={(event) => setProfileRecordType(event.target.value)}
           className="h-9 rounded-md border border-border bg-background px-3 text-sm"
           disabled={isUpdating}
         >
-          <option value="profile">profile</option>
-          <option value="preference">preference</option>
-          <option value="activity_profile">activity_profile</option>
+          <option value="profile">Profile Fact</option>
+          <option value="preference">Preference</option>
+          <option value="activity_profile">Profile Signal</option>
         </select>
         <Button
           type="button"
           size="sm"
           variant="outline"
           disabled={!changed || isUpdating}
-          onClick={() => onUpdateMemoryType(item.key, memoryType, item.value)}
+          onClick={() => onUpdateProfileRecordType(item.key, profileRecordType, item.value)}
         >
           Save Type
         </Button>

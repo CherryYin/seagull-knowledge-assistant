@@ -196,7 +196,6 @@ export function SourcesPage() {
     },
     onSuccess: (result, paper) => {
       queryClient.invalidateQueries({ queryKey: ["sources"] });
-      queryClient.invalidateQueries({ queryKey: ["memory-nodes"] });
       queryClient.invalidateQueries({ queryKey: ["paper-discovery-candidates"] });
       setPaperResults((items) => items.map((item) => item.arxiv_id === paper.arxiv_id ? { ...item, cache_status: "saved", cache_expires_at: null, source_id: result.source?.id ?? item.source_id } : item));
       if (result.item) {
@@ -226,7 +225,6 @@ export function SourcesPage() {
     mutationFn: (repo: GitHubRepo) => connectorsApi.importGitHub({ repo, category_id: githubForm.categoryId, fetch_readme: githubForm.fetchReadme }),
     onSuccess: (result, repo) => {
       queryClient.invalidateQueries({ queryKey: ["sources"] });
-      queryClient.invalidateQueries({ queryKey: ["memory-nodes"] });
       setGithubResults((items) => items.map((item) => item.full_name === repo.full_name ? { ...item, cache_status: "saved", cache_expires_at: null, source_id: result.source.id } : item));
       setTypeFilter("github");
       setFeedView("parents");
@@ -238,7 +236,6 @@ export function SourcesPage() {
     mutationFn: () => connectorsApi.importGitHub({ full_name: githubForm.fullName, category_id: githubForm.categoryId, fetch_readme: githubForm.fetchReadme }),
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["sources"] });
-      queryClient.invalidateQueries({ queryKey: ["memory-nodes"] });
       setTypeFilter("github");
       setFeedView("parents");
       setConnectorMessage(`${result.created ? "Kept" : "Updated"} ${result.source.title}`);
@@ -263,7 +260,6 @@ export function SourcesPage() {
     mutationFn: (article: NewsArticle) => connectorsApi.importNews({ article, category_id: newsForm.categoryId, fetch_full_text: newsForm.fetchFullText }),
     onSuccess: (result, article) => {
       queryClient.invalidateQueries({ queryKey: ["sources"] });
-      queryClient.invalidateQueries({ queryKey: ["memory-nodes"] });
       setNewsResults((items) => items.map((item) => item.url === article.url ? { ...item, cache_status: "saved", cache_expires_at: null, source_id: result.source.id } : item));
       setTypeFilter("article");
       setFeedView("parents");
@@ -769,7 +765,7 @@ function ArxivConnectorPanel({
       <div className="mb-3 flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
         <div>
           <h2 className="flex items-center gap-2 text-sm font-semibold"><BookOpen className="h-4 w-4" /> Paper Search</h2>
-          <p className="text-xs text-muted-foreground">Paper search runs through OpenAlex. Click Keep to save a paper as a permanent article source and generate memory.</p>
+          <p className="text-xs text-muted-foreground">Paper search runs through OpenAlex. Click Keep to save a paper as a permanent article Source.</p>
         </div>
         {message && <p className="text-xs text-muted-foreground">{message}</p>}
       </div>
