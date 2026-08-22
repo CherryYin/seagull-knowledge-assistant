@@ -45,7 +45,6 @@ export const MODULE_PRESETS: ModulePreset[] = [
       "wiki",
       "digest-review",
       "wiki-review",
-      "wiki-discovery",
       "wiki-rules",
       "review-suggestions",
     ],

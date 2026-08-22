@@ -87,12 +87,6 @@ def build_system_capabilities(
             setup_route="/settings/connectors",
         ),
         "discover": _capability(),
-        "wiki-discovery": _capability(
-            configured=has_any_llm_provider or not settings.WIKI_CONCEPT_DISCOVERY_LLM_ENABLED,
-            detail="LLM refinement is disabled; rule-based discovery remains available." if not settings.WIKI_CONCEPT_DISCOVERY_LLM_ENABLED else None,
-            setup_route="/settings/agents",
-            experimental=True,
-        ),
         "wiki-review": _capability(experimental=True, detail="Wiki review suggestions are an advanced refinement workflow."),
         "review-suggestions": _capability(experimental=True, detail="Review suggestions are an advanced refinement workflow."),
         "memory-tree": _capability(experimental=True, detail="Memory Tree is an advanced knowledge graph view."),

@@ -1,6 +1,6 @@
 import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Bell, BookOpenCheck, FileSearch, GitPullRequestArrow, Sparkles, UserRoundCheck } from "lucide-react";
+import { Bell, BookOpenCheck, FileSearch, GitPullRequestArrow, UserRoundCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -18,10 +18,6 @@ export function ReviewPage() {
     queryKey: ["review-wiki-suggestions"],
     queryFn: () => wikiApi.suggestions({ status: "pending", limit: 5 }),
   });
-  const { data: miningRunsData, isLoading: miningRunsLoading } = useQuery({
-    queryKey: ["review-wiki-mining-runs"],
-    queryFn: () => wikiApi.miningRuns({ limit: 5 }),
-  });
   const { data: sourceData, isLoading: sourcesLoading } = useQuery({
     queryKey: ["review-source-imported"],
     queryFn: () => sourcesApi.list({ limit: 100, feed_view: "parents" }),
@@ -33,10 +29,6 @@ export function ReviewPage() {
 
   const reviewableSources = (sourceData?.items ?? []).filter((source) => source.metadata_?.review_status === "imported_reviewable").slice(0, 5);
   const sourceReviewCount = (sourceData?.items ?? []).filter((source) => source.metadata_?.review_status === "imported_reviewable").length;
-  const pendingMiningRuns = (miningRunsData?.items ?? []).filter((run) => {
-    const summary = run.metadata_?.input_summary as Record<string, number> | undefined;
-    return run.status === "completed" && !!summary;
-  });
 
   return (
     <div className="h-full overflow-y-auto">
@@ -75,37 +67,6 @@ export function ReviewPage() {
             count={suggestionData?.total ?? 0}
             loading={suggestionsLoading}
             items={(suggestionData?.items ?? []).map((item) => ({ title: item.wiki_title || item.wiki_id, meta: item.reason }))}
-          />
-          <ReviewQueueCard
-            title="Wiki Mining Candidates"
-            description="Recent wiki mining runs with candidate insights and draft articles waiting for review or conversion into draft wiki pages."
-            to="/review/wiki-suggestions"
-            icon={Sparkles}
-            workflowLabel="Run Candidate Review"
-            onWorkflow={() =>
-              navigate("/chat", {
-                state: {
-                  objectRef: {
-                    object_type: "wiki_candidate_article",
-                    object_id: "review-queue",
-                    title: "Wiki Mining Candidates",
-                  },
-                  workflowId: "review-candidate-article",
-                  promptSeed: "Review the current wiki mining candidate queue. Identify which articles are closest to acceptable draft quality, which weak claims block acceptance, and what should remain in review.",
-                },
-              })
-            }
-            count={pendingMiningRuns.length}
-            loading={miningRunsLoading}
-            items={pendingMiningRuns.map((run) => {
-              const summary = (run.metadata_?.input_summary as Record<string, number> | undefined) ?? {};
-              const newCount = (summary.new_sources ?? 0) + (summary.new_notes ?? 0) + (summary.new_memory_nodes ?? 0);
-              const relatedCount = (summary.related_sources ?? 0) + (summary.related_notes ?? 0) + (summary.related_memory_nodes ?? 0) + (summary.related_wiki_pages ?? 0);
-              return {
-                title: `Mining run #${run.id}`,
-                meta: `${newCount} new inputs · ${relatedCount} related items`,
-              };
-            })}
           />
           <ReviewQueueCard
             title="Imported Source Review"

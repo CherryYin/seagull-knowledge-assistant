@@ -194,17 +194,6 @@ export const APP_MODULES: AppModuleConfig[] = [
     dependencies: ["wiki", "review"],
   },
   {
-    id: "wiki-discovery",
-    label: "Wiki Discovery",
-    group: "refinement",
-    route: "/wiki/discovery",
-    icon: Sparkles,
-    description: "Mine recent materials for wiki-worthy concepts.",
-    nav: { section: true, parent: "review", order: 40 },
-    visibility: { defaultEnabled: false, configurable: true, advanced: true, experimental: true },
-    dependencies: ["wiki", "review"],
-  },
-  {
     id: "review-suggestions",
     label: "Suggestions",
     group: "refinement",

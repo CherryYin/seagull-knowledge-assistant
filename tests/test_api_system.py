@@ -69,11 +69,8 @@ def test_build_system_capabilities_reports_api_key_storage_unavailable(fake_user
         )
 
     api_keys = capabilities.modules["api-keys"]
-    wiki_discovery = capabilities.modules["wiki-discovery"]
     assert api_keys.status == "needs_setup"
     assert "storage is unavailable" in (api_keys.detail or "")
-    assert wiki_discovery.status == "experimental"
-    assert "rule-based discovery remains available" in (wiki_discovery.detail or "")
 
 
 @pytest.mark.asyncio

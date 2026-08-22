@@ -42,8 +42,6 @@ class WikiPage(Base):
             postgresql_where=needs_recompile.is_(True),
         ),
     )
-
-
 class WikiEmbedding(Base):
     __tablename__ = "wiki_embeddings"
 
@@ -103,70 +101,4 @@ class WikiRecompileSuggestion(Base):
         Index("idx_wiki_recompile_suggestions_wiki", "wiki_id"),
         Index("idx_wiki_recompile_suggestions_status", "status"),
         Index("idx_wiki_recompile_suggestions_trigger", "trigger_type", "trigger_id"),
-    )
-
-
-class WikiMiningRun(Base):
-    __tablename__ = "wiki_mining_runs"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="completed")
-    window_start: Mapped[datetime | None] = mapped_column()
-    window_end: Mapped[datetime | None] = mapped_column()
-    metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
-
-    __table_args__ = (
-        Index("idx_wiki_mining_runs_user_id", "user_id"),
-        Index("idx_wiki_mining_runs_status", "status"),
-        Index("idx_wiki_mining_runs_created_at", "created_at"),
-    )
-
-
-class WikiInsightCandidate(Base):
-    __tablename__ = "wiki_insight_candidates"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    run_id: Mapped[int] = mapped_column(Integer, ForeignKey("wiki_mining_runs.id", ondelete="CASCADE"), nullable=False)
-    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
-    insight_type: Mapped[str] = mapped_column(String(30), nullable=False)
-    title: Mapped[str] = mapped_column(Text, nullable=False)
-    summary: Mapped[str] = mapped_column(Text, nullable=False)
-    evidence_refs: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
-    metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB)
-    status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="pending")
-    reviewer_note: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
-
-    __table_args__ = (
-        Index("idx_wiki_insight_candidates_run_id", "run_id"),
-        Index("idx_wiki_insight_candidates_user_id", "user_id"),
-        Index("idx_wiki_insight_candidates_status", "status"),
-    )
-
-
-class WikiArticleDraft(Base):
-    __tablename__ = "wiki_article_drafts"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    run_id: Mapped[int] = mapped_column(Integer, ForeignKey("wiki_mining_runs.id", ondelete="CASCADE"), nullable=False)
-    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
-    title: Mapped[str] = mapped_column(Text, nullable=False)
-    page_type: Mapped[str] = mapped_column(String(50), nullable=False, server_default="topic")
-    summary: Mapped[str | None] = mapped_column(Text)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    evidence_refs: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
-    metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB)
-    status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="candidate")
-    reviewer_note: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
-
-    __table_args__ = (
-        Index("idx_wiki_article_drafts_run_id", "run_id"),
-        Index("idx_wiki_article_drafts_user_id", "user_id"),
-        Index("idx_wiki_article_drafts_status", "status"),
     )

@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { MarkdownRenderer } from "@/components/markdown";
-import { wikiApi, type ReferenceRead, type WikiArticleDraft, type WikiPage, type WikiPageSourceCreate, type WikiPageUpdate } from "@/lib/api";
+import { wikiApi, type ReferenceRead, type WikiPage, type WikiPageSourceCreate, type WikiPageUpdate } from "@/lib/api";
 import { getWikiOrigin, getWikiRole } from "@/lib/wikiLifecycle";
 import { buildAssetHandoffState } from "@/lib/asset-handoff";
 
@@ -21,31 +21,6 @@ function splitCsv(value: string) {
 
 function joinCsv(value?: string[]) {
   return (value ?? []).join(", ");
-}
-
-function draftSectionToQuestion(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function buildEditorDraftFromUpdateDraft(page: WikiPage, draftItem: WikiArticleDraft) {
-  const marker = "## Update Draft Workspace";
-  const baseContent = (page.content ?? "").trim();
-  const proposalContent = (draftItem.content ?? "").trim();
-  const mergedContent = [
-    baseContent || `# ${page.title}`,
-    marker,
-    `> Loaded from update draft #${draftItem.id}. Review and manually merge relevant edits into the canonical wiki content.`,
-    "",
-    proposalContent,
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-
-  return {
-    ...wikiToDraft(page),
-    summary: page.summary ?? draftItem.summary ?? "",
-    content: mergedContent,
-  };
 }
 
 function wikiToDraft(page: WikiPage) {
@@ -114,8 +89,6 @@ export function WikiDetailPage() {
   const flashMessage = locationState?.flashMessage || null;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<ReturnType<typeof wikiToDraft> | null>(null);
-  const [activeUpdateDraftId, setActiveUpdateDraftId] = useState<number | null>(null);
-  const [showAppliedUpdateDrafts, setShowAppliedUpdateDrafts] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
   const [sourceForm, setSourceForm] = useState({
@@ -138,12 +111,6 @@ export function WikiDetailPage() {
     enabled: !!id,
   });
 
-  const { data: updateDrafts = [] } = useQuery({
-    queryKey: ["wiki-update-drafts", id],
-    queryFn: () => wikiApi.updateDrafts(id!),
-    enabled: !!id,
-  });
-
   const referenceInputs = useMemo(
     () => sourceEvidence.map((item) => ({ ref_type: "source", ref_id: item.source_id, excerpt: item.relevance_summary })),
     [sourceEvidence]
@@ -161,16 +128,11 @@ export function WikiDetailPage() {
 
   const updateMutation = useMutation({
     mutationFn: (payload: WikiPageUpdate) => wikiApi.update(id!, payload),
-    onSuccess: async () => {
-      if (activeUpdateDraftId != null) {
-        await wikiApi.updateMiningArticle(activeUpdateDraftId, { status: "applied" });
-        queryClient.invalidateQueries({ queryKey: ["wiki-update-drafts", id] });
-      }
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["wiki-page", id] });
       queryClient.invalidateQueries({ queryKey: ["wiki-pages"] });
       setEditing(false);
       setDraft(null);
-      setActiveUpdateDraftId(null);
     },
   });
 
@@ -197,16 +159,6 @@ export function WikiDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["wiki-page-sources", id] });
       setSourceOpen(false);
       setSourceForm({ source_id: "", relevance_summary: "", key_points: "", supporting_claims: "", cited_chunk_ids: "", confidence_score: "" });
-    },
-  });
-
-  const deleteUpdateDraftMutation = useMutation({
-    mutationFn: (articleId: number) => wikiApi.deleteUpdateDraft(articleId),
-    onSuccess: (_, articleId) => {
-      queryClient.invalidateQueries({ queryKey: ["wiki-update-drafts", id] });
-      if (activeUpdateDraftId === articleId) {
-        setActiveUpdateDraftId(null);
-      }
     },
   });
 
@@ -239,18 +191,6 @@ export function WikiDetailPage() {
     return { level: "ok", message: "Claim health looks good for stable usage." };
   }, [role, weakPageClaimCount]);
 
-  const sortedUpdateDrafts = useMemo(() => {
-    return [...updateDrafts].sort((left, right) => {
-      const leftApplied = left.status === "applied" ? 1 : 0;
-      const rightApplied = right.status === "applied" ? 1 : 0;
-      if (leftApplied !== rightApplied) return leftApplied - rightApplied;
-      return right.id - left.id;
-    });
-  }, [updateDrafts]);
-
-  const pendingUpdateDrafts = sortedUpdateDrafts.filter((item) => item.status !== "applied");
-  const appliedUpdateDrafts = sortedUpdateDrafts.filter((item) => item.status === "applied");
-
   const resolvedReferenceMap = useMemo(
     () => new Map(resolvedReferences.map((item) => [`${item.ref_type}:${item.ref_id}`, item] satisfies [string, ReferenceRead])),
     [resolvedReferences]
@@ -265,22 +205,6 @@ export function WikiDetailPage() {
   function startEdit() {
     if (!page) return;
     setDraft(wikiToDraft(page));
-    setActiveUpdateDraftId(null);
-    setEditing(true);
-  }
-
-  function applyUpdateDraftToEditor(draftItem: WikiArticleDraft) {
-    if (!page) return;
-    const base = editing && draft ? draft : buildEditorDraftFromUpdateDraft(page, draftItem);
-    const suggestedSection = draftSectionToQuestion(draftItem.metadata_?.suggested_section);
-    const nextQuestions = new Set(splitCsv(base.openQuestionsCsv));
-    if (suggestedSection) nextQuestions.add(suggestedSection);
-    setDraft({
-      ...base,
-      summary: base.summary || draftItem.summary || "",
-      openQuestionsCsv: Array.from(nextQuestions).join(", "),
-    });
-    setActiveUpdateDraftId(draftItem.id);
     setEditing(true);
   }
 
@@ -523,82 +447,6 @@ export function WikiDetailPage() {
                 <div className="mb-6 rounded-sm border border-primary/30 bg-primary/5 px-4 py-3 text-sm leading-6 text-foreground/90">
                   {flashMessage}
                 </div>
-              )}
-
-              {sortedUpdateDrafts.length > 0 && (
-                <section className="mb-8 rounded-sm border border-border/70 bg-muted/10 px-4 py-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <h2 className="text-lg font-semibold text-foreground">Update Drafts</h2>
-                      <p className="mt-1 text-sm text-muted-foreground">Review memory-triggered wiki update drafts before copying edits into this canonical page.</p>
-                    </div>
-                    <Badge variant="secondary">{sortedUpdateDrafts.length}</Badge>
-                  </div>
-                  <div className="mt-4 space-y-4">
-                    {pendingUpdateDrafts.map((draftItem) => (
-                      (() => {
-                        const suggestedSection = draftSectionToQuestion(draftItem.metadata_?.suggested_section);
-                        return (
-                      <div key={draftItem.id} className="rounded-sm border border-border/70 bg-background px-4 py-4">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-sm font-medium text-foreground">{draftItem.title}</span>
-                          <Badge variant="outline">{String(draftItem.status)}</Badge>
-                          {suggestedSection && <Badge variant="secondary">{suggestedSection}</Badge>}
-                        </div>
-                        {draftItem.summary && <p className="mt-2 text-sm text-muted-foreground">{draftItem.summary}</p>}
-                        <div className="mt-3 rounded-sm bg-muted/40 px-3 py-3">
-                          <MarkdownRenderer>{draftItem.content}</MarkdownRenderer>
-                        </div>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <Button size="sm" onClick={() => applyUpdateDraftToEditor(draftItem)}>
-                            <Pencil className="h-4 w-4" /> Use In Editor
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="text-destructive hover:text-destructive"
-                            onClick={() => deleteUpdateDraftMutation.mutate(draftItem.id)}
-                            disabled={deleteUpdateDraftMutation.isPending}
-                          >
-                            <Trash2 className="h-4 w-4" /> Delete Draft
-                          </Button>
-                        </div>
-                      </div>
-                        );
-                      })()
-                    ))}
-                    {appliedUpdateDrafts.length > 0 && (
-                      <div className="rounded-sm border border-dashed border-border/70 bg-background/70 px-4 py-3">
-                        <div className="flex flex-wrap items-center justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-medium text-foreground">Applied Drafts</p>
-                            <p className="mt-1 text-xs text-muted-foreground">Already copied into the wiki editor and saved.</p>
-                          </div>
-                          <Button variant="outline" size="sm" onClick={() => setShowAppliedUpdateDrafts((prev) => !prev)}>
-                            {showAppliedUpdateDrafts ? "Hide Applied" : `Show Applied (${appliedUpdateDrafts.length})`}
-                          </Button>
-                        </div>
-                        {showAppliedUpdateDrafts && (
-                          <div className="mt-4 space-y-4">
-                            {appliedUpdateDrafts.map((draftItem) => {
-                              const suggestedSection = draftSectionToQuestion(draftItem.metadata_?.suggested_section);
-                              return (
-                                <div key={draftItem.id} className="rounded-sm border border-border/70 bg-background px-4 py-4 opacity-80">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <span className="text-sm font-medium text-foreground">{draftItem.title}</span>
-                                    <Badge variant="outline">{String(draftItem.status)}</Badge>
-                                    {suggestedSection && <Badge variant="secondary">{suggestedSection}</Badge>}
-                                  </div>
-                                  {draftItem.summary && <p className="mt-2 text-sm text-muted-foreground">{draftItem.summary}</p>}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </section>
               )}
 
               {page.summary && (

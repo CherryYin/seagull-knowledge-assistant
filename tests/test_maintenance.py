@@ -36,7 +36,6 @@ async def test_run_maintenance_cleanup_step_aggregates_counts():
         patch("pkg.services.cross_cutting.maintenance.cleanup_system_jobs", AsyncMock(return_value=120)),
         patch("pkg.services.cross_cutting.maintenance.cleanup_discovery_items", AsyncMock(return_value=12)),
         patch("pkg.services.cross_cutting.maintenance.cleanup_review_suggestions", AsyncMock(return_value=9)),
-        patch("pkg.services.cross_cutting.maintenance.cleanup_wiki_mining_runs", AsyncMock(return_value=6)),
         patch("pkg.services.cross_cutting.maintenance.cleanup_expired_connector_cache", AsyncMock(return_value=44)),
         patch("pkg.services.cross_cutting.maintenance.run_storage_orphan_audit_step", AsyncMock(return_value={"orphan_count": 2})),
     ):
@@ -55,7 +54,6 @@ async def test_run_maintenance_cleanup_step_aggregates_counts():
         "system_jobs_deleted": 120,
         "discovery_items_deleted": 12,
         "review_suggestions_deleted": 9,
-        "wiki_mining_runs_deleted": 6,
         "connector_cache_deleted": 44,
         "storage_orphan_audit": {"orphan_count": 2},
         "errors": 0,
@@ -77,7 +75,6 @@ async def test_run_maintenance_cleanup_step_isolates_failures():
         patch("pkg.services.cross_cutting.maintenance.cleanup_system_jobs", AsyncMock(return_value=9)),
         patch("pkg.services.cross_cutting.maintenance.cleanup_discovery_items", AsyncMock(side_effect=RuntimeError("discovery boom"))),
         patch("pkg.services.cross_cutting.maintenance.cleanup_review_suggestions", AsyncMock(return_value=4)),
-        patch("pkg.services.cross_cutting.maintenance.cleanup_wiki_mining_runs", AsyncMock(side_effect=RuntimeError("wiki boom"))),
         patch("pkg.services.cross_cutting.maintenance.cleanup_expired_connector_cache", AsyncMock(side_effect=RuntimeError("cache boom"))),
         patch("pkg.services.cross_cutting.maintenance.run_storage_orphan_audit_step", AsyncMock(side_effect=RuntimeError("storage boom"))),
     ):
@@ -95,10 +92,9 @@ async def test_run_maintenance_cleanup_step_isolates_failures():
     assert result["system_jobs_deleted"] == 9
     assert result["discovery_items_deleted"] == 0
     assert result["review_suggestions_deleted"] == 4
-    assert result["wiki_mining_runs_deleted"] == 0
     assert result["connector_cache_deleted"] == 0
     assert result["storage_orphan_audit"] is None
-    assert result["errors"] == 6
+    assert result["errors"] == 5
 
 
 @pytest.mark.asyncio

@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pkg.services.cross_cutting.retention import cleanup_discovery_items, cleanup_review_suggestions, cleanup_wiki_mining_runs
+from pkg.services.cross_cutting.retention import cleanup_discovery_items, cleanup_review_suggestions
 
 
 @pytest.mark.asyncio
@@ -42,25 +42,3 @@ async def test_cleanup_review_suggestions_deletes_old_terminal_items_only():
 
 
 @pytest.mark.asyncio
-async def test_cleanup_wiki_mining_runs_preserves_all_unresolved_review_states():
-    session = AsyncMock()
-    old_runs = MagicMock()
-    old_runs.scalars.return_value = [1, 2]
-    no_pending = MagicMock()
-    no_pending.scalar_one_or_none.return_value = None
-    has_unresolved = MagicMock()
-    has_unresolved.scalar_one_or_none.return_value = 99
-    run = MagicMock()
-    session.execute.side_effect = [old_runs, no_pending, no_pending, no_pending, has_unresolved]
-    session.get.return_value = run
-
-    with patch("pkg.services.cross_cutting.retention.async_session") as session_factory:
-        session_factory.return_value.__aenter__.return_value = session
-        deleted = await cleanup_wiki_mining_runs(retention_days=90)
-
-    assert deleted == 1
-    session.delete.assert_awaited_once_with(run)
-    insight_query = session.execute.await_args_list[1].args[0]
-    article_query = session.execute.await_args_list[2].args[0]
-    assert ["accepted", "rejected", "converted_to_draft"] in insight_query.compile().params.values()
-    assert ["accepted", "rejected", "merged", "applied"] in article_query.compile().params.values()

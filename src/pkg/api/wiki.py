@@ -13,24 +13,14 @@ from pkg.models.foundation.note import Note
 from pkg.models.foundation.source import Source
 from pkg.models.user import User
 from pkg.models.foundation.wiki import (
-    WikiArticleDraft,
     WikiEmbedding,
-    WikiInsightCandidate,
-    WikiMiningRun,
     WikiPage,
     WikiPageSource,
     WikiRecompileSuggestion,
 )
 from pkg.schemas.wiki import (
-    WikiArticleDraftStatusUpdate,
-    WikiCandidateMergeAction,
-    WikiCandidateNoteConversionRead,
     WikiCloneDraftRequest,
     WikiCompileRequest,
-    WikiUpdateDraftFromSourceRequest,
-    WikiInsightCandidateStatusUpdate,
-    WikiMiningRunDetail,
-    WikiMiningRunList,
     WikiPageCreate,
     WikiPageList,
     WikiPageRead,
@@ -46,33 +36,11 @@ from pkg.schemas.reference import ReferenceRead, ReferenceResolveRequest, Refere
 from pkg.services.cross_cutting.embedding import get_embedding_service
 from pkg.services.cross_cutting.llm import create_async_client
 from pkg.services.foundation.wiki_lifecycle import get_wiki_role
-from pkg.services.foundation.wiki_mining import get_wiki_mining_run_detail, list_wiki_mining_runs
 from pkg.services.foundation.wiki_recompile import suggest_wiki_recompile_for_trigger
 from pkg.services.foundation.wiki_templates import build_wiki_template
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-
-async def get_wiki_mining_runs(
-    limit: int = Query(default=20, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-):
-    items, total = await list_wiki_mining_runs(session, user_id=user.id, limit=limit, offset=offset)
-    return WikiMiningRunList(items=items, total=total)
-
-
-async def get_wiki_mining_run(
-    run_id: int,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-):
-    run, insights, articles = await get_wiki_mining_run_detail(session, user_id=user.id, run_id=run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="Wiki mining run not found")
-    return WikiMiningRunDetail(run=run, insights=insights, articles=articles)
 
 
 @router.post("/references/resolve", response_model=ReferenceResolveResponse)
@@ -93,165 +61,6 @@ async def resolve_wiki_references(
         if resolved:
             items.append(resolved)
     return ReferenceResolveResponse(items=items)
-
-
-async def update_wiki_insight_candidate_status(
-    insight_id: int,
-    body: WikiInsightCandidateStatusUpdate,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-):
-    insight = await session.get(WikiInsightCandidate, insight_id)
-    if not insight or insight.user_id != user.id:
-        raise HTTPException(status_code=404, detail="Wiki insight candidate not found")
-    insight.status = body.status
-    insight.reviewer_note = body.reviewer_note
-    await session.commit()
-    await session.refresh(insight)
-    return insight
-
-
-async def delete_wiki_insight_candidate(
-    insight_id: int,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-):
-    insight = await session.get(WikiInsightCandidate, insight_id)
-    if not insight or insight.user_id != user.id:
-        raise HTTPException(status_code=404, detail="Wiki insight candidate not found")
-    await session.delete(insight)
-    await session.commit()
-
-
-async def update_wiki_article_draft_status(
-    article_id: int,
-    body: WikiArticleDraftStatusUpdate,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-):
-    article = await session.get(WikiArticleDraft, article_id)
-    if not article or article.user_id != user.id:
-        raise HTTPException(status_code=404, detail="Wiki article draft not found")
-
-    article.status = body.status
-    article.reviewer_note = body.reviewer_note
-
-    if body.status == "accepted":
-        tags = ["wiki-draft", "from-mining-candidate"]
-        evidence_refs = article.evidence_refs or []
-        source_ids = [ref.get("ref_id") for ref in evidence_refs if ref.get("ref_type") == "source" and ref.get("ref_id")]
-        note_ids = [ref.get("ref_id") for ref in evidence_refs if ref.get("ref_type") == "note" and ref.get("ref_id")]
-        wiki = await persist_wiki_page(
-            session=session,
-            body=WikiPageCreate(
-                title=body.wiki_title or article.title,
-                page_type=body.page_type or article.page_type,
-                summary=article.summary,
-                content=article.content,
-                derived_from_sources=_merge_unique(source_ids),
-                derived_from_notes=_merge_unique(note_ids),
-                tags=tags,
-                open_questions=["Review generated from wiki mining candidate article before stabilizing."],
-            ),
-            user_id=user.id,
-        )
-        article.status = "accepted"
-        metadata = dict(article.metadata_ or {})
-        metadata["accepted_wiki_id"] = wiki.id
-        article.metadata_ = metadata
-    else:
-        await session.commit()
-
-    await session.refresh(article)
-    return article
-
-
-async def delete_wiki_article_draft(
-    article_id: int,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-):
-    article = await session.get(WikiArticleDraft, article_id)
-    if not article or article.user_id != user.id:
-        raise HTTPException(status_code=404, detail="Wiki article draft not found")
-    await session.delete(article)
-    await session.commit()
-
-
-async def list_wiki_update_drafts(
-    wiki_id: str = Query(...),
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-):
-    rows = await session.execute(
-        select(WikiArticleDraft)
-        .where(
-            WikiArticleDraft.user_id == user.id,
-            WikiArticleDraft.metadata_["origin"].astext == "wiki_update_draft",
-            WikiArticleDraft.metadata_["target_wiki_id"].astext == wiki_id,
-        )
-        .order_by(WikiArticleDraft.created_at.desc(), WikiArticleDraft.id.desc())
-    )
-    return list(rows.scalars())
-
-
-async def delete_wiki_update_draft(
-    article_id: int,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-):
-    article = await session.get(WikiArticleDraft, article_id)
-    if not article or article.user_id != user.id:
-        raise HTTPException(status_code=404, detail="Wiki update draft not found")
-    if (article.metadata_ or {}).get("origin") != "wiki_update_draft":
-        raise HTTPException(status_code=400, detail="Only wiki update drafts can be deleted here")
-    await session.delete(article)
-    await session.commit()
-
-
-async def merge_wiki_article_candidate(
-    article_id: int,
-    body: WikiCandidateMergeAction,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-):
-    article = await session.get(WikiArticleDraft, article_id)
-    if not article or article.user_id != user.id:
-        raise HTTPException(status_code=404, detail="Wiki article draft not found")
-
-    metadata = dict(article.metadata_ or {})
-    metadata["merge_target_wiki_id"] = body.target_wiki_id
-    metadata["merge_placeholder"] = True
-    article.metadata_ = metadata
-    article.status = "merged"
-    article.reviewer_note = body.reviewer_note
-    await session.commit()
-    await session.refresh(article)
-    return article
-
-
-async def convert_wiki_article_candidate_to_note(
-    article_id: int,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-):
-    article = await session.get(WikiArticleDraft, article_id)
-    if not article or article.user_id != user.id:
-        raise HTTPException(status_code=404, detail="Wiki article draft not found")
-
-    metadata = dict(article.metadata_ or {})
-    metadata["converted_to_note_placeholder"] = True
-    article.metadata_ = metadata
-    article.reviewer_note = (article.reviewer_note or "").strip() or "Converted to note placeholder"
-    await session.commit()
-    await session.refresh(article)
-    return WikiCandidateNoteConversionRead(
-        article_id=article.id,
-        status="placeholder",
-        note_title=article.title,
-        note_content=article.content,
-        metadata_=article.metadata_,
-    )
 
 
 def make_wiki_id(title: str, explicit_id: str | None = None) -> str:
@@ -693,98 +502,6 @@ async def compile_wiki_page(
         user_id=user.id,
     )
     return wiki
-
-
-async def create_wiki_update_draft_from_source(
-    body: WikiUpdateDraftFromSourceRequest,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-):
-    wiki = await session.get(WikiPage, body.wiki_id)
-    if not wiki or wiki.user_id != user.id:
-        raise HTTPException(status_code=404, detail="Wiki page not found")
-
-    source = await session.get(Source, body.source_id)
-    if not source or source.user_id != user.id:
-        raise HTTPException(status_code=404, detail="Source not found")
-
-    section = (body.section or "Open Questions").strip() or "Open Questions"
-    run = WikiMiningRun(
-        user_id=user.id,
-        status="completed",
-        metadata_={
-            "origin": "wiki_update_draft",
-            "trigger_type": "source",
-            "trigger_id": source.id,
-            "target_wiki_id": wiki.id,
-            "target_wiki_title": wiki.title,
-        },
-    )
-    session.add(run)
-    await session.flush()
-
-    wiki_summary = (wiki.summary or "").strip()
-    relevant_existing_content = _extract_section_excerpt(wiki.content, section)
-    source_summary = (source.title or "").strip()
-    source_content = _trim_text(source.raw_content, limit=1200)
-    proposed_update = "\n\n".join(
-        part
-        for part in [
-            f"Update the **{section}** section of **{wiki.title}** only if the new evidence is clearly relevant to the page's current topic boundary.",
-            "Keep the page focused on its canonical subject. Prefer additive or corrective edits rather than turning this page into a new topic.",
-            f"New evidence source: {source_summary}" if source_summary else None,
-            source_content or None,
-        ]
-        if part
-    )
-    content = (
-        f"# Wiki Refresh Proposal: {wiki.title}\n\n"
-        f"<!-- Draft generated from source {source.id} for wiki {wiki.id}. Review before applying. -->\n\n"
-        f"## Target Wiki\n\n- `{wiki.id}` · {wiki.title}\n- Suggested Section: {section}\n\n"
-        f"## Current Wiki Summary\n\n{wiki_summary or 'No wiki summary yet.'}\n\n"
-        f"## Relevant Existing Content\n\n{relevant_existing_content or 'No directly matching section found in the current wiki content.'}\n\n"
-        f"## New Evidence\n\n- Source: `{source.id}` · {source.title}\n\n{source_content or 'No source content available.'}\n\n"
-        "## Why This Matters\n\n"
-        "Explain whether this new evidence changes, clarifies, or extends the current wiki page without drifting away from the existing wiki topic.\n\n"
-        f"## Proposed Update\n\n{proposed_update}\n\n"
-        "## Suggested Diff\n\n"
-        f"- Where should this be inserted or revised inside `{section}`?\n"
-        "- Which current claim should be updated, clarified, or kept unchanged?\n"
-        "- What wording should be added to preserve the wiki's scope?\n\n"
-        "## Open Questions\n\n"
-        "- Is this evidence important enough to change the current wiki page?\n"
-        f"- Should this stay in `{section}`, or does it belong in a different section?\n"
-        "- Does this evidence imply a separate wiki page instead of an update here?\n"
-    )
-    article = WikiArticleDraft(
-        run_id=run.id,
-        user_id=user.id,
-        title=f"Update {wiki.title} from source",
-        page_type=body.page_type,
-        summary=source.title,
-        content=content,
-        evidence_refs=[
-            {
-                "ref_type": "source",
-                "ref_id": source.id,
-                "title": source.title,
-                "excerpt": source.raw_content[:240] if source.raw_content else None,
-            },
-        ],
-        metadata_={
-            "origin": "wiki_update_draft",
-            "target_wiki_id": wiki.id,
-            "target_wiki_title": wiki.title,
-            "trigger_type": "source",
-            "trigger_id": source.id,
-            "suggested_section": section,
-        },
-        status="draft",
-    )
-    session.add(article)
-    await session.commit()
-    await session.refresh(article)
-    return article
 
 
 def _trim_text(value: str | None, limit: int = 1200) -> str:

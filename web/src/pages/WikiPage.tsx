@@ -164,9 +164,6 @@ export function WikiPage() {
                   <Link to="/review/wiki-suggestions"><Lightbulb className="h-4 w-4" /> Wiki Review</Link>
                 </Button>
                 <Button asChild variant="outline">
-                  <Link to="/wiki/discovery"><Sparkles className="h-4 w-4" /> Discovery</Link>
-                </Button>
-                <Button asChild variant="outline">
                   <Link to="/wiki/rules"><Settings2 className="h-4 w-4" /> Rules</Link>
                 </Button>
                 <Dialog open={open} onOpenChange={setOpen}>

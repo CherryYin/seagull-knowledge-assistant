@@ -84,13 +84,6 @@ export interface WikiCompileRequest {
   instructions?: string | null;
 }
 
-export interface WikiUpdateDraftFromSourceRequest {
-  wiki_id: string;
-  source_id: string;
-  section?: string;
-  page_type?: string;
-}
-
 export interface WikiRecompileSuggestion {
   id: number;
   user_id: string;
@@ -138,59 +131,6 @@ export interface ReferenceResolveInput {
   id?: string;
   title?: string;
   excerpt?: string | null;
-}
-
-export interface WikiInsightCandidate {
-  id: number;
-  run_id: number;
-  user_id: string;
-  insight_type: "pending" | "accepted" | "rejected" | "converted_to_draft" | string;
-  title: string;
-  summary: string;
-  evidence_refs: WikiEvidenceRef[];
-  metadata_?: Record<string, unknown> | null;
-  status: "pending" | "accepted" | "rejected" | "converted_to_draft" | string;
-  reviewer_note?: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface WikiArticleDraft {
-  id: number;
-  run_id: number;
-  user_id: string;
-  title: string;
-  page_type: string;
-  summary?: string | null;
-  content: string;
-  evidence_refs: WikiEvidenceRef[];
-  metadata_?: Record<string, unknown> | null;
-  status: "candidate" | "draft" | "in_review" | "accepted" | "rejected" | "merged" | string;
-  reviewer_note?: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface WikiMiningRun {
-  id: number;
-  user_id: string;
-  status: string;
-  window_start?: string | null;
-  window_end?: string | null;
-  metadata_?: Record<string, unknown> | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface WikiMiningRunList {
-  items: WikiMiningRun[];
-  total: number;
-}
-
-export interface WikiMiningRunDetail {
-  run: WikiMiningRun;
-  insights: WikiInsightCandidate[];
-  articles: WikiArticleDraft[];
 }
 
 export interface ReferenceRead {
@@ -245,15 +185,6 @@ export const wikiApi = {
     }),
   compile: (body: WikiCompileRequest) =>
     request<WikiPage>("/wiki/compile", { method: "POST", body: JSON.stringify(body) }),
-  createUpdateDraftFromSource: (body: WikiUpdateDraftFromSourceRequest) =>
-    request<WikiArticleDraft>("/wiki/update-drafts/from-source", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-  updateDrafts: (wikiId: string) =>
-    request<WikiArticleDraft[]>(`/wiki/update-drafts?wiki_id=${encodeURIComponent(wikiId)}`),
-  deleteUpdateDraft: (id: number) =>
-    request<void>(`/wiki/update-drafts/${id}`, { method: "DELETE" }),
   suggestions: (params?: { status?: string; wiki_id?: string; limit?: number; offset?: number }) => {
     const q = new URLSearchParams();
     if (params?.status !== undefined) q.set("status", params.status);
@@ -271,43 +202,6 @@ export const wikiApi = {
     request<WikiRecompileSuggestion>(`/wiki/suggestions/${id}`, {
       method: "PATCH",
       body: JSON.stringify({ status, reviewer_note }),
-    }),
-  miningRuns: (params?: { limit?: number; offset?: number }) => {
-    const q = new URLSearchParams();
-    if (params?.limit) q.set("limit", String(params.limit));
-    if (params?.offset) q.set("offset", String(params.offset));
-    return request<WikiMiningRunList>(`/wiki/mining/runs?${q}`);
-  },
-  miningRun: (id: number) => request<WikiMiningRunDetail>(`/wiki/mining/runs/${id}`),
-  updateMiningInsight: (id: number, status: "pending" | "accepted" | "rejected" | "converted_to_draft", reviewer_note?: string | null) =>
-    request<WikiInsightCandidate>(`/wiki/mining/insights/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ status, reviewer_note }),
-    }),
-  deleteMiningInsight: (id: number) =>
-    request<void>(`/wiki/mining/insights/${id}`, {
-      method: "DELETE",
-    }),
-  updateMiningArticle: (
-    id: number,
-    body: { status: "candidate" | "draft" | "in_review" | "accepted" | "rejected" | "merged" | "applied"; reviewer_note?: string | null; wiki_title?: string | null; page_type?: string | null }
-  ) =>
-    request<WikiArticleDraft>(`/wiki/mining/articles/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify(body),
-    }),
-  deleteMiningArticle: (id: number) =>
-    request<void>(`/wiki/mining/articles/${id}`, {
-      method: "DELETE",
-    }),
-  mergeMiningArticle: (id: number, body?: { target_wiki_id?: string | null; reviewer_note?: string | null }) =>
-    request<WikiArticleDraft>(`/wiki/mining/articles/${id}/merge`, {
-      method: "POST",
-      body: JSON.stringify(body ?? {}),
-    }),
-  convertMiningArticleToNote: (id: number) =>
-    request<{ article_id: number; status: string; note_title: string; note_content: string; metadata_?: Record<string, unknown> | null }>(`/wiki/mining/articles/${id}/convert-to-note`, {
-      method: "POST",
     }),
   resolveReferences: (refs: ReferenceResolveInput[]) =>
     request<{ items: ReferenceRead[] }>("/wiki/references/resolve", {

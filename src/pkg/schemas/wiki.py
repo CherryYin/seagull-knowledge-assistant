@@ -93,13 +93,6 @@ class WikiCompileRequest(BaseModel):
     instructions: str | None = None
 
 
-class WikiUpdateDraftFromSourceRequest(BaseModel):
-    wiki_id: str
-    source_id: str
-    section: str = "Open Questions"
-    page_type: str = Field(default="topic", pattern=r"^(topic|entity|concept|project|comparison)$")
-
-
 class WikiRecompileSuggestionRead(BaseModel):
     model_config = {"from_attributes": True}
 
@@ -145,87 +138,3 @@ class WikiEvidenceRefRead(BaseModel):
     ref_id: str
     title: str
     excerpt: str | None = None
-
-
-class WikiInsightCandidateRead(BaseModel):
-    model_config = {"from_attributes": True}
-
-    id: int
-    run_id: int
-    user_id: str
-    insight_type: str
-    title: str
-    summary: str
-    evidence_refs: list[WikiEvidenceRefRead | dict]
-    metadata_: dict | None = None
-    status: str
-    reviewer_note: str | None = None
-    created_at: datetime
-    updated_at: datetime
-
-
-class WikiArticleDraftRead(BaseModel):
-    model_config = {"from_attributes": True}
-
-    id: int
-    run_id: int
-    user_id: str
-    title: str
-    page_type: str
-    summary: str | None = None
-    content: str
-    evidence_refs: list[WikiEvidenceRefRead | dict]
-    metadata_: dict | None = None
-    status: str
-    reviewer_note: str | None = None
-    created_at: datetime
-    updated_at: datetime
-
-
-class WikiMiningRunRead(BaseModel):
-    model_config = {"from_attributes": True}
-
-    id: int
-    user_id: str
-    status: str
-    window_start: datetime | None = None
-    window_end: datetime | None = None
-    metadata_: dict | None = None
-    created_at: datetime
-    updated_at: datetime
-
-
-class WikiMiningRunList(BaseModel):
-    items: list[WikiMiningRunRead]
-    total: int
-
-
-class WikiMiningRunDetail(BaseModel):
-    run: WikiMiningRunRead
-    insights: list[WikiInsightCandidateRead]
-    articles: list[WikiArticleDraftRead]
-
-
-class WikiInsightCandidateStatusUpdate(BaseModel):
-    status: str = Field(pattern=r"^(pending|accepted|rejected|converted_to_draft)$")
-    reviewer_note: str | None = None
-
-
-class WikiArticleDraftStatusUpdate(BaseModel):
-    status: str = Field(pattern=r"^(candidate|draft|in_review|accepted|rejected|merged|applied)$")
-    reviewer_note: str | None = None
-    wiki_title: str | None = None
-    page_type: str | None = Field(default=None, pattern=r"^(topic|entity|concept|project|comparison)$")
-
-
-class WikiCandidateMergeAction(BaseModel):
-    target_wiki_id: str | None = None
-    reviewer_note: str | None = None
-
-
-class WikiCandidateNoteConversionRead(BaseModel):
-    article_id: int
-    status: str
-    note_title: str
-    note_content: str
-    metadata_: dict | None = None
