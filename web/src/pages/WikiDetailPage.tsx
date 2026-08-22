@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Bot, Copy, ExternalLink, Pencil, Plus, Save, Trash2, X } from "lucide-react";
+import { ArrowLeft, Bot, Copy, ExternalLink, Pencil, Save, Trash2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { MarkdownRenderer } from "@/components/markdown";
-import { wikiApi, type ReferenceRead, type WikiPage, type WikiPageSourceCreate, type WikiPageUpdate } from "@/lib/api";
+import { wikiApi, type ReferenceRead, type WikiPage, type WikiPageUpdate } from "@/lib/api";
 import { getWikiOrigin, getWikiRole } from "@/lib/wikiLifecycle";
 import { buildAssetHandoffState } from "@/lib/asset-handoff";
 
@@ -35,17 +35,6 @@ function wikiToDraft(page: WikiPage) {
     confidence: page.confidence_score == null ? "" : String(page.confidence_score),
     needs_recompile: page.needs_recompile,
   };
-}
-
-function renderEvidenceList(items?: Array<string | Record<string, unknown>> | null) {
-  if (!items || items.length === 0) return null;
-  return (
-    <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-      {items.map((item, idx) => (
-        <li key={idx}>{typeof item === "string" ? item : JSON.stringify(item)}</li>
-      ))}
-    </ul>
-  );
 }
 
 function InfoRow({ label, value }: { label: string; value: string }) {
@@ -90,30 +79,18 @@ export function WikiDetailPage() {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<ReturnType<typeof wikiToDraft> | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [sourceOpen, setSourceOpen] = useState(false);
-  const [sourceForm, setSourceForm] = useState({
-    source_id: "",
-    relevance_summary: "",
-    key_points: "",
-    supporting_claims: "",
-    cited_chunk_ids: "",
-    confidence_score: "",
-  });
   const { data: page, isLoading, error } = useQuery({
     queryKey: ["wiki-page", id],
     queryFn: () => wikiApi.get(id!),
     enabled: !!id,
   });
 
-  const { data: sourceEvidence = [] } = useQuery({
-    queryKey: ["wiki-page-sources", id],
-    queryFn: () => wikiApi.sources(id!),
-    enabled: !!id,
-  });
-
   const referenceInputs = useMemo(
-    () => sourceEvidence.map((item) => ({ ref_type: "source", ref_id: item.source_id, excerpt: item.relevance_summary })),
-    [sourceEvidence]
+    () => [
+      ...(page?.derived_from_notes ?? []).map((ref_id) => ({ ref_type: "note", ref_id })),
+      ...(page?.derived_from_sources ?? []).map((ref_id) => ({ ref_type: "source", ref_id })),
+    ],
+    [page?.derived_from_notes, page?.derived_from_sources]
   );
 
   const { data: resolvedReferences = [] } = useQuery({
@@ -152,44 +129,20 @@ export function WikiDetailPage() {
     },
   });
 
-  const sourceMutation = useMutation({
-    mutationFn: (payload: WikiPageSourceCreate) => wikiApi.upsertSource(id!, payload),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["wiki-page", id] });
-      queryClient.invalidateQueries({ queryKey: ["wiki-page-sources", id] });
-      setSourceOpen(false);
-      setSourceForm({ source_id: "", relevance_summary: "", key_points: "", supporting_claims: "", cited_chunk_ids: "", confidence_score: "" });
-    },
-  });
-
   const origin = page ? getWikiOrigin(page) : null;
   const role = page ? getWikiRole(page) : "draft";
-  const referencesCount = sourceEvidence.length;
+  const referencesCount = referenceInputs.length;
   const tocItems = useMemo(() => extractToc(page?.content || ""), [page?.content]);
-  const pageClaims = useMemo(() => {
-    const claims: Array<{ text: string; status: string; sourceLabel: string }> = [];
-    sourceEvidence.forEach((item) => {
-      (item.supporting_claims ?? []).forEach((claim) => {
-        const text = typeof claim === "string" ? claim : JSON.stringify(claim);
-        if (text) claims.push({ text, status: item.cited_chunk_ids?.length ? "supported" : "weak", sourceLabel: item.source_id });
-      });
-    });
-    return claims;
-  }, [sourceEvidence]);
-  const weakPageClaimCount = pageClaims.filter((claim) => claim.status !== "supported").length;
   const stableReadiness = useMemo(() => {
     if (role !== "stable") {
-      if (weakPageClaimCount >= 2) return { level: "warning", message: "Draft still has multiple weak claims. Strengthen evidence before treating it as stable knowledge." };
-      return { level: "ok", message: "Draft has no major claim-health warnings." };
+      return referencesCount > 0
+        ? { level: "ok", message: `Draft records ${referencesCount} explicit provenance reference${referencesCount === 1 ? "" : "s"}.` }
+        : { level: "caution", message: "Draft has no explicit Note or Source provenance yet." };
     }
-    if (weakPageClaimCount >= 2) {
-      return { level: "warning", message: "This stable page still has multiple weak claims in attached evidence. Review or recompile before relying on it heavily." };
-    }
-    if (weakPageClaimCount > 0) {
-      return { level: "caution", message: "This stable page has a small number of weak claims. Monitor evidence quality." };
-    }
-    return { level: "ok", message: "Claim health looks good for stable usage." };
-  }, [role, weakPageClaimCount]);
+    return referencesCount > 0
+      ? { level: "ok", message: `Stable page records ${referencesCount} explicit provenance reference${referencesCount === 1 ? "" : "s"}.` }
+      : { level: "warning", message: "This stable page has no explicit Note or Source provenance." };
+  }, [role, referencesCount]);
 
   const resolvedReferenceMap = useMemo(
     () => new Map(resolvedReferences.map((item) => [`${item.ref_type}:${item.ref_id}`, item] satisfies [string, ReferenceRead])),
@@ -221,17 +174,6 @@ export function WikiDetailPage() {
       open_questions: splitCsv(draft.openQuestionsCsv),
       confidence_score: Number.isFinite(confidence) ? confidence : null,
       needs_recompile: draft.needs_recompile,
-    });
-  }
-
-  function submitSourceEvidence() {
-    sourceMutation.mutate({
-      source_id: sourceForm.source_id.trim(),
-      relevance_summary: sourceForm.relevance_summary,
-      key_points: splitCsv(sourceForm.key_points),
-      supporting_claims: splitCsv(sourceForm.supporting_claims),
-      cited_chunk_ids: splitCsv(sourceForm.cited_chunk_ids).map(Number).filter(Number.isFinite),
-      confidence_score: sourceForm.confidence_score.trim() ? Number(sourceForm.confidence_score) : null,
     });
   }
 
@@ -486,46 +428,23 @@ export function WikiDetailPage() {
 
               <section className="mt-12 space-y-6">
                 <div>
-                  <h2 className="border-b border-border/60 pb-1 text-2xl font-semibold tracking-tight">Claims</h2>
-                  {pageClaims.length === 0 ? (
-                    <p className="mt-4 text-sm text-muted-foreground">No explicit claims extracted yet from attached evidence.</p>
-                  ) : (
-                    <div className="mt-4 space-y-3">
-                      {weakPageClaimCount > 0 && (
-                        <p className="text-sm text-amber-700 dark:text-amber-300">
-                          {weakPageClaimCount} claim{weakPageClaimCount > 1 ? "s are" : " is"} weakly supported and may need stronger evidence before this page is treated as stable.
-                        </p>
-                      )}
-                      {pageClaims.slice(0, 8).map((claim, index) => (
-                        <div key={`${claim.sourceLabel}-${index}`} className="rounded-md border border-border/70 p-3">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Badge variant="outline">{claim.status}</Badge>
-                            <span className="text-xs text-muted-foreground">from {claim.sourceLabel}</span>
-                          </div>
-                          <p className="mt-2 text-sm leading-6 text-foreground">{claim.text}</p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div>
                   <h2 className="border-b border-border/60 pb-1 text-2xl font-semibold tracking-tight">References</h2>
                   {referencesCount === 0 ? (
-                    <p className="mt-4 text-sm text-muted-foreground">No references attached yet.</p>
+                    <p className="mt-4 text-sm text-muted-foreground">No Note or Source provenance recorded yet.</p>
                   ) : (
                     <ol className="mt-4 space-y-4 pl-5 text-sm">
-                      {sourceEvidence.map((item, idx) => {
-                        const resolved = resolvedReferenceMap.get(`source:${item.source_id}`);
+                      {referenceInputs.map((item, idx) => {
+                        const resolved = resolvedReferenceMap.get(`${item.ref_type}:${item.ref_id}`);
+                        const fallbackHref = item.ref_type === "note"
+                          ? `/notes/${encodeURIComponent(item.ref_id)}`
+                          : `/sources/${encodeURIComponent(item.ref_id)}`;
                         return (
-                        <li key={item.id} className="leading-6">
-                          <Link to={resolved?.href || `/sources/${encodeURIComponent(item.source_id)}`} className="font-medium text-primary hover:underline">
-                            Source {idx + 1}: {resolved?.title || item.source_id}
+                        <li key={`${item.ref_type}:${item.ref_id}`} className="leading-6">
+                          <Link to={resolved?.href || fallbackHref} className="font-medium text-primary hover:underline">
+                            {item.ref_type === "note" ? "Note" : "Source"} {idx + 1}: {resolved?.title || item.ref_id}
                           </Link>
                           {resolved?.subtitle && <p className="mt-1 text-xs text-muted-foreground">{resolved.subtitle}</p>}
-                          <p className="mt-1 text-muted-foreground">{resolved?.excerpt || item.relevance_summary}</p>
-                          {renderEvidenceList(item.key_points)}
-                          {item.cited_chunk_ids.length > 0 && <p className="mt-1 text-xs text-muted-foreground">Chunks: {item.cited_chunk_ids.join(", ")}</p>}
+                          {resolved?.excerpt && <p className="mt-1 text-muted-foreground">{resolved.excerpt}</p>}
                         </li>
                         );
                       })}
@@ -559,7 +478,6 @@ export function WikiDetailPage() {
                   <InfoRow label="Origin" value={origin ?? "manual"} />
                   <InfoRow label="Confidence" value={page.confidence_score == null ? "—" : String(page.confidence_score)} />
                   <InfoRow label="References" value={String(referencesCount)} />
-                  <InfoRow label="Claim health" value={weakPageClaimCount > 0 ? `${weakPageClaimCount} weak` : "strong"} />
                 </div>
               </div>
 
@@ -585,54 +503,6 @@ export function WikiDetailPage() {
                 </div>
               </div>
 
-              <div className="border border-border/70 bg-background p-4 shadow-sm">
-                <div className="mb-3 flex items-center justify-between gap-2">
-                  <p className="text-sm font-semibold">Evidence tools</p>
-                  <Dialog open={sourceOpen} onOpenChange={setSourceOpen}>
-                    <DialogTrigger asChild>
-                      <Button size="sm" variant="outline"><Plus className="h-4 w-4" /> Source</Button>
-                    </DialogTrigger>
-                    <DialogContent>
-                      <DialogHeader>
-                        <DialogTitle>Add Source Evidence</DialogTitle>
-                      </DialogHeader>
-                      <div className="space-y-4">
-                        <div>
-                          <label className="text-xs font-medium text-muted-foreground">Source ID</label>
-                          <Input value={sourceForm.source_id} onChange={(event) => setSourceForm((prev) => ({ ...prev, source_id: event.target.value }))} className="mt-1" />
-                        </div>
-                        <div>
-                          <label className="text-xs font-medium text-muted-foreground">Relevance Summary</label>
-                          <Textarea value={sourceForm.relevance_summary} onChange={(event) => setSourceForm((prev) => ({ ...prev, relevance_summary: event.target.value }))} rows={4} className="mt-1" />
-                        </div>
-                        <div>
-                          <label className="text-xs font-medium text-muted-foreground">Key Points</label>
-                          <Input value={sourceForm.key_points} onChange={(event) => setSourceForm((prev) => ({ ...prev, key_points: event.target.value }))} placeholder="comma separated" className="mt-1" />
-                        </div>
-                        <div>
-                          <label className="text-xs font-medium text-muted-foreground">Supporting Claims</label>
-                          <Input value={sourceForm.supporting_claims} onChange={(event) => setSourceForm((prev) => ({ ...prev, supporting_claims: event.target.value }))} placeholder="comma separated" className="mt-1" />
-                        </div>
-                        <div>
-                          <label className="text-xs font-medium text-muted-foreground">Cited Chunk IDs</label>
-                          <Input value={sourceForm.cited_chunk_ids} onChange={(event) => setSourceForm((prev) => ({ ...prev, cited_chunk_ids: event.target.value }))} placeholder="1, 2" className="mt-1" />
-                        </div>
-                        <div>
-                          <label className="text-xs font-medium text-muted-foreground">Confidence</label>
-                          <Input value={sourceForm.confidence_score} onChange={(event) => setSourceForm((prev) => ({ ...prev, confidence_score: event.target.value }))} placeholder="0.8" className="mt-1" />
-                        </div>
-                        {sourceMutation.error && <p className="text-sm text-destructive">{sourceMutation.error.message}</p>}
-                        <div className="flex justify-end gap-2">
-                          <Button variant="outline" onClick={() => setSourceOpen(false)}>Cancel</Button>
-                          <Button onClick={submitSourceEvidence} disabled={!sourceForm.source_id.trim() || !sourceForm.relevance_summary.trim() || sourceMutation.isPending}>
-                            {sourceMutation.isPending ? "Saving…" : "Save Evidence"}
-                          </Button>
-                        </div>
-                      </div>
-                    </DialogContent>
-                  </Dialog>
-                </div>
-              </div>
             </aside>
           </div>
         )}
@@ -643,7 +513,7 @@ export function WikiDetailPage() {
           <DialogHeader>
             <DialogTitle>Delete Wiki Page?</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">This deletes the wiki page and its source evidence. Notes and sources stay unchanged.</p>
+          <p className="text-sm text-muted-foreground">This deletes the wiki page. Referenced Notes and Sources stay unchanged.</p>
           {deleteMutation.error && <p className="text-sm text-destructive">{deleteMutation.error.message}</p>}
           <div className="mt-4 flex justify-end gap-2">
             <Button variant="outline" onClick={() => setDeleteOpen(false)}>Cancel</Button>

@@ -15,7 +15,6 @@ from pkg.models.user import User
 from pkg.models.foundation.wiki import (
     WikiEmbedding,
     WikiPage,
-    WikiPageSource,
     WikiRecompileSuggestion,
 )
 from pkg.schemas.wiki import (
@@ -24,8 +23,6 @@ from pkg.schemas.wiki import (
     WikiPageCreate,
     WikiPageList,
     WikiPageRead,
-    WikiPageSourceCreate,
-    WikiPageSourceRead,
     WikiPageUpdate,
     WikiRecompileSuggestionList,
     WikiRecompileSuggestionRead,
@@ -360,66 +357,6 @@ async def delete_wiki_page(
     await session.delete(wiki)
     await session.commit()
     return None
-
-
-@router.post("/{wiki_id}/sources", response_model=WikiPageSourceRead, status_code=201)
-async def upsert_wiki_page_source(
-    wiki_id: str,
-    body: WikiPageSourceCreate,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-):
-    wiki = await session.get(WikiPage, wiki_id)
-    if not wiki or wiki.user_id != user.id:
-        raise HTTPException(status_code=404, detail="Wiki page not found")
-    source = await session.get(Source, body.source_id)
-    if not source or (source.user_id != user.id and not source.is_shared):
-        raise HTTPException(status_code=404, detail="Source not found")
-
-    rows = await session.execute(
-        select(WikiPageSource).where(
-            WikiPageSource.wiki_id == wiki_id,
-            WikiPageSource.source_id == body.source_id,
-        )
-    )
-    evidence = rows.scalar_one_or_none()
-    if evidence:
-        evidence.relevance_summary = body.relevance_summary
-        evidence.key_points = body.key_points
-        evidence.supporting_claims = body.supporting_claims
-        evidence.cited_chunk_ids = body.cited_chunk_ids
-        evidence.confidence_score = body.confidence_score
-    else:
-        evidence = WikiPageSource(
-            wiki_id=wiki_id,
-            source_id=body.source_id,
-            relevance_summary=body.relevance_summary,
-            key_points=body.key_points,
-            supporting_claims=body.supporting_claims,
-            cited_chunk_ids=body.cited_chunk_ids,
-            confidence_score=body.confidence_score,
-        )
-        session.add(evidence)
-    if body.source_id not in wiki.derived_from_sources:
-        wiki.derived_from_sources = [*wiki.derived_from_sources, body.source_id]
-    await session.commit()
-    await session.refresh(evidence)
-    return evidence
-
-
-@router.get("/{wiki_id}/sources", response_model=list[WikiPageSourceRead])
-async def list_wiki_page_sources(
-    wiki_id: str,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-):
-    wiki = await session.get(WikiPage, wiki_id)
-    if not wiki or wiki.user_id != user.id:
-        raise HTTPException(status_code=404, detail="Wiki page not found")
-    rows = await session.execute(
-        select(WikiPageSource).where(WikiPageSource.wiki_id == wiki_id).order_by(WikiPageSource.id)
-    )
-    return list(rows.scalars())
 
 
 @router.post("/compile", response_model=WikiPageRead, status_code=201)

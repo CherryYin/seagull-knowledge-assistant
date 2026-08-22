@@ -55,27 +55,6 @@ export interface WikiPageUpdate {
   stale_reason?: string | null;
 }
 
-export interface WikiPageSource {
-  id: number;
-  wiki_id: string;
-  source_id: string;
-  relevance_summary: string;
-  key_points?: Array<string | Record<string, unknown>> | null;
-  supporting_claims?: Array<string | Record<string, unknown>> | null;
-  cited_chunk_ids: number[];
-  confidence_score?: number | null;
-  last_refreshed_at: string;
-}
-
-export interface WikiPageSourceCreate {
-  source_id: string;
-  relevance_summary: string;
-  key_points?: Array<string | Record<string, unknown>>;
-  supporting_claims?: Array<string | Record<string, unknown>>;
-  cited_chunk_ids?: number[];
-  confidence_score?: number | null;
-}
-
 export interface WikiCompileRequest {
   title: string;
   page_type?: string;
@@ -177,12 +156,6 @@ export const wikiApi = {
     }),
   delete: (id: string) =>
     request<void>(`/wiki/${encodeURIComponent(id)}`, { method: "DELETE" }),
-  sources: (id: string) => request<WikiPageSource[]>(`/wiki/${encodeURIComponent(id)}/sources`),
-  upsertSource: (id: string, body: WikiPageSourceCreate) =>
-    request<WikiPageSource>(`/wiki/${encodeURIComponent(id)}/sources`, {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
   compile: (body: WikiCompileRequest) =>
     request<WikiPage>("/wiki/compile", { method: "POST", body: JSON.stringify(body) }),
   suggestions: (params?: { status?: string; wiki_id?: string; limit?: number; offset?: number }) => {

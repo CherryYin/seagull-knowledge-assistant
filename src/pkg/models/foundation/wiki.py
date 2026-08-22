@@ -51,26 +51,6 @@ class WikiEmbedding(Base):
     content_vec = mapped_column(Vector(settings.EMBEDDING_DIM))
 
 
-class WikiPageSource(Base):
-    __tablename__ = "wiki_page_sources"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    wiki_id: Mapped[str] = mapped_column(String, ForeignKey("wiki_pages.id", ondelete="CASCADE"), nullable=False)
-    source_id: Mapped[str] = mapped_column(String, ForeignKey("sources.id", ondelete="CASCADE"), nullable=False)
-    relevance_summary: Mapped[str] = mapped_column(Text, nullable=False)
-    key_points: Mapped[list | None] = mapped_column(JSONB)
-    supporting_claims: Mapped[list | None] = mapped_column(JSONB)
-    cited_chunk_ids: Mapped[list[int]] = mapped_column(ARRAY(Integer), server_default="{}")
-    confidence_score: Mapped[float | None] = mapped_column(Float)
-    last_refreshed_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
-
-    __table_args__ = (
-        UniqueConstraint("wiki_id", "source_id", name="uq_wiki_page_sources_wiki_source"),
-        Index("idx_wiki_page_sources_wiki", "wiki_id"),
-        Index("idx_wiki_page_sources_source", "source_id"),
-    )
-
-
 class WikiRecompileSuggestion(Base):
     __tablename__ = "wiki_recompile_suggestions"
 

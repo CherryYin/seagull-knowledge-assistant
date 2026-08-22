@@ -9,27 +9,25 @@ from pkg.schemas.wiki import WikiCompileRequest
 
 
 class TestCreateWikiPage:
-    @patch("pkg.api.wiki.get_embedding_service")
-    def test_success(self, mock_embedding_service, client, mock_session):
-        emb_svc = MagicMock()
-        emb_svc.embed_text = AsyncMock(return_value=[0.1, 0.2])
-        mock_embedding_service.return_value = emb_svc
+    def test_success(self, client, fake_user):
+        wiki = _make_wiki("wiki-1", fake_user.id)
+        wiki.derived_from_sources = ["src-1"]
 
-        resp = client.post(
-            "/wiki",
-            json={
-                "title": "Personal Knowledge Graph",
-                "page_type": "topic",
-                "summary": "PKG overview",
-                "content": "# Personal Knowledge Graph\n\nCurrent understanding.",
-                "derived_from_sources": ["src-1"],
-            },
-        )
+        with patch("pkg.api.wiki.persist_wiki_page", new=AsyncMock(return_value=wiki)) as persist:
+            resp = client.post(
+                "/wiki",
+                json={
+                    "title": "Personal Knowledge Graph",
+                    "page_type": "topic",
+                    "summary": "PKG overview",
+                    "content": "# Personal Knowledge Graph\n\nCurrent understanding.",
+                    "derived_from_sources": ["src-1"],
+                },
+            )
 
         assert resp.status_code == 201
-        mock_session.add.assert_called()
-        mock_session.commit.assert_awaited()
-        mock_session.refresh.assert_awaited()
+        assert resp.json()["derived_from_sources"] == ["src-1"]
+        persist.assert_awaited_once()
 
 
 class TestGetWikiPage:
@@ -69,36 +67,6 @@ class TestCloneWikiDraft:
         resp = client.get("/wiki/wiki-1")
 
         assert resp.status_code == 404
-
-
-class TestUpsertWikiSource:
-    def test_success(self, client, mock_session, fake_user):
-        wiki = _make_wiki("wiki-1", fake_user.id)
-        source = MagicMock(spec=[])
-        source.id = "src-1"
-        source.user_id = fake_user.id
-        source.is_shared = False
-        rows = MagicMock()
-        rows.scalar_one_or_none.return_value = None
-        mock_session.get.side_effect = [wiki, source]
-        mock_session.execute.return_value = rows
-
-        resp = client.post(
-            "/wiki/wiki-1/sources",
-            json={
-                "source_id": "src-1",
-                "relevance_summary": "This source supports the PKG memory tree design.",
-                "key_points": ["Memory Tree"],
-                "supporting_claims": ["Use topic-relative source summaries"],
-                "cited_chunk_ids": [1, 2],
-                "confidence_score": 0.8,
-            },
-        )
-
-        assert resp.status_code == 201
-        mock_session.add.assert_called()
-        mock_session.commit.assert_awaited()
-        assert "src-1" in wiki.derived_from_sources
 
 
 class TestCompileWikiPage:
@@ -173,36 +141,6 @@ class TestListWikiPages:
         assert resp.status_code == 200
         assert resp.json()["total"] == 1
         assert resp.json()["items"][0]["id"] == "wiki-1"
-
-
-class TestListWikiUpdateDrafts:
-    @pytest.mark.asyncio
-    async def test_success(self, mock_session, fake_user):
-        from pkg.api.wiki import list_wiki_update_drafts
-
-        article = type("ArticleObj", (), {
-            "id": 11,
-            "run_id": 1,
-            "user_id": fake_user.id,
-            "title": "Update AI AGENT from memory",
-            "page_type": "topic",
-            "summary": "Compatibility note",
-            "content": "draft",
-            "evidence_refs": [],
-            "metadata_": {"origin": "wiki_update_draft", "target_wiki_id": "wiki-ai-agent", "suggested_section": "Risks"},
-            "status": "draft",
-            "reviewer_note": None,
-            "created_at": datetime(2026, 6, 16, tzinfo=timezone.utc),
-            "updated_at": datetime(2026, 6, 16, tzinfo=timezone.utc),
-        })()
-        rows = MagicMock()
-        rows.scalars.return_value = [article]
-        mock_session.execute.return_value = rows
-
-        result = await list_wiki_update_drafts("wiki-ai-agent", user=fake_user, session=mock_session)
-
-        assert len(result) == 1
-        assert result[0].metadata_["target_wiki_id"] == "wiki-ai-agent"
 
 
 class TestWikiSuggestionStatusFlow:
