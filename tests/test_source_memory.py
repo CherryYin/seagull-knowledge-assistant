@@ -51,13 +51,9 @@ async def test_delete_source_memory_derivatives_keeps_node_owned_by_another_user
 
 
 @pytest.mark.asyncio
-async def test_maybe_upsert_source_memory_node_skips_when_auto_generation_disabled(monkeypatch):
+async def test_maybe_upsert_source_memory_node_is_permanently_disabled():
     source = _make_source()
     session = AsyncMock()
-    monkeypatch.setattr(
-        "pkg.services.foundation.source_memory.settings.SOURCE_MEMORY_AUTO_GENERATE_ENABLED",
-        False,
-    )
     upsert = AsyncMock()
 
     with patch("pkg.services.foundation.source_memory.upsert_source_memory_node", upsert):
@@ -65,24 +61,6 @@ async def test_maybe_upsert_source_memory_node_skips_when_auto_generation_disabl
 
     assert result is None
     upsert.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_maybe_upsert_source_memory_node_delegates_when_enabled(monkeypatch):
-    source = _make_source()
-    session = AsyncMock()
-    expected = MagicMock()
-    monkeypatch.setattr(
-        "pkg.services.foundation.source_memory.settings.SOURCE_MEMORY_AUTO_GENERATE_ENABLED",
-        True,
-    )
-    upsert = AsyncMock(return_value=expected)
-
-    with patch("pkg.services.foundation.source_memory.upsert_source_memory_node", upsert):
-        result = await maybe_upsert_source_memory_node(session, source)
-
-    assert result is expected
-    upsert.assert_awaited_once_with(session, source)
 
 
 @pytest.mark.asyncio

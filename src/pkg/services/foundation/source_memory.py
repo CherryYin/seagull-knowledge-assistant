@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pkg.config import settings
 from pkg.models.foundation.memory import MemoryNode
 from pkg.models.foundation.source import Source
 from pkg.models.memory_edge import MemoryEdge
@@ -51,11 +50,9 @@ async def maybe_upsert_source_memory_node(
     session: AsyncSession,
     source: Source,
 ) -> MemoryNode | None:
-    """Create Source Memory only when legacy automatic generation is enabled."""
-    if not settings.SOURCE_MEMORY_AUTO_GENERATE_ENABLED:
-        logger.info("Skipping automatic source memory generation for %s", source.id)
-        return None
-    return await upsert_source_memory_node(session, source)
+    """Keep legacy ingestion callers inert after Source Memory retirement."""
+    logger.info("Skipping retired automatic source memory generation for %s", source.id)
+    return None
 
 
 async def delete_source_memory_derivatives(
