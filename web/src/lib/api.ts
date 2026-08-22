@@ -11,7 +11,6 @@ export * from "./api/knowledge";
 export * from "./api/agent-profiles";
 export * from "./api/auth";
 export * from "./api/wiki";
-export * from "./api/memory";
 export * from "./api/connectors";
 export * from "./api/calendar-reminders";
 export * from "./api/review";

@@ -32,7 +32,6 @@ import {
   type DiscoveryItem,
   type ChatSessionRecord,
   type SystemJob,
-  type MemoryNode,
   type WikiPage,
 } from "@/lib/api";
 import { getSourceProcessingState } from "@/lib/sourceProcessingStatus";
