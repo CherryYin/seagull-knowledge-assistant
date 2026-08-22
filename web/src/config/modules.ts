@@ -140,16 +140,6 @@ export const APP_MODULES: AppModuleConfig[] = [
     visibility: { defaultEnabled: true, configurable: false },
   },
   {
-    id: "documents",
-    label: "Documents",
-    group: "knowledge",
-    route: "/documents",
-    icon: BookOpen,
-    description: "Legacy document surface.",
-    nav: { primary: true, section: true, parent: "knowledge", order: 35 },
-    visibility: { defaultEnabled: false, configurable: true, advanced: true },
-  },
-  {
     id: "wiki",
     label: "Wiki",
     group: "knowledge",

@@ -15,7 +15,6 @@ const SkillsPage = lazy(() => import("./pages/SkillsPage").then((m) => ({ defaul
 const StatsPage = lazy(() => import("./pages/StatsPage").then((m) => ({ default: m.StatsPage })));
 const CalendarPage = lazy(() => import("./pages/CalendarPage").then((m) => ({ default: m.CalendarPage })));
 const CompletedTodosPage = lazy(() => import("./pages/CompletedTodosPage").then((m) => ({ default: m.CompletedTodosPage })));
-const WritingPage = lazy(() => import("./pages/WritingPage").then((m) => ({ default: m.WritingPage })));
 const AssetsPage = lazy(() => import("./pages/AssetsPage").then((m) => ({ default: m.AssetsPage })));
 const AssetDetailPage = lazy(() => import("./pages/AssetDetailPage").then((m) => ({ default: m.AssetDetailPage })));
 const DigestPage = lazy(() => import("./pages/DigestPage").then((m) => ({ default: m.DigestPage })));
@@ -116,7 +115,7 @@ export default function App() {
             <Route path="/wiki" element={<LazyPage><WikiPage /></LazyPage>} />
             <Route path="/wiki/:id" element={<LazyPage><WikiDetailPage /></LazyPage>} />
             <Route path="/review/digest" element={<LazyPage><DigestPage /></LazyPage>} />
-            <Route path="/documents" element={<LazyPage><WritingPage /></LazyPage>} />
+            <Route path="/documents" element={<Navigate to="/notes" replace />} />
             <Route path="/assets" element={<LazyPage><AssetsPage /></LazyPage>} />
             <Route path="/assets/:id" element={<LazyPage><AssetDetailPage /></LazyPage>} />
             <Route path="/review/wiki-suggestions" element={<LazyPage><WikiSuggestionsPage /></LazyPage>} />
@@ -124,10 +123,10 @@ export default function App() {
             <Route path="/review/suggestions" element={<LazyPage><ReviewSuggestionsPage /></LazyPage>} />
             <Route path="/wiki/rules" element={<LazyPage><WikiRulesPage /></LazyPage>} />
             <Route path="/wiki/digest" element={<Navigate to="/review/digest" replace />} />
-            <Route path="/wiki/writing" element={<Navigate to="/documents" replace />} />
+            <Route path="/wiki/writing" element={<Navigate to="/notes" replace />} />
             <Route path="/wiki/suggestions" element={<Navigate to="/review/wiki-suggestions" replace />} />
             <Route path="/review/wiki-discovery" element={<Navigate to="/wiki/discovery" replace />} />
-            <Route path="/writing" element={<Navigate to="/documents" replace />} />
+            <Route path="/writing" element={<Navigate to="/notes" replace />} />
             <Route path="/digest" element={<Navigate to="/review/digest" replace />} />
             <Route path="/stats" element={<LazyPage><StatsPage /></LazyPage>} />
             <Route path="/admin/users" element={<AdminRoute><LazyPage><AdminUsersPage /></LazyPage></AdminRoute>} />
