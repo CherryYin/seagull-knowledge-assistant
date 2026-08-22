@@ -11,7 +11,6 @@ from pkg.api.deps import get_current_user
 from pkg.config import settings
 from pkg.db import get_session
 from pkg.models.foundation.note import Note
-from pkg.models.foundation.memory import MemoryNode
 from pkg.models.foundation.source import Source
 from pkg.models.user import User
 from pkg.models.foundation.wiki import (
@@ -902,18 +901,6 @@ async def _resolve_reference(
             title=note.title,
             subtitle=note.note_type,
             href=f"/notes/{note.id}",
-            excerpt=excerpt,
-        )
-    if ref_type == "memory":
-        memory = await session.get(MemoryNode, ref_id)
-        if not memory or memory.user_id != user_id:
-            return None
-        return ReferenceRead(
-            ref_type="memory",
-            ref_id=memory.id,
-            title=memory.title,
-            subtitle=memory.level,
-            href=f"/memory?node={memory.id}",
             excerpt=excerpt,
         )
     if ref_type == "wiki":

@@ -2,7 +2,6 @@ from datetime import datetime, timezone
 
 import pytest
 
-from pkg.models.foundation.memory import MemoryNode
 from pkg.models.foundation.note import Note
 from pkg.models.foundation.source import Source
 from pkg.models.foundation.wiki import WikiPage
@@ -50,24 +49,6 @@ class TestWikiReferenceResolveAPI:
             created_at=now,
             updated_at=now,
         )
-        memory = MemoryNode(
-            id="mem-1",
-            user_id=fake_user.id,
-            node_type="topic",
-            scope_id="scope",
-            level="topic",
-            title="Memory 1",
-            summary="summary",
-            content="content",
-            child_node_ids=[],
-            derived_from_notes=[],
-            derived_from_sources=[],
-            derived_from_chunks=[],
-            metadata_={},
-            confidence_score=0.5,
-            created_at=now,
-            updated_at=now,
-        )
         wiki = WikiPage(
             id="wiki-1",
             user_id=fake_user.id,
@@ -93,7 +74,6 @@ class TestWikiReferenceResolveAPI:
             mapping = {
                 (Source, "src-1"): source,
                 (Note, "note-1"): note,
-                (MemoryNode, "mem-1"): memory,
                 (WikiPage, "wiki-1"): wiki,
             }
             return mapping.get((model, ident))
@@ -116,4 +96,6 @@ class TestWikiReferenceResolveAPI:
         assert len(result.items) == 4
         assert result.items[0].title == "Source 1"
         assert result.items[0].href == "/sources/src-1"
+        assert result.items[2].title == "mem-1"
+        assert result.items[2].href is None
         assert result.items[3].status == "stable"
