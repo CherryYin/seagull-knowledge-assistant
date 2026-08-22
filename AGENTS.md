@@ -10,8 +10,9 @@ DeepSeek Knowledge Lab — 基于 DeepSeek Harness 的个人知识 agent 实验�
 
 ```
 deepseek-knowledge-lab/
-├── plugins/            # deepseek-harness 插件（Cordis 插件系统）
-│   └── pkg-client/     # PKG 知识 API 客户端插件
+├── plugins/            # deepseek-harness 插件与 Lab 运行时模块
+│   ├── pkg-client/     # PKG 知识 API 客户端插件
+│   └── agent-memory/   # Harness Agent Memory 领域存储（由 BFF 调用）
 ├── experiments/        # 实验任务模板（Markdown prompt + 配置）
 ├── config/             # dsh 配置文件
 │   ├── cordis.patch.yml   # 插件补丁，注入 pkg-client 等自定义插件
@@ -27,6 +28,7 @@ deepseek-knowledge-lab/
 2. **知识消费**：agent 阅读、分析、关联检索到的知识片段。
 3. **知识产出**：agent 结果保留在 Harness Session/Workflow；用户在 Seagull UI 明确 Keep/Save/Publish 后才写回 PKG。
 4. **实验追踪**：DeepSeek Harness 的 Trajectory View 记录完整执行轨迹，可 replay/fork/对比。
+5. **长期记忆**：Agent Memory Candidate 由用户确认后才激活，保存在 Harness/Lab 自有存储，不写入 PKG 知识实体。
 
 ## PKG API 对接要点
 

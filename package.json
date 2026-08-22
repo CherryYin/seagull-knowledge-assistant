@@ -17,6 +17,8 @@
     "test:pkg-client": "node --test scripts/pkg-client-readonly.test.mjs",
     "test:sessions:verify-shadow": "node --test scripts/verify-session-shadow.test.mjs",
     "test:sessions:stage-e": "node --test scripts/check-stage-e-readiness.test.mjs",
+    "test:agent-memory": "node --test plugins/agent-memory/test/store.test.js",
+    "test:agent-memory-integration": "node scripts/check-agent-memory-integration.mjs",
     "run-headless": "DSH_HOME=./.dsh node dsh-harness/apps/cli/lib/bin.js --profile headless",
     "run-web": "DSH_HOME=./.dsh node dsh-harness/apps/cli/lib/bin.js --profile web"
   },

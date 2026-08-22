@@ -1,5 +1,7 @@
 node_modules/
 .dsh/.env
+.dsh/agent-memory.json
+.dsh/agent-memory.json.*.tmp
 .dsh/sessions/
 .dsh/storages/
 .dsh/migration-reports/
