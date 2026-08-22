@@ -372,35 +372,43 @@ export function CalendarPage() {
                   <span className="text-xs text-muted-foreground">{selectedReminders.filter((reminder) => !reminder.is_done).length} open</span>
                 </div>
                 <form
-                  className="flex flex-col gap-2 sm:flex-row"
+                  className="space-y-2"
                   onSubmit={(event) => {
                     event.preventDefault();
                     submitReminder();
                   }}
                 >
-                  <Input value={newReminder} onChange={(event) => setNewReminder(event.target.value)} placeholder="Add a todo for this day..." />
-                  <select
-                    className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-                    value={linkedNoteId}
-                    onChange={(event) => setLinkedNoteId(event.target.value)}
-                  >
-                    <option value="">No linked note</option>
-                    {(notesData?.items ?? []).slice(0, 100).map((note) => (
-                      <option key={note.id} value={note.id}>{note.title}</option>
-                    ))}
-                  </select>
-                  <select
-                    className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-                    value={newReminderRecurrence}
-                    onChange={(event) => setNewReminderRecurrence(event.target.value as CalendarReminder["recurrence"])}
-                  >
-                    {RECURRENCE_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
-                  <Button type="submit" size="icon" disabled={!newReminder.trim() || createReminderMutation.isPending}>
-                    <Plus className="h-4 w-4" />
-                  </Button>
+                  <Input
+                    value={newReminder}
+                    onChange={(event) => setNewReminder(event.target.value)}
+                    placeholder="Add a todo for this day..."
+                  />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      className="h-9 min-w-[140px] flex-1 truncate rounded-md border border-input bg-background px-2 text-sm"
+                      value={linkedNoteId}
+                      onChange={(event) => setLinkedNoteId(event.target.value)}
+                      title="Link a note"
+                    >
+                      <option value="">No linked note</option>
+                      {(notesData?.items ?? []).slice(0, 100).map((note) => (
+                        <option key={note.id} value={note.id}>{note.title}</option>
+                      ))}
+                    </select>
+                    <select
+                      className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+                      value={newReminderRecurrence}
+                      onChange={(event) => setNewReminderRecurrence(event.target.value as CalendarReminder["recurrence"])}
+                      title="Recurrence"
+                    >
+                      {RECURRENCE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                    <Button type="submit" size="sm" disabled={!newReminder.trim() || createReminderMutation.isPending}>
+                      <Plus className="h-4 w-4" /> Add
+                    </Button>
+                  </div>
                 </form>
                 <div className="mt-3 space-y-2">
                   {selectedReminders.length === 0 ? (

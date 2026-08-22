@@ -8,7 +8,10 @@ export function ModuleRouteGate({ children }: { children: React.ReactNode }) {
   const moduleState = useResolvedModules();
   const routeModule = getModuleForPathname(location.pathname);
 
-  if (moduleState.loading || moduleState.isAdmin) return <>{children}</>;
+  if (moduleState.loading) {
+    return <div className="flex h-full min-h-screen items-center justify-center text-sm text-muted-foreground">Loading workspace…</div>;
+  }
+  if (moduleState.isAdmin) return <>{children}</>;
   if (!moduleState.onboardingRequired && location.pathname === "/onboarding") return <Navigate to="/" replace />;
   if (moduleState.onboardingRequired && location.pathname !== "/onboarding" && !routeModule) {
     return <Navigate to="/onboarding" replace state={{ from: location.pathname }} />;
