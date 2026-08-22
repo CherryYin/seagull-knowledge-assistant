@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, CheckCircle2, Lightbulb, Network, RefreshCw, ScrollText, Sparkles, XCircle } from "lucide-react";
+import { Bot, CheckCircle2, Lightbulb, Network, ScrollText, Sparkles, XCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -31,14 +31,6 @@ export function WikiDiscoveryPage() {
 
   const loadingDetails = detailQueries.some((query) => query.isLoading);
   const detailError = detailQueries.find((query) => query.error)?.error;
-
-  const runMiningMutation = useMutation({
-    mutationFn: () => wikiApi.createMiningRun(),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["wiki-mining-runs"] });
-      queryClient.invalidateQueries({ queryKey: ["wiki-mining-run"] });
-    },
-  });
 
   const updateInsightMutation = useMutation({
     mutationFn: ({ id, status }: { id: number; status: "accepted" | "rejected" }) => wikiApi.updateMiningInsight(id, status),
@@ -141,9 +133,6 @@ export function WikiDiscoveryPage() {
             <div className="flex gap-2">
               <Button variant="outline" onClick={() => navigate("/review/wiki-suggestions")}>
                 <Lightbulb className="h-4 w-4" /> Wiki Refresh
-              </Button>
-              <Button variant="outline" onClick={() => runMiningMutation.mutate()} disabled={runMiningMutation.isPending}>
-                <RefreshCw className="h-4 w-4" /> {runMiningMutation.isPending ? "Running…" : "Run Mining"}
               </Button>
               <Button
                 variant="outline"

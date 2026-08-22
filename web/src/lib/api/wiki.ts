@@ -193,12 +193,6 @@ export interface WikiMiningRunDetail {
   articles: WikiArticleDraft[];
 }
 
-export interface WikiMiningRunCreate {
-  window_days?: number;
-  max_new_items?: number;
-  max_related_items?: number;
-}
-
 export interface ReferenceRead {
   ref_type: string;
   ref_id: string;
@@ -285,11 +279,6 @@ export const wikiApi = {
     return request<WikiMiningRunList>(`/wiki/mining/runs?${q}`);
   },
   miningRun: (id: number) => request<WikiMiningRunDetail>(`/wiki/mining/runs/${id}`),
-  createMiningRun: (body?: WikiMiningRunCreate) =>
-    request<WikiMiningRunDetail>("/wiki/mining/runs", {
-      method: "POST",
-      body: JSON.stringify(body ?? {}),
-    }),
   updateMiningInsight: (id: number, status: "pending" | "accepted" | "rejected" | "converted_to_draft", reviewer_note?: string | null) =>
     request<WikiInsightCandidate>(`/wiki/mining/insights/${id}`, {
       method: "PATCH",

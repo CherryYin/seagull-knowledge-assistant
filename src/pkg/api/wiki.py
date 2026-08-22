@@ -8,7 +8,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.api.deps import get_current_user
-from pkg.config import settings
 from pkg.db import get_session
 from pkg.models.foundation.note import Note
 from pkg.models.foundation.source import Source
@@ -31,7 +30,6 @@ from pkg.schemas.wiki import (
     WikiUpdateDraftFromSourceRequest,
     WikiInsightCandidateRead,
     WikiInsightCandidateStatusUpdate,
-    WikiMiningRunCreate,
     WikiMiningRunDetail,
     WikiMiningRunList,
     WikiPageCreate,
@@ -50,33 +48,12 @@ from pkg.schemas.reference import ReferenceRead, ReferenceResolveRequest, Refere
 from pkg.services.cross_cutting.embedding import get_embedding_service
 from pkg.services.cross_cutting.llm import create_async_client
 from pkg.services.foundation.wiki_lifecycle import get_wiki_role
-from pkg.services.foundation.wiki_mining import get_wiki_mining_run_detail, list_wiki_mining_runs, run_wiki_mining
+from pkg.services.foundation.wiki_mining import get_wiki_mining_run_detail, list_wiki_mining_runs
 from pkg.services.foundation.wiki_recompile import suggest_wiki_recompile_for_trigger
 from pkg.services.foundation.wiki_templates import build_wiki_template
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-
-@router.post("/mining/runs", response_model=WikiMiningRunDetail, status_code=201)
-async def create_wiki_mining_run(
-    body: WikiMiningRunCreate,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-):
-    if not settings.PKG_WIKI_MINING_ENABLED:
-        raise HTTPException(
-            status_code=410,
-            detail="PKG-local wiki mining is disabled; run Harness workflow mine-wiki-candidates",
-        )
-    result = await run_wiki_mining(
-        session,
-        user_id=user.id,
-        window_days=body.window_days,
-        max_new_items=body.max_new_items,
-        max_related_items=body.max_related_items,
-    )
-    return WikiMiningRunDetail(run=result.run, insights=result.insights, articles=result.articles)
 
 
 @router.get("/mining/runs", response_model=WikiMiningRunList)

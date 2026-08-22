@@ -140,12 +140,6 @@ class WikiCloneDraftRequest(BaseModel):
     title: str | None = None
 
 
-class WikiMiningRunCreate(BaseModel):
-    window_days: int = Field(default=2, ge=1, le=30)
-    max_new_items: int = Field(default=24, ge=1, le=100)
-    max_related_items: int = Field(default=12, ge=1, le=50)
-
-
 class WikiEvidenceRefRead(BaseModel):
     ref_type: str
     ref_id: str
