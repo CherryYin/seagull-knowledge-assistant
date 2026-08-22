@@ -52,21 +52,21 @@ async def cleanup_wiki_mining_runs(retention_days: int = 90) -> int:
         run_ids = list(rows.scalars())
         deleted = 0
         for run_id in run_ids:
-            pending_candidate = await session.execute(
+            unresolved_insight = await session.execute(
                 select(WikiInsightCandidate.id)
                 .where(WikiInsightCandidate.run_id == run_id)
-                .where(WikiInsightCandidate.status == "pending")
+                .where(WikiInsightCandidate.status.notin_(("accepted", "rejected", "converted_to_draft")))
                 .limit(1)
             )
-            if pending_candidate.scalar_one_or_none() is not None:
+            if unresolved_insight.scalar_one_or_none() is not None:
                 continue
-            pending_draft = await session.execute(
+            unresolved_article = await session.execute(
                 select(WikiArticleDraft.id)
                 .where(WikiArticleDraft.run_id == run_id)
-                .where(WikiArticleDraft.status == "candidate")
+                .where(WikiArticleDraft.status.notin_(("accepted", "rejected", "merged", "applied")))
                 .limit(1)
             )
-            if pending_draft.scalar_one_or_none() is not None:
+            if unresolved_article.scalar_one_or_none() is not None:
                 continue
             run = await session.get(WikiMiningRun, run_id)
             if run:
