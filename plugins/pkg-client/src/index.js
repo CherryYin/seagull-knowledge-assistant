@@ -38,7 +38,6 @@ class PkgClient {
     return this.request(sessionId, "GET", `/notes?${query.toString()}`);
   }
   readNote(sessionId, noteId) { return this.request(sessionId, "GET", `/notes/${noteId}`); }
-  createNote(sessionId, body) { return this.request(sessionId, "POST", "/notes", body); }
   listSources(sessionId, params) {
     const query = new URLSearchParams();
     if (params?.source_type) query.set("source_type", params.source_type);
@@ -46,10 +45,6 @@ class PkgClient {
     return this.request(sessionId, "GET", `/sources?${query.toString()}`);
   }
   readSource(sessionId, sourceId) { return this.request(sessionId, "GET", `/sources/${sourceId}`); }
-  saveDocument(sessionId, body) { return this.request(sessionId, "POST", "/knowledge/save-document", body); }
-  remember(sessionId, content, title) {
-    return this.request(sessionId, "POST", "/knowledge/remember", { content, title });
-  }
   searchMemory(sessionId, query, topK) {
     return this.request(sessionId, "POST", "/memory/search", {
       query,
@@ -150,50 +145,6 @@ export function apply(ctx) {
   });
 
   ctx.tools.register({
-    name: "pkg_save_note",
-    description: "保存 Agent 产出为当前用户的 PKG 笔记。",
-    parameters: {
-      type: "object",
-      properties: {
-        title: { type: "string" },
-        content: { type: "string" },
-        note_type: { type: "string", default: "concept" },
-        tags: { type: "array", items: { type: "string" } },
-      },
-      required: ["title", "content"],
-    },
-    output: textOutput("JSON 已保存笔记"),
-    execute: async (args, exec) => JSON.stringify(await client.createNote(sessionId(exec), {
-      title: args.title,
-      content: args.content,
-      note_type: args.note_type || "concept",
-      tags: args.tags || ["from-agent"],
-      status: "seed",
-    })),
-  });
-
-  ctx.tools.register({
-    name: "pkg_save_document",
-    description: "保存 Agent 产出为当前用户的 PKG writing artifact。",
-    parameters: { type: "object", properties: { title: { type: "string" }, content: { type: "string" } }, required: ["title", "content"] },
-    output: textOutput("JSON 保存结果"),
-    execute: async (args, exec) => JSON.stringify(await client.saveDocument(sessionId(exec), {
-      message_content: args.content,
-      title: args.title,
-    })),
-  });
-
-  ctx.tools.register({
-    name: "pkg_remember",
-    description: "保存知识为当前用户的 PKG 临时记忆。",
-    parameters: { type: "object", properties: { content: { type: "string" }, title: { type: "string" } }, required: ["content"] },
-    output: textOutput("JSON 已保存记忆"),
-    execute: async (args, exec) => JSON.stringify(
-      await client.remember(sessionId(exec), args.content, args.title),
-    ),
-  });
-
-  ctx.tools.register({
     name: "pkg_search_memory",
     description: "搜索当前用户的 PKG 记忆图谱。",
     parameters: { type: "object", properties: { query: { type: "string" }, top_k: { type: "number", default: 5 } }, required: ["query"] },
@@ -203,39 +154,5 @@ export function apply(ctx) {
     ),
   });
 
-  ctx.tools.register({
-    name: "pkg_submit_experiment",
-    description: "将 Harness 中验证成功的实验流程提交到当前用户的 PKG 实验台。",
-    parameters: {
-      type: "object",
-      properties: {
-        experiment_name: { type: "string", description: "实验名称，如 research-topic-validated" },
-        description: { type: "string", description: "实验/Skill 描述" },
-        steps: { type: "array", items: { type: "string" }, description: "执行步骤列表" },
-        output_sections: { type: "array", items: { type: "string" }, description: "输出格式 sections" },
-        constraints: { type: "array", items: { type: "string" }, description: "约束条件" },
-        tools_used: { type: "array", items: { type: "string" }, description: "实验中使用的工具名列表" },
-        save_as_note: { type: "boolean", description: "是否同时保存为 PKG Note", default: true },
-      },
-      required: ["experiment_name", "description", "steps"],
-    },
-    output: textOutput("JSON 提交结果，含 skill_id 和双输出内容"),
-    execute: async (args, exec) => {
-      const result = await client.request(sessionId(exec), "POST", "/lab/experiment-to-skill", {
-        experiment_name: args.experiment_name,
-        description: args.description,
-        steps: args.steps || [],
-        output_sections: args.output_sections || [],
-        constraints: args.constraints || [],
-        tools_used: args.tools_used || [],
-        model_provider: "qwen",
-        model_name: "qwen-plus",
-        temperature: 0.3,
-        save_as_note: args.save_as_note !== false,
-      });
-      return JSON.stringify(result, null, 2);
-    },
-  });
-
-  ctx.logger?.info(`[pkg-client] connected through ${baseUrl} (11 tools, session-scoped Gateway auth)`);
+  ctx.logger?.info(`[pkg-client] connected through ${baseUrl} (7 read-only tools, session-scoped Gateway auth)`);
 }

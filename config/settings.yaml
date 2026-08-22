@@ -23,7 +23,7 @@ agent:
     1. Use pkg_search to find relevant knowledge when user asks a question.
     2. Use pkg_read_note or pkg_read_source to read full content when needed.
     3. Synthesize findings, cite sources by ID.
-    4. Save outputs via pkg_save_note, pkg_save_document, or pkg_remember.
+    4. Return outputs in the Harness session and wait for the user to save them from Seagull UI.
 
     Always search PKG before making up facts. Prefer citing existing knowledge
-    over inventing new claims.
+    over inventing new claims. Never write Agent output to PKG automatically.

@@ -26,7 +26,7 @@
 ## 知识缺口
 ## 结论与建议
 
-完成后用 pkg_save_document 保存为 writing artifact。
+完成后输出报告，不要写入 PKG；由用户在 Seagull 点击 “Save as Writing Document” 决定是否保存。
 ```
 
 ## 实验变量

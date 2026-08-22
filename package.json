@@ -14,6 +14,7 @@
     "profiles:check": "node scripts/check-profiles.mjs",
     "sessions:verify-shadow": "node scripts/verify-session-shadow.mjs",
     "sessions:stage-e-status": "npm run sessions:verify-shadow && node scripts/check-stage-e-readiness.mjs",
+    "test:pkg-client": "node --test scripts/pkg-client-readonly.test.mjs",
     "test:sessions:verify-shadow": "node --test scripts/verify-session-shadow.test.mjs",
     "test:sessions:stage-e": "node --test scripts/check-stage-e-readiness.test.mjs",
     "run-headless": "DSH_HOME=./.dsh node dsh-harness/apps/cli/lib/bin.js --profile headless",

@@ -2,38 +2,26 @@ import type { Context } from "@deepseek-ai/cordis";
 export declare const name = "pkg-client";
 interface PkgConfig {
     baseUrl: string;
-    token?: string;
+    serviceToken: string;
 }
 declare class PkgClient {
     private baseUrl;
-    private token;
+    private serviceToken;
     constructor(config: PkgConfig);
-    setToken(token: string): void;
-    private get headers();
     private request;
-    login(email: string, password: string): Promise<{
-        access_token: string;
-    }>;
-    search(query: string, mode?: string, topK?: number): Promise<SearchResult[]>;
-    listNotes(params?: {
+    search(sessionId: string, query: string, mode?: string, topK?: number): Promise<SearchResult[]>;
+    listNotes(sessionId: string, params?: {
         note_type?: string;
         limit?: number;
-        offset?: number;
     }): Promise<NoteList>;
-    readNote(noteId: string): Promise<NoteRead>;
-    createNote(body: NoteCreate): Promise<NoteRead>;
-    listSources(params?: {
+    readNote(sessionId: string, noteId: string): Promise<NoteRead>;
+    listSources(sessionId: string, params?: {
         source_type?: string;
         limit?: number;
     }): Promise<SourceList>;
-    readSource(sourceId: string): Promise<SourceRead>;
-    saveDocument(body: SaveDocumentRequest): Promise<SaveDocumentResponse>;
-    remember(content: string, title?: string): Promise<NoteRead>;
-    searchMemory(query: string, nodeType?: string, level?: string, topK?: number): Promise<MemorySearchResult[]>;
-    listWikis(): Promise<WikiList>;
-    readWiki(wikiId: string): Promise<WikiRead>;
-    dashboard(): Promise<DashboardResponse>;
-    knowledgeStats(): Promise<KnowledgeStatsList>;
+    readSource(sessionId: string, sourceId: string): Promise<SourceRead>;
+    searchMemory(sessionId: string, query: string, topK?: number): Promise<MemorySearchResult[]>;
+    dashboard(sessionId: string): Promise<DashboardResponse>;
 }
 interface SearchResult {
     id: string;
@@ -58,16 +46,6 @@ interface NoteRead {
     created_at: string;
     updated_at: string;
 }
-interface NoteCreate {
-    title: string;
-    content?: string;
-    note_type?: string;
-    tags?: string[];
-    domains?: string[];
-    status?: string;
-    category_id?: number;
-    source_ids?: string[];
-}
 interface SourceList {
     items: SourceRead[];
     total: number;
@@ -79,15 +57,6 @@ interface SourceRead {
     raw_content?: string;
     created_at: string;
 }
-interface SaveDocumentRequest {
-    message_content: string;
-    title?: string;
-    category_id?: number;
-}
-interface SaveDocumentResponse {
-    source_id: string;
-    note_id: string;
-}
 interface MemorySearchResult {
     id: string;
     title: string;
@@ -96,15 +65,6 @@ interface MemorySearchResult {
     snippet: string;
     score: number;
 }
-interface WikiList {
-    items: WikiRead[];
-    total: number;
-}
-interface WikiRead {
-    id: string;
-    title: string;
-    content?: string;
-}
 interface DashboardResponse {
     counts: {
         notes: number;
@@ -112,10 +72,6 @@ interface DashboardResponse {
         chats: number;
         digest_pending: number;
     };
-}
-interface KnowledgeStatsList {
-    items: unknown[];
-    total: number;
 }
 declare module "@deepseek-ai/cordis" {
     interface Context {

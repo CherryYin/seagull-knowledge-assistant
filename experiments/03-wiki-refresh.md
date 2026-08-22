@@ -24,7 +24,7 @@
 ## Open Questions
 ## Apply Recommendation
 
-完成后用 pkg_save_note 保存 proposal，tag 为 ["wiki-refresh", "from-agent"]。
+完成后输出 proposal，不要写入 PKG；由用户 review 后在 Seagull 显式保存或发布。
 ```
 
 ## 实验变量

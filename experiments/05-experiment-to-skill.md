@@ -16,7 +16,7 @@
 在 Harness Web UI 中设计一个知识研究任务，例如：
 "搜索 PKG 中关于 {topic} 的所有 notes 和 sources，
  阅读最相关的 3 条，用 pkg_search_memory 查记忆图谱，
- 然后输出结构化研究报告，最后用 pkg_save_document 保存。"
+ 然后输出结构化研究报告，等待用户决定是否保存。"
 
 跑通后观察 Trajectory View，记录：
 - 工具调用顺序
@@ -54,7 +54,7 @@ args:
 2. Harness Workflow 配置 (YAML):
 # 记录本次实验的 prompt、工具列表、参数配置
 
-请将两者分别输出，并用 pkg_save_note 保存。
+请将两者分别输出，不要写入 PKG；等待用户 review 和显式保存。
 ```
 
 ### Phase 3：验证固化效果
@@ -107,7 +107,7 @@ args:
 - 先搜 PKG，不要跳过检索
 - 每项发现标注来源
 - 区分「PKG 记录的事实」和「你的推断」
-- 完成后用 pkg_save_document 保存
+- 完成后等待用户在 Seagull 显式保存
 ```
 
 ### B. Harness Workflow 配置 (.yml)
@@ -129,7 +129,6 @@ tools:
   - pkg_search
   - pkg_read_note
   - pkg_search_memory
-  - pkg_save_document
 
 system_prompt: |
   你是 PKG 知识研究 agent。执行经过实验验证的深度研究流程：
@@ -137,7 +136,7 @@ system_prompt: |
   2. 阅读最相关的 2-3 条
   3. 搜索记忆图谱
   4. 输出结构化报告
-  5. 用 pkg_save_document 保存
+  5. 等待用户 review 和显式保存
 
   每步标注来源，区分事实与推断。
 ```

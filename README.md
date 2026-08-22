@@ -8,7 +8,7 @@
 
 - **知识检索**：通过 `pkg_search` 工具在 PKG 中搜索 sources、notes、memory nodes 和 wiki
 - **深度阅读**：`pkg_read_note` / `pkg_read_source` 获取完整内容
-- **知识产出**：`pkg_save_note` / `pkg_save_document` / `pkg_remember` 将 agent 产出写回 PKG
+- **知识产出**：Agent 结果默认留在 Harness Session；用户在 Seagull 明确点击保存后才写回 PKG
 - **实验对比**：同一任务用不同 prompt/策略/模型跑，Harness 的 Trajectory View 完整记录每一步
 - **回放复现**：支持 fork/replay，从同一分叉点尝试不同策略
 
@@ -78,11 +78,10 @@ deepseek-knowledge-lab/
 | `pkg_list_notes` | 浏览笔记列表 | `GET /api/notes` |
 | `pkg_read_source` | 读取知识源全文 | `GET /api/sources/:id` |
 | `pkg_list_sources` | 浏览知识源列表 | `GET /api/sources` |
-| `pkg_save_note` | 保存笔记 | `POST /api/notes` |
-| `pkg_save_document` | 保存长文档 artifact | `POST /api/knowledge/save-document` |
-| `pkg_remember` | 保存临时记忆 | `POST /api/knowledge/remember` |
 | `pkg_search_memory` | 搜索记忆图谱 | `POST /api/memory/search` |
 | `pkg_knowledge_stats` | 知识库统计 | `GET /api/dashboard` |
+
+`pkg-client` 对 Agent 仅暴露读取/检索工具。保存笔记、Writing Document 或其他持久化操作由 Seagull UI 的显式用户动作发起。
 
 ## 实验工作流
 
