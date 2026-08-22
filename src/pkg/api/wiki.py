@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.api.deps import get_current_user
+from pkg.config import settings
 from pkg.db import get_session
 from pkg.models.foundation.note import Note
 from pkg.models.foundation.memory import MemoryNode
@@ -69,6 +70,11 @@ async def create_wiki_mining_run(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
+    if not settings.PKG_WIKI_MINING_ENABLED:
+        raise HTTPException(
+            status_code=410,
+            detail="PKG-local wiki mining is disabled; run Harness workflow mine-wiki-candidates",
+        )
     result = await run_wiki_mining(
         session,
         user_id=user.id,

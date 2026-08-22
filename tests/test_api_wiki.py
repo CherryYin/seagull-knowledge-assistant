@@ -9,6 +9,31 @@ from pkg.models.memory import MemoryNode
 from pkg.schemas.wiki import WikiFromMemoryRequest, WikiPageMemoryCreate
 
 
+@pytest.mark.asyncio
+async def test_create_wiki_mining_run_rejects_pkg_local_execution_when_disabled(
+    monkeypatch,
+    mock_session,
+    fake_user,
+):
+    from pkg.api.wiki import create_wiki_mining_run
+    from pkg.schemas.wiki import WikiMiningRunCreate
+
+    monkeypatch.setattr("pkg.api.wiki.settings.PKG_WIKI_MINING_ENABLED", False)
+    mining = AsyncMock()
+
+    with patch("pkg.api.wiki.run_wiki_mining", mining):
+        with pytest.raises(HTTPException) as exc_info:
+            await create_wiki_mining_run(
+                WikiMiningRunCreate(),
+                user=fake_user,
+                session=mock_session,
+            )
+
+    assert exc_info.value.status_code == 410
+    assert "Harness workflow mine-wiki-candidates" in exc_info.value.detail
+    mining.assert_not_awaited()
+
+
 class TestCreateWikiPage:
     @patch("pkg.api.wiki.get_embedding_service")
     def test_success(self, mock_embedding_service, client, mock_session):

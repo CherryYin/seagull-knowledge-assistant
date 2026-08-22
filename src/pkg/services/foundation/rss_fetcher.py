@@ -293,9 +293,9 @@ async def _update_source_content(
         )
 
     try:
-        from pkg.services.foundation.source_memory import upsert_source_memory_node
+        from pkg.services.foundation.source_memory import maybe_upsert_source_memory_node
 
-        await upsert_source_memory_node(session, source)
+        await maybe_upsert_source_memory_node(session, source)
     except Exception:
         logger.error("Source memory generation failed for source %s", source.id, exc_info=True)
 

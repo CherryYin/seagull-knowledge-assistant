@@ -424,7 +424,7 @@ async def test_save_openalex_discovery_item_imports_article_source():
         },
     )
 
-    with patch("pkg.services.foundation.discovery.upsert_source_memory_node", new_callable=AsyncMock) as mock_upsert:
+    with patch("pkg.services.foundation.discovery.maybe_upsert_source_memory_node", new_callable=AsyncMock) as mock_upsert:
         source, created = await apply_discovery_feedback(session, item=item, action="save")
 
     assert created is True

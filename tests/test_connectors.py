@@ -429,7 +429,7 @@ async def test_import_github_repo_updates_existing_source():
     )
 
     with (
-        patch("pkg.services.foundation.connectors.upsert_source_memory_node", new_callable=AsyncMock) as mock_memory,
+        patch("pkg.services.foundation.connectors.maybe_upsert_source_memory_node", new_callable=AsyncMock) as mock_memory,
         patch("pkg.services.foundation.connectors.upsert_source_embeddings", new_callable=AsyncMock) as mock_embeddings,
     ):
         source, created, dedupe_key = await import_github_repo(mock_session, user_id="user-1", repo=repo)
