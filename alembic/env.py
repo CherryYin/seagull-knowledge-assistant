@@ -12,7 +12,7 @@ from pkg.db import Base
 from pkg.models.category import Category  # noqa: F401
 from pkg.models.source import Source, SourceChunk, SourceEmbedding  # noqa: F401
 from pkg.models.note import Note, NoteEmbedding  # noqa: F401
-from pkg.models.chat_session import ChatSession  # noqa: F401
+from pkg.models.chat_session import ChatSession, ChatSessionEvent  # noqa: F401
 from pkg.models.user import User, UserMemory, UserSettings, ActivityLog  # noqa: F401
 from pkg.models.stats import KnowledgeStats  # noqa: F401
 from pkg.models.agent_profile import AgentProfile  # noqa: F401
