@@ -55,14 +55,6 @@ export interface WikiPageUpdate {
   stale_reason?: string | null;
 }
 
-export interface WikiCompileRequest {
-  title: string;
-  page_type?: string;
-  note_ids?: string[];
-  source_ids?: string[];
-  instructions?: string | null;
-}
-
 export interface WikiRecompileSuggestion {
   id: number;
   user_id: string;
@@ -156,8 +148,6 @@ export const wikiApi = {
     }),
   delete: (id: string) =>
     request<void>(`/wiki/${encodeURIComponent(id)}`, { method: "DELETE" }),
-  compile: (body: WikiCompileRequest) =>
-    request<WikiPage>("/wiki/compile", { method: "POST", body: JSON.stringify(body) }),
   suggestions: (params?: { status?: string; wiki_id?: string; limit?: number; offset?: number }) => {
     const q = new URLSearchParams();
     if (params?.status !== undefined) q.set("status", params.status);

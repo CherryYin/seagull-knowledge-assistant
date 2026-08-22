@@ -62,14 +62,6 @@ class WikiPageList(BaseModel):
     total: int
 
 
-class WikiCompileRequest(BaseModel):
-    title: str
-    page_type: str = Field(default="topic", pattern=r"^(topic|entity|concept|project|comparison)$")
-    note_ids: list[str] = []
-    source_ids: list[str] = []
-    instructions: str | None = None
-
-
 class WikiRecompileSuggestionRead(BaseModel):
     model_config = {"from_attributes": True}
 

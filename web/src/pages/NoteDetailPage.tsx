@@ -541,23 +541,20 @@ export function NoteDetailPage() {
     },
   });
 
-  const createWikiDraftMutation = useMutation({
-    mutationFn: async () => {
-      if (!note) throw new Error("Note is not loaded");
-      return wikiApi.compile({
-        title: note.title,
-        page_type: "topic",
-        note_ids: [note.id],
-        instructions: `Create a draft canonical wiki page from note ${note.id}. Keep it reviewable and evidence-backed.`,
-      });
-    },
-    onSuccess: (page) => {
-      queryClient.invalidateQueries({ queryKey: ["wiki-pages"] });
-      navigate(`/wiki/${encodeURIComponent(page.id)}`, {
-        state: { backTo: `/notes/${encodeURIComponent(note?.id || id!)}`, backLabel: "Back to Note" },
-      });
-    },
-  });
+  function createWikiDraftInAgent() {
+    if (!note) return;
+    navigate("/chat", {
+      state: {
+        objectRef: {
+          object_type: "note",
+          object_id: note.id,
+          title: note.title,
+        },
+        workflowId: "draft-wiki-refresh",
+        promptSeed: `Create a reviewable canonical wiki draft from note "${note.title}" (${note.id}). Use only explicit evidence and preserve note provenance.`,
+      },
+    });
+  }
 
   function askAgentAboutNote() {
     if (!note) return;
@@ -777,8 +774,8 @@ export function NoteDetailPage() {
                     <Button size="sm" onClick={() => queueWikiRefreshMutation.mutate()} disabled={queueWikiRefreshMutation.isPending}>
                       <RefreshCw className={`h-4 w-4 ${queueWikiRefreshMutation.isPending ? "animate-spin" : ""}`} /> Queue Wiki Refresh
                     </Button>
-                    <Button size="sm" variant="outline" onClick={() => createWikiDraftMutation.mutate()} disabled={createWikiDraftMutation.isPending}>
-                      <BookOpen className="h-4 w-4" /> {createWikiDraftMutation.isPending ? "Creating…" : "Create Wiki Draft"}
+                    <Button size="sm" variant="outline" onClick={createWikiDraftInAgent}>
+                      <BookOpen className="h-4 w-4" /> Draft Wiki in Agent Chat
                     </Button>
                     <Button
                       size="sm"

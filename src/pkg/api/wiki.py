@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,7 +19,6 @@ from pkg.models.foundation.wiki import (
 )
 from pkg.schemas.wiki import (
     WikiCloneDraftRequest,
-    WikiCompileRequest,
     WikiPageCreate,
     WikiPageList,
     WikiPageRead,
@@ -31,7 +30,6 @@ from pkg.schemas.wiki import (
 )
 from pkg.schemas.reference import ReferenceRead, ReferenceResolveRequest, ReferenceResolveResponse
 from pkg.services.cross_cutting.embedding import get_embedding_service
-from pkg.services.cross_cutting.llm import create_async_client
 from pkg.services.foundation.wiki_lifecycle import get_wiki_role
 from pkg.services.foundation.wiki_recompile import suggest_wiki_recompile_for_trigger
 from pkg.services.foundation.wiki_templates import build_wiki_template
@@ -357,88 +355,6 @@ async def delete_wiki_page(
     await session.delete(wiki)
     await session.commit()
     return None
-
-
-@router.post("/compile", response_model=WikiPageRead, status_code=201)
-async def compile_wiki_page(
-    body: WikiCompileRequest,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-):
-    notes = []
-    sources = []
-    if body.note_ids:
-        rows = await session.execute(
-            select(Note).where(Note.user_id == user.id, Note.id.in_(body.note_ids))
-        )
-        notes = list(rows.scalars())
-        if len(notes) != len(set(body.note_ids)):
-            raise HTTPException(status_code=404, detail="One or more notes were not found")
-    if body.source_ids:
-        rows = await session.execute(
-            select(Source).where(
-                Source.id.in_(body.source_ids),
-                or_(Source.user_id == user.id, Source.is_shared),
-            )
-        )
-        sources = list(rows.scalars())
-        if len(sources) != len(set(body.source_ids)):
-            raise HTTPException(status_code=404, detail="One or more sources were not found")
-    if not notes and not sources:
-        raise HTTPException(status_code=422, detail="Choose at least one note or source to compile")
-
-    sections: list[str] = []
-    for note in notes:
-        sections.append(f"## Note: {note.title}\nID: {note.id}\n\n{note.content or note.abstract or ''}")
-    for source in sources:
-        content = source.raw_content or ""
-        sections.append(f"## Source: {source.title}\nID: {source.id}\n\n{content[:12000]}")
-
-    system_prompt = """你是个人知识图谱的 Wiki Compiler。请把输入的 notes 和 sources 综合成一篇长期维护、适合阅读的中文 Markdown wiki 页面。
-要求：
-1. 输出更像百科条目，而不是内部提纲或工作底稿。
-2. 优先写成可连续阅读的自然段，而不是堆很多碎 bullet。
-3. 结构应优先包含：概述 / 背景 / 核心内容 / 影响或适用范围 / 开放问题。
-4. 可以在正文中自然引用 notes/sources，但不要把正文写成“Source Evidence”清单。
-5. 保留 note/source id，方便追溯，但把引用写得尽量不打断阅读。
-6. 不要编造未提供的信息。
-7. 所有结论都必须来自本次显式提供的 notes/sources，不得依赖未列出的系统记忆或隐式上下文。
-"""
-    user_prompt = f"标题：{body.title}\n类型：{body.page_type}\n额外指令：{body.instructions or '无'}\n\n材料：\n" + "\n\n---\n\n".join(sections)
-
-    try:
-        client, model = create_async_client()
-        response = await client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        )
-        content = response.choices[0].message.content or ""
-    except Exception:
-        logger.exception("Wiki compilation failed")
-        raise HTTPException(status_code=502, detail="Wiki compilation failed") from None
-
-    if not content.strip():
-        raise HTTPException(status_code=502, detail="Wiki compiler returned empty content")
-
-    summary = content.splitlines()[0].lstrip("# ").strip() or body.title
-    wiki = await persist_wiki_page(
-        session=session,
-        body=WikiPageCreate(
-            title=body.title,
-            page_type=body.page_type,
-            summary=summary[:500],
-            content=content,
-            derived_from_notes=[note.id for note in notes],
-            derived_from_sources=[source.id for source in sources],
-            tags=["wiki-compiled"],
-            open_questions=[],
-        ),
-        user_id=user.id,
-    )
-    return wiki
 
 
 def _trim_text(value: str | None, limit: int = 1200) -> str:

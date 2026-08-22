@@ -24,3 +24,9 @@ def test_legacy_agent_persistence_routes_are_not_registered():
     assert "/knowledge/save-document" not in paths
     assert "/knowledge/remember" not in paths
     assert "/knowledge/summarize-daily" not in paths
+
+
+def test_wiki_compile_route_is_not_registered():
+    paths = {route.path for route in app.routes}
+
+    assert "/wiki/compile" not in paths

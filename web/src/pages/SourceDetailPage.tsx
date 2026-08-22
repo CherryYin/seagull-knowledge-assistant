@@ -193,23 +193,21 @@ export function SourceDetailPage() {
     },
   });
 
-  const createWikiDraftMutation = useMutation({
-    mutationFn: async () => {
-      if (!source) throw new Error("Source is not loaded");
-      return wikiApi.compile({
-        title: source.title,
-        page_type: "topic",
-        source_ids: [source.id],
-        instructions: `Create a draft canonical wiki page from source ${source.id}. Keep it reviewable and evidence-backed.`,
-      });
-    },
-    onSuccess: (page) => {
-      queryClient.invalidateQueries({ queryKey: ["wiki-pages"] });
-      navigate(`/wiki/${encodeURIComponent(page.id)}`, {
-        state: { backTo: `/sources/${encodeURIComponent(source?.id || id!)}`, backLabel: "Back to Source" },
-      });
-    },
-  });
+  function createWikiDraftInAgent() {
+    if (!source) return;
+    navigate("/chat", {
+      state: {
+        objectRef: {
+          object_type: "source",
+          object_id: source.id,
+          title: source.title,
+          url: source.url ?? null,
+        },
+        workflowId: "draft-wiki-refresh",
+        promptSeed: `Create a reviewable canonical wiki draft from source "${source.title}" (${source.id}). Use only explicit evidence and preserve source provenance.`,
+      },
+    });
+  }
 
   function askAgentAboutSource() {
     if (!source) return;
@@ -649,8 +647,8 @@ export function SourceDetailPage() {
                 <Button size="sm" variant="outline" onClick={() => queueWikiRefreshMutation.mutate()} disabled={queueWikiRefreshMutation.isPending}>
                   <RefreshCw className={`h-4 w-4 ${queueWikiRefreshMutation.isPending ? "animate-spin" : ""}`} /> Queue Wiki Refresh
                 </Button>
-                <Button size="sm" variant="outline" onClick={() => createWikiDraftMutation.mutate()} disabled={createWikiDraftMutation.isPending}>
-                  <BookOpen className="h-4 w-4" /> {createWikiDraftMutation.isPending ? "Creating…" : "Create Wiki Draft"}
+                <Button size="sm" variant="outline" onClick={createWikiDraftInAgent}>
+                  <BookOpen className="h-4 w-4" /> Draft Wiki in Agent Chat
                 </Button>
                 <Button
                   size="sm"
