@@ -40,12 +40,3 @@
       config:
         connectionString: !!js process.env.PKG_DATABASE_URL
         schema: public
-    - id: session-persistence-jsonl-shadow
-      name: '@deepseek-ai/dsh-session-persistence-jsonl-shadow'
-      inject: [sessionPersistence]
-      config:
-        root: !!js dshHomePath('sessions')
-        compression: zstd
-        sourceBackend: session-persistence-postgres
-        maxAttempts: 3
-        retryDelayMs: 250
