@@ -23,7 +23,6 @@ def sync():
 
     async def _sync():
         from pkg.db import async_session
-        from pkg.services.cross_cutting.skills import sync_skills_from_directory
         from pkg.services.foundation.sync_pipeline import (
             sync_notes_from_directory,
             sync_sources_from_directory,
@@ -67,10 +66,6 @@ def sync():
                 )
 
             console.print(f"  Sources: {sources_stats}")
-
-            console.print(f"[bold]Syncing skills from[/bold] {settings.skills_dir}")
-            skills_stats = await sync_skills_from_directory(session, settings.skills_dir)
-            console.print(f"  Skills: {skills_stats}")
 
             console.print("[green]Sync complete.[/green]")
 
@@ -239,37 +234,6 @@ def stats():
             console.print(table)
 
     _run(_stats())
-
-
-@app.command()
-def skills():
-    """List all available skills (local + DB)."""
-    from pkg.services.cross_cutting.skills import load_skills_merged
-
-    async def _list():
-        return await load_skills_merged(settings.skills_dir)
-
-    skill_list = _run(_list())
-
-    if not skill_list:
-        console.print(f"[yellow]No skills found in {settings.skills_dir} or DB[/yellow]")
-        console.print("[dim]Create .md files with YAML frontmatter in skills/ or use the API.[/dim]")
-        return
-
-    table = Table(title="Available Skills")
-    table.add_column("Name", style="cyan bold")
-    table.add_column("Description")
-    table.add_column("Source", style="dim")
-    table.add_column("Usage", style="dim")
-
-    for s in skill_list:
-        args_hint = " ".join(
-            f"<{a.name}>" if a.required else f"[{a.name}]"
-            for a in s.args
-        )
-        table.add_row(s.name, s.description, s.source, f"/{s.name} {args_hint}".strip())
-
-    console.print(table)
 
 
 @app.command()

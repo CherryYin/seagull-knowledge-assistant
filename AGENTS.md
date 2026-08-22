@@ -20,7 +20,7 @@ The core product goal is a durable personal knowledge graph with deterministic r
 - Generate review suggestions, discovery items, wiki pages, summaries, and temporary/permanent knowledge artifacts.
 - Create newsletter assets from sources ingested in a recent time window plus the user's editorial point of view, without manual source/note picking.
 - Mine recent knowledge materials for reusable concept/entity candidates and recommend concept wiki drafts with evidence.
-- Support persistent conversations, model/provider selection, skills, observable background jobs, and user profiling.
+- Support persistent conversations, model/provider selection, observable background jobs, and user profiling.
 
 ## Key Architecture
 
@@ -32,11 +32,9 @@ The core product goal is a durable personal knowledge graph with deterministic r
 - `tests/`: pytest coverage for APIs, services, and schemas.
 - `web/src/pages/`: React application pages.
 - `web/src/lib/api/`: frontend API clients.
-- `web/src/lib/agent-workflows.ts`: legacy frontend workflow catalog retained temporarily until physical cleanup.
 - `web/src/lib/status.ts`, `web/src/components/StatusBadge.tsx`, `web/src/components/StateMessage.tsx`: user-facing status and empty/error state presentation helpers.
 - `web/src/components/`: reusable UI components.
 - `scripts/`: operational/backfill/import helper scripts.
-- `skills/`: reusable prompt/workflow skills loaded by the app.
 - `docs/`: all project documentation. Do not add new top-level `architectures/` documents; organize docs under `docs/` by topic folder, such as `docs/architecture/<topic>/`, `docs/plans/<topic>/`, `docs/roadmaps/<topic>/`, and `docs/reference/<topic>/`. Within a topic folder, prefer stable filenames like `architecture.md`, `plan.md`, `implementation-plan.md`, `progress.md`, and `roadmap.md`.
 
 ## Important Backend Areas

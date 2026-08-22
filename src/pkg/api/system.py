@@ -102,7 +102,6 @@ def build_system_capabilities(
             detail=None if has_any_llm_provider else "Configure an LLM provider before using custom agent profiles reliably.",
             setup_route="/settings/agents",
         ),
-        "skills": _capability(),
         "workspace": _capability(experimental=True, detail="Workspace profile controls are advanced agent configuration."),
         "system-jobs": _capability(),
         "dashboard": _capability(),

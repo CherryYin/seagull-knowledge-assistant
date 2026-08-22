@@ -214,10 +214,6 @@ class Settings(BaseSettings):
     def notes_dir(self) -> Path:
         return self.DATA_DIR / "notes"
 
-    @property
-    def skills_dir(self) -> Path:
-        return Path("./skills")
-
     def get_llm_providers(self) -> list[LLMProviderConfig]:
         """Parse LLM_PROVIDERS JSON. Falls back to a single provider from legacy QWEN_* config."""
         try:

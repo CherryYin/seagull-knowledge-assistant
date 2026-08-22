@@ -35,7 +35,7 @@ export function SettingsPage() {
             <div>
               <h1 className="text-3xl font-semibold tracking-tight">Settings & Advanced</h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-                Configuration, advanced agent controls, skills, and admin tools live here so the main steward workflow stays focused.
+                Configuration and admin tools live here so the main steward workflow stays focused.
               </p>
             </div>
           </div>

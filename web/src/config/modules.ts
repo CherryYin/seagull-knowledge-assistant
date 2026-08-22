@@ -10,7 +10,6 @@ import {
   KeyRound,
   Search,
   Settings,
-  Sparkles,
   StickyNote,
   User,
   Users,
@@ -275,20 +274,6 @@ export const APP_MODULES: AppModuleConfig[] = [
       title: "User Profile",
       description: "Review the learned profile used to adapt answers.",
       order: 40,
-    },
-  },
-  {
-    id: "skills",
-    label: "Skills",
-    group: "agent",
-    route: "/settings/skills",
-    icon: Sparkles,
-    description: "Manage reusable skills.",
-    nav: { section: true, parent: "settings", order: 60 },
-    visibility: { defaultEnabled: false, configurable: true, advanced: true },
-    settingsCard: {
-      description: "Manage reusable chat skills.",
-      order: 60,
     },
   },
   {
