@@ -1,8 +1,4 @@
-"""Source Memory Tree v1 — creates one source-level MemoryNode per Source.
-
-This is the first source tree layer: Source -> MemoryNode(node_type=source,
-level=source). Later versions can add chunk_group / section levels.
-"""
+"""Historical Source Memory migration and cleanup helpers."""
 import hashlib
 import logging
 import re
@@ -14,8 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pkg.models.foundation.memory import MemoryNode
 from pkg.models.foundation.source import Source
 from pkg.models.memory_edge import MemoryEdge
-from pkg.services.foundation.memory_tree import upsert_memory_embedding
 from pkg.services.foundation.memory_edges import sync_memory_edges_for_node
+from pkg.services.foundation.memory_embeddings import upsert_memory_embedding
 from pkg.services.foundation.wiki_recompile import suggest_wiki_recompile_for_trigger
 
 logger = logging.getLogger(__name__)

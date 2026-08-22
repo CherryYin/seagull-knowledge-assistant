@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from pkg.db import async_session
 from pkg.models.memory import MemoryEmbedding, MemoryNode
-from pkg.services.foundation.memory_tree import upsert_memory_embedding
+from pkg.services.foundation.memory_embeddings import upsert_memory_embedding
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
