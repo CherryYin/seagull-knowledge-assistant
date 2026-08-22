@@ -28,7 +28,6 @@ from pkg.schemas.wiki import (
     WikiCloneDraftRequest,
     WikiCompileRequest,
     WikiUpdateDraftFromSourceRequest,
-    WikiInsightCandidateRead,
     WikiInsightCandidateStatusUpdate,
     WikiMiningRunDetail,
     WikiMiningRunList,
@@ -42,7 +41,6 @@ from pkg.schemas.wiki import (
     WikiRecompileSuggestionRead,
     WikiSuggestionStatusUpdate,
     WikiSuggestRequest,
-    WikiArticleDraftRead,
 )
 from pkg.schemas.reference import ReferenceRead, ReferenceResolveRequest, ReferenceResolveResponse
 from pkg.services.cross_cutting.embedding import get_embedding_service
@@ -56,7 +54,6 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.get("/mining/runs", response_model=WikiMiningRunList)
 async def get_wiki_mining_runs(
     limit: int = Query(default=20, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
@@ -67,7 +64,6 @@ async def get_wiki_mining_runs(
     return WikiMiningRunList(items=items, total=total)
 
 
-@router.get("/mining/runs/{run_id}", response_model=WikiMiningRunDetail)
 async def get_wiki_mining_run(
     run_id: int,
     user: User = Depends(get_current_user),
@@ -99,7 +95,6 @@ async def resolve_wiki_references(
     return ReferenceResolveResponse(items=items)
 
 
-@router.patch("/mining/insights/{insight_id}", response_model=WikiInsightCandidateRead)
 async def update_wiki_insight_candidate_status(
     insight_id: int,
     body: WikiInsightCandidateStatusUpdate,
@@ -116,7 +111,6 @@ async def update_wiki_insight_candidate_status(
     return insight
 
 
-@router.delete("/mining/insights/{insight_id}", status_code=204)
 async def delete_wiki_insight_candidate(
     insight_id: int,
     user: User = Depends(get_current_user),
@@ -129,7 +123,6 @@ async def delete_wiki_insight_candidate(
     await session.commit()
 
 
-@router.patch("/mining/articles/{article_id}", response_model=WikiArticleDraftRead)
 async def update_wiki_article_draft_status(
     article_id: int,
     body: WikiArticleDraftStatusUpdate,
@@ -173,7 +166,6 @@ async def update_wiki_article_draft_status(
     return article
 
 
-@router.delete("/mining/articles/{article_id}", status_code=204)
 async def delete_wiki_article_draft(
     article_id: int,
     user: User = Depends(get_current_user),
@@ -186,7 +178,6 @@ async def delete_wiki_article_draft(
     await session.commit()
 
 
-@router.get("/update-drafts", response_model=list[WikiArticleDraftRead])
 async def list_wiki_update_drafts(
     wiki_id: str = Query(...),
     user: User = Depends(get_current_user),
@@ -204,7 +195,6 @@ async def list_wiki_update_drafts(
     return list(rows.scalars())
 
 
-@router.delete("/update-drafts/{article_id}", status_code=204)
 async def delete_wiki_update_draft(
     article_id: int,
     user: User = Depends(get_current_user),
@@ -219,7 +209,6 @@ async def delete_wiki_update_draft(
     await session.commit()
 
 
-@router.post("/mining/articles/{article_id}/merge", response_model=WikiArticleDraftRead)
 async def merge_wiki_article_candidate(
     article_id: int,
     body: WikiCandidateMergeAction,
@@ -241,7 +230,6 @@ async def merge_wiki_article_candidate(
     return article
 
 
-@router.post("/mining/articles/{article_id}/convert-to-note", response_model=WikiCandidateNoteConversionRead)
 async def convert_wiki_article_candidate_to_note(
     article_id: int,
     user: User = Depends(get_current_user),
@@ -707,7 +695,6 @@ async def compile_wiki_page(
     return wiki
 
 
-@router.post("/update-drafts/from-source", response_model=WikiArticleDraftRead, status_code=201)
 async def create_wiki_update_draft_from_source(
     body: WikiUpdateDraftFromSourceRequest,
     user: User = Depends(get_current_user),

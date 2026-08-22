@@ -3,13 +3,11 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 
-def test_pkg_local_wiki_mining_creation_route_is_removed():
+def test_pkg_local_wiki_mining_and_update_draft_routes_are_removed():
     from pkg.api.app import app
 
-    assert not any(
-        route.path == "/wiki/mining/runs" and "POST" in (route.methods or set())
-        for route in app.routes
-    )
+    retired_prefixes = ("/wiki/mining", "/wiki/update-drafts")
+    assert not any(route.path.startswith(retired_prefixes) for route in app.routes)
 
 
 class TestWikiMiningAPI:
