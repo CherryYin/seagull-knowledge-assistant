@@ -76,25 +76,6 @@ export interface WikiPageSourceCreate {
   confidence_score?: number | null;
 }
 
-export interface WikiPageMemory {
-  id: number;
-  wiki_id: string;
-  memory_node_id: string;
-  relevance_summary: string;
-  key_points?: Array<string | Record<string, unknown>> | null;
-  supporting_claims?: Array<string | Record<string, unknown>> | null;
-  confidence_score?: number | null;
-  last_refreshed_at: string;
-}
-
-export interface WikiPageMemoryCreate {
-  memory_node_id: string;
-  relevance_summary: string;
-  key_points?: Array<string | Record<string, unknown>>;
-  supporting_claims?: Array<string | Record<string, unknown>>;
-  confidence_score?: number | null;
-}
-
 export interface WikiCompileRequest {
   title: string;
   page_type?: string;
@@ -279,12 +260,6 @@ export const wikiApi = {
   sources: (id: string) => request<WikiPageSource[]>(`/wiki/${encodeURIComponent(id)}/sources`),
   upsertSource: (id: string, body: WikiPageSourceCreate) =>
     request<WikiPageSource>(`/wiki/${encodeURIComponent(id)}/sources`, {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-  memories: (id: string) => request<WikiPageMemory[]>(`/wiki/${encodeURIComponent(id)}/memories`),
-  upsertMemory: (id: string, body: WikiPageMemoryCreate) =>
-    request<WikiPageMemory>(`/wiki/${encodeURIComponent(id)}/memories`, {
       method: "POST",
       body: JSON.stringify(body),
     }),

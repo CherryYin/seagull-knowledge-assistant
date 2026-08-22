@@ -85,27 +85,6 @@ class WikiPageSourceRead(BaseModel):
     last_refreshed_at: datetime
 
 
-class WikiPageMemoryCreate(BaseModel):
-    memory_node_id: str
-    relevance_summary: str
-    key_points: list[dict | str] = []
-    supporting_claims: list[dict | str] = []
-    confidence_score: float | None = Field(default=None, ge=0, le=1)
-
-
-class WikiPageMemoryRead(BaseModel):
-    model_config = {"from_attributes": True}
-
-    id: int
-    wiki_id: str
-    memory_node_id: str
-    relevance_summary: str
-    key_points: list | None = None
-    supporting_claims: list | None = None
-    confidence_score: float | None = None
-    last_refreshed_at: datetime
-
-
 class WikiCompileRequest(BaseModel):
     title: str
     page_type: str = Field(default="topic", pattern=r"^(topic|entity|concept|project|comparison)$")

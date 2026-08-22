@@ -4,9 +4,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from pkg.api.wiki import create_wiki_draft_from_memory, list_wiki_page_memories, upsert_wiki_page_memory
+from pkg.api.wiki import create_wiki_draft_from_memory
 from pkg.models.memory import MemoryNode
-from pkg.schemas.wiki import WikiFromMemoryRequest, WikiPageMemoryCreate
+from pkg.schemas.wiki import WikiFromMemoryRequest
 
 
 @pytest.mark.asyncio
@@ -363,85 +363,6 @@ class TestListWikiUpdateDrafts:
 
         assert len(result) == 1
         assert result[0].metadata_["target_wiki_id"] == "wiki-ai-agent"
-
-
-class TestWikiMemoryEvidence:
-    @pytest.mark.asyncio
-    async def test_upsert_success(self, mock_session, fake_user):
-        wiki = _make_wiki("wiki-1", fake_user.id)
-        memory = MemoryNode(
-            id="mem-topic-ai",
-            user_id=fake_user.id,
-            node_type="topic",
-            scope_id="ai",
-            level="topic",
-            title="Topic Memory - AI",
-            summary="summary",
-            content="content",
-            child_node_ids=[],
-            derived_from_notes=["note-1"],
-            derived_from_sources=["src-1"],
-            derived_from_chunks=[],
-            metadata_={},
-            confidence_score=0.8,
-        )
-        rows = MagicMock()
-        rows.scalar_one_or_none.return_value = None
-        mock_session.get.side_effect = [wiki, memory]
-        mock_session.execute.return_value = rows
-
-        result = await upsert_wiki_page_memory(
-            "wiki-1",
-            WikiPageMemoryCreate(
-                memory_node_id="mem-topic-ai",
-                relevance_summary="This memory supports the wiki synthesis.",
-                key_points=["AI"],
-                supporting_claims=["Topic memory summarizes source evidence"],
-                confidence_score=0.8,
-            ),
-            user=fake_user,
-            session=mock_session,
-        )
-
-        assert result.memory_node_id == "mem-topic-ai"
-        assert "src-1" in wiki.derived_from_sources
-        assert "note-1" in wiki.derived_from_notes
-        mock_session.add.assert_called_once()
-        mock_session.commit.assert_awaited_once()
-        mock_session.refresh.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_rejects_other_user_memory(self, mock_session, fake_user):
-        wiki = _make_wiki("wiki-1", fake_user.id)
-        memory = MagicMock(spec=[])
-        memory.id = "mem-topic-other"
-        memory.user_id = "other-user"
-        mock_session.get.side_effect = [wiki, memory]
-
-        with pytest.raises(Exception) as exc_info:
-            await upsert_wiki_page_memory(
-                "wiki-1",
-                WikiPageMemoryCreate(memory_node_id="mem-topic-other", relevance_summary="Relevant"),
-                user=fake_user,
-                session=mock_session,
-            )
-        assert getattr(exc_info.value, "status_code") == 404
-
-    @pytest.mark.asyncio
-    async def test_list_success(self, mock_session, fake_user):
-        wiki = _make_wiki("wiki-1", fake_user.id)
-        evidence = MagicMock(spec=[])
-        evidence.id = 1
-        evidence.wiki_id = "wiki-1"
-        evidence.memory_node_id = "mem-topic-ai"
-        rows = MagicMock()
-        rows.scalars.return_value = [evidence]
-        mock_session.get.return_value = wiki
-        mock_session.execute.return_value = rows
-
-        result = await list_wiki_page_memories("wiki-1", user=fake_user, session=mock_session)
-
-        assert result == [evidence]
 
 
 class TestWikiSuggestionStatusFlow:

@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { MarkdownRenderer } from "@/components/markdown";
-import { wikiApi, type ReferenceRead, type WikiArticleDraft, type WikiPage, type WikiPageMemoryCreate, type WikiPageSourceCreate, type WikiPageUpdate } from "@/lib/api";
+import { wikiApi, type ReferenceRead, type WikiArticleDraft, type WikiPage, type WikiPageSourceCreate, type WikiPageUpdate } from "@/lib/api";
 import { getWikiOrigin, getWikiRole } from "@/lib/wikiLifecycle";
 import { buildAssetHandoffState } from "@/lib/asset-handoff";
 
@@ -118,7 +118,6 @@ export function WikiDetailPage() {
   const [showAppliedUpdateDrafts, setShowAppliedUpdateDrafts] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
-  const [memoryOpen, setMemoryOpen] = useState(false);
   const [sourceForm, setSourceForm] = useState({
     source_id: "",
     relevance_summary: "",
@@ -127,14 +126,6 @@ export function WikiDetailPage() {
     cited_chunk_ids: "",
     confidence_score: "",
   });
-  const [memoryForm, setMemoryForm] = useState({
-    memory_node_id: "",
-    relevance_summary: "",
-    key_points: "",
-    supporting_claims: "",
-    confidence_score: "",
-  });
-
   const { data: page, isLoading, error } = useQuery({
     queryKey: ["wiki-page", id],
     queryFn: () => wikiApi.get(id!),
@@ -147,12 +138,6 @@ export function WikiDetailPage() {
     enabled: !!id,
   });
 
-  const { data: memoryEvidence = [] } = useQuery({
-    queryKey: ["wiki-page-memories", id],
-    queryFn: () => wikiApi.memories(id!),
-    enabled: !!id,
-  });
-
   const { data: updateDrafts = [] } = useQuery({
     queryKey: ["wiki-update-drafts", id],
     queryFn: () => wikiApi.updateDrafts(id!),
@@ -160,11 +145,8 @@ export function WikiDetailPage() {
   });
 
   const referenceInputs = useMemo(
-    () => [
-      ...sourceEvidence.map((item) => ({ ref_type: "source", ref_id: item.source_id, excerpt: item.relevance_summary })),
-      ...memoryEvidence.map((item) => ({ ref_type: "memory", ref_id: item.memory_node_id, excerpt: item.relevance_summary })),
-    ],
-    [memoryEvidence, sourceEvidence]
+    () => sourceEvidence.map((item) => ({ ref_type: "source", ref_id: item.source_id, excerpt: item.relevance_summary })),
+    [sourceEvidence]
   );
 
   const { data: resolvedReferences = [] } = useQuery({
@@ -218,16 +200,6 @@ export function WikiDetailPage() {
     },
   });
 
-  const memoryMutation = useMutation({
-    mutationFn: (payload: WikiPageMemoryCreate) => wikiApi.upsertMemory(id!, payload),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["wiki-page", id] });
-      queryClient.invalidateQueries({ queryKey: ["wiki-page-memories", id] });
-      setMemoryOpen(false);
-      setMemoryForm({ memory_node_id: "", relevance_summary: "", key_points: "", supporting_claims: "", confidence_score: "" });
-    },
-  });
-
   const deleteUpdateDraftMutation = useMutation({
     mutationFn: (articleId: number) => wikiApi.deleteUpdateDraft(articleId),
     onSuccess: (_, articleId) => {
@@ -240,7 +212,7 @@ export function WikiDetailPage() {
 
   const origin = page ? getWikiOrigin(page) : null;
   const role = page ? getWikiRole(page) : "draft";
-  const referencesCount = sourceEvidence.length + memoryEvidence.length;
+  const referencesCount = sourceEvidence.length;
   const tocItems = useMemo(() => extractToc(page?.content || ""), [page?.content]);
   const pageClaims = useMemo(() => {
     const claims: Array<{ text: string; status: string; sourceLabel: string }> = [];
@@ -250,14 +222,8 @@ export function WikiDetailPage() {
         if (text) claims.push({ text, status: item.cited_chunk_ids?.length ? "supported" : "weak", sourceLabel: item.source_id });
       });
     });
-    memoryEvidence.forEach((item) => {
-      (item.supporting_claims ?? []).forEach((claim) => {
-        const text = typeof claim === "string" ? claim : JSON.stringify(claim);
-        if (text) claims.push({ text, status: item.confidence_score != null ? "supported" : "weak", sourceLabel: item.memory_node_id });
-      });
-    });
     return claims;
-  }, [memoryEvidence, sourceEvidence]);
+  }, [sourceEvidence]);
   const weakPageClaimCount = pageClaims.filter((claim) => claim.status !== "supported").length;
   const stableReadiness = useMemo(() => {
     if (role !== "stable") {
@@ -342,16 +308,6 @@ export function WikiDetailPage() {
       supporting_claims: splitCsv(sourceForm.supporting_claims),
       cited_chunk_ids: splitCsv(sourceForm.cited_chunk_ids).map(Number).filter(Number.isFinite),
       confidence_score: sourceForm.confidence_score.trim() ? Number(sourceForm.confidence_score) : null,
-    });
-  }
-
-  function submitMemoryEvidence() {
-    memoryMutation.mutate({
-      memory_node_id: memoryForm.memory_node_id.trim(),
-      relevance_summary: memoryForm.relevance_summary,
-      key_points: splitCsv(memoryForm.key_points),
-      supporting_claims: splitCsv(memoryForm.supporting_claims),
-      confidence_score: memoryForm.confidence_score.trim() ? Number(memoryForm.confidence_score) : null,
     });
   }
 
@@ -725,20 +681,6 @@ export function WikiDetailPage() {
                         </li>
                         );
                       })}
-                      {memoryEvidence.map((item, idx) => {
-                        const resolved = resolvedReferenceMap.get(`memory:${item.memory_node_id}`);
-                        return (
-                        <li key={item.id} className="leading-6">
-                          <Link to={resolved?.href || `/memory?node=${encodeURIComponent(item.memory_node_id)}`} className="font-medium text-primary hover:underline">
-                            Memory {sourceEvidence.length + idx + 1}: {resolved?.title || item.memory_node_id}
-                          </Link>
-                          {resolved?.subtitle && <p className="mt-1 text-xs text-muted-foreground">{resolved.subtitle}</p>}
-                          <p className="mt-1 text-muted-foreground">{resolved?.excerpt || item.relevance_summary}</p>
-                          {renderEvidenceList(item.key_points)}
-                          {item.confidence_score != null && <p className="mt-1 text-xs text-muted-foreground">Confidence: {item.confidence_score}</p>}
-                        </li>
-                        );
-                      })}
                     </ol>
                   )}
                 </div>
@@ -842,46 +784,6 @@ export function WikiDetailPage() {
                     </DialogContent>
                   </Dialog>
                 </div>
-
-                <Dialog open={memoryOpen} onOpenChange={setMemoryOpen}>
-                  <DialogTrigger asChild>
-                    <Button size="sm" variant="outline"><Plus className="h-4 w-4" /> Memory</Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>Add Memory Evidence</DialogTitle>
-                    </DialogHeader>
-                    <div className="space-y-4">
-                      <div>
-                        <label className="text-xs font-medium text-muted-foreground">Memory Node ID</label>
-                        <Input value={memoryForm.memory_node_id} onChange={(event) => setMemoryForm((prev) => ({ ...prev, memory_node_id: event.target.value }))} className="mt-1" />
-                      </div>
-                      <div>
-                        <label className="text-xs font-medium text-muted-foreground">Relevance Summary</label>
-                        <Textarea value={memoryForm.relevance_summary} onChange={(event) => setMemoryForm((prev) => ({ ...prev, relevance_summary: event.target.value }))} rows={4} className="mt-1" />
-                      </div>
-                      <div>
-                        <label className="text-xs font-medium text-muted-foreground">Key Points</label>
-                        <Input value={memoryForm.key_points} onChange={(event) => setMemoryForm((prev) => ({ ...prev, key_points: event.target.value }))} placeholder="comma separated" className="mt-1" />
-                      </div>
-                      <div>
-                        <label className="text-xs font-medium text-muted-foreground">Supporting Claims</label>
-                        <Input value={memoryForm.supporting_claims} onChange={(event) => setMemoryForm((prev) => ({ ...prev, supporting_claims: event.target.value }))} placeholder="comma separated" className="mt-1" />
-                      </div>
-                      <div>
-                        <label className="text-xs font-medium text-muted-foreground">Confidence</label>
-                        <Input value={memoryForm.confidence_score} onChange={(event) => setMemoryForm((prev) => ({ ...prev, confidence_score: event.target.value }))} placeholder="0.8" className="mt-1" />
-                      </div>
-                      {memoryMutation.error && <p className="text-sm text-destructive">{memoryMutation.error.message}</p>}
-                      <div className="flex justify-end gap-2">
-                        <Button variant="outline" onClick={() => setMemoryOpen(false)}>Cancel</Button>
-                        <Button onClick={submitMemoryEvidence} disabled={!memoryForm.memory_node_id.trim() || !memoryForm.relevance_summary.trim() || memoryMutation.isPending}>
-                          {memoryMutation.isPending ? "Saving…" : "Save Evidence"}
-                        </Button>
-                      </div>
-                    </div>
-                  </DialogContent>
-                </Dialog>
               </div>
             </aside>
           </div>

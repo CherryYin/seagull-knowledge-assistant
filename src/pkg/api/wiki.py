@@ -20,7 +20,6 @@ from pkg.models.foundation.wiki import (
     WikiInsightCandidate,
     WikiMiningRun,
     WikiPage,
-    WikiPageMemory,
     WikiPageSource,
     WikiRecompileSuggestion,
 )
@@ -40,8 +39,6 @@ from pkg.schemas.wiki import (
     WikiMiningRunList,
     WikiPageCreate,
     WikiPageList,
-    WikiPageMemoryCreate,
-    WikiPageMemoryRead,
     WikiPageRead,
     WikiPageSourceCreate,
     WikiPageSourceRead,
@@ -651,68 +648,6 @@ async def list_wiki_page_sources(
         raise HTTPException(status_code=404, detail="Wiki page not found")
     rows = await session.execute(
         select(WikiPageSource).where(WikiPageSource.wiki_id == wiki_id).order_by(WikiPageSource.id)
-    )
-    return list(rows.scalars())
-
-
-@router.post("/{wiki_id}/memories", response_model=WikiPageMemoryRead, status_code=201)
-async def upsert_wiki_page_memory(
-    wiki_id: str,
-    body: WikiPageMemoryCreate,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-):
-    wiki = await session.get(WikiPage, wiki_id)
-    if not wiki or wiki.user_id != user.id:
-        raise HTTPException(status_code=404, detail="Wiki page not found")
-    memory = await session.get(MemoryNode, body.memory_node_id)
-    if not memory or memory.user_id != user.id:
-        raise HTTPException(status_code=404, detail="Memory node not found")
-
-    rows = await session.execute(
-        select(WikiPageMemory).where(
-            WikiPageMemory.wiki_id == wiki_id,
-            WikiPageMemory.memory_node_id == body.memory_node_id,
-        )
-    )
-    evidence = rows.scalar_one_or_none()
-    if evidence:
-        evidence.relevance_summary = body.relevance_summary
-        evidence.key_points = body.key_points
-        evidence.supporting_claims = body.supporting_claims
-        evidence.confidence_score = body.confidence_score
-    else:
-        evidence = WikiPageMemory(
-            wiki_id=wiki_id,
-            memory_node_id=body.memory_node_id,
-            relevance_summary=body.relevance_summary,
-            key_points=body.key_points,
-            supporting_claims=body.supporting_claims,
-            confidence_score=body.confidence_score,
-        )
-        session.add(evidence)
-
-    wiki.derived_from_sources = _merge_unique([*(wiki.derived_from_sources or []), *(memory.derived_from_sources or [])])
-    wiki.derived_from_notes = _merge_unique([*(wiki.derived_from_notes or []), *(memory.derived_from_notes or [])])
-    wiki.needs_recompile = True
-    wiki.stale_reason = f"Memory evidence `{memory.title}` was attached or refreshed."
-    wiki.stale_triggered_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    await session.commit()
-    await session.refresh(evidence)
-    return evidence
-
-
-@router.get("/{wiki_id}/memories", response_model=list[WikiPageMemoryRead])
-async def list_wiki_page_memories(
-    wiki_id: str,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-):
-    wiki = await session.get(WikiPage, wiki_id)
-    if not wiki or wiki.user_id != user.id:
-        raise HTTPException(status_code=404, detail="Wiki page not found")
-    rows = await session.execute(
-        select(WikiPageMemory).where(WikiPageMemory.wiki_id == wiki_id).order_by(WikiPageMemory.id)
     )
     return list(rows.scalars())
 
