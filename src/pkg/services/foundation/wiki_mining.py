@@ -7,7 +7,6 @@ from typing import Literal
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pkg.models.foundation.memory import MemoryNode
 from pkg.models.foundation.note import Note
 from pkg.models.foundation.source import Source
 from pkg.models.foundation.wiki import WikiArticleDraft, WikiInsightCandidate, WikiMiningRun, WikiPage
@@ -123,10 +122,8 @@ async def run_wiki_mining(
             "input_summary": {
                 "new_sources": sum(1 for record in new_records if record.record_type == "source"),
                 "new_notes": sum(1 for record in new_records if record.record_type == "note"),
-                "new_memory_nodes": sum(1 for record in new_records if record.record_type == "memory"),
                 "related_sources": sum(1 for record in related_records if record.record_type == "source"),
                 "related_notes": sum(1 for record in related_records if record.record_type == "note"),
-                "related_memory_nodes": sum(1 for record in related_records if record.record_type == "memory"),
                 "related_wiki_pages": sum(1 for record in related_records if record.record_type == "wiki"),
             },
             "input_refs": {
@@ -244,17 +241,6 @@ async def _load_new_records(
     )
     records.extend(_note_to_record(note) for note in note_rows.scalars())
 
-    memory_rows = await session.execute(
-        select(MemoryNode)
-        .where(
-            MemoryNode.user_id == user_id,
-            or_(MemoryNode.created_at >= window_start, MemoryNode.updated_at >= window_start),
-            MemoryNode.created_at <= window_end,
-        )
-        .order_by(MemoryNode.updated_at.desc())
-        .limit(limit)
-    )
-    records.extend(_memory_to_record(memory) for memory in memory_rows.scalars())
     records.sort(key=lambda record: record.updated_at or record.created_at or window_start, reverse=True)
     return records[:limit]
 
@@ -305,21 +291,6 @@ async def _load_related_records(
         key = ("note", note.id)
         if key not in seen:
             related.append(_note_to_record(note))
-            seen.add(key)
-
-    memory_rows = await session.execute(
-        select(MemoryNode)
-        .where(
-            MemoryNode.user_id == user_id,
-            or_(*[MemoryNode.title.ilike(pattern) for pattern in patterns]),
-        )
-        .order_by(MemoryNode.updated_at.desc())
-        .limit(limit)
-    )
-    for memory in memory_rows.scalars():
-        key = ("memory", memory.id)
-        if key not in seen:
-            related.append(_memory_to_record(memory))
             seen.add(key)
 
     wiki_rows = await session.execute(
@@ -615,17 +586,6 @@ def _note_to_record(note: Note) -> MiningRecord:
         text="\n\n".join(part for part in [note.title, note.abstract or "", note.content or ""] if part),
         created_at=note.created_at,
         updated_at=note.updated_at,
-    )
-
-
-def _memory_to_record(memory: MemoryNode) -> MiningRecord:
-    return MiningRecord(
-        record_type="memory",
-        record_id=memory.id,
-        title=memory.title,
-        text="\n\n".join(part for part in [memory.title, memory.summary or "", memory.content or ""] if part),
-        created_at=memory.created_at,
-        updated_at=memory.updated_at,
     )
 
 

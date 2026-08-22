@@ -4,7 +4,6 @@ import json
 
 import pytest
 
-from pkg.models.foundation.memory import MemoryNode
 from pkg.models.foundation.note import Note
 from pkg.models.foundation.source import Source
 from pkg.models.foundation.wiki import WikiPage
@@ -50,24 +49,6 @@ async def test_run_wiki_mining_generates_insights_and_article():
         created_at=now,
         updated_at=now,
     )
-    memory = MemoryNode(
-        id="mem-1",
-        user_id="user-1",
-        node_type="topic",
-        scope_id="wiki-review",
-        level="topic",
-        title="Wiki review memory",
-        summary="Stable review knowledge",
-        content="Knowledge tree nodes can guide wiki mining.",
-        child_node_ids=[],
-        derived_from_notes=["note-1"],
-        derived_from_sources=["src-1"],
-        derived_from_chunks=[],
-        metadata_={},
-        confidence_score=0.8,
-        created_at=now,
-        updated_at=now,
-    )
     wiki = WikiPage(
         id="wiki-1",
         user_id="user-1",
@@ -90,7 +71,7 @@ async def test_run_wiki_mining_generates_insights_and_article():
     )
 
     rows = []
-    for scalars in ([source], [note], [memory], [source], [note], [memory], [wiki]):
+    for scalars in ([source], [note], [source], [note], [wiki]):
         result = MagicMock()
         result.scalars.return_value = scalars
         rows.append(result)
@@ -109,6 +90,9 @@ async def test_run_wiki_mining_generates_insights_and_article():
     assert len(result.articles) >= 1
     assert result.insights[0].evidence_refs
     assert result.articles[0].evidence_refs
+    assert all(ref["ref_type"] != "memory" for ref in result.insights[0].evidence_refs)
+    assert "new_memory_nodes" not in result.run.metadata_["input_summary"]
+    assert "related_memory_nodes" not in result.run.metadata_["input_summary"]
     session.commit.assert_awaited()
 
 
@@ -154,27 +138,8 @@ async def test_run_wiki_mining_discovers_knowledge_entity_candidates():
         created_at=now,
         updated_at=now,
     )
-    memory = MemoryNode(
-        id="mem-hybrid",
-        user_id="user-1",
-        node_type="topic",
-        scope_id="hybrid-retrieval",
-        level="topic",
-        title="Topic Memory - Hybrid Retrieval",
-        summary="Hybrid retrieval connects semantic search with structured filters.",
-        content="Hybrid retrieval appears in topic memory as a durable concept.",
-        child_node_ids=[],
-        derived_from_notes=["note-hybrid"],
-        derived_from_sources=["src-hybrid"],
-        derived_from_chunks=[],
-        metadata_={},
-        confidence_score=0.8,
-        created_at=now,
-        updated_at=now,
-    )
-
     rows = []
-    for scalars in ([source], [note], [memory], [source], [note], [memory], []):
+    for scalars in ([source], [note], [source], [note], []):
         result = MagicMock()
         result.scalars.return_value = scalars
         rows.append(result)
