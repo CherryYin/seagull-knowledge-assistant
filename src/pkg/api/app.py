@@ -29,7 +29,7 @@ from pkg.config import settings
 from pkg.api.sources import router as sources_router
 from pkg.api.notes import router as notes_router
 from pkg.api.search import router as search_router
-from pkg.api.action import router as action_router
+from pkg.api.completion import router as completion_router
 from pkg.api.chat_sessions import router as chat_sessions_router
 from pkg.api.skills import router as skills_router
 from pkg.api.knowledge import router as knowledge_router
@@ -37,9 +37,7 @@ from pkg.api.models import router as models_router
 from pkg.api.dashboard import router as dashboard_router
 from pkg.api.categories import router as categories_router
 from pkg.api.auth import router as auth_router
-from pkg.api.agent_profiles import router as agent_profiles_router
 from pkg.api.assets import router as assets_router
-from pkg.api.agent_runs import router as agent_runs_router
 from pkg.api.wiki import router as wiki_router
 from pkg.api.connectors import router as connectors_router
 from pkg.api.calendar_reminders import router as calendar_reminders_router
@@ -159,7 +157,7 @@ app.add_middleware(
 app.include_router(sources_router, prefix="/sources", tags=["sources"])
 app.include_router(notes_router, prefix="/notes", tags=["notes"])
 app.include_router(search_router, tags=["search"])
-app.include_router(action_router, tags=["action"])
+app.include_router(completion_router, tags=["completion"])
 app.include_router(chat_sessions_router, prefix="/chat-sessions", tags=["chat-sessions"])
 app.include_router(skills_router, prefix="/skills", tags=["skills"])
 app.include_router(knowledge_router, prefix="/knowledge", tags=["knowledge"])
@@ -167,9 +165,7 @@ app.include_router(models_router, prefix="/knowledge", tags=["models"])
 app.include_router(dashboard_router, prefix="/knowledge", tags=["dashboard"])
 app.include_router(categories_router, prefix="/categories", tags=["categories"])
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
-app.include_router(agent_profiles_router, prefix="/agent-profiles", tags=["agent-profiles"])
 app.include_router(assets_router, prefix="/assets", tags=["assets"])
-app.include_router(agent_runs_router, prefix="/agent-runs", tags=["agent-runs"])
 app.include_router(wiki_router, prefix="/wiki", tags=["wiki"])
 app.include_router(connectors_router, prefix="/connectors", tags=["connectors"])
 app.include_router(calendar_reminders_router, prefix="/calendar/reminders", tags=["calendar"])

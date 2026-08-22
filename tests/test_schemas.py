@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from pkg.schemas.source import SourceCreate, ChunkRead
 from pkg.schemas.note import NoteCreate, NoteUpdate, SearchRequest
-from pkg.schemas.action import ActionRequest, ActionResponse
+from pkg.schemas.completion import CompleteRequest
 from pkg.schemas.chat_session import ChatSessionCreate, ChatMessageSchema
 
 
@@ -116,26 +116,13 @@ class TestSearchRequest:
 
 
 # ---------------------------------------------------------------------------
-# ActionRequest / ActionResponse
+# CompleteRequest
 # ---------------------------------------------------------------------------
-class TestActionSchemas:
-    def test_action_request_minimal(self):
-        r = ActionRequest(task="hello")
-        assert r.session_id is None
-        assert r.conversation_history == []
-
-    def test_action_request_full(self):
-        r = ActionRequest(
-            task="do something",
-            session_id="s-1",
-            conversation_history=[{"role": "user", "content": "hi"}],
-        )
-        assert r.session_id == "s-1"
-
-    def test_action_response(self):
-        r = ActionResponse(result="done", stop_reason="end_turn")
-        assert r.result == "done"
-        assert r.session_id is None
+class TestCompletionSchemas:
+    def test_complete_request(self):
+        request = CompleteRequest(messages=[{"role": "user", "content": "hello"}])
+        assert request.messages[0].role == "user"
+        assert request.temperature is None
 
 
 # ---------------------------------------------------------------------------
