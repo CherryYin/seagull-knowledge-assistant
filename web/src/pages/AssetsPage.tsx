@@ -187,8 +187,6 @@ export function AssetsPage() {
   const [selectedNoteIds, setSelectedNoteIds] = useState<string[]>([]);
   const [opinionNotes, setOpinionNotes] = useState("");
   const [styleNotes, setStyleNotes] = useState("");
-  const [newsletterWindowDays, setNewsletterWindowDays] = useState(2);
-  const [newsletterMaxSources, setNewsletterMaxSources] = useState(12);
   const [createError, setCreateError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [exportedMarkdown, setExportedMarkdown] = useState<string | null>(null);
@@ -230,30 +228,6 @@ export function AssetsPage() {
 
   const createMutation = useMutation({
     mutationFn: () => assetsApi.create({ asset_type: assetType, title, brief, source_refs: selectedSourceIds, note_refs: selectedNoteIds, opinion_notes: opinionNotes, style_notes: styleNotes }),
-    onSuccess: async (asset) => {
-      setCreateError(null);
-      loadEditorState(asset);
-      setTitle("");
-      setBrief("");
-      setAssetType("blog_post");
-      setSelectedSourceIds([]);
-      setSelectedNoteIds([]);
-      setOpinionNotes("");
-      setStyleNotes("");
-      setSelectedId(asset.id);
-      await queryClient.invalidateQueries({ queryKey: ["assets"] });
-    },
-  });
-
-  const createRecentNewsletterMutation = useMutation({
-    mutationFn: () => assetsApi.createRecentNewsletter({
-      title,
-      brief: brief || undefined,
-      opinion_notes: opinionNotes,
-      style_notes: styleNotes || undefined,
-      window_days: newsletterWindowDays,
-      max_sources: newsletterMaxSources,
-    }),
     onSuccess: async (asset) => {
       setCreateError(null);
       loadEditorState(asset);
@@ -339,16 +313,6 @@ export function AssetsPage() {
     setSelectedSourceIds(handoff.source_refs ?? []);
     setSelectedNoteIds(handoff.note_refs ?? []);
   }, [location.state]);
-
-  const generateOutlineMutation = useMutation({
-    mutationFn: (assetId: string) => assetsApi.generateOutline(assetId, true),
-    onSuccess: async (asset) => refreshGeneratedAsset(asset),
-  });
-
-  const generateDraftMutation = useMutation({
-    mutationFn: (assetId: string) => assetsApi.generateDraft(assetId, true),
-    onSuccess: async (asset) => refreshGeneratedAsset(asset),
-  });
 
   const attachReferencesMutation = useMutation({
     mutationFn: (assetId: string) => assetsApi.attachReferences(assetId, true),
@@ -446,41 +410,7 @@ export function AssetsPage() {
             <p className="text-xs text-muted-foreground">{assetTypeBriefGuidance(assetType)}</p>
             <Textarea placeholder="Opinion / thesis" value={opinionNotes} onChange={(e) => setOpinionNotes(e.target.value)} rows={3} />
             <Textarea placeholder="Style notes / tone instructions" value={styleNotes} onChange={(e) => setStyleNotes(e.target.value)} rows={3} />
-            {assetType === "newsletter_issue" && (
-              <div className="rounded-md border border-primary/30 bg-primary/5 p-3 space-y-3">
-                <div>
-                  <p className="text-sm font-medium">Recent-source newsletter mode</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Create a newsletter from sources ingested in the last few days plus your opinion above. No manual source or note picking required.
-                  </p>
-                </div>
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="space-y-1">
-                    <p className="text-xs font-medium">Source window days</p>
-                    <Input type="number" min={1} max={14} value={newsletterWindowDays} onChange={(e) => setNewsletterWindowDays(Number(e.target.value) || 2)} />
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-xs font-medium">Max sources</p>
-                    <Input type="number" min={1} max={50} value={newsletterMaxSources} onChange={(e) => setNewsletterMaxSources(Number(e.target.value) || 12)} />
-                  </div>
-                </div>
-                <Button
-                  variant="outline"
-                  onClick={() => createRecentNewsletterMutation.mutate()}
-                  disabled={!title.trim() || !opinionNotes.trim() || createRecentNewsletterMutation.isPending}
-                >
-                  {createRecentNewsletterMutation.isPending
-                    ? "Creating…"
-                    : `Create from last ${newsletterWindowDays} days of sources`}
-                </Button>
-                {createRecentNewsletterMutation.isError && (
-                  <p className="text-xs text-destructive">
-                    Failed to create recent-source newsletter. Make sure recent sources exist.
-                  </p>
-                )}
-              </div>
-            )}
-            {assetType !== "newsletter_issue" && <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2 rounded-md border p-3">
                 <p className="text-sm font-medium">Source refs</p>
                 <div className="max-h-40 space-y-2 overflow-auto pr-1 text-sm">
@@ -518,11 +448,11 @@ export function AssetsPage() {
                   ))}
                 </div>
               </div>
-            </div>}
+            </div>
             {createError && <p className="text-xs text-destructive">{createError}</p>}
-            <Button onClick={() => { if (validateCreate()) createMutation.mutate(); }} disabled={!title.trim() || assetType === "newsletter_issue" || createMutation.isPending}>
+            <Button onClick={() => { if (validateCreate()) createMutation.mutate(); }} disabled={!title.trim() || createMutation.isPending}>
               <Plus className="mr-2 h-4 w-4" />
-              {assetType === "newsletter_issue" ? "Use Recent-Source Newsletter Mode" : "Create Asset"}
+              Create Asset
             </Button>
           </CardContent>
         </Card>
@@ -650,14 +580,6 @@ export function AssetsPage() {
                     </div>
                   )}
                   <div className="flex flex-wrap gap-2">
-                    <Button variant="outline" onClick={() => generateOutlineMutation.mutate(selectedAsset.id)}>
-                      <Sparkles className="mr-2 h-4 w-4" />
-                      {selectedAsset.asset_type === "research_brief" ? "Generate Brief Outline" : selectedAsset.asset_type === "knowledge_pack" ? "Generate Pack Outline" : selectedAsset.asset_type === "newsletter_issue" ? "Generate Issue Outline" : selectedAsset.asset_type === "topic_report" ? "Generate Report Outline" : "Generate Outline"}
-                    </Button>
-                    <Button variant="outline" onClick={() => generateDraftMutation.mutate(selectedAsset.id)}>
-                      <FileText className="mr-2 h-4 w-4" />
-                      {selectedAsset.asset_type === "research_brief" ? "Generate Brief Draft" : selectedAsset.asset_type === "knowledge_pack" ? "Generate Pack Draft" : selectedAsset.asset_type === "newsletter_issue" ? "Generate Issue Draft" : selectedAsset.asset_type === "topic_report" ? "Generate Report Draft" : "Generate Draft"}
-                    </Button>
                     <Button variant="outline" onClick={() => attachReferencesMutation.mutate(selectedAsset.id)}>
                       <CheckCircle2 className="mr-2 h-4 w-4" />
                       Attach References

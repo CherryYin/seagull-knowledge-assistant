@@ -29,16 +29,6 @@ class AssetCreate(BaseModel):
     provenance: AssetProvenance | None = None
 
 
-class RecentNewsletterCreate(BaseModel):
-    title: str
-    opinion_notes: str
-    style_notes: str | None = None
-    brief: str | None = None
-    window_days: int = Field(default=2, ge=1, le=14)
-    max_sources: int = Field(default=12, ge=1, le=50)
-    status: str = Field(default="draft", pattern=ASSET_STATUS_PATTERN)
-
-
 class AssetUpdate(BaseModel):
     title: str | None = None
     brief: str | None = None
@@ -85,14 +75,6 @@ class AssetRead(BaseModel):
 class AssetList(BaseModel):
     items: list[AssetRead]
     total: int
-
-
-class GenerateOutlineRequest(BaseModel):
-    regenerate: bool = False
-
-
-class GenerateDraftRequest(BaseModel):
-    regenerate: bool = False
 
 
 class AttachReferencesRequest(BaseModel):

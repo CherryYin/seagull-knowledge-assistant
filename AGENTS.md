@@ -18,9 +18,9 @@ The core product goal is a durable personal knowledge graph with deterministic r
 - Import or discover external knowledge from RSS, web pages, GitHub repositories, arXiv papers, and news providers.
 - Create `web` sources from a direct URL by fetching and extracting readable page text when content is left empty.
 - Discover article links from a `web` directory source such as a blog index and import each article as a child web source.
-- Generate review suggestions, discovery items, wiki pages, summaries, and temporary/permanent knowledge artifacts.
+- Manage review suggestions, discovery items, wiki pages, summaries, and temporary/permanent knowledge artifacts while delegating interactive Wiki/Asset drafting to Harness workflows.
 - Preserve terminal discovery decisions (`saved`, `kept`, and `dismissed`) as durable deduplication history so reviewed connector items are not recommended again.
-- Create newsletter assets from sources ingested in a recent time window plus the user's editorial point of view, without manual source/note picking.
+- Create and edit newsletter assets through PKG CRUD, then develop their content in Harness Agent Chat and explicitly save the reviewed result back to the Asset.
 - Pin notes for quick access, keep content version history (snapshots captured on content/title edits, restorable), and attach inline images to notes via drag-and-drop upload.
 - Mine recent knowledge materials for reusable concept/entity candidates and recommend concept wiki drafts with evidence.
 - Support persistent conversations, model/provider selection, observable background jobs, and user profiling.

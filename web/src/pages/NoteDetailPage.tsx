@@ -541,21 +541,6 @@ export function NoteDetailPage() {
     },
   });
 
-  function createWikiDraftInAgent() {
-    if (!note) return;
-    navigate("/chat", {
-      state: {
-        objectRef: {
-          object_type: "note",
-          object_id: note.id,
-          title: note.title,
-        },
-        workflowId: "draft-wiki-refresh",
-        promptSeed: `Create a reviewable canonical wiki draft from note "${note.title}" (${note.id}). Use only explicit evidence and preserve note provenance.`,
-      },
-    });
-  }
-
   function askAgentAboutNote() {
     if (!note) return;
     navigate("/chat", {
@@ -773,9 +758,6 @@ export function NoteDetailPage() {
                     </div>
                     <Button size="sm" onClick={() => queueWikiRefreshMutation.mutate()} disabled={queueWikiRefreshMutation.isPending}>
                       <RefreshCw className={`h-4 w-4 ${queueWikiRefreshMutation.isPending ? "animate-spin" : ""}`} /> Queue Wiki Refresh
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={createWikiDraftInAgent}>
-                      <BookOpen className="h-4 w-4" /> Draft Wiki in Agent Chat
                     </Button>
                     <Button
                       size="sm"
