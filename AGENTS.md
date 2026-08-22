@@ -11,6 +11,7 @@ The core product goal is a durable personal knowledge graph with deterministic r
 ## Core Capabilities
 
 - Ingest and manage sources, notes, categories, files, and user-owned chat sessions.
+- Treat `pdf` and `article` sources as permanent user knowledge: automated retention jobs must never delete them; deletion requires an explicit user action.
 - Search knowledge using SQL filters, vector embeddings, full-text style search, and hybrid retrieval.
 - Expose authenticated REST APIs that Harness tools use to search, read, and write user knowledge.
 - Delegate interactive Agent Chat and workflow execution to DeepSeek Harness through the shared gateway.
@@ -18,7 +19,9 @@ The core product goal is a durable personal knowledge graph with deterministic r
 - Create `web` sources from a direct URL by fetching and extracting readable page text when content is left empty.
 - Discover article links from a `web` directory source such as a blog index and import each article as a child web source.
 - Generate review suggestions, discovery items, wiki pages, summaries, and temporary/permanent knowledge artifacts.
+- Preserve terminal discovery decisions (`saved`, `kept`, and `dismissed`) as durable deduplication history so reviewed connector items are not recommended again.
 - Create newsletter assets from sources ingested in a recent time window plus the user's editorial point of view, without manual source/note picking.
+- Pin notes for quick access, keep content version history (snapshots captured on content/title edits, restorable), and attach inline images to notes via drag-and-drop upload.
 - Mine recent knowledge materials for reusable concept/entity candidates and recommend concept wiki drafts with evidence.
 - Support persistent conversations, model/provider selection, observable background jobs, and user profiling.
 
