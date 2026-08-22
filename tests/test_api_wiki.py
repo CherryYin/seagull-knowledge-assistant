@@ -4,9 +4,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from pkg.api.wiki import create_wiki_draft_from_memory
+from pkg.api.wiki import compile_wiki_page, create_wiki_draft_from_memory
 from pkg.models.memory import MemoryNode
-from pkg.schemas.wiki import WikiFromMemoryRequest
+from pkg.schemas.wiki import WikiCompileRequest, WikiFromMemoryRequest
 
 
 @pytest.mark.asyncio
@@ -266,6 +266,65 @@ class TestUpsertWikiSource:
         mock_session.add.assert_called()
         mock_session.commit.assert_awaited()
         assert "src-1" in wiki.derived_from_sources
+
+
+class TestCompileWikiPage:
+    @pytest.mark.asyncio
+    async def test_uses_only_explicit_notes_and_sources(self, mock_session, fake_user):
+        note = type(
+            "NoteObj",
+            (),
+            {"id": "note-1", "title": "Explicit Note", "content": "Note evidence", "abstract": None},
+        )()
+        source = type(
+            "SourceObj",
+            (),
+            {
+                "id": "src-1",
+                "title": "Explicit Source",
+                "raw_content": "Source evidence",
+                "user_id": fake_user.id,
+                "is_shared": False,
+            },
+        )()
+        note_rows = MagicMock()
+        note_rows.scalars.return_value = [note]
+        source_rows = MagicMock()
+        source_rows.scalars.return_value = [source]
+        mock_session.execute.side_effect = [note_rows, source_rows]
+
+        completion = type(
+            "CompletionObj",
+            (),
+            {"choices": [type("ChoiceObj", (), {"message": type("MessageObj", (), {"content": "# Explicit Wiki\n\nCompiled."})()})()]},
+        )()
+        llm_client = MagicMock()
+        llm_client.chat.completions.create = AsyncMock(return_value=completion)
+        wiki = _make_wiki("wiki-explicit", fake_user.id)
+
+        with (
+            patch("pkg.api.wiki.create_async_client", return_value=(llm_client, "test-model")),
+            patch("pkg.api.wiki.persist_wiki_page", new_callable=AsyncMock, return_value=wiki) as persist,
+        ):
+            result = await compile_wiki_page(
+                WikiCompileRequest(
+                    title="Explicit Wiki",
+                    note_ids=[note.id],
+                    source_ids=[source.id],
+                ),
+                user=fake_user,
+                session=mock_session,
+            )
+
+        assert result is wiki
+        prompt = llm_client.chat.completions.create.await_args.kwargs["messages"][1]["content"]
+        assert "## Note: Explicit Note" in prompt
+        assert "## Source: Explicit Source" in prompt
+        assert "Memory Tree Context" not in prompt
+        persisted = persist.await_args.kwargs["body"]
+        assert persisted.derived_from_notes == [note.id]
+        assert persisted.derived_from_sources == [source.id]
+        assert persisted.open_questions == []
 
 
 class TestListWikiPages:

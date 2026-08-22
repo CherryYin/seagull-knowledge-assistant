@@ -52,7 +52,6 @@ from pkg.schemas.wiki import (
 from pkg.schemas.reference import ReferenceRead, ReferenceResolveRequest, ReferenceResolveResponse
 from pkg.services.cross_cutting.embedding import get_embedding_service
 from pkg.services.cross_cutting.llm import create_async_client
-from pkg.services.foundation.memory_retriever import format_memory_context, retrieve_for_wiki
 from pkg.services.foundation.wiki_lifecycle import get_wiki_role
 from pkg.services.foundation.wiki_mining import get_wiki_mining_run_detail, list_wiki_mining_runs, run_wiki_mining
 from pkg.services.foundation.wiki_recompile import suggest_wiki_recompile_for_trigger
@@ -680,18 +679,7 @@ async def compile_wiki_page(
     if not notes and not sources:
         raise HTTPException(status_code=422, detail="Choose at least one note or source to compile")
 
-    memory_results = await retrieve_for_wiki(
-        session,
-        user_id=user.id,
-        topic=body.title,
-        source_ids=[source.id for source in sources],
-        limit=8,
-    )
-    memory_context = format_memory_context(memory_results, max_chars_per_item=700)
-
     sections: list[str] = []
-    if memory_context:
-        sections.append("## Memory Tree Context\n" + memory_context)
     for note in notes:
         sections.append(f"## Note: {note.title}\nID: {note.id}\n\n{note.content or note.abstract or ''}")
     for source in sources:
@@ -706,7 +694,7 @@ async def compile_wiki_page(
 4. 可以在正文中自然引用 notes/sources，但不要把正文写成“Source Evidence”清单。
 5. 保留 note/source id，方便追溯，但把引用写得尽量不打断阅读。
 6. 不要编造未提供的信息。
-7. Memory Tree Context 是系统长期理解，只能作为线索；最终结论仍需尽量落到 notes/sources 证据。
+7. 所有结论都必须来自本次显式提供的 notes/sources，不得依赖未列出的系统记忆或隐式上下文。
 """
     user_prompt = f"标题：{body.title}\n类型：{body.page_type}\n额外指令：{body.instructions or '无'}\n\n材料：\n" + "\n\n---\n\n".join(sections)
 
@@ -738,7 +726,7 @@ async def compile_wiki_page(
             derived_from_notes=[note.id for note in notes],
             derived_from_sources=[source.id for source in sources],
             tags=["wiki-compiled"],
-            open_questions=[f"Memory context used: {result.node.id}" for result in memory_results[:5]],
+            open_questions=[],
         ),
         user_id=user.id,
     )
