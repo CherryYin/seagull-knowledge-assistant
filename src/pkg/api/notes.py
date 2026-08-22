@@ -10,13 +10,13 @@ from fastapi.responses import FileResponse, RedirectResponse, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pkg.api.deps import get_current_user
+from pkg.api.deps import get_current_user, get_current_user_optional_token
 from pkg.config import settings
 from pkg.db import get_session
 from pkg.models.category import Category
-from pkg.models.foundation.note import Note, NoteEmbedding
+from pkg.models.foundation.note import Note, NoteEmbedding, NoteImage
 from pkg.models.user import User
-from pkg.schemas.note import DigestMergeRequest, NoteCreate, NoteList, NoteRead, NoteUpdate
+from pkg.schemas.note import DigestMergeRequest, NoteCreate, NoteImageResponse, NoteList, NoteRead, NoteUpdate, NoteVersion
 from pkg.services.cross_cutting.embedding import get_embedding_service
 from pkg.services.cross_cutting.storage import get_storage_service
 
@@ -24,6 +24,8 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 DIGEST_TTL_DAYS = 7
+NOTE_MAX_VERSIONS = 20
+ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"}
 
 
 def digest_expires_at(now: datetime | None = None) -> datetime:
@@ -41,6 +43,23 @@ def apply_digest_retention(note: Note, *, now: datetime | None = None) -> None:
         note.expires_at = None
         if getattr(note, "kept_at", None) is None:
             note.kept_at = now or datetime.now(timezone.utc)
+
+
+
+def push_content_version(note: Note, now: datetime | None = None) -> None:
+    """Append the current (title, content) as a snapshot to ``content_versions``.
+
+    Called when content/title actually changes during an update, so earlier
+    states can be restored. Capped at NOTE_MAX_VERSIONS most-recent snapshots.
+    """
+    now = now or datetime.now(timezone.utc)
+    versions = list(note.content_versions or [])
+    versions.append({
+        "title": note.title,
+        "content": note.content or "",
+        "created_at": now.isoformat(),
+    })
+    note.content_versions = versions[-NOTE_MAX_VERSIONS:]
 
 
 async def delete_expired_digest_notes(
@@ -292,7 +311,7 @@ async def list_notes(
         stmt = stmt.where(Note.status == status)
         count_stmt = count_stmt.where(Note.status == status)
 
-    stmt = stmt.order_by(Note.updated_at.desc()).offset(offset).limit(limit)
+    stmt = stmt.order_by(Note.is_pinned.desc(), Note.updated_at.desc()).offset(offset).limit(limit)
 
     total = (await session.execute(count_stmt)).scalar() or 0
     rows = await session.execute(stmt)
@@ -397,6 +416,11 @@ async def update_note(
     patch = body.model_dump(exclude_unset=True)
     if not patch:
         return note
+
+    # Snapshot the pre-edit state when content or title is being changed, so it
+    # can be restored from version history.
+    if "content" in patch or "title" in patch:
+        push_content_version(note)
 
     for key, value in patch.items():
         setattr(note, key, value)
@@ -609,3 +633,136 @@ async def export_note_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename=\"note.pdf\"; filename*=UTF-8''{encoded_filename}"},
     )
+
+
+@router.post("/{note_id}/pin", response_model=NoteRead)
+async def toggle_pin_note(
+    note_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    note = await session.get(Note, note_id)
+    if not note or note.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Note not found")
+    note.is_pinned = not note.is_pinned
+    await session.commit()
+    await session.refresh(note)
+    category = await session.get(Category, note.category_id)
+    read = NoteRead.model_validate(note)
+    read.category_name = category.name if category else None
+    return read
+
+
+@router.get("/{note_id}/versions", response_model=list[NoteVersion])
+async def list_note_versions(
+    note_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    note = await session.get(Note, note_id)
+    if not note or note.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Note not found")
+    versions = note.content_versions or []
+    return [
+        NoteVersion(index=idx, title=v.get("title"), content=v.get("content") or "", created_at=v.get("created_at"))
+        for idx, v in enumerate(versions)
+    ]
+
+
+@router.post("/{note_id}/versions/{version_idx}/restore", response_model=NoteRead)
+async def restore_note_version(
+    note_id: str,
+    version_idx: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    note = await session.get(Note, note_id)
+    if not note or note.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Note not found")
+    versions = note.content_versions or []
+    if version_idx < 0 or version_idx >= len(versions):
+        raise HTTPException(status_code=404, detail="Version not found")
+    target = versions[version_idx]
+    # Snapshot the current state before restoring, so the restore itself is reversible.
+    push_content_version(note)
+    note.content = target.get("content") or ""
+    if target.get("title"):
+        note.title = target["title"]
+    apply_digest_retention(note)
+    note.word_count = len((note.content or "").split())
+    category = await session.get(Category, note.category_id)
+    category_name = category.name if category else None
+    note.file_path = await put_note_markdown_oss(note_id, note.content or "", category_name=category_name)
+    await session.commit()
+    await session.refresh(note)
+    read = NoteRead.model_validate(note)
+    read.category_name = category_name
+    return read
+
+
+@router.post("/{note_id}/images", response_model=NoteImageResponse, status_code=201)
+async def upload_note_image(
+    note_id: str,
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    note = await session.get(Note, note_id)
+    if not note or note.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Note not found")
+    content_type = (file.content_type or "").lower()
+    if content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(status_code=415, detail=f"Unsupported image type: {content_type or 'unknown'}")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Image is empty")
+    category = await session.get(Category, note.category_id)
+    category_name = category.name if category else None
+    storage = get_storage_service()
+    image_id = f"img-{uuid.uuid4().hex[:12]}"
+    ext = {
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/gif": ".gif",
+        "image/webp": ".webp",
+        "image/svg+xml": ".svg",
+    }.get(content_type, "")
+    filename = f"{image_id}{ext}"
+    base_key = storage.build_object_key("notes", note_id, filename, category_name=category_name)
+    object_key = base_key.replace(f"/{note_id}/", f"/{note_id}/images/", 1) if f"/{note_id}/" in base_key else base_key.replace(f"{note_id}/", f"{note_id}/images/", 1)
+    storage_uri = await storage.upload_bytes(object_key=object_key, data=data, content_type=content_type)
+    record = NoteImage(
+        id=image_id,
+        note_id=note_id,
+        storage_uri=storage_uri,
+        content_type=content_type,
+        filename=file.filename,
+    )
+    session.add(record)
+    await session.commit()
+    return NoteImageResponse(
+        id=image_id,
+        note_id=note_id,
+        url=f"/notes/{note_id}/images/{image_id}",
+        content_type=content_type,
+        filename=file.filename,
+    )
+
+
+@router.get("/{note_id}/images/{image_id}")
+async def get_note_image(
+    note_id: str,
+    image_id: str,
+    user: User = Depends(get_current_user_optional_token),
+    session: AsyncSession = Depends(get_session),
+):
+    # Verify ownership of the note (image_id is not directly guessable, but the
+    # note ownership check is the real guard).
+    note = await session.get(Note, note_id)
+    if not note or note.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Image not found")
+    image = await session.get(NoteImage, image_id)
+    if not image or image.note_id != note_id:
+        raise HTTPException(status_code=404, detail="Image not found")
+    url = await get_storage_service().generate_download_url(image.storage_uri)
+    return RedirectResponse(url=url)

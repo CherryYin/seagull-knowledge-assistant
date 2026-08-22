@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Plus, StickyNote, Upload, ChevronDown, ChevronRight, FolderOpen } from "lucide-react";
+import { Plus, StickyNote, Upload, ChevronDown, ChevronRight, FolderOpen, Pin } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -65,6 +65,22 @@ export function NotesPage() {
       return a.displayName.localeCompare(b.displayName);
     });
   }, [data?.items, categories]);
+
+  const pinnedNotes = useMemo(() => {
+    return (data?.items ?? []).filter((n) => n.is_pinned);
+  }, [data?.items]);
+
+  const pinMutation = useMutation({
+    mutationFn: (noteId: string) => notesApi.togglePin(noteId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["notes"] });
+    },
+  });
+
+  function handlePinToggle(noteId: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    pinMutation.mutate(noteId);
+  }
 
   const toggleCategory = (name: string) => {
     setCollapsedCategories((prev) => {
@@ -308,6 +324,21 @@ export function NotesPage() {
           </div>
         )}
 
+        {pinnedNotes.length > 0 && showGrouped && (
+          <div className="mb-6">
+            <div className="flex items-center gap-2 mb-3">
+              <Pin className="h-4 w-4 text-primary" />
+              <span className="text-sm font-semibold">Pinned</span>
+              <span className="text-xs text-muted-foreground">({pinnedNotes.length})</span>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              {pinnedNotes.map((note) => (
+                <NoteCard key={note.id} note={note} onClick={() => navigate(`/notes/${encodeURIComponent(note.id)}`, { state: noteDetailState })} onPinToggle={(e) => handlePinToggle(note.id, e)} />
+              ))}
+            </div>
+          </div>
+        )}
+
         {showGrouped ? (
           /* Grouped by category */
           <div className="space-y-6">
@@ -330,8 +361,8 @@ export function NotesPage() {
                   </button>
                   {!isCollapsed && (
                     <div className="grid gap-3 md:grid-cols-2">
-                      {group.notes.map((note) => (
-                        <NoteCard key={note.id} note={note} onClick={() => navigate(`/notes/${encodeURIComponent(note.id)}`, { state: noteDetailState })} />
+                      {group.notes.filter((note) => !note.is_pinned).map((note) => (
+                        <NoteCard key={note.id} note={note} onClick={() => navigate(`/notes/${encodeURIComponent(note.id)}`, { state: noteDetailState })} onPinToggle={(e) => handlePinToggle(note.id, e)} />
                       ))}
                     </div>
                   )}
@@ -342,8 +373,8 @@ export function NotesPage() {
         ) : (
           /* Flat list (filtered by category or only one category) */
           <div className="grid gap-3 md:grid-cols-2">
-            {data?.items.map((note) => (
-              <NoteCard key={note.id} note={note} onClick={() => navigate(`/notes/${encodeURIComponent(note.id)}`, { state: noteDetailState })} />
+            {data?.items.filter((note) => !note.is_pinned).map((note) => (
+              <NoteCard key={note.id} note={note} onClick={() => navigate(`/notes/${encodeURIComponent(note.id)}`, { state: noteDetailState })} onPinToggle={(e) => handlePinToggle(note.id, e)} />
             ))}
           </div>
         )}
@@ -352,17 +383,32 @@ export function NotesPage() {
   );
 }
 
-function NoteCard({ note, onClick }: { note: Note; onClick: () => void }) {
+function NoteCard({ note, onClick, onPinToggle }: { note: Note; onClick: () => void; onPinToggle?: (e: React.MouseEvent) => void }) {
+  const preview = buildNotePreview(note);
+
   return (
-    <Card className="cursor-pointer hover:border-primary/40 transition-colors" onClick={onClick}>
+    <Card className={`cursor-pointer hover:border-primary/40 transition-colors ${note.is_pinned ? "border-primary/50" : ""}`} onClick={onClick}>
       <CardHeader className="pb-2">
         <div className="flex items-center gap-2 mb-1">
           <Badge variant="note">{note.note_type}</Badge>
           <Badge variant="outline">{note.status}</Badge>
+          {note.is_pinned && (
+            <Badge variant="outline" className="text-primary border-primary/40"><Pin className="h-2.5 w-2.5 inline-block mr-0.5" />Pinned</Badge>
+          )}
+          {onPinToggle && (
+            <button
+              type="button"
+              title={note.is_pinned ? "Unpin" : "Pin"}
+              onClick={onPinToggle}
+              className={`ml-auto cursor-pointer rounded p-1 transition-colors hover:bg-accent ${note.is_pinned ? "text-primary" : "text-muted-foreground/50 hover:text-foreground"}`}
+            >
+              <Pin className={`h-3.5 w-3.5 ${note.is_pinned ? "fill-primary" : ""}`} />
+            </button>
+          )}
         </div>
         <CardTitle className="text-sm">{note.title}</CardTitle>
-        {note.abstract && (
-          <CardDescription className="line-clamp-2">{note.abstract}</CardDescription>
+        {preview && (
+          <CardDescription className="line-clamp-3 whitespace-pre-line">{preview}</CardDescription>
         )}
       </CardHeader>
       <CardContent>
@@ -380,4 +426,19 @@ function NoteCard({ note, onClick }: { note: Note; onClick: () => void }) {
       </CardContent>
     </Card>
   );
+}
+
+function buildNotePreview(note: Note) {
+  const source = note.abstract?.trim() || note.content?.trim() || "";
+  if (!source) return "";
+
+  return source
+    .replace(/<[^>]+>/g, " ")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/[*_~`>|-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }

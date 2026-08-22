@@ -3,10 +3,15 @@
 import pytest
 from pydantic import ValidationError
 
-from pkg.schemas.source import SourceCreate, ChunkRead
+from pkg.schemas.source import SourceCreate
 from pkg.schemas.note import NoteCreate, NoteUpdate, SearchRequest
 from pkg.schemas.completion import CompleteRequest
-from pkg.schemas.chat_session import ChatSessionCreate, ChatMessageSchema
+from pkg.schemas.chat_session import (
+    ChatSessionCreate,
+    ChatMessageSchema,
+    HarnessSessionEventSchema,
+    HarnessSessionHeaderSchema,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -146,3 +151,21 @@ class TestChatSessionSchemas:
         )
         s = ChatSessionCreate(title="My Chat", messages=[msg])
         assert len(s.messages) == 1
+
+    def test_harness_session_header(self):
+        header = HarnessSessionHeaderSchema(
+            version=0,
+            id="session-1",
+            created_at_ms=1_787_200_000_000,
+            agent_preset="knowledge-lab",
+        )
+        assert header.agent_preset == "knowledge-lab"
+
+    def test_harness_session_event(self):
+        event = HarnessSessionEventSchema(
+            seq=0,
+            type="turn/start",
+            time_ms=1_787_200_000_001,
+            data={"prompt": "hello"},
+        )
+        assert event.seq == 0

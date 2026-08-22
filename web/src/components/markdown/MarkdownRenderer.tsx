@@ -3,6 +3,7 @@ import rehypeHighlight from "rehype-highlight";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import { MermaidDiagram } from "@/components/markdown/MermaidDiagram";
+import { BASE, TOKEN_KEY } from "@/lib/api/client";
 
 const sanitizeSchema = {
   ...defaultSchema,
@@ -10,6 +11,12 @@ const sanitizeSchema = {
     ...defaultSchema.attributes,
     code: [...(defaultSchema.attributes?.code || []), "className"],
     span: [...(defaultSchema.attributes?.span || []), "className"],
+    // Allow note-attached images served by relative URLs (no protocol).
+    img: [...(defaultSchema.attributes?.img || []), "src", "alt", "title"],
+  },
+  protocols: {
+    ...defaultSchema.protocols,
+    src: ["http", "https", "data", "blob"], // relative URLs pass through without a protocol
   },
 };
 
@@ -44,11 +51,31 @@ interface MarkdownRendererProps {
   children: string;
   components?: Components;
   enableHighlight?: boolean;
+  noteId?: string;
 }
 
-export function MarkdownRenderer({ children, components, enableHighlight = true }: MarkdownRendererProps) {
+/** Resolve a relative note-image URL (e.g. "api/notes/{id}/images/{imgId}") into
+ * an authenticated full URL by appending the JWT as a query param. Note images
+ * are served via <img> tags which cannot attach Authorization headers. The token
+ * is only added at render time, never persisted into note content. */
+function resolveNoteImageSrc(src: string, noteId?: string): string {
+  if (!noteId) return src;
+  const marker = `notes/${encodeURIComponent(noteId)}/images/`;
+  const idx = src.indexOf(marker);
+  if (idx === -1) return src;
+  const tail = src.slice(idx); // notes/{id}/images/{imgId}
+  const token = localStorage.getItem(TOKEN_KEY) || "";
+  const sep = tail.includes("?") ? "&" : "?";
+  return `${BASE}/${tail}${sep}token=${encodeURIComponent(token)}`;
+}
+
+export function MarkdownRenderer({ children, components, enableHighlight = true, noteId }: MarkdownRendererProps) {
   const markdownComponents: Components = {
     ...components,
+    img({ src, alt, ...props }) {
+      const resolved = resolveNoteImageSrc(typeof src === "string" ? src : "", noteId);
+      return <img src={resolved || src} alt={alt} {...props} />;
+    },
     code({ className, children: codeChildren, ...props }) {
       const code = getTextContent(codeChildren).replace(/\n$/, "");
       const language = getCodeLanguage(className);

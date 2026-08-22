@@ -1,7 +1,7 @@
 """Shared test fixtures for the personal knowledge graph backend."""
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -64,7 +64,7 @@ def mock_session():
 def client(fake_user, mock_session):
     # Defer import to avoid module-level side effects
     from pkg.api.app import app
-    from pkg.api.deps import get_current_user
+    from pkg.api.deps import get_current_user, get_current_user_optional_token
     from pkg.db import get_session
 
     async def override_get_session():
@@ -75,6 +75,7 @@ def client(fake_user, mock_session):
 
     app.dependency_overrides[get_session] = override_get_session
     app.dependency_overrides[get_current_user] = override_get_current_user
+    app.dependency_overrides[get_current_user_optional_token] = override_get_current_user
 
     client = TestClient(app, raise_server_exceptions=False)
     try:

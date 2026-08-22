@@ -1,16 +1,19 @@
 import { useLocation, useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState, useMemo, useRef } from "react";
-import { ArrowLeft, Download, Pencil, Save, X, Trash2, List, FileText, FileDown, Bot, RefreshCw, LinkIcon, BookOpen } from "lucide-react";
+import { useEffect, useState, useMemo, useRef, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { ArrowLeft, Download, Pencil, Save, X, Trash2, List, FileText, FileDown, Bot, RefreshCw, LinkIcon, BookOpen, Bold, Italic, Heading1, Heading2, Heading3, ListChecks, ListOrdered, Quote, Code, SquareCode, Table, Check, Loader2, Sparkles, Wand2, PanelRight, Square, Cpu, Pin, History, ImagePlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { NoteContentRenderer, inferNoteRenderModeFromTags, type NoteRenderMode } from "@/components/NoteContentRenderer";
-import { notesApi, categoriesApi, wikiApi, downloadFile, type NoteUpdate } from "@/lib/api";
+import { notesApi, categoriesApi, wikiApi, knowledgeApi, downloadFile, type NoteUpdate, type Note } from "@/lib/api";
 import { CategorySelect } from "@/components/CategorySelect";
 import { buildAssetHandoffState } from "@/lib/asset-handoff";
+import { NoteAIPanel } from "@/components/NoteAIPanel";
+import { VersionsDialog } from "@/components/VersionsDialog";
+import { buildTitleMessages, buildEnhanceMessages, parseTitleResponse, parseModelSelector, runComplete } from "@/lib/note-ai";
 
 const NOTE_TYPES = ["inbox", "architecture", "case-study", "concept", "how-to", "remember"] as const;
 
@@ -59,6 +62,55 @@ function noteToDraft(note: {
   };
 }
 
+function parseTagsCsv(csv: string): string[] {
+  return csv
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function buildNoteUpdatePayload(
+  draft: ReturnType<typeof noteToDraft>,
+  note: Note
+): NoteUpdate | null {
+  const domains = parseTagsCsv(draft.domainsCsv);
+  const tags = parseTagsCsv(draft.tagsCsv);
+  const payload: NoteUpdate = {};
+  if (draft.title !== note.title) payload.title = draft.title;
+  if (draft.category_id !== note.category_id) payload.category_id = draft.category_id;
+  if (draft.abstract !== (note.abstract ?? "")) payload.abstract = draft.abstract || null;
+  if (draft.content !== (note.content ?? "")) payload.content = draft.content;
+  if (draft.note_type !== note.note_type) payload.note_type = draft.note_type;
+  if (draft.status !== note.status) payload.status = draft.status;
+  if (draft.confidence !== note.confidence) payload.confidence = draft.confidence;
+  if (draft.project !== (note.project ?? "")) payload.project = draft.project || null;
+  const sameDomains =
+    domains.length === note.domains.length && domains.every((d, i) => d === note.domains[i]);
+  const sameTags =
+    tags.length === note.tags.length && tags.every((t, i) => t === note.tags[i]);
+  if (!sameDomains) payload.domains = domains;
+  if (!sameTags) payload.tags = tags;
+  return Object.keys(payload).length > 0 ? payload : null;
+}
+
+function ToolbarButton({ title, onClick, children }: { title: string; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      title={title}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onClick}
+      className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground cursor-pointer"
+    >
+      {children}
+    </button>
+  );
+}
+
+function ToolbarDivider() {
+  return <span className="mx-1 h-5 w-px self-center bg-border" />;
+}
+
 export function NoteDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -76,6 +128,25 @@ export function NoteDetailPage() {
   const [sourceIdInput, setSourceIdInput] = useState("");
   const [queuedRefreshCount, setQueuedRefreshCount] = useState<number | null>(null);
   const previewRef = useRef<HTMLDivElement>(null);
+  const [editorPane, setEditorPane] = useState<"write" | "split" | "preview">("split");
+  const [splitRatio, setSplitRatio] = useState(0.5);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [activeModel, setActiveModel] = useState<string | null>(() => localStorage.getItem("noteActiveModel") || null);
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [titleGenerating, setTitleGenerating] = useState(false);
+  const [enhancing, setEnhancing] = useState(false);
+  const [enhanceDraft, setEnhanceDraft] = useState<string | null>(null);
+  const [enhanceError, setEnhanceError] = useState<string | null>(null);
+  const titleAbortRef = useRef<AbortController | null>(null);
+  const enhanceAbortRef = useRef<AbortController | null>(null);
+  const [versionsOpen, setVersionsOpen] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const [imageUploading, setImageUploading] = useState(false);
+  const contentTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const pendingSelection = useRef<[number, number] | null>(null);
+  const splitContainerRef = useRef<HTMLDivElement>(null);
+  const draggingRef = useRef(false);
+  const wasEditingRef = useRef(false);
 
   const { data: note, isLoading, error } = useQuery({
     queryKey: ["note", id],
@@ -88,6 +159,17 @@ export function NoteDetailPage() {
     queryFn: () => categoriesApi.list(),
   });
   const categories = categoriesData?.items ?? [];
+
+  const { data: modelsData } = useQuery({
+    queryKey: ["knowledge-models"],
+    queryFn: () => knowledgeApi.models(),
+  });
+  const models = modelsData ?? [];
+
+  useEffect(() => {
+    if (activeModel) localStorage.setItem("noteActiveModel", activeModel);
+    else localStorage.removeItem("noteActiveModel");
+  }, [activeModel]);
 
   const sections = useMemo(() => {
     if (!note?.content) return [];
@@ -114,10 +196,307 @@ export function NoteDetailPage() {
   }, [highlightRange]);
 
   useEffect(() => {
-    if (note && editing) {
+    // Initialize the draft only when entering edit mode, so background
+    // refetches (e.g. after autosave) never clobber in-progress edits.
+    if (editing && !wasEditingRef.current && note) {
       setDraft(noteToDraft(note));
+      setEditorPane("split");
+      setAutoSaveStatus("idle");
     }
+    wasEditingRef.current = editing;
   }, [note, editing]);
+
+  // Debounced autosave: persist edits ~1.5s after the user stops changing the draft.
+  useEffect(() => {
+    if (!editing || !draft || !note) return;
+    const payload = buildNoteUpdatePayload(draft, note);
+    if (!payload) {
+      setAutoSaveStatus((prev) => (prev === "saving" ? "idle" : prev));
+      return;
+    }
+    setAutoSaveStatus("saving");
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        await notesApi.update(note.id, payload);
+        if (cancelled) return;
+        queryClient.invalidateQueries({ queryKey: ["note", id] });
+        queryClient.invalidateQueries({ queryKey: ["notes"] });
+        setAutoSaveStatus("saved");
+      } catch {
+        if (cancelled) return;
+        setAutoSaveStatus("error");
+      }
+    }, 1500);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [draft, note, editing, id, queryClient]);
+
+  // Restore the textarea selection after a toolbar insert re-renders the content.
+  useEffect(() => {
+    if (pendingSelection.current && contentTextareaRef.current) {
+      const [start, end] = pendingSelection.current;
+      contentTextareaRef.current.focus();
+      contentTextareaRef.current.setSelectionRange(start, end);
+      pendingSelection.current = null;
+    }
+  }, [draft?.content]);
+
+  // Resizable split-pane drag handling (no extra dependency).
+  useEffect(() => {
+    function onMove(event: MouseEvent) {
+      if (!draggingRef.current || !splitContainerRef.current) return;
+      const rect = splitContainerRef.current.getBoundingClientRect();
+      const ratio = (event.clientX - rect.left) / rect.width;
+      setSplitRatio(Math.min(0.8, Math.max(0.2, ratio)));
+    }
+    function onUp() {
+      draggingRef.current = false;
+      document.body.style.userSelect = "";
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, []);
+
+  const previewRenderMode = useMemo<NoteRenderMode>(() => {
+    if (!draft) return "markdown";
+    return inferNoteRenderModeFromTags(parseTagsCsv(draft.tagsCsv), draft.content || "");
+  }, [draft?.tagsCsv, draft?.content]);
+
+  const contentCounts = useMemo(() => {
+    const text = draft?.content ?? "";
+    const trimmed = text.trim();
+    const words = trimmed ? trimmed.split(/\s+/).length : 0;
+    return { words, chars: text.length };
+  }, [draft?.content]);
+
+  function startSplitDrag(event: ReactMouseEvent) {
+    event.preventDefault();
+    draggingRef.current = true;
+    document.body.style.userSelect = "none";
+  }
+
+  function applyContent(nextValue: string, selection?: [number, number]) {
+    setDraft((d) => (d ? { ...d, content: nextValue } : d));
+    if (selection) pendingSelection.current = selection;
+  }
+
+  function insertMarkdown(kind: string) {
+    const ta = contentTextareaRef.current;
+    if (!ta || !draft) return;
+    const { selectionStart: start, selectionEnd: end, value } = ta;
+    const selected = value.slice(start, end);
+
+    const wrap = (token: string, placeholder: string) => {
+      const text = `${token}${placeholder}${token}`;
+      applyContent(value.slice(0, start) + text + value.slice(end), [
+        start + token.length,
+        start + token.length + placeholder.length,
+      ]);
+    };
+
+    switch (kind) {
+      case "bold":
+        return wrap("**", selected || "bold");
+      case "italic":
+        return wrap("*", selected || "italic");
+      case "code":
+        return wrap("`", selected || "code");
+      case "link": {
+        const placeholder = selected || "text";
+        const text = `[${placeholder}](url)`;
+        const urlStart = start + placeholder.length + 3;
+        applyContent(value.slice(0, start) + text + value.slice(end), [urlStart, urlStart + 3]);
+        return;
+      }
+      case "codeblock": {
+        const placeholder = selected || "code";
+        const text = `\n\`\`\`\n${placeholder}\n\`\`\`\n`;
+        applyContent(value.slice(0, start) + text + value.slice(end), [
+          start + 5,
+          start + 5 + placeholder.length,
+        ]);
+        return;
+      }
+      case "table": {
+        const text = `\n| Column A | Column B |\n| --- | --- |\n| cell | cell |\n`;
+        applyContent(value.slice(0, start) + text + value.slice(end), [
+          start + text.length,
+          start + text.length,
+        ]);
+        return;
+      }
+      case "h1":
+      case "h2":
+      case "h3": {
+        const prefix = kind === "h1" ? "# " : kind === "h2" ? "## " : "### ";
+        const lineStart = value.lastIndexOf("\n", start - 1) + 1;
+        const lineEnd = value.indexOf("\n", start);
+        const endIdx = lineEnd === -1 ? value.length : lineEnd;
+        const line = value.slice(lineStart, endIdx).replace(/^#{1,6}\s+/, "");
+        const newLine = prefix + line;
+        applyContent(value.slice(0, lineStart) + newLine + value.slice(endIdx), [
+          lineStart + newLine.length,
+          lineStart + newLine.length,
+        ]);
+        return;
+      }
+      case "quote":
+      case "bullet":
+      case "task":
+      case "ordered": {
+        const prefixes: Record<string, string> = {
+          quote: "> ",
+          bullet: "- ",
+          task: "- [ ] ",
+          ordered: "1. ",
+        };
+        const prefix = prefixes[kind];
+        const lineStart = value.lastIndexOf("\n", start - 1) + 1;
+        const lineEnd = value.indexOf("\n", start);
+        const endIdx = lineEnd === -1 ? value.length : lineEnd;
+        const line = value.slice(lineStart, endIdx).replace(/^(\s*)(> |- \[ \] \s*|- |\d+\. )/, "$1");
+        const newLine = prefix + line;
+        applyContent(value.slice(0, lineStart) + newLine + value.slice(endIdx), [
+          lineStart + newLine.length,
+          lineStart + newLine.length,
+        ]);
+        return;
+      }
+    }
+  }
+
+  function handleTogglePin() {
+    if (!note) return;
+    notesApi.togglePin(note.id).then(() => {
+      queryClient.invalidateQueries({ queryKey: ["note", id] });
+      queryClient.invalidateQueries({ queryKey: ["notes"] });
+    });
+  }
+
+  async function handleUploadImage(file: File) {
+    if (!note || !draft) return;
+    if (!file.type.startsWith("image/")) return;
+    setImageUploading(true);
+    try {
+      const res = await notesApi.uploadImage(note.id, file);
+      const alt = file.name.replace(/\.[^.]+$/, "");
+      const markdown = `![${alt}](api/notes/${encodeURIComponent(note.id)}/images/${encodeURIComponent(res.id)})`;
+      // Insert at cursor; if no cursor info, append.
+      const ta = contentTextareaRef.current;
+      if (ta) {
+        const { selectionStart: start, value } = ta;
+        const insert = (value && !value.endsWith("\n") ? "\n" : "") + markdown + "\n";
+        applyContent(value.slice(0, start) + insert + value.slice(start), [start + insert.length, start + insert.length]);
+      } else {
+        applyContent((draft.content || "") + "\n" + markdown + "\n");
+      }
+    } catch {
+      /* surfaced via toast if available; keep silent fallback */
+    } finally {
+      setImageUploading(false);
+    }
+  }
+
+  function handleImageDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragOver(false);
+    const files = Array.from(e.dataTransfer.files || []);
+    const image = files.find((f) => f.type.startsWith("image/"));
+    if (image) handleUploadImage(image);
+  }
+
+  function getSelectionText(): string {
+    const ta = contentTextareaRef.current;
+    if (!ta) return "";
+    return ta.value.slice(ta.selectionStart, ta.selectionEnd);
+  }
+
+  function insertAtCursor(text: string) {
+    const ta = contentTextareaRef.current;
+    if (!ta || !draft) return;
+    const { selectionStart: start, value } = ta;
+    const insert = text.endsWith("\n") ? text : text + "\n";
+    applyContent(value.slice(0, start) + insert + value.slice(start), [
+      start + insert.length,
+      start + insert.length,
+    ]);
+  }
+
+  function appendToContent(text: string) {
+    if (!draft) return;
+    const prefix = draft.content && !draft.content.endsWith("\n") ? "\n\n" : "";
+    const next = draft.content + prefix + text;
+    applyContent(next);
+  }
+
+  async function generateTitle() {
+    if (!draft || titleGenerating) return;
+    setTitleGenerating(true);
+    const controller = new AbortController();
+    titleAbortRef.current = controller;
+    try {
+      const { provider_id, model_id } = parseModelSelector(activeModel);
+      const raw = await runComplete(
+        { messages: buildTitleMessages(draft.content), provider_id, model_id },
+        controller.signal,
+      );
+      const title = parseTitleResponse(raw);
+      if (title) setDraft((d) => (d ? { ...d, title } : d));
+    } catch {
+      /* ignored: keep current title */
+    } finally {
+      setTitleGenerating(false);
+      titleAbortRef.current = null;
+    }
+  }
+
+  async function startEnhance() {
+    if (!draft || enhancing) return;
+    setEnhancing(true);
+    setEnhanceDraft("");
+    setEnhanceError(null);
+    const controller = new AbortController();
+    enhanceAbortRef.current = controller;
+    try {
+      const { provider_id, model_id } = parseModelSelector(activeModel);
+      await runComplete(
+        { messages: buildEnhanceMessages(draft.content), provider_id, model_id },
+        controller.signal,
+        (_delta, full) => setEnhanceDraft(full),
+      );
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        setEnhanceError(err instanceof Error ? err.message : "Enhance failed");
+      }
+    } finally {
+      setEnhancing(false);
+      enhanceAbortRef.current = null;
+    }
+  }
+
+  function stopEnhance() {
+    enhanceAbortRef.current?.abort();
+  }
+
+  function applyEnhance() {
+    if (enhanceDraft == null || !draft) return;
+    applyContent(enhanceDraft);
+    setEnhanceDraft(null);
+    setEnhanceError(null);
+  }
+
+  function discardEnhance() {
+    stopEnhance();
+    setEnhanceDraft(null);
+    setEnhanceError(null);
+  }
 
   const saveMutation = useMutation({
     mutationFn: (payload: NoteUpdate) => notesApi.update(id!, payload),
@@ -195,36 +574,9 @@ export function NoteDetailPage() {
     });
   }
 
-  function buildUpdatePayload(): NoteUpdate | null {
-    if (!draft || !note) return null;
-    const domains = draft.domainsCsv
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const tags = draft.tagsCsv
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const payload: NoteUpdate = {};
-    if (draft.title !== note.title) payload.title = draft.title;
-    if (draft.category_id !== note.category_id) payload.category_id = draft.category_id;
-    if (draft.abstract !== (note.abstract ?? "")) payload.abstract = draft.abstract || null;
-    if (draft.content !== (note.content ?? "")) payload.content = draft.content;
-    if (draft.note_type !== note.note_type) payload.note_type = draft.note_type;
-    if (draft.status !== note.status) payload.status = draft.status;
-    if (draft.confidence !== note.confidence) payload.confidence = draft.confidence;
-    if (draft.project !== (note.project ?? "")) payload.project = draft.project || null;
-    const sameDomains =
-      domains.length === note.domains.length && domains.every((d, i) => d === note.domains[i]);
-    const sameTags =
-      tags.length === note.tags.length && tags.every((t, i) => t === note.tags[i]);
-    if (!sameDomains) payload.domains = domains;
-    if (!sameTags) payload.tags = tags;
-    return Object.keys(payload).length > 0 ? payload : null;
-  }
-
   function handleSave() {
-    const payload = buildUpdatePayload();
+    if (!draft || !note) return;
+    const payload = buildNoteUpdatePayload(draft, note);
     if (!payload) {
       setEditing(false);
       setDraft(null);
@@ -245,6 +597,8 @@ export function NoteDetailPage() {
   const cancelEdit = () => {
     setEditing(false);
     setDraft(null);
+    setAiPanelOpen(false);
+    discardEnhance();
   };
 
   const hasSections = sections.length > 1;
@@ -268,18 +622,72 @@ export function NoteDetailPage() {
               >
                 <FileDown className="h-4 w-4" /> Export PDF
               </Button>
+              <Button variant="outline" size="sm" onClick={() => setVersionsOpen(true)} title="Version history">
+                <History className="h-4 w-4" /> History
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleTogglePin}
+                title={note.is_pinned ? "Unpin" : "Pin"}
+                className={note.is_pinned ? "border-primary/40 text-primary" : ""}
+              >
+                <Pin className={`h-4 w-4 ${note.is_pinned ? "fill-primary" : ""}`} /> {note.is_pinned ? "Pinned" : "Pin"}
+              </Button>
               <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" onClick={() => setDeleteOpen(true)}>
                 <Trash2 className="h-4 w-4" /> Delete
               </Button>
             </>
           ) : (
             <>
+              <div className="flex items-center gap-1.5 rounded-full border border-border px-2 py-0.5">
+                <Cpu className="h-3.5 w-3.5 text-muted-foreground" />
+                <select
+                  value={activeModel ?? ""}
+                  onChange={(e) => setActiveModel(e.target.value || null)}
+                  className="bg-transparent text-xs text-muted-foreground outline-none cursor-pointer py-0.5 max-w-[180px]"
+                >
+                  <option value="">System Default</option>
+                  {(() => {
+                    const groups = new Map<string, typeof models>();
+                    for (const m of models) {
+                      if (!groups.has(m.provider_id)) groups.set(m.provider_id, []);
+                      groups.get(m.provider_id)!.push(m);
+                    }
+                    return [...groups.entries()].map(([providerId, items]) => (
+                      <optgroup key={providerId} label={items[0].provider_name}>
+                        {items.map((m) => (
+                          <option key={`${providerId}:${m.id}`} value={`${providerId}:${m.id}`}>
+                            {m.display_name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ));
+                  })()}
+                </select>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => setAiPanelOpen((v) => !v)} title="AI assistant">
+                <PanelRight className="h-4 w-4" /> AI
+              </Button>
+              <span className="ml-auto flex items-center gap-1 text-xs text-muted-foreground">
+                {autoSaveStatus === "saving" && (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin" /> Saving…
+                  </>
+                )}
+                {autoSaveStatus === "saved" && (
+                  <>
+                    <Check className="h-3 w-3 text-emerald-500" /> Saved
+                  </>
+                )}
+                {autoSaveStatus === "error" && <span className="text-destructive">Save failed</span>}
+              </span>
               <Button
                 size="sm"
                 onClick={handleSave}
                 disabled={saveMutation.isPending || !draft?.title.trim()}
               >
-                <Save className="h-4 w-4" /> {saveMutation.isPending ? "Saving…" : "Save"}
+                <Save className="h-4 w-4" /> {saveMutation.isPending ? "Saving…" : "Done"}
               </Button>
               <Button variant="outline" size="sm" onClick={cancelEdit} disabled={saveMutation.isPending}>
                 <X className="h-4 w-4" /> Cancel
@@ -467,11 +875,25 @@ export function NoteDetailPage() {
               <div className="space-y-4">
                 <div>
                   <label className="text-xs font-medium text-muted-foreground">Title</label>
-                  <Input
-                    value={draft.title}
-                    onChange={(e) => setDraft((d) => (d ? { ...d, title: e.target.value } : d))}
-                    className="mt-1 text-lg font-semibold"
-                  />
+                  <div className="mt-1 flex gap-2">
+                    <Input
+                      value={draft.title}
+                      onChange={(e) => setDraft((d) => (d ? { ...d, title: e.target.value } : d))}
+                      placeholder={titleGenerating ? "Generating…" : undefined}
+                      className="text-lg font-semibold"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      title="Generate title with AI"
+                      onClick={generateTitle}
+                      disabled={titleGenerating}
+                      className="shrink-0"
+                    >
+                      {titleGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                    </Button>
+                  </div>
                 </div>
                 <div>
                   <label className="text-xs font-medium text-muted-foreground">Abstract</label>
@@ -552,13 +974,95 @@ export function NoteDetailPage() {
                   </p>
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground">Content (Markdown)</label>
-                  <Textarea
-                    value={draft.content}
-                    onChange={(e) => setDraft((d) => (d ? { ...d, content: e.target.value } : d))}
-                    rows={24}
-                    className="mt-1 font-mono text-sm"
-                  />
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-xs font-medium text-muted-foreground">Content (Markdown)</label>
+                    <div className="flex items-center gap-0.5 rounded-md border border-border p-0.5">
+                      {(["write", "split", "preview"] as const).map((mode) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => setEditorPane(mode)}
+                          className={`cursor-pointer rounded px-2 py-0.5 text-[11px] capitalize transition-colors ${
+                            editorPane === mode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent"
+                          }`}
+                        >
+                          {mode}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {(editorPane === "write" || editorPane === "split") && (
+                    <div className="mt-1 flex flex-wrap items-center gap-0.5 rounded-md border border-border bg-muted/30 p-1">
+                      <ToolbarButton title="Bold" onClick={() => insertMarkdown("bold")}><Bold className="h-4 w-4" /></ToolbarButton>
+                      <ToolbarButton title="Italic" onClick={() => insertMarkdown("italic")}><Italic className="h-4 w-4" /></ToolbarButton>
+                      <ToolbarButton title="Inline code" onClick={() => insertMarkdown("code")}><Code className="h-4 w-4" /></ToolbarButton>
+                      <ToolbarDivider />
+                      <ToolbarButton title="Heading 1" onClick={() => insertMarkdown("h1")}><Heading1 className="h-4 w-4" /></ToolbarButton>
+                      <ToolbarButton title="Heading 2" onClick={() => insertMarkdown("h2")}><Heading2 className="h-4 w-4" /></ToolbarButton>
+                      <ToolbarButton title="Heading 3" onClick={() => insertMarkdown("h3")}><Heading3 className="h-4 w-4" /></ToolbarButton>
+                      <ToolbarDivider />
+                      <ToolbarButton title="Bulleted list" onClick={() => insertMarkdown("bullet")}><List className="h-4 w-4" /></ToolbarButton>
+                      <ToolbarButton title="Task list" onClick={() => insertMarkdown("task")}><ListChecks className="h-4 w-4" /></ToolbarButton>
+                      <ToolbarButton title="Numbered list" onClick={() => insertMarkdown("ordered")}><ListOrdered className="h-4 w-4" /></ToolbarButton>
+                      <ToolbarButton title="Quote" onClick={() => insertMarkdown("quote")}><Quote className="h-4 w-4" /></ToolbarButton>
+                      <ToolbarDivider />
+                      <ToolbarButton title="Link" onClick={() => insertMarkdown("link")}><LinkIcon className="h-4 w-4" /></ToolbarButton>
+                      <ToolbarButton title="Code block" onClick={() => insertMarkdown("codeblock")}><SquareCode className="h-4 w-4" /></ToolbarButton>
+                      <ToolbarButton title="Table" onClick={() => insertMarkdown("table")}><Table className="h-4 w-4" /></ToolbarButton>
+                      <ToolbarDivider />
+                      <ToolbarButton title="Enhance with AI" onClick={startEnhance}><Wand2 className="h-4 w-4" /></ToolbarButton>
+                    </div>
+                  )}
+
+                  <div
+                    ref={splitContainerRef}
+                    onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                    onDragLeave={() => setDragOver(false)}
+                    onDrop={handleImageDrop}
+                    className={`mt-1 relative flex h-[60vh] overflow-hidden rounded-md border border-border ${dragOver ? "border-primary ring-2 ring-primary/30" : ""}`}
+                  >
+                    {dragOver && (
+                      <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-primary/10 text-sm font-medium text-primary">
+                        <ImagePlus className="mr-2 h-5 w-5" /> Drop image to insert
+                      </div>
+                    )}
+                    {(editorPane === "write" || editorPane === "split") && (
+                      <div
+                        style={{ width: editorPane === "split" ? `${splitRatio * 100}%` : "100%" }}
+                        className="flex min-w-0 flex-col"
+                      >
+                        <Textarea
+                          ref={contentTextareaRef}
+                          value={draft.content}
+                          onChange={(e) => setDraft((d) => (d ? { ...d, content: e.target.value } : d))}
+                          placeholder="Write your note in markdown…"
+                          className="min-h-0 flex-1 resize-none rounded-none border-0 font-mono text-sm focus-visible:ring-0"
+                        />
+                      </div>
+                    )}
+                    {editorPane === "split" && (
+                      <div
+                        onMouseDown={startSplitDrag}
+                        className="w-1 shrink-0 cursor-col-resize bg-border transition-colors hover:bg-primary/40"
+                      />
+                    )}
+                    {(editorPane === "preview" || editorPane === "split") && (
+                      <div
+                        style={{ width: editorPane === "split" ? `${(1 - splitRatio) * 100}%` : "100%" }}
+                        className="min-w-0 overflow-y-auto bg-background"
+                      >
+                        <div className="prose prose-sm max-w-none p-4">
+                          <NoteContentRenderer content={draft.content || ""} mode={previewRenderMode} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-1 flex items-center justify-between text-[11px] text-muted-foreground">
+                    <span>{contentCounts.words} words · {contentCounts.chars} chars</span>
+                    {autoSaveStatus === "error" && <span className="text-destructive">Last autosave failed</span>}
+                  </div>
                 </div>
                 {saveMutation.isError && (
                   <p className="text-sm text-destructive">
@@ -589,7 +1093,7 @@ export function NoteDetailPage() {
                   </div>
                 )}
                 <div className="prose max-h-[70vh] overflow-y-auto">
-                  <NoteContentRenderer content={note.content || ""} mode={renderMode} />
+                  <NoteContentRenderer content={note.content || ""} mode={renderMode} noteId={note.id} />
                 </div>
               </>
             ) : (
@@ -775,6 +1279,66 @@ export function NoteDetailPage() {
           )}
         </div>
       </div>
+
+      <VersionsDialog
+        open={versionsOpen}
+        onOpenChange={setVersionsOpen}
+        noteId={note.id}
+        onRestored={() => {
+          queryClient.invalidateQueries({ queryKey: ["note", id] });
+          setEditing(false);
+          setDraft(null);
+        }}
+      />
+
+      <Dialog open={enhanceDraft !== null} onOpenChange={(o) => { if (!o) discardEnhance(); }}>
+        <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Wand2 className="h-4 w-4" /> AI Enhance
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto rounded-md border border-border p-4">
+            {enhanceDraft ? (
+              <div className="prose prose-sm max-w-none">
+                <NoteContentRenderer content={enhanceDraft} mode="markdown" />
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">Generating…</p>
+            )}
+            {enhanceError && <p className="mt-2 text-sm text-destructive">{enhanceError}</p>}
+          </div>
+          <div className="flex items-center justify-between pt-3">
+            <span className="text-xs text-muted-foreground">
+              {enhancing ? "Streaming rewrite…" : "Review the enhanced note before applying."}
+            </span>
+            <div className="flex gap-2">
+              {enhancing ? (
+                <Button variant="destructive" size="sm" onClick={stopEnhance}>
+                  <Square className="h-3.5 w-3.5 fill-current" /> Stop
+                </Button>
+              ) : (
+                <>
+                  <Button variant="outline" size="sm" onClick={discardEnhance}>Discard</Button>
+                  <Button size="sm" onClick={applyEnhance} disabled={!enhanceDraft}>
+                    <Check className="h-3.5 w-3.5" /> Apply
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <NoteAIPanel
+        open={aiPanelOpen}
+        onClose={() => setAiPanelOpen(false)}
+        activeModel={activeModel}
+        noteTitle={draft?.title ?? note?.title ?? ""}
+        getSelection={getSelectionText}
+        onInsert={insertAtCursor}
+        onAppend={appendToContent}
+      />
 
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <DialogContent>

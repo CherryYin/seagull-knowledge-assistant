@@ -27,7 +27,7 @@ export function inferNoteRenderModeFromTags(tags: string[] | undefined, content:
   return inferNoteRenderMode(content);
 }
 
-export function NoteContentRenderer({ content, mode }: { content: string; mode: NoteRenderMode }) {
+export function NoteContentRenderer({ content, mode, noteId }: { content: string; mode: NoteRenderMode; noteId?: string }) {
   if (mode === "raw") {
     return <pre className="whitespace-pre-wrap font-mono text-sm leading-6">{content || "*No content*"}</pre>;
   }
@@ -82,5 +82,5 @@ export function NoteContentRenderer({ content, mode }: { content: string; mode: 
     );
   }
 
-  return <MarkdownRenderer>{content || "*No content*"}</MarkdownRenderer>;
+  return <MarkdownRenderer noteId={noteId}>{content || "*No content*"}</MarkdownRenderer>;
 }

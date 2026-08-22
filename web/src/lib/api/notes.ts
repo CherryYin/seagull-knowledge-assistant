@@ -18,8 +18,25 @@ export interface Note {
   word_count?: number | null;
   expires_at?: string | null;
   kept_at?: string | null;
+  is_pinned?: boolean;
+  content_versions?: { title?: string | null; content: string; created_at: string }[] | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface NoteVersion {
+  index: number;
+  title?: string | null;
+  content: string;
+  created_at: string;
+}
+
+export interface NoteImageResponse {
+  id: string;
+  note_id: string;
+  url: string;
+  content_type?: string | null;
+  filename?: string | null;
 }
 
 export interface NoteList {
@@ -39,6 +56,7 @@ export interface NoteCreate {
   status?: string;
   confidence?: string;
   source_ids?: string[];
+  is_pinned?: boolean;
 }
 
 export interface DigestMergeRequest {
@@ -100,4 +118,15 @@ export const notesApi = {
     }),
   exportPdf: (id: string, title?: string) =>
     downloadFile(`/notes/${encodeURIComponent(id)}/export/pdf`, `${title || "note"}.pdf`),
+  togglePin: (id: string) =>
+    request<Note>(`/notes/${encodeURIComponent(id)}/pin`, { method: "POST" }),
+  versions: (id: string) =>
+    request<NoteVersion[]>(`/notes/${encodeURIComponent(id)}/versions`),
+  restoreVersion: (id: string, versionIdx: number) =>
+    request<Note>(`/notes/${encodeURIComponent(id)}/versions/${versionIdx}/restore`, { method: "POST" }),
+  uploadImage: (id: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<NoteImageResponse>(`/notes/${encodeURIComponent(id)}/images`, { method: "POST", body: form });
+  },
 };

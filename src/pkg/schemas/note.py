@@ -50,8 +50,17 @@ class NoteRead(BaseModel):
     word_count: int | None = None
     expires_at: datetime | None = None
     kept_at: datetime | None = None
+    is_pinned: bool = False
+    content_versions: list[dict] | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class NoteVersion(BaseModel):
+    index: int
+    title: str | None = None
+    content: str
+    created_at: datetime
 
 
 class NoteList(BaseModel):
@@ -76,6 +85,7 @@ class NoteUpdate(BaseModel):
     status: str | None = None
     confidence: str | None = None
     source_ids: list[str] | None = None
+    is_pinned: bool | None = None
 
 
 class DigestMergeRequest(BaseModel):
@@ -97,3 +107,11 @@ class SearchResult(BaseModel):
     score: float
     abstract: str | None = None
     content_preview: str | None = None
+
+
+class NoteImageResponse(BaseModel):
+    id: str
+    note_id: str
+    url: str
+    content_type: str | None = None
+    filename: str | None = None
