@@ -17,7 +17,6 @@ from pkg.services.foundation.connector_cache import connector_cache_key
 from pkg.services.foundation.discovery_imports import domain_from_url, import_discovery_item, normalize_http_url
 from pkg.services.foundation.discovery_profile import load_discovery_preferences, load_discovery_profile
 from pkg.services.foundation.discovery_scoring import candidate_summary, candidate_url, score_candidate
-from pkg.services.foundation.source_memory import maybe_upsert_source_memory_node
 
 
 def _utc_now_naive() -> datetime:
@@ -468,5 +467,4 @@ __all__ = [
     "import_github_repo",
     "ingest_web_discovery_results",
     "search_external_web_results",
-    "maybe_upsert_source_memory_node",
 ]

@@ -23,7 +23,7 @@ from pkg.models.user import User
 from pkg.schemas.source import ChunkRead, SourceCreate, SourceList, SourceRead, SourceUpdate
 from pkg.services.foundation.chunking import chunk_text
 from pkg.services.cross_cutting.embedding import get_embedding_service
-from pkg.services.foundation.source_memory import delete_source_memory_derivatives, maybe_upsert_source_memory_node
+from pkg.services.foundation.source_memory import delete_source_memory_derivatives
 from pkg.services.cross_cutting.storage import get_storage_service
 from pkg.services.foundation.web_extractor import WebPageFetchError, fetch_web_page
 
@@ -226,11 +226,6 @@ async def persist_source(
     session.add(source)
 
     await upsert_source_embeddings(session, source)
-
-    try:
-        await maybe_upsert_source_memory_node(session, source)
-    except Exception:
-        logger.error("Source memory generation failed for source %s", source_id, exc_info=True)
 
     try:
         await session.commit()
@@ -708,10 +703,6 @@ async def retry_source_extraction(
     source.metadata_ = metadata
 
     await upsert_source_embeddings(session, source)
-    try:
-        await maybe_upsert_source_memory_node(session, source)
-    except Exception:
-        logger.error("Source memory regeneration failed for source %s", source_id, exc_info=True)
     await session.commit()
     await session.refresh(source)
     return source

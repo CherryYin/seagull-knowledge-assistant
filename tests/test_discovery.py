@@ -408,8 +408,7 @@ async def test_save_openalex_discovery_item_imports_article_source():
         },
     )
 
-    with patch("pkg.services.foundation.discovery.maybe_upsert_source_memory_node", new_callable=AsyncMock) as mock_upsert:
-        source, created = await apply_discovery_feedback(session, item=item, action="save")
+    source, created = await apply_discovery_feedback(session, item=item, action="save")
 
     assert created is True
     assert source.id.startswith("src-paper-")
@@ -420,7 +419,6 @@ async def test_save_openalex_discovery_item_imports_article_source():
     assert item.status == "saved"
     assert item.source_id == source.id
     assert session.add.call_args_list[0].args[0] == source
-    mock_upsert.assert_awaited_once_with(session, source)
 
 
 @pytest.mark.asyncio

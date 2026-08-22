@@ -292,13 +292,6 @@ async def _update_source_content(
             source.id, exc_info=True,
         )
 
-    try:
-        from pkg.services.foundation.source_memory import maybe_upsert_source_memory_node
-
-        await maybe_upsert_source_memory_node(session, source)
-    except Exception:
-        logger.error("Source memory generation failed for source %s", source.id, exc_info=True)
-
 
 async def fetch_single_feed(feed_source: Source, session: AsyncSession) -> int:
     """Fetch a single RSS feed and persist new articles. Returns count of new articles."""

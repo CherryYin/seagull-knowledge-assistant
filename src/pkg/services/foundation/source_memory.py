@@ -46,15 +46,6 @@ def source_memory_node_id(source_id: str) -> str:
     return f"mem-source-{source_id}"
 
 
-async def maybe_upsert_source_memory_node(
-    session: AsyncSession,
-    source: Source,
-) -> MemoryNode | None:
-    """Keep legacy ingestion callers inert after Source Memory retirement."""
-    logger.info("Skipping retired automatic source memory generation for %s", source.id)
-    return None
-
-
 async def delete_source_memory_derivatives(
     session: AsyncSession,
     *,

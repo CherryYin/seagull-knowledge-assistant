@@ -428,10 +428,7 @@ async def test_import_github_repo_updates_existing_source():
         readme="# README",
     )
 
-    with (
-        patch("pkg.services.foundation.connectors.maybe_upsert_source_memory_node", new_callable=AsyncMock) as mock_memory,
-        patch("pkg.services.foundation.connectors.upsert_source_embeddings", new_callable=AsyncMock) as mock_embeddings,
-    ):
+    with patch("pkg.services.foundation.connectors.upsert_source_embeddings", new_callable=AsyncMock) as mock_embeddings:
         source, created, dedupe_key = await import_github_repo(mock_session, user_id="user-1", repo=repo)
 
     assert source is existing
@@ -447,7 +444,6 @@ async def test_import_github_repo_updates_existing_source():
     assert "Language: TypeScript" in existing.metadata_["embedding_text"]
     assert "Topics: agents" in existing.metadata_["embedding_text"]
     mock_embeddings.assert_awaited_once_with(mock_session, existing)
-    mock_memory.assert_awaited_once_with(mock_session, existing)
 
 
 def test_canonicalize_news_url_removes_tracking_params():

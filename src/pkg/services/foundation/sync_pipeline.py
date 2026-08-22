@@ -11,7 +11,6 @@ from pkg.models.foundation.note import Note, NoteEmbedding
 from pkg.models.foundation.source import Source, SourceChunk, SourceEmbedding
 from pkg.services.foundation.chunking import chunk_text
 from pkg.services.cross_cutting.embedding import get_embedding_service
-from pkg.services.foundation.source_memory import maybe_upsert_source_memory_node
 
 
 def _content_hash(content: str) -> str:
@@ -269,14 +268,6 @@ async def sync_sources_from_directory(
 
         # Generate chunks for long documents
         await _generate_chunks(session, emb, source_id, content)
-
-        try:
-            await maybe_upsert_source_memory_node(session, source)
-        except Exception:
-            import logging
-            logging.getLogger(__name__).warning(
-                "Source memory generation failed for %s", source_id, exc_info=True
-            )
 
     await session.commit()
     return stats

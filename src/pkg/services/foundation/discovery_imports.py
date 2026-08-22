@@ -96,8 +96,6 @@ def paper_raw_content(item: DiscoveryItem, payload: dict) -> str:
 
 
 async def import_external_paper_discovery_item(session: AsyncSession, item: DiscoveryItem, payload: dict) -> tuple[Source, bool, str]:
-    from pkg.services.foundation.discovery import maybe_upsert_source_memory_node
-
     if not item.title:
         raise ValueError("Discovery item does not contain a paper title to import")
     source_id = paper_source_id(item.user_id, item.provider, item.item_key)
@@ -135,7 +133,6 @@ async def import_external_paper_discovery_item(session: AsyncSession, item: Disc
         existing.url = payload.get("url") or item.url
         existing.raw_content = raw_content
         existing.metadata_ = {**(existing.metadata_ or {}), **metadata}
-        await maybe_upsert_source_memory_node(session, existing)
         return existing, False, dedupe_key
 
     source = Source(
@@ -150,13 +147,10 @@ async def import_external_paper_discovery_item(session: AsyncSession, item: Disc
         metadata_=metadata,
     )
     session.add(source)
-    await maybe_upsert_source_memory_node(session, source)
     return source, True, dedupe_key
 
 
 async def import_web_discovery_item(session: AsyncSession, item: DiscoveryItem, payload: dict) -> tuple[Source, bool, str]:
-    from pkg.services.foundation.discovery import maybe_upsert_source_memory_node
-
     url = normalize_http_url(str(payload.get("url") or item.url or "").strip())
     if not url:
         raise ValueError("Discovery item does not contain a valid http(s) URL to import")
@@ -189,10 +183,6 @@ async def import_web_discovery_item(session: AsyncSession, item: DiscoveryItem, 
         existing.url = url
         existing.raw_content = raw_content
         existing.metadata_ = {**(existing.metadata_ or {}), **metadata}
-        try:
-            await maybe_upsert_source_memory_node(session, existing)
-        except Exception:
-            pass
         return existing, False, dedupe_key
 
     source = Source(
@@ -207,8 +197,4 @@ async def import_web_discovery_item(session: AsyncSession, item: DiscoveryItem, 
         metadata_=metadata,
     )
     session.add(source)
-    try:
-        await maybe_upsert_source_memory_node(session, source)
-    except Exception:
-        pass
     return source, True, dedupe_key
