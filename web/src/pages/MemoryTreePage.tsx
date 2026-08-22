@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { memoryApi, wikiApi, type MemoryNode } from "@/lib/api";
+import { memoryApi, type MemoryNode } from "@/lib/api";
 import { getMemoryFamily, getMemoryRole } from "@/lib/memoryRole";
 import {
   getMemoryLastUsedAction,
@@ -97,17 +97,6 @@ export function MemoryTreePage() {
     onSuccess: (node) => {
       queryClient.invalidateQueries({ queryKey: ["memory-nodes"] });
       setSelectedId(node.id);
-    },
-  });
-
-  const createWikiDraftMutation = useMutation({
-    mutationFn: ({ id, title }: { id: string; title: string }) =>
-      wikiApi.createFromMemory({ memory_node_id: id, title, page_type: "topic" }),
-    onSuccess: (page) => {
-      queryClient.invalidateQueries({ queryKey: ["wiki-pages"] });
-      navigate(`/wiki/${encodeURIComponent(page.id)}`, {
-        state: { backTo: "/memory", backLabel: "Back to Knowledge Tree" },
-      });
     },
   });
 
@@ -287,7 +276,6 @@ export function MemoryTreePage() {
                   onArchive={() => updateMutation.mutate({ id: selectedNode.id, body: { status: "archived" } })}
                   onRestore={() => updateMutation.mutate({ id: selectedNode.id, body: { status: "active" } })}
                   onReject={() => updateMutation.mutate({ id: selectedNode.id, body: { status: "rejected" } })}
-                  onCreateWikiDraft={() => createWikiDraftMutation.mutate({ id: selectedNode.id, title: selectedNode.title })}
                   onAskAgent={() =>
                     navigate("/chat", {
                       state: {
@@ -475,7 +463,6 @@ function MemoryDetail({
   onArchive,
   onRestore,
   onReject,
-  onCreateWikiDraft,
   onAskAgent,
   onCreateAsset,
   onCreateBrief,
@@ -494,7 +481,6 @@ function MemoryDetail({
   onArchive: () => void;
   onRestore: () => void;
   onReject: () => void;
-  onCreateWikiDraft: () => void;
   onAskAgent: () => void;
   onCreateAsset: () => void;
   onCreateBrief: () => void;
@@ -520,11 +506,8 @@ function MemoryDetail({
       </div>
       <div className="rounded-lg border p-3">
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Next Step</p>
-        <p className="mt-1 text-sm text-muted-foreground">Use the quickest action for this node: draft a wiki page, turn it into an asset, or ask the agent to reason over it.</p>
+        <p className="mt-1 text-sm text-muted-foreground">Use the quickest action for this legacy node: turn its original provenance into an asset, or ask the agent to reason over it.</p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Button variant="outline" onClick={onCreateWikiDraft}>
-            <FileText className="h-4 w-4" /> Create Wiki Draft
-          </Button>
           <Button variant="outline" onClick={onAskAgent}>
             <Bot className="h-4 w-4" /> Ask Agent
           </Button>

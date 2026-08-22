@@ -93,13 +93,6 @@ class WikiCompileRequest(BaseModel):
     instructions: str | None = None
 
 
-class WikiFromMemoryRequest(BaseModel):
-    memory_node_id: str
-    title: str | None = None
-    page_type: str = Field(default="topic", pattern=r"^(topic|entity|concept|project|comparison)$")
-    tags: list[str] = []
-
-
 class WikiUpdateDraftFromMemoryRequest(BaseModel):
     wiki_id: str
     memory_node_id: str

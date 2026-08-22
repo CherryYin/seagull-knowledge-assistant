@@ -4,9 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from pkg.api.wiki import compile_wiki_page, create_wiki_draft_from_memory
-from pkg.models.memory import MemoryNode
-from pkg.schemas.wiki import WikiCompileRequest, WikiFromMemoryRequest
+from pkg.api.wiki import compile_wiki_page
+from pkg.schemas.wiki import WikiCompileRequest
 
 
 @pytest.mark.asyncio
@@ -340,58 +339,6 @@ class TestListWikiPages:
         assert resp.status_code == 200
         assert resp.json()["total"] == 1
         assert resp.json()["items"][0]["id"] == "wiki-1"
-
-
-class TestCreateWikiDraftFromMemory:
-    @pytest.mark.asyncio
-    @patch("pkg.api.wiki.persist_wiki_page", new_callable=AsyncMock)
-    async def test_success(self, mock_persist, mock_session, fake_user):
-        memory = MemoryNode(
-            id="mem-topic-ai",
-            user_id=fake_user.id,
-            node_type="topic",
-            scope_id="ai",
-            level="topic",
-            title="Topic Memory - AI Coding",
-            summary="AI coding summary",
-            content="# AI Coding\n\nStable conclusions.",
-            child_node_ids=[],
-            derived_from_notes=["note-1"],
-            derived_from_sources=["src-1"],
-            derived_from_chunks=[],
-            metadata_={},
-            confidence_score=0.8,
-        )
-        wiki = _make_wiki("wiki-ai-coding", fake_user.id)
-        wiki.title = "AI Coding"
-        wiki.tags = ["draft", "from-memory", "topic-memory"]
-        mock_session.get.return_value = memory
-        mock_persist.return_value = wiki
-
-        result = await create_wiki_draft_from_memory(
-            WikiFromMemoryRequest(memory_node_id="mem-topic-ai", title="AI Coding"),
-            user=fake_user,
-            session=mock_session,
-        )
-
-        assert result.id == "wiki-ai-coding"
-        mock_persist.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_rejects_non_topic_memory(self, mock_session, fake_user):
-        memory = MagicMock(spec=[])
-        memory.id = "mem-source-src-1"
-        memory.user_id = fake_user.id
-        memory.node_type = "source"
-        mock_session.get.return_value = memory
-
-        with pytest.raises(Exception) as exc_info:
-            await create_wiki_draft_from_memory(
-                WikiFromMemoryRequest(memory_node_id="mem-source-src-1"),
-                user=fake_user,
-                session=mock_session,
-            )
-        assert getattr(exc_info.value, "status_code") == 422
 
 
 class TestListWikiUpdateDrafts:

@@ -29,7 +29,6 @@ from pkg.schemas.wiki import (
     WikiCandidateNoteConversionRead,
     WikiCloneDraftRequest,
     WikiCompileRequest,
-    WikiFromMemoryRequest,
     WikiUpdateDraftFromMemoryRequest,
     WikiUpdateDraftFromSourceRequest,
     WikiInsightCandidateRead,
@@ -733,44 +732,6 @@ async def compile_wiki_page(
     return wiki
 
 
-@router.post("/from-memory", response_model=WikiPageRead, status_code=201)
-async def create_wiki_draft_from_memory(
-    body: WikiFromMemoryRequest,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-):
-    """Create a wiki draft from topic memory.
-
-    This is a draft/stable-knowledge handoff from compiled memory, not a raw
-    summary step and not an automatic overwrite of an existing stable wiki.
-    """
-
-    memory = await session.get(MemoryNode, body.memory_node_id)
-    if not memory or memory.user_id != user.id:
-        raise HTTPException(status_code=404, detail="Memory node not found")
-    if memory.node_type != "topic":
-        raise HTTPException(status_code=422, detail="Only topic memory can be converted into a wiki draft")
-
-    title = body.title or _wiki_title_from_memory(memory)
-    tags = _merge_unique([*body.tags, "wiki-draft", "from-memory", "topic-memory"])
-    content = _wiki_draft_content_from_memory(memory)
-    wiki = await persist_wiki_page(
-        session=session,
-        body=WikiPageCreate(
-            title=title,
-            page_type=body.page_type,
-            summary=memory.summary,
-            content=content,
-            derived_from_notes=memory.derived_from_notes,
-            derived_from_sources=memory.derived_from_sources,
-            tags=tags,
-            confidence_score=memory.confidence_score,
-        ),
-        user_id=user.id,
-    )
-    return wiki
-
-
 @router.post("/update-drafts/from-memory", response_model=WikiArticleDraftRead, status_code=201)
 async def create_wiki_update_draft_from_memory(
     body: WikiUpdateDraftFromMemoryRequest,
@@ -952,11 +913,6 @@ async def create_wiki_update_draft_from_source(
     return article
 
 
-def _wiki_title_from_memory(memory: MemoryNode) -> str:
-    title = memory.title.removeprefix("Topic Memory - ").strip()
-    return title or memory.title
-
-
 def _trim_text(value: str | None, limit: int = 1200) -> str:
     text = (value or "").strip()
     if not text:
@@ -992,23 +948,6 @@ def _extract_section_excerpt(content: str | None, section: str, limit: int = 120
 
     excerpt = "\n".join(collected).strip()
     return _trim_text(excerpt or text, limit=limit)
-
-
-def _wiki_draft_content_from_memory(memory: MemoryNode) -> str:
-    return (
-        f"# {_wiki_title_from_memory(memory)}\n\n"
-        "<!-- Draft generated from Topic Memory. Review before promoting to stable wiki. -->\n\n"
-        "## Overview\n\n"
-        f"{memory.content}\n\n"
-        "## Background and Context\n\n"
-        "Expand this draft into a readable wiki article. Explain the topic in prose, clarify key ideas, and keep factual claims grounded in supporting evidence.\n\n"
-        "## References To Review\n\n"
-        + "\n".join(f"- `{source_id}`" for source_id in memory.derived_from_sources)
-        + "\n\n## Open Questions\n\n"
-        "- Which claims still need stronger evidence?\n"
-        "- Which paragraphs should be rewritten for clarity or neutrality?\n"
-        "- What should be added before promoting this draft to stable?\n"
-    )
 
 
 def _merge_unique(values: list[str]) -> list[str]:

@@ -84,13 +84,6 @@ export interface WikiCompileRequest {
   instructions?: string | null;
 }
 
-export interface WikiFromMemoryRequest {
-  memory_node_id: string;
-  title?: string | null;
-  page_type?: string;
-  tags?: string[];
-}
-
 export interface WikiUpdateDraftFromMemoryRequest {
   wiki_id: string;
   memory_node_id: string;
@@ -265,9 +258,6 @@ export const wikiApi = {
     }),
   compile: (body: WikiCompileRequest) =>
     request<WikiPage>("/wiki/compile", { method: "POST", body: JSON.stringify(body) }),
-  // Creates a wiki draft from compiled topic memory.
-  createFromMemory: (body: WikiFromMemoryRequest) =>
-    request<WikiPage>("/wiki/from-memory", { method: "POST", body: JSON.stringify(body) }),
   createUpdateDraftFromMemory: (body: WikiUpdateDraftFromMemoryRequest) =>
     request<WikiArticleDraft>("/wiki/update-drafts/from-memory", {
       method: "POST",
