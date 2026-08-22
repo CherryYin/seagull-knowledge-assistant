@@ -43,12 +43,20 @@ export function WikiSuggestionsPage() {
   });
 
   const createUpdateDraftMutation = useMutation({
-    mutationFn: ({ wikiId, memoryNodeId }: { wikiId: string; memoryNodeId: string }) =>
-      wikiApi.createUpdateDraftFromMemory({
+    mutationFn: ({ wikiId, triggerType, triggerId }: { wikiId: string; triggerType: string; triggerId: string }) => {
+      if (triggerType === "source") {
+        return wikiApi.createUpdateDraftFromSource({
+          wiki_id: wikiId,
+          source_id: triggerId,
+          section: "Open Questions",
+        });
+      }
+      return wikiApi.createUpdateDraftFromMemory({
         wiki_id: wikiId,
-        memory_node_id: memoryNodeId,
+        memory_node_id: triggerId,
         section: "Open Questions",
-      }),
+      });
+    },
     onSuccess: (draft) => {
       queryClient.invalidateQueries({ queryKey: ["wiki-suggestions"] });
       queryClient.invalidateQueries({ queryKey: ["wiki-mining-runs"] });
@@ -170,7 +178,8 @@ export function WikiSuggestionsPage() {
                 onCreateUpdateDraft={() =>
                   createUpdateDraftMutation.mutate({
                     wikiId: suggestion.wiki_id,
-                    memoryNodeId: suggestion.trigger_id,
+                    triggerType: suggestion.trigger_type,
+                    triggerId: suggestion.trigger_id,
                   })
                 }
               />
@@ -539,7 +548,7 @@ function SuggestionCard({
   onCreateUpdateDraft: () => void;
 }) {
   const score = typeof suggestion.metadata_?.score === "number" ? suggestion.metadata_.score : null;
-  const canCreateMemoryUpdateDraft = suggestion.trigger_type === "memory" && !!suggestion.trigger_id;
+  const canCreateUpdateDraft = ["source", "memory"].includes(suggestion.trigger_type) && !!suggestion.trigger_id;
   return (
     <div className="rounded-lg border border-border bg-card p-4">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -575,7 +584,7 @@ function SuggestionCard({
               <Button size="sm" variant="outline" onClick={onReject} disabled={isUpdating}>
                 <XCircle className="mr-1 h-4 w-4" /> Dismiss
               </Button>
-              {canCreateMemoryUpdateDraft && (
+              {canCreateUpdateDraft && (
                 <Button size="sm" variant="outline" onClick={onCreateUpdateDraft} disabled={isCreatingUpdateDraft}>
                   <FileSearch className="mr-1 h-4 w-4" /> {isCreatingUpdateDraft ? "Creating…" : "Create Update Draft"}
                 </Button>
@@ -590,7 +599,7 @@ function SuggestionCard({
           )}
           {suggestion.status === "accepted" && (
             <>
-              {canCreateMemoryUpdateDraft && (
+              {canCreateUpdateDraft && (
                 <Button size="sm" variant="outline" onClick={onCreateUpdateDraft} disabled={isCreatingUpdateDraft}>
                   <FileSearch className="mr-1 h-4 w-4" /> {isCreatingUpdateDraft ? "Creating…" : "Create Update Draft"}
                 </Button>

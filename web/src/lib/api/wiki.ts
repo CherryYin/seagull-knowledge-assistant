@@ -117,6 +117,13 @@ export interface WikiUpdateDraftFromMemoryRequest {
   page_type?: string;
 }
 
+export interface WikiUpdateDraftFromSourceRequest {
+  wiki_id: string;
+  source_id: string;
+  section?: string;
+  page_type?: string;
+}
+
 export interface WikiRecompileSuggestion {
   id: number;
   user_id: string;
@@ -288,6 +295,11 @@ export const wikiApi = {
     request<WikiPage>("/wiki/from-memory", { method: "POST", body: JSON.stringify(body) }),
   createUpdateDraftFromMemory: (body: WikiUpdateDraftFromMemoryRequest) =>
     request<WikiArticleDraft>("/wiki/update-drafts/from-memory", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  createUpdateDraftFromSource: (body: WikiUpdateDraftFromSourceRequest) =>
+    request<WikiArticleDraft>("/wiki/update-drafts/from-source", {
       method: "POST",
       body: JSON.stringify(body),
     }),

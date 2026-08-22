@@ -128,6 +128,13 @@ class WikiUpdateDraftFromMemoryRequest(BaseModel):
     page_type: str = Field(default="topic", pattern=r"^(topic|entity|concept|project|comparison)$")
 
 
+class WikiUpdateDraftFromSourceRequest(BaseModel):
+    wiki_id: str
+    source_id: str
+    section: str = "Open Questions"
+    page_type: str = Field(default="topic", pattern=r"^(topic|entity|concept|project|comparison)$")
+
+
 class WikiRecompileSuggestionRead(BaseModel):
     model_config = {"from_attributes": True}
 

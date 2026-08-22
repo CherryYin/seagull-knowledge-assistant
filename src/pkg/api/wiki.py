@@ -32,6 +32,7 @@ from pkg.schemas.wiki import (
     WikiCompileRequest,
     WikiFromMemoryRequest,
     WikiUpdateDraftFromMemoryRequest,
+    WikiUpdateDraftFromSourceRequest,
     WikiInsightCandidateRead,
     WikiInsightCandidateStatusUpdate,
     WikiMiningRunCreate,
@@ -925,6 +926,99 @@ async def create_wiki_update_draft_from_memory(
             "target_wiki_title": wiki.title,
             "trigger_type": "memory",
             "trigger_id": memory.id,
+            "suggested_section": section,
+        },
+        status="draft",
+    )
+    session.add(article)
+    await session.commit()
+    await session.refresh(article)
+    return article
+
+
+@router.post("/update-drafts/from-source", response_model=WikiArticleDraftRead, status_code=201)
+async def create_wiki_update_draft_from_source(
+    body: WikiUpdateDraftFromSourceRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    wiki = await session.get(WikiPage, body.wiki_id)
+    if not wiki or wiki.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Wiki page not found")
+
+    source = await session.get(Source, body.source_id)
+    if not source or source.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    section = (body.section or "Open Questions").strip() or "Open Questions"
+    run = WikiMiningRun(
+        user_id=user.id,
+        status="completed",
+        metadata_={
+            "origin": "wiki_update_draft",
+            "trigger_type": "source",
+            "trigger_id": source.id,
+            "target_wiki_id": wiki.id,
+            "target_wiki_title": wiki.title,
+        },
+    )
+    session.add(run)
+    await session.flush()
+
+    wiki_summary = (wiki.summary or "").strip()
+    relevant_existing_content = _extract_section_excerpt(wiki.content, section)
+    source_summary = (source.title or "").strip()
+    source_content = _trim_text(source.raw_content, limit=1200)
+    proposed_update = "\n\n".join(
+        part
+        for part in [
+            f"Update the **{section}** section of **{wiki.title}** only if the new evidence is clearly relevant to the page's current topic boundary.",
+            "Keep the page focused on its canonical subject. Prefer additive or corrective edits rather than turning this page into a new topic.",
+            f"New evidence source: {source_summary}" if source_summary else None,
+            source_content or None,
+        ]
+        if part
+    )
+    content = (
+        f"# Wiki Refresh Proposal: {wiki.title}\n\n"
+        f"<!-- Draft generated from source {source.id} for wiki {wiki.id}. Review before applying. -->\n\n"
+        f"## Target Wiki\n\n- `{wiki.id}` · {wiki.title}\n- Suggested Section: {section}\n\n"
+        f"## Current Wiki Summary\n\n{wiki_summary or 'No wiki summary yet.'}\n\n"
+        f"## Relevant Existing Content\n\n{relevant_existing_content or 'No directly matching section found in the current wiki content.'}\n\n"
+        f"## New Evidence\n\n- Source: `{source.id}` · {source.title}\n\n{source_content or 'No source content available.'}\n\n"
+        "## Why This Matters\n\n"
+        "Explain whether this new evidence changes, clarifies, or extends the current wiki page without drifting away from the existing wiki topic.\n\n"
+        f"## Proposed Update\n\n{proposed_update}\n\n"
+        "## Suggested Diff\n\n"
+        f"- Where should this be inserted or revised inside `{section}`?\n"
+        "- Which current claim should be updated, clarified, or kept unchanged?\n"
+        "- What wording should be added to preserve the wiki's scope?\n\n"
+        "## Open Questions\n\n"
+        "- Is this evidence important enough to change the current wiki page?\n"
+        f"- Should this stay in `{section}`, or does it belong in a different section?\n"
+        "- Does this evidence imply a separate wiki page instead of an update here?\n"
+    )
+    article = WikiArticleDraft(
+        run_id=run.id,
+        user_id=user.id,
+        title=f"Update {wiki.title} from source",
+        page_type=body.page_type,
+        summary=source.title,
+        content=content,
+        evidence_refs=[
+            {
+                "ref_type": "source",
+                "ref_id": source.id,
+                "title": source.title,
+                "excerpt": source.raw_content[:240] if source.raw_content else None,
+            },
+        ],
+        metadata_={
+            "origin": "wiki_update_draft",
+            "target_wiki_id": wiki.id,
+            "target_wiki_title": wiki.title,
+            "trigger_type": "source",
+            "trigger_id": source.id,
             "suggested_section": section,
         },
         status="draft",
