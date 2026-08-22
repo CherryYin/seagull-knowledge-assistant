@@ -18,12 +18,11 @@ Seagull 不是单纯的“资料库”或“聊天工具”，而是一个把原
 
 - `Sources`：原始资料，来自本地文件、网页、RSS、GitHub、arXiv、新闻等
 - `Notes`：基于资料整理出的结构化笔记
-- `Memory`：可持续组织的记忆节点与关系
 - `Wiki`：围绕主题持续编译的知识页与更新草稿
 - `Assets`：面向输出的内容资产，例如 digest、博客草稿、可下载文档
-- `Agent Workflows`：围绕总结、整理、研究、刷新 wiki 的半自动工作流
+- `Agent Workflows`：由 DeepSeek Harness 执行的总结、整理、研究和发布工作流
 
-系统目标是：**确定性检索 + LLM 驱动工作流 + 可持续积累的个人知识图谱**。
+系统目标是：**稳定知识存储 + 确定性检索 + Harness 驱动工作流 + 可审计的知识沉淀**。
 
 ## 当前核心能力
 
@@ -39,23 +38,21 @@ Seagull 不是单纯的“资料库”或“聊天工具”，而是一个把原
 
 - SQL 过滤、向量检索、混合检索
 - 文档分块、嵌入与细粒度语义召回
-- Notes、Sources、Memory、Wiki 之间可交叉引用
-- Memory Tree 维护主题、实体、关系与用户偏好
+- Sources、Notes、Wiki、Assets 之间可追踪引用与 provenance
 - Review Suggestions 帮助识别值得回顾和整理的知识项
 - Discover / Paper Discovery 帮助发现外部候选资料
 
-### 3. Agent 与工作流
+### 3. Harness Agent 与工作流
 
-- 内置 Action Agent，支持普通响应和流式响应
-- Agent 可搜索知识、读取资料、创建记忆、处理文档、调用网页搜索
-- 支持 Agent Profiles：模型、提示词、工具白名单、技能白名单、温度等可配置
-- 支持 Skills 体系，复用提示模板和任务说明
-- 支持持久化 Chat Sessions 与 Agent Run 日志
-- 前端提供预设工作流，用于来源总结、最近导入整理、专题研究、Wiki 刷新草稿等
+- Agent Chat、Session、Workflow、Preset、Skill 和运行轨迹由 DeepSeek Harness 承担
+- Harness 通过受认证的 PKG API 搜索 Sources、Notes、Wiki 和 Assets
+- Seagull UI 提供统一入口，并由共享网关校验 PKG 用户与 Harness Session 所有权
+- Agent 输出默认保留在 Harness；只有用户明确 Keep / Save / Publish 后才写回 PKG
+- PKG 仅保留轻量 `/action/complete`，用于 Note AI direct completion，不加载工具或创建 Agent Run
 
 ### 4. Wiki / 资产 / 调度能力
 
-- Wiki 页面创建、更新、克隆草稿、编译、关联 sources / memories
+- Wiki 页面创建、更新、克隆草稿、编译及 Source provenance
 - Wiki mining：从近期知识材料中挖掘概念、证据和候选文章草稿
 - Wiki suggestions：为已有 wiki 提供增量更新建议
 - Assets：生成内容资产并提供下载/详情页
@@ -67,8 +64,8 @@ Seagull 不是单纯的“资料库”或“聊天工具”，而是一个把原
 ## 典型使用流程
 
 1. 导入资料：上传文件、保存网页、订阅 RSS、搜索导入 GitHub/arXiv/新闻
-2. 检索与整理：通过 Search、Notes、Memory Tree、Review 页面进行初步归档
-3. 让 Agent 工作：在 Chat 或 Agent Workspace 中调用知识和工具完成总结、研究、转换
+2. 检索与整理：通过 Search、Notes、Review 页面进行初步归档
+3. 让 Agent 工作：在统一 Seagull UI 中调用 Harness 完成总结、研究和转换
 4. 沉淀主题知识：把候选概念与资料编译成 Wiki 页面与更新草稿
 5. 对外输出：生成 Digest、博客草稿、导出文档等资产
 
@@ -79,8 +76,7 @@ Seagull 不是单纯的“资料库”或“聊天工具”，而是一个把原
 - `Sources` / `Source Detail`：资料管理与查看
 - `Notes` / `Note Detail`：笔记整理与导出
 - `Search`：统一检索入口
-- `Chat` / `Agent Workspace`：Agent 对话与工作流入口
-- `Memory Tree`：长期记忆结构
+- `Chat`：由 Harness 驱动的 Agent 对话与工作流入口
 - `Discover` / `Review` / `Paper Discovery`：发现与回顾
 - `Wiki` / `Wiki Discovery` / `Wiki Suggestions` / `Wiki Rules`：Wiki 编译与挖掘
 - `Assets` / `Digest` / `Writing`：知识资产与输出页
@@ -96,7 +92,7 @@ Seagull 不是单纯的“资料库”或“聊天工具”，而是一个把原
 | ORM | SQLAlchemy 2.0 (async) + Alembic |
 | 检索 | SQL 过滤 + Embedding + Hybrid Retrieval |
 | LLM / Embedding | OpenAI-compatible providers, Azure OpenAI, Qwen, MiniMax 等 |
-| Agent 框架 | Strands Agents |
+| Agent Runtime | DeepSeek Harness（独立运行时） |
 | 文档解析 | Docling + OCR（RapidOCR / Tesseract） |
 | 文件存储 | MinIO / S3-compatible storage |
 | 前端 | React 19 + TypeScript + Vite |
@@ -203,11 +199,11 @@ alembic upgrade head
 ## 关键后端模块
 
 - `src/pkg/api/app.py`：FastAPI 应用与路由装配
-- `src/pkg/api/action.py`：Action Agent 普通/流式接口
+- `src/pkg/api/completion.py`：Note AI 使用的轻量 direct completion
 - `src/pkg/api/sources.py` / `src/pkg/api/notes.py` / `src/pkg/api/wiki.py`：资料、笔记、Wiki 主接口
 - `src/pkg/api/connectors.py`：GitHub、arXiv、新闻等连接器接口
 - `src/pkg/api/system_jobs.py`：后台任务观测接口
-- `src/pkg/services/action_agent.py`：Agent 构建与工具绑定
+- `src/pkg/services/foundation/retriever.py`：SQL / vector / hybrid 知识检索
 - `src/pkg/services/foundation/web_extractor.py`：网页抽取
 - `src/pkg/services/foundation/web_directory.py`：网页目录发现与子文章导入
 - `src/pkg/services/foundation/wiki_concept_discovery.py`：Wiki 概念发现与候选推荐
@@ -221,12 +217,10 @@ alembic upgrade head
 - `/sources`
 - `/notes`
 - `/search`
-- `/action`
+- `/action/complete`
 - `/chat-sessions`
-- `/agent-profiles`
 - `/assets`
 - `/wiki`
-- `/memory`
 - `/connectors`
 - `/calendar/reminders`
 - `/review`
@@ -243,6 +237,8 @@ Seagull 适合这些场景：
 - 同时管理网页、论文、RSS、GitHub 信息流的技术从业者
 - 希望把零散输入沉淀成长期知识库、主题 Wiki 和写作资产的人
 - 想要在个人知识库上运行可控 Agent 工作流的开发者
+
+> Agent Runtime 不在 PKG 内运行。交互式 Agent 能力由 `deepseek-knowledge-lab` 中的 DeepSeek Harness 提供。
 
 ## 开发说明
 

@@ -4,21 +4,19 @@ This file is the workspace profile and operating guide for Codex/agents working 
 
 ## Project Overview
 
-Seagull / Personal Knowledge Graph is a FastAPI + React personal knowledge mining system. It turns raw materials such as Markdown notes, PDFs, documents, web pages, RSS articles, GitHub repositories, and arXiv papers into searchable sources, structured notes, memory nodes, wiki pages, reviews, discovery items, and agent conversations.
+Seagull / Personal Knowledge Graph is a FastAPI + React personal knowledge platform. It turns raw materials such as Markdown notes, PDFs, documents, web pages, RSS articles, GitHub repositories, and arXiv papers into searchable sources, structured notes, wiki pages, reviews, discovery items, and publishable assets.
 
-The core product goal is a durable personal knowledge graph with deterministic retrieval plus LLM-powered agent workflows.
+The core product goal is a durable personal knowledge graph with deterministic retrieval plus Harness-powered agent workflows.
 
 ## Core Capabilities
 
-- Ingest and manage sources, notes, categories, files, chat sessions, and agent profiles.
+- Ingest and manage sources, notes, categories, files, and user-owned chat sessions.
 - Search knowledge using SQL filters, vector embeddings, full-text style search, and hybrid retrieval.
-- Run a Strands-based Action Agent that can use project tools to search/read/write knowledge.
-- Offer frontend Agent workflow templates for common tasks such as source summarization, recent import organization, topic research, and wiki refresh drafting.
-- Inject this workspace profile into the default in-app Action Agent prompt when `AGENT_LOAD_WORKSPACE_PROFILE=true`.
+- Expose authenticated REST APIs that Harness tools use to search, read, and write user knowledge.
+- Delegate interactive Agent Chat and workflow execution to DeepSeek Harness through the shared gateway.
 - Import or discover external knowledge from RSS, web pages, GitHub repositories, arXiv papers, and news providers.
 - Create `web` sources from a direct URL by fetching and extracting readable page text when content is left empty.
 - Discover article links from a `web` directory source such as a blog index and import each article as a child web source.
-- Maintain memory nodes and memory edges for topic organization and semantic retrieval.
 - Generate review suggestions, discovery items, wiki pages, summaries, and temporary/permanent knowledge artifacts.
 - Create newsletter assets from sources ingested in a recent time window plus the user's editorial point of view, without manual source/note picking.
 - Mine recent knowledge materials for reusable concept/entity candidates and recommend concept wiki drafts with evidence.
@@ -27,14 +25,14 @@ The core product goal is a durable personal knowledge graph with deterministic r
 ## Key Architecture
 
 - `src/pkg/api/`: FastAPI route modules.
-- `src/pkg/services/`: business logic, integrations, agent tools, retrieval, import pipelines, background jobs.
+- `src/pkg/services/`: business logic, integrations, retrieval, import pipelines, background jobs, and knowledge production services.
 - `src/pkg/models/`: SQLAlchemy models.
 - `src/pkg/schemas/`: Pydantic request/response schemas.
 - `alembic/versions/`: database migrations.
-- `tests/`: pytest coverage for APIs, services, schemas, and agent-related behavior.
+- `tests/`: pytest coverage for APIs, services, and schemas.
 - `web/src/pages/`: React application pages.
 - `web/src/lib/api/`: frontend API clients.
-- `web/src/lib/agent-workflows.ts`: frontend-only Agent workflow catalog and prompt rendering helpers.
+- `web/src/lib/agent-workflows.ts`: legacy frontend workflow catalog retained temporarily until physical cleanup.
 - `web/src/lib/status.ts`, `web/src/components/StatusBadge.tsx`, `web/src/components/StateMessage.tsx`: user-facing status and empty/error state presentation helpers.
 - `web/src/components/`: reusable UI components.
 - `scripts/`: operational/backfill/import helper scripts.
@@ -44,42 +42,36 @@ The core product goal is a durable personal knowledge graph with deterministic r
 ## Important Backend Areas
 
 - `src/pkg/api/app.py`: FastAPI app setup, routers, logging, and background loops.
-- `src/pkg/api/action.py`: streaming Action Agent endpoint and session persistence.
-- `src/pkg/services/action_agent.py`: Strands Agent construction, tool wiring, and workspace profile prompt injection.
-- `src/pkg/services/tools.py`, `src/pkg/services/tools_web.py`, `src/pkg/services/tools_document.py`: built-in agent tools.
-- `src/pkg/services/retriever.py`, `src/pkg/services/memory_retriever.py`: knowledge and memory retrieval.
-- `src/pkg/services/sync_pipeline.py`, `src/pkg/services/document_extractor.py`: source ingestion and document processing.
-- `src/pkg/services/connectors.py`: GitHub, arXiv, and news connector search/import logic.
-- `src/pkg/services/connector_trends.py`: daily GitHub/arXiv trend collection.
-- `src/pkg/services/rss_fetcher.py`, `src/pkg/services/rss_discovery.py`, `src/pkg/services/rss_summarizer.py`: RSS ingestion and summarization.
-- `src/pkg/services/discovery.py`, `src/pkg/services/review_suggestions.py`, `src/pkg/services/wiki_recompile.py`: discovery/review/wiki workflows.
+- `src/pkg/api/completion.py`: lightweight `/action/complete` direct-LLM completion stream used by Note AI; it has no Agent tools or Session persistence.
+- `src/pkg/services/foundation/retriever.py`: Source/Chunk/Note/Wiki/Asset retrieval; it does not query a Memory Tree.
+- `src/pkg/services/foundation/sync_pipeline.py`, `src/pkg/services/foundation/document_extractor.py`: source ingestion and document processing.
+- `src/pkg/services/foundation/connectors.py`: GitHub, arXiv, and news connector search/import logic.
+- `src/pkg/services/foundation/connector_trends.py`: daily GitHub/arXiv trend collection.
+- `src/pkg/services/foundation/rss_fetcher.py`, `src/pkg/services/foundation/rss_discovery.py`, `src/pkg/services/foundation/rss_summarizer.py`: RSS ingestion and summarization.
+- `src/pkg/services/foundation/discovery.py`, `src/pkg/services/foundation/review_suggestions.py`, `src/pkg/services/foundation/wiki_recompile.py`: discovery/review/wiki workflows.
 - `src/pkg/services/foundation/wiki_concept_discovery.py`: reusable knowledge concept/entity discovery for wiki mining recommendations, with rule-based recall and optional top-K LLM refinement.
-- `src/pkg/services/system_jobs.py` and `web/src/pages/SystemJobsPage.tsx`: background job observability, failure inspection, and troubleshooting entry points.
+- `src/pkg/services/cross_cutting/system_jobs.py` and `web/src/pages/SystemJobsPage.tsx`: background job observability, failure inspection, and troubleshooting entry points.
 - System jobs are user-scoped when attached to a user; global jobs are for admin/system inspection and must not leak to ordinary users.
 - `src/pkg/api/system.py`: authenticated system capability/status endpoint used by the frontend module settings UI to distinguish visible-by-preference from unavailable-by-setup modules.
 
-## Agent Capabilities In This Project
+## Agent Integration
 
-The in-app Action Agent loads this workspace profile into its system prompt by default, then can, depending on configured tools/profile/skills:
+- Interactive Agent Chat, workflow presets, tool execution, and runtime event history live in DeepSeek Harness.
+- PKG owns users, knowledge assets, authentication, and `chat_sessions` ownership records.
+- BFF validates PKG ownership and relays the current user's PKG token to Harness tools.
+- PKG no longer registers `/action`, `/action/stream`, `/agent-profiles`, or `/agent-runs`.
+- `/action/complete` remains available only for lightweight note-writing assistance.
+- The legacy Memory Tree API, services, ORM models, and database schema have been removed. Do not reintroduce MemoryNode as an intermediate knowledge layer.
 
-- Search the knowledge base and memory tree.
-- Read notes, sources, and memory nodes.
-- Create memory from conversations.
-- Process documents and generate downloadable outputs.
-- Search the web via configured web-search providers.
-- Use project skills as reusable task instructions.
-- Work with persisted chat sessions and agent run event logs.
-- Start fixed prompt workflows from the Agent page or from Source, Note, and Discover context handoffs; workflows generate editable prompts and never auto-write durable state.
-
-When changing tool names, tool behavior, workflow templates, skill loading, streaming behavior, or agent profile semantics, update this file.
+When changing gateway authentication, Harness tools, Session ownership, or completion streaming, update this file.
 
 ## External Connectors
 
-- Direct web URL capture for `web` sources lives in `src/pkg/services/web_extractor.py` and is invoked by `src/pkg/api/sources.py` before persistence when `raw_content` is empty.
-- Web directory article discovery lives in `src/pkg/services/web_directory.py` and uses `metadata.feed_source_id` to link imported child articles to the parent directory source.
-- arXiv search/import lives in `src/pkg/services/connectors.py` and `src/pkg/api/connectors.py`.
-- GitHub search/import lives in `src/pkg/services/connectors.py` and `src/pkg/api/connectors.py`.
-- News search/import lives in `src/pkg/services/connectors.py` and `src/pkg/api/connectors.py`; imported news is stored as `article` sources with `metadata.kind = "news"`.
+- Direct web URL capture for `web` sources lives in `src/pkg/services/foundation/web_extractor.py` and is invoked by `src/pkg/api/sources.py` before persistence when `raw_content` is empty.
+- Web directory article discovery lives in `src/pkg/services/foundation/web_directory.py` and uses `metadata.feed_source_id` to link imported child articles to the parent directory source.
+- arXiv search/import lives in `src/pkg/services/foundation/connectors.py` and `src/pkg/api/connectors.py`.
+- GitHub search/import lives in `src/pkg/services/foundation/connectors.py` and `src/pkg/api/connectors.py`.
+- News search/import lives in `src/pkg/services/foundation/connectors.py` and `src/pkg/api/connectors.py`; imported news is stored as `article` sources with `metadata.kind = "news"`.
 - Connector search results are cached temporarily before being kept as permanent sources.
 - Default GitHub and arXiv search windows should stay aligned with product expectations; currently searches default to the past year unless callers provide explicit dates.
 - arXiv may return `429`; code should preserve this as rate limiting rather than converting it to a generic bad gateway where possible.
@@ -95,7 +87,6 @@ Use the project virtual environment when available.
 - Apply migrations: `alembic upgrade head`
 - Start infrastructure: `docker compose up -d`
 - Start API: `pkg serve` or the project-specific documented command.
-- Disable workspace profile injection: set `AGENT_LOAD_WORKSPACE_PROFILE=false`.
 - Set strong `JWT_SECRET_KEY` and `ADMIN_INIT_PASSWORD`; weak or missing admin initialization password blocks normal app startup.
 - Frontend dependencies/build commands are in `package.json`; inspect scripts before running.
 
