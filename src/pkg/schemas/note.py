@@ -92,7 +92,7 @@ class SearchRequest(BaseModel):
 class SearchResult(BaseModel):
     id: str
     title: str
-    type: str  # "source", "source_chunk", "note", "wiki", or "memory"
+    type: str  # "source", "source_chunk", "note", "wiki", or "asset"
     layer: str | None = None
     score: float
     abstract: str | None = None

@@ -1,7 +1,6 @@
 from sqlalchemy import select, text, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pkg.models.foundation.memory import MemoryNode
 from pkg.models.foundation.note import Note
 from pkg.models.foundation.source import Source
 from pkg.models.foundation.wiki import WikiPage
@@ -19,8 +18,6 @@ def _result_layer(result_type: str) -> str:
         return "raw_evidence"
     if result_type == "note":
         return "user_note"
-    if result_type == "memory":
-        return "knowledge_tree"
     if result_type == "wiki":
         return "stable_wiki"
     if result_type == "asset":
@@ -161,37 +158,6 @@ class RetrieverAgent:
                 content_preview=(src.raw_content or "")[:200],
             ))
 
-        memory_stmt = select(MemoryNode)
-        if self.user_id:
-            memory_stmt = memory_stmt.where(MemoryNode.user_id == self.user_id)
-        if query:
-            like_pattern = f"%{_escape_like(query)}%"
-            memory_stmt = memory_stmt.where(
-                or_(
-                    MemoryNode.title.ilike(like_pattern),
-                    MemoryNode.summary.ilike(like_pattern),
-                    MemoryNode.content.ilike(like_pattern),
-                )
-            )
-        if filters:
-            if "node_type" in filters:
-                memory_stmt = memory_stmt.where(MemoryNode.node_type == filters["node_type"])
-            if "level" in filters:
-                memory_stmt = memory_stmt.where(MemoryNode.level == filters["level"])
-        memory_stmt = memory_stmt.limit(top_k)
-
-        rows = await self.session.execute(memory_stmt)
-        for node in rows.scalars():
-            results.append(SearchResult(
-                id=node.id,
-                title=node.title,
-                type="memory",
-                layer=_result_layer("memory"),
-                score=1.0,
-                abstract=node.summary,
-                content_preview=(node.content or "")[:200],
-            ))
-
         return results[:top_k]
 
     async def vector_search(self, query: str, top_k: int = 5) -> list[SearchResult]:
@@ -287,33 +253,6 @@ class RetrieverAgent:
                 score=float(row.score or 0.0),
                 abstract=row.brief,
                 content_preview=(row.draft_content or "")[:200],
-            ))
-
-        # Search memory embeddings (global/source/topic memory tree nodes)
-        memory_user_clause = ""
-        if self.user_id:
-            memory_user_clause = "WHERE m.user_id = :user_id"
-        memory_stmt = text(f"""
-            SELECT me.memory_node_id, m.title, m.summary, m.content, m.node_type, m.level,
-                   1 - (me.content_vec <=> CAST(:query_vec AS vector)) AS score
-            FROM memory_embeddings me
-            JOIN memory_nodes m ON m.id = me.memory_node_id
-            {memory_user_clause}
-            ORDER BY me.content_vec <=> CAST(:query_vec AS vector)
-            LIMIT :top_k
-        """)
-        rows = await self.session.execute(
-            memory_stmt, {"query_vec": query_vec_literal, "top_k": top_k, **user_params}
-        )
-        for row in rows:
-            results.append(SearchResult(
-                id=row.memory_node_id,
-                title=row.title,
-                type="memory",
-                layer=_result_layer("memory"),
-                score=float(row.score),
-                abstract=f"{row.node_type} / {row.level} · {row.summary or ''}".strip(),
-                content_preview=(row.content or "")[:200],
             ))
 
         # Search source embeddings (document-level)
