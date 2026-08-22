@@ -7,7 +7,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.models.application.asset import Asset
-from pkg.models.foundation.memory import MemoryNode
 from pkg.models.foundation.note import Note
 from pkg.models.foundation.source import Source
 from pkg.models.foundation.wiki import WikiPage
@@ -29,7 +28,7 @@ def make_asset_id(title: str, explicit_id: str | None = None) -> str:
     return f"asset-{now.strftime('%Y%m%d')}-{slug}-{suffix}"
 
 
-async def _validate_refs(session: AsyncSession, *, user_id: str, source_refs: list[str], note_refs: list[str], memory_refs: list[str], wiki_refs: list[str]) -> None:
+async def _validate_refs(session: AsyncSession, *, user_id: str, source_refs: list[str], note_refs: list[str], wiki_refs: list[str]) -> None:
     async def _ensure_all(model, ids: list[str], label: str) -> None:
         if not ids:
             return
@@ -41,7 +40,6 @@ async def _validate_refs(session: AsyncSession, *, user_id: str, source_refs: li
 
     await _ensure_all(Source, source_refs, "source")
     await _ensure_all(Note, note_refs, "note")
-    await _ensure_all(MemoryNode, memory_refs, "memory")
     await _ensure_all(WikiPage, wiki_refs, "wiki")
 
 
@@ -51,7 +49,6 @@ async def create_asset(session: AsyncSession, *, user_id: str, body: AssetCreate
         user_id=user_id,
         source_refs=body.source_refs,
         note_refs=body.note_refs,
-        memory_refs=body.memory_refs,
         wiki_refs=body.wiki_refs,
     )
     metadata = dict(body.metadata or {})
@@ -77,7 +74,6 @@ async def create_asset(session: AsyncSession, *, user_id: str, body: AssetCreate
         draft_content=body.draft_content,
         source_refs=body.source_refs,
         note_refs=body.note_refs,
-        memory_refs=body.memory_refs,
         wiki_refs=body.wiki_refs,
         metadata_=metadata or None,
     )
@@ -190,7 +186,6 @@ async def update_asset(session: AsyncSession, *, user_id: str, asset_id: str, bo
         user_id=user_id,
         source_refs=data.get("source_refs", asset.source_refs or []),
         note_refs=data.get("note_refs", asset.note_refs or []),
-        memory_refs=data.get("memory_refs", asset.memory_refs or []),
         wiki_refs=data.get("wiki_refs", asset.wiki_refs or []),
     )
     effective_metadata = dict(asset.metadata_ or {})
@@ -220,7 +215,6 @@ async def update_asset(session: AsyncSession, *, user_id: str, asset_id: str, bo
             editor_feedback=data.get("editor_feedback", asset.editor_feedback),
             source_refs=data.get("source_refs", asset.source_refs),
             note_refs=data.get("note_refs", asset.note_refs),
-            memory_refs=data.get("memory_refs", asset.memory_refs),
             wiki_refs=data.get("wiki_refs", asset.wiki_refs),
             export_format=data.get("export_format", asset.export_format),
             metadata_=effective_metadata,

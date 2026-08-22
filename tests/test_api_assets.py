@@ -7,6 +7,14 @@ from fastapi import HTTPException
 from pkg.models.application.asset import Asset
 
 
+def test_asset_api_models_exclude_memory_refs():
+    from pkg.schemas.application.asset import AssetCreate, AssetRead, AssetUpdate
+
+    assert "memory_refs" not in AssetCreate.model_fields
+    assert "memory_refs" not in AssetUpdate.model_fields
+    assert "memory_refs" not in AssetRead.model_fields
+
+
 def _make_asset(asset_id: str, user_id: str):
     asset = Asset(
         id=asset_id,

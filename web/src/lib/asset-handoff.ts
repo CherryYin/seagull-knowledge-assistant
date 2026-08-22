@@ -4,7 +4,6 @@ export interface AssetHandoffState {
   asset_type?: "blog_post" | "research_brief" | "knowledge_pack" | "newsletter_issue" | "topic_report";
   source_refs?: string[];
   note_refs?: string[];
-  memory_refs?: string[];
   wiki_refs?: string[];
 }
 
@@ -15,7 +14,6 @@ export function buildAssetHandoffState(input: AssetHandoffState): AssetHandoffSt
     asset_type: input.asset_type,
     source_refs: input.source_refs ?? [],
     note_refs: input.note_refs ?? [],
-    memory_refs: input.memory_refs ?? [],
     wiki_refs: input.wiki_refs ?? [],
   };
 }

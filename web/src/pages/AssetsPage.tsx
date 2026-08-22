@@ -330,7 +330,7 @@ export function AssetsPage() {
   }, [selectedAssetId]);
 
   useEffect(() => {
-    const state = location.state as { assetHandoff?: { title?: string; brief?: string; asset_type?: AssetType; source_refs?: string[]; note_refs?: string[]; memory_refs?: string[]; wiki_refs?: string[] } } | null;
+    const state = location.state as { assetHandoff?: { title?: string; brief?: string; asset_type?: AssetType; source_refs?: string[]; note_refs?: string[]; wiki_refs?: string[] } } | null;
     const handoff = state?.assetHandoff;
     if (!handoff) return;
     setTitle(handoff.title ?? "");
@@ -722,7 +722,6 @@ export function AssetsPage() {
                   <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                     <span>Sources: {selectedAsset.source_refs.length}</span>
                     <span>Notes: {selectedAsset.note_refs.length}</span>
-                    <span>Memories: {selectedAsset.memory_refs.length}</span>
                     <span>Wiki: {selectedAsset.wiki_refs.length}</span>
                   </div>
 

@@ -22,7 +22,6 @@ class AssetCreate(BaseModel):
     status: str = Field(default="draft", pattern=ASSET_STATUS_PATTERN)
     source_refs: list[str] = []
     note_refs: list[str] = []
-    memory_refs: list[str] = []
     wiki_refs: list[str] = []
     opinion_notes: str | None = None
     style_notes: str | None = None
@@ -50,7 +49,6 @@ class AssetUpdate(BaseModel):
     status: str | None = Field(default=None, pattern=ASSET_STATUS_PATTERN)
     source_refs: list[str] | None = None
     note_refs: list[str] | None = None
-    memory_refs: list[str] | None = None
     wiki_refs: list[str] | None = None
     opinion_notes: str | None = None
     style_notes: str | None = None
@@ -73,7 +71,6 @@ class AssetRead(BaseModel):
     editor_feedback: str | None = None
     source_refs: list[str]
     note_refs: list[str]
-    memory_refs: list[str]
     wiki_refs: list[str]
     opinion_notes: str | None = None
     style_notes: str | None = None

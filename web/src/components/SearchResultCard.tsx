@@ -63,7 +63,6 @@ export function SearchResultCard({ result }: Props) {
           brief: `Create a blog asset from search result: ${result.title}`,
           source_refs: result.type === "source" || result.type === "source_chunk" ? [result.id] : [],
           note_refs: result.type === "note" ? [result.id] : [],
-          memory_refs: result.type === "memory" ? [result.id] : [],
           wiki_refs: result.type === "wiki" ? [result.id] : [],
         }),
       },
@@ -123,9 +122,11 @@ export function SearchResultCard({ result }: Props) {
             <Button type="button" size="sm" variant="outline" onClick={(event) => { event.stopPropagation(); handleClick(); }}>
               <ExternalLink className="h-3.5 w-3.5" /> Open
             </Button>
-            <Button type="button" size="sm" variant="outline" onClick={createAsset}>
-              <FileText className="h-3.5 w-3.5" /> Create Asset
-            </Button>
+            {result.type !== "memory" && (
+              <Button type="button" size="sm" variant="outline" onClick={createAsset}>
+                <FileText className="h-3.5 w-3.5" /> Create Asset
+              </Button>
+            )}
             {(result.type === "source" || result.type === "source_chunk" || result.type === "note") && (
               <Button type="button" size="sm" variant="ghost" onClick={attachToWiki}>
                 <SearchCheck className="h-3.5 w-3.5" /> Attach to Wiki

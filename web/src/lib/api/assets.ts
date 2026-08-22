@@ -16,7 +16,6 @@ export interface Asset {
   editor_feedback?: string | null;
   source_refs: string[];
   note_refs: string[];
-  memory_refs: string[];
   wiki_refs: string[];
   opinion_notes?: string | null;
   style_notes?: string | null;
@@ -41,7 +40,6 @@ export interface AssetCreate {
   status?: AssetStatus;
   source_refs?: string[];
   note_refs?: string[];
-  memory_refs?: string[];
   wiki_refs?: string[];
   opinion_notes?: string;
   style_notes?: string;
@@ -73,7 +71,6 @@ export interface AssetUpdate {
   status?: AssetStatus;
   source_refs?: string[];
   note_refs?: string[];
-  memory_refs?: string[];
   wiki_refs?: string[];
   opinion_notes?: string;
   style_notes?: string;

@@ -102,7 +102,6 @@ def test_render_generation_context_groups_raw_stable_and_candidate_wiki():
         asset=asset,
         sources=[source],
         notes=[note],
-        memories=[],
         stable_wiki_pages=[stable_wiki],
         candidate_wiki_pages=[draft_wiki],
     )

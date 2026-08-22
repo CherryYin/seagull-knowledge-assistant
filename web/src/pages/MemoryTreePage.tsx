@@ -322,7 +322,6 @@ export function MemoryTreePage() {
                           brief: `Create a blog asset from knowledge tree node: ${selectedNode.title}`,
                           source_refs: selectedNode.derived_from_sources || [],
                           note_refs: selectedNode.derived_from_notes || [],
-                          memory_refs: [selectedNode.id],
                         }),
                       },
                     })
@@ -336,7 +335,6 @@ export function MemoryTreePage() {
                           asset_type: "research_brief",
                           source_refs: selectedNode.derived_from_sources || [],
                           note_refs: selectedNode.derived_from_notes || [],
-                          memory_refs: [selectedNode.id],
                         }),
                       },
                     })
@@ -350,7 +348,6 @@ export function MemoryTreePage() {
                           asset_type: "knowledge_pack",
                           source_refs: selectedNode.derived_from_sources || [],
                           note_refs: selectedNode.derived_from_notes || [],
-                          memory_refs: [selectedNode.id],
                         }),
                       },
                     })
@@ -364,7 +361,6 @@ export function MemoryTreePage() {
                           asset_type: "newsletter_issue",
                           source_refs: selectedNode.derived_from_sources || [],
                           note_refs: selectedNode.derived_from_notes || [],
-                          memory_refs: [selectedNode.id],
                         }),
                       },
                     })
@@ -378,7 +374,6 @@ export function MemoryTreePage() {
                           asset_type: "topic_report",
                           source_refs: selectedNode.derived_from_sources || [],
                           note_refs: selectedNode.derived_from_notes || [],
-                          memory_refs: [selectedNode.id],
                         }),
                       },
                     })

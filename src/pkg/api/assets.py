@@ -43,7 +43,6 @@ async def create_asset_route(
         body.asset_type == "newsletter_issue"
         and not body.source_refs
         and not body.note_refs
-        and not body.memory_refs
         and not body.wiki_refs
         and body.opinion_notes
     ):

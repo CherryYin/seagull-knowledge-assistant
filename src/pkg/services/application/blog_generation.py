@@ -11,7 +11,6 @@ from pkg.models.application.asset import Asset
 from pkg.models.foundation.note import Note
 from pkg.models.foundation.source import Source
 from pkg.models.foundation.wiki import WikiPage
-from pkg.models.foundation.memory import MemoryNode
 from pkg.services.cross_cutting.llm import create_async_client
 from pkg.services.foundation.wiki_lifecycle import get_wiki_role
 
@@ -21,7 +20,6 @@ class GenerationContext:
     asset: Asset
     sources: list[Source]
     notes: list[Note]
-    memories: list[MemoryNode]
     stable_wiki_pages: list[WikiPage]
     candidate_wiki_pages: list[WikiPage]
 
@@ -35,7 +33,6 @@ async def load_generation_context(session: AsyncSession, *, asset: Asset) -> Gen
 
     sources = await _load(Source, asset.source_refs or [], asset.user_id)
     notes = await _load(Note, asset.note_refs or [], asset.user_id)
-    memories = await _load(MemoryNode, asset.memory_refs or [], asset.user_id)
     wiki_pages = await _load(WikiPage, asset.wiki_refs or [], asset.user_id)
     stable_wiki_pages = [wiki for wiki in wiki_pages if get_wiki_role(wiki) == "stable"]
     candidate_wiki_pages = [wiki for wiki in wiki_pages if get_wiki_role(wiki) != "stable"]
@@ -43,7 +40,6 @@ async def load_generation_context(session: AsyncSession, *, asset: Asset) -> Gen
         asset=asset,
         sources=sources,
         notes=notes,
-        memories=memories,
         stable_wiki_pages=stable_wiki_pages,
         candidate_wiki_pages=candidate_wiki_pages,
     )
@@ -75,13 +71,6 @@ def render_generation_context(context: GenerationContext) -> str:
             preview = body[:1200] + ("…" if len(body) > 1200 else "")
             note_sections.append(f"### Note: {note.title}\n\n{preview or '(empty note)'}")
         raw_evidence_parts.append("## Notes\n\n" + "\n\n".join(note_sections))
-    if context.memories:
-        memory_sections = []
-        for memory in context.memories[:8]:
-            body = (memory.content or memory.summary or "").strip()
-            preview = body[:1000] + ("…" if len(body) > 1000 else "")
-            memory_sections.append(f"### Knowledge Tree: {memory.title}\n\n{preview or '(empty memory)'}")
-        raw_evidence_parts.append("## Knowledge Tree Context\n\n" + "\n\n".join(memory_sections))
     if raw_evidence_parts:
         parts.append("# Raw Evidence\n\n" + "\n\n".join(raw_evidence_parts))
     if context.stable_wiki_pages:
@@ -386,7 +375,6 @@ def _research_brief_export_markdown(asset: Asset) -> str:
             f"- **Status:** {asset.status.replace('_', ' ').title()}",
             f"- **Sources:** {len(asset.source_refs or [])}",
             f"- **Notes:** {len(asset.note_refs or [])}",
-            f"- **Knowledge Tree Nodes:** {len(asset.memory_refs or [])}",
             f"- **Wiki Pages:** {len(asset.wiki_refs or [])}",
         ]
     )
@@ -453,7 +441,6 @@ def _knowledge_pack_export_markdown(asset: Asset) -> str:
             f"- **Status:** {asset.status.replace('_', ' ').title()}",
             f"- **Sources:** {len(asset.source_refs or [])}",
             f"- **Notes:** {len(asset.note_refs or [])}",
-            f"- **Knowledge Tree Nodes:** {len(asset.memory_refs or [])}",
             f"- **Wiki Pages:** {len(asset.wiki_refs or [])}",
         ]
     )
@@ -505,7 +492,6 @@ def _newsletter_issue_export_markdown(asset: Asset) -> str:
             f"- **Status:** {asset.status.replace('_', ' ').title()}",
             f"- **Sources:** {len(asset.source_refs or [])}",
             f"- **Notes:** {len(asset.note_refs or [])}",
-            f"- **Knowledge Tree Nodes:** {len(asset.memory_refs or [])}",
             f"- **Wiki Pages:** {len(asset.wiki_refs or [])}",
         ]
     )
@@ -558,7 +544,6 @@ def _topic_report_export_markdown(asset: Asset) -> str:
             f"- **Status:** {asset.status.replace('_', ' ').title()}",
             f"- **Sources:** {len(asset.source_refs or [])}",
             f"- **Notes:** {len(asset.note_refs or [])}",
-            f"- **Knowledge Tree Nodes:** {len(asset.memory_refs or [])}",
             f"- **Wiki Pages:** {len(asset.wiki_refs or [])}",
         ]
     )
@@ -721,10 +706,6 @@ async def attach_references(session: AsyncSession, *, asset: Asset, include_refe
         lines.append("\n## Note References")
         for note in context.notes:
             lines.append(f"- Note: {note.title} ({note.id})")
-    if context.memories:
-        lines.append("\n## Knowledge Tree References")
-        for memory in context.memories:
-            lines.append(f"- Knowledge Tree: {memory.title} ({memory.id})")
     if context.stable_wiki_pages:
         lines.append("\n## Stable Wiki References")
         for wiki in context.stable_wiki_pages:
@@ -751,7 +732,7 @@ def check_readiness(asset: Asset) -> tuple[bool, list[str], list[str], list[str]
         blocking.append("Missing outline")
     if not (asset.draft_content or "").strip():
         blocking.append("Missing draft content")
-    if not any([asset.source_refs, asset.note_refs, asset.memory_refs, asset.wiki_refs]):
+    if not any([asset.source_refs, asset.note_refs, asset.wiki_refs]):
         blocking.append("No references attached")
     if asset.asset_type == "research_brief":
         if not (asset.wiki_refs or []):
@@ -761,7 +742,7 @@ def check_readiness(asset: Asset) -> tuple[bool, list[str], list[str], list[str]
         if not (asset.reference_notes or "").strip():
             blocking.append("Research brief requires evidence references before export")
     if asset.asset_type == "knowledge_pack":
-        total_refs = len(asset.source_refs or []) + len(asset.note_refs or []) + len(asset.memory_refs or []) + len(asset.wiki_refs or [])
+        total_refs = len(asset.source_refs or []) + len(asset.note_refs or []) + len(asset.wiki_refs or [])
         if total_refs < 3:
             blocking.append("Knowledge pack requires at least three attached references")
         if not (asset.reference_notes or "").strip():
@@ -774,7 +755,7 @@ def check_readiness(asset: Asset) -> tuple[bool, list[str], list[str], list[str]
         if "recommended reading path" not in draft_text:
             blocking.append("Knowledge pack requires a 'recommended reading path' section")
     if asset.asset_type == "newsletter_issue":
-        total_refs = len(asset.source_refs or []) + len(asset.note_refs or []) + len(asset.memory_refs or []) + len(asset.wiki_refs or [])
+        total_refs = len(asset.source_refs or []) + len(asset.note_refs or []) + len(asset.wiki_refs or [])
         if total_refs < 3:
             blocking.append("Newsletter issue requires at least three attached references")
         if not (asset.reference_notes or "").strip():
@@ -787,7 +768,7 @@ def check_readiness(asset: Asset) -> tuple[bool, list[str], list[str], list[str]
         if "recommended next reads" not in draft_text:
             blocking.append("Newsletter issue requires a 'recommended next reads' section")
     if asset.asset_type == "topic_report":
-        total_refs = len(asset.source_refs or []) + len(asset.note_refs or []) + len(asset.memory_refs or []) + len(asset.wiki_refs or [])
+        total_refs = len(asset.source_refs or []) + len(asset.note_refs or []) + len(asset.wiki_refs or [])
         if not (asset.wiki_refs or []):
             blocking.append("Topic report requires at least one wiki reference")
         if total_refs < 3:
@@ -803,7 +784,7 @@ def check_readiness(asset: Asset) -> tuple[bool, list[str], list[str], list[str]
             blocking.append("Topic report requires a 'findings' section")
         if "recommendations" not in draft_text:
             blocking.append("Topic report requires a 'recommendations' section")
-    if asset.wiki_refs and not asset.source_refs and not asset.note_refs and not asset.memory_refs:
+    if asset.wiki_refs and not asset.source_refs and not asset.note_refs:
         warnings.append("Wiki context is attached without raw source/note references")
     if asset.wiki_refs and not (asset.reference_notes or "").strip():
         warnings.append("Wiki-backed asset is missing reference notes")
@@ -811,7 +792,7 @@ def check_readiness(asset: Asset) -> tuple[bool, list[str], list[str], list[str]
         warnings.append("Draft is very short")
     if not (asset.editor_feedback or "").strip():
         suggestions.append("Add editor feedback before export review")
-    if not (asset.reference_notes or "").strip() and any([asset.source_refs, asset.note_refs, asset.memory_refs, asset.wiki_refs]):
+    if not (asset.reference_notes or "").strip() and any([asset.source_refs, asset.note_refs, asset.wiki_refs]):
         suggestions.append("Attach references to generate a readable references section")
     if asset.status == "ready_to_export" and blocking:
         warnings.append("Asset is marked ready_to_export but still has blocking readiness issues")
@@ -875,7 +856,7 @@ def _estimate_unsupported_claims(asset: Asset) -> int:
     draft = (asset.draft_content or "").strip()
     if not draft:
         return 0
-    reference_weight = len(asset.source_refs or []) + len(asset.note_refs or []) + len(asset.memory_refs or []) + len(asset.wiki_refs or [])
+    reference_weight = len(asset.source_refs or []) + len(asset.note_refs or []) + len(asset.wiki_refs or [])
     if reference_weight >= 4 and (asset.reference_notes or "").strip():
         return 0
     sentences = [segment.strip() for segment in re.split(r"[\n.!?。！？]", draft) if segment.strip()]
