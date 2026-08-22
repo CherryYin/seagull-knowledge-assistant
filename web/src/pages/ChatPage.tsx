@@ -13,6 +13,7 @@ import {
   streamAction,
   chatSessionsApi,
   knowledgeApi,
+  assetsApi,
   notesApi,
   categoriesApi,
   agentProfilesApi,
@@ -413,44 +414,41 @@ export function ChatPage() {
   const handleNewKnowledge = useCallback(
     async (assistantMsg: ChatSessionMessage) => {
       if (!currentSession) return;
-      // Generated long-form outputs are saved as writing documents rather than external evidence records.
-      await knowledgeApi.saveDocument({
-        message_content: assistantMsg.metadata?.document_content || assistantMsg.content,
-        title: assistantMsg.metadata?.document_title,
-        session_id: currentSession.id,
-        category_id: defaultCategoryId,
+      const content = assistantMsg.metadata?.document_content || assistantMsg.content;
+      const title = assistantMsg.metadata?.document_title
+        || content.split("\n")[0].replace(/^#+\s*/, "").slice(0, 80)
+        || "Agent writing draft";
+      await assetsApi.create({
+        title,
+        asset_type: "topic_report",
+        status: "draft",
+        draft_content: content,
+        provenance: {
+          origin_type: "harness_session",
+          origin_ref: currentSession.id,
+          action: "save",
+        },
       });
     },
-    [currentSession, defaultCategoryId]
+    [currentSession]
   );
 
   const handleSaveAsNote = useCallback(
     async (assistantMsg: ChatSessionMessage) => {
-      if (!defaultCategoryId) throw new Error("No category available for saved note");
+      if (!currentSession || !defaultCategoryId) throw new Error("No active session or category available for saved note");
       // Chat messages saved here become user-authored notes, not source records.
       await notesApi.create({
         title: assistantMsg.metadata?.document_title || assistantMsg.content.split("\n")[0].replace(/^#+\s*/, "").slice(0, 80) || "Agent output",
         category_id: defaultCategoryId,
-        note_type: "remember",
+        note_type: "inbox",
         status: "kept",
         confidence: "medium",
-        tags: ["from-agent"],
+        tags: ["from-agent", "explicit-save", `harness-session:${currentSession.id}`],
         domains: ["agent-output"],
         content: assistantMsg.content,
       });
     },
-    [defaultCategoryId]
-  );
-
-  const handleRemember = useCallback(
-    async (assistantMsg: ChatSessionMessage) => {
-      if (!currentSession) return;
-      await knowledgeApi.remember({
-        content: assistantMsg.content,
-        session_id: currentSession.id,
-      });
-    },
-    [currentSession]
+    [currentSession, defaultCategoryId]
   );
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -592,11 +590,6 @@ export function ChatPage() {
                         onSaveAsNote={
                           msg.role === "assistant" && !streaming
                             ? () => handleSaveAsNote(msg)
-                            : undefined
-                        }
-                        onRemember={
-                          msg.role === "assistant" && !streaming
-                            ? () => handleRemember(msg)
                             : undefined
                         }
                       />

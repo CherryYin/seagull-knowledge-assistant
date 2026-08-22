@@ -339,14 +339,6 @@ async def run_news_auto_search_step() -> dict:
 def get_scheduled_tasks() -> list[ScheduledTask]:
     tasks = [
         ScheduledTask(
-            name="daily_summarizer",
-            job_type="daily_summarizer",
-            title="Daily summarizer",
-            handler=run_daily_summarizer_step,
-            schedule_type="daily",
-            daily_time_utc=time(hour=2, minute=0),
-        ),
-        ScheduledTask(
             name="maintenance_cleanup",
             job_type="maintenance_cleanup",
             title="Maintenance cleanup",

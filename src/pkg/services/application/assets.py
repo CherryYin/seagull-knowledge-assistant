@@ -55,6 +55,8 @@ async def create_asset(session: AsyncSession, *, user_id: str, body: AssetCreate
         wiki_refs=body.wiki_refs,
     )
     metadata = dict(body.metadata or {})
+    if body.provenance is not None:
+        metadata["provenance"] = body.provenance.model_dump(exclude_none=True)
     if body.opinion_notes is not None:
         metadata["opinion_notes"] = body.opinion_notes
     if body.style_notes is not None:
@@ -72,6 +74,7 @@ async def create_asset(session: AsyncSession, *, user_id: str, body: AssetCreate
         status=body.status,
         title=body.title,
         brief=body.brief,
+        draft_content=body.draft_content,
         source_refs=body.source_refs,
         note_refs=body.note_refs,
         memory_refs=body.memory_refs,

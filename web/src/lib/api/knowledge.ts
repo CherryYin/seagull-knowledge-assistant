@@ -1,5 +1,4 @@
 import { request } from "./client";
-import type { Note } from "./notes";
 
 export interface KnowledgeStatsItem {
   item_id: string;
@@ -16,29 +15,6 @@ export interface KnowledgeStatsItem {
 export interface KnowledgeStatsList {
   items: KnowledgeStatsItem[];
   total: number;
-}
-
-export interface SaveDocumentRequest {
-  message_content: string;
-  title?: string;
-  storage_uri?: string;
-  document_format?: string;
-  document_filename?: string;
-  session_id?: string;
-  category_id?: number;
-}
-
-export interface SaveDocumentResponse {
-  // `source_id` is the backing stored artifact record for the generated document.
-  source_id: string;
-  // `note_id` is the user-visible writing note.
-  note_id: string;
-}
-
-export interface RememberRequest {
-  content: string;
-  session_id?: string;
-  title?: string;
 }
 
 export interface ModelInfo {
@@ -76,16 +52,6 @@ export interface DashboardData {
 export const knowledgeApi = {
   models: () => request<ModelInfo[]>("/knowledge/models"),
   dashboard: () => request<DashboardData>("/knowledge/dashboard"),
-  saveDocument: (body: SaveDocumentRequest) =>
-    request<SaveDocumentResponse>("/knowledge/save-document", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-  remember: (body: RememberRequest) =>
-    request<Note>("/knowledge/remember", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
   stats: (params?: {
     sort_by?: string;
     item_type?: string;

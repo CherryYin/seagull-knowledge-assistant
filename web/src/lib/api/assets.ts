@@ -36,6 +36,7 @@ export interface AssetList {
 export interface AssetCreate {
   title: string;
   brief?: string;
+  draft_content?: string;
   asset_type?: AssetType;
   status?: AssetStatus;
   source_refs?: string[];
@@ -45,6 +46,11 @@ export interface AssetCreate {
   opinion_notes?: string;
   style_notes?: string;
   metadata?: Record<string, unknown>;
+  provenance?: {
+    origin_type: "harness_session" | "user";
+    origin_ref?: string;
+    action?: "save" | "keep" | "publish";
+  };
 }
 
 export interface RecentNewsletterCreate {

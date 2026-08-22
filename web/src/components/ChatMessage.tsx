@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { Components } from "react-markdown";
 import { cn } from "@/lib/utils";
-import { Bot, User, RotateCw, Brain, Check, FileText, StickyNote, Globe, FileOutput, AlertTriangle } from "lucide-react";
+import { Bot, User, RotateCw, Check, FileText, StickyNote, Globe, FileOutput, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MarkdownRenderer } from "@/components/markdown";
 import type { MessageMetadata, ReferenceInfo } from "@/lib/api";
@@ -38,7 +38,6 @@ interface Props {
   onRetry?: () => void;
   onNewKnowledge?: () => void;
   onSaveAsNote?: () => void;
-  onRemember?: () => void;
 }
 
 export function ChatMessage({
@@ -49,17 +48,14 @@ export function ChatMessage({
   onRetry,
   onNewKnowledge,
   onSaveAsNote,
-  onRemember,
 }: Props) {
   const isUser = role === "user";
   const navigate = useNavigate();
   const [retryLoading, setRetryLoading] = useState(false);
   const [newKnowledgeLoading, setNewKnowledgeLoading] = useState(false);
   const [saveAsNoteLoading, setSaveAsNoteLoading] = useState(false);
-  const [rememberLoading, setRememberLoading] = useState(false);
   const [newKnowledgeDone, setNewKnowledgeDone] = useState(false);
   const [saveAsNoteDone, setSaveAsNoteDone] = useState(false);
-  const [rememberDone, setRememberDone] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const markdownComponents: Components = {
@@ -105,24 +101,9 @@ export function ChatMessage({
       setNewKnowledgeDone(true);
       setTimeout(() => setNewKnowledgeDone(false), 2000);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Could not save as Source + Note. Try again or inspect the source details.");
+      setActionError(err instanceof Error ? err.message : "Could not save as a Writing Asset. Try again or inspect the Writing workspace.");
     } finally {
       setNewKnowledgeLoading(false);
-    }
-  };
-
-  const handleRemember = async () => {
-    if (!onRemember) return;
-    setRememberLoading(true);
-    setActionError(null);
-    try {
-      await onRemember();
-      setRememberDone(true);
-      setTimeout(() => setRememberDone(false), 2000);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Could not remember this output. Try again or inspect Agent settings.");
-    } finally {
-      setRememberLoading(false);
     }
   };
 
@@ -272,23 +253,6 @@ export function ChatMessage({
               </Button>
             )}
 
-            {/* Remember Knowledge button — on all assistant messages */}
-            {!isUser && onRemember && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
-                onClick={handleRemember}
-                disabled={rememberLoading || rememberDone}
-              >
-                {rememberDone ? (
-                  <Check className="h-3 w-3 text-emerald-500" />
-                ) : (
-                  <Brain className={cn("h-3 w-3", rememberLoading && "animate-pulse")} />
-                )}
-                Remember
-              </Button>
-            )}
           </div>
         )}
         {actionError && (

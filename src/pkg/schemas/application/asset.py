@@ -1,14 +1,23 @@
 from datetime import datetime
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 ASSET_TYPE_PATTERN = r"^(blog_post|research_brief|knowledge_pack|newsletter_issue|topic_report)$"
 ASSET_STATUS_PATTERN = r"^(draft|in_review|ready_to_export|exported|published|archived)$"
 
 
+class AssetProvenance(BaseModel):
+    origin_type: Literal["harness_session", "user"]
+    origin_ref: str | None = None
+    action: Literal["save", "keep", "publish"] = "save"
+
+
 class AssetCreate(BaseModel):
     title: str
     brief: str | None = None
+    draft_content: str | None = None
     asset_type: str = Field(default="blog_post", pattern=ASSET_TYPE_PATTERN)
     status: str = Field(default="draft", pattern=ASSET_STATUS_PATTERN)
     source_refs: list[str] = []
@@ -18,6 +27,7 @@ class AssetCreate(BaseModel):
     opinion_notes: str | None = None
     style_notes: str | None = None
     metadata: dict | None = None
+    provenance: AssetProvenance | None = None
 
 
 class RecentNewsletterCreate(BaseModel):

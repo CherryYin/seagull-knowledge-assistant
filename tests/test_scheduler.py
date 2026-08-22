@@ -486,6 +486,10 @@ def test_get_scheduled_tasks_includes_daily_maintenance_cleanup():
     assert task.daily_time_utc == time(hour=4, minute=0)
 
 
+def test_get_scheduled_tasks_excludes_legacy_daily_summarizer():
+    assert all(task.name != "daily_summarizer" for task in get_scheduled_tasks())
+
+
 @pytest.mark.asyncio
 async def test_run_paper_discovery_step_reports_no_enabled_profiles_reason():
     session = AsyncMock()

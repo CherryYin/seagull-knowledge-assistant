@@ -5,7 +5,7 @@ from fastapi import HTTPException
 
 from pkg.models.application.asset import Asset
 from pkg.models.foundation.source import Source
-from pkg.schemas.application.asset import AssetCreate, AssetUpdate, RecentNewsletterCreate
+from pkg.schemas.application.asset import AssetCreate, AssetProvenance, AssetUpdate, RecentNewsletterCreate
 from pkg.services.application.assets import create_asset, create_recent_newsletter_asset, update_asset
 
 
@@ -47,14 +47,33 @@ async def test_create_asset_persists_asset_when_refs_exist():
         asset = await create_asset(
             session,
             user_id="user-1",
-            body=AssetCreate(title="Draft post", source_refs=["src-1"], note_refs=["note-1"], wiki_refs=["wiki-1"], opinion_notes="Take a strong stance", style_notes="Write analytically"),
+            body=AssetCreate(
+                title="Draft post",
+                draft_content="# Draft",
+                source_refs=["src-1"],
+                note_refs=["note-1"],
+                wiki_refs=["wiki-1"],
+                opinion_notes="Take a strong stance",
+                style_notes="Write analytically",
+                provenance=AssetProvenance(
+                    origin_type="harness_session",
+                    origin_ref="session-1",
+                    action="save",
+                ),
+            ),
         )
 
     assert asset.title == "Draft post"
     assert asset.asset_type == "blog_post"
     assert asset.status == "draft"
+    assert asset.draft_content == "# Draft"
     assert asset.metadata_["opinion_notes"] == "Take a strong stance"
     assert asset.metadata_["style_notes"] == "Write analytically"
+    assert asset.metadata_["provenance"] == {
+        "origin_type": "harness_session",
+        "origin_ref": "session-1",
+        "action": "save",
+    }
     assert asset.metadata_["wiki_claims"][0]["wiki_title"] == "Wiki One"
     session.add.assert_called_once()
     session.commit.assert_awaited_once()

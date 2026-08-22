@@ -3,34 +3,6 @@ from datetime import datetime
 from pydantic import BaseModel
 
 
-class SaveDocumentRequest(BaseModel):
-    message_content: str
-    title: str | None = None
-    storage_uri: str | None = None
-    document_format: str | None = None
-    document_filename: str | None = None
-    session_id: str | None = None
-    category_id: int | None = None
-
-
-class SaveDocumentResponse(BaseModel):
-    """Saved writing document artifact identifiers.
-
-    `source_id` currently points to the backing stored artifact record, while
-    `note_id` points to the user-visible writing note.
-    """
-
-    source_id: str
-    note_id: str
-
-
-class RememberRequest(BaseModel):
-    content: str
-    session_id: str | None = None
-    title: str | None = None
-    category_id: int | None = None
-
-
 class KnowledgeStatsRead(BaseModel):
     item_id: str
     item_type: str
