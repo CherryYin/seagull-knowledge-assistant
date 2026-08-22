@@ -18,10 +18,6 @@ async def test_collect_core_simplification_audit_reports_ids_without_content():
     session = AsyncMock()
     session.execute.side_effect = [
         _rows([
-            ("mem-source-a", {"source_type": "rss"}),
-            ("mem-source-b", {}),
-        ]),
-        _rows([
             ("digest-a", "minio://knowledge-graph/notes/digest-a.md"),
         ]),
         _rows([10, 11, 12]),
@@ -35,12 +31,6 @@ async def test_collect_core_simplification_audit_reports_ids_without_content():
     assert result == {
         "generated_at": "2026-08-22T12:00:00+00:00",
         "read_only": True,
-        "orphan_source_memory": {
-            "count": 2,
-            "ids": ["mem-source-a", "mem-source-b"],
-            "ids_truncated": False,
-            "by_source_type": {"rss": 1, "unknown": 1},
-        },
         "expired_digest_notes": {
             "count": 1,
             "ids": ["digest-a"],

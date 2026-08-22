@@ -73,27 +73,6 @@ class WikiPageSource(Base):
     )
 
 
-class WikiPageMemory(Base):
-    __tablename__ = "wiki_page_memories"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    wiki_id: Mapped[str] = mapped_column(String, ForeignKey("wiki_pages.id", ondelete="CASCADE"), nullable=False)
-    memory_node_id: Mapped[str] = mapped_column(
-        String, ForeignKey("memory_nodes.id", ondelete="CASCADE"), nullable=False
-    )
-    relevance_summary: Mapped[str] = mapped_column(Text, nullable=False)
-    key_points: Mapped[list | None] = mapped_column(JSONB)
-    supporting_claims: Mapped[list | None] = mapped_column(JSONB)
-    confidence_score: Mapped[float | None] = mapped_column(Float)
-    last_refreshed_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
-
-    __table_args__ = (
-        UniqueConstraint("wiki_id", "memory_node_id", name="uq_wiki_page_memories_wiki_memory"),
-        Index("idx_wiki_page_memories_wiki", "wiki_id"),
-        Index("idx_wiki_page_memories_memory", "memory_node_id"),
-    )
-
-
 class WikiRecompileSuggestion(Base):
     __tablename__ = "wiki_recompile_suggestions"
 

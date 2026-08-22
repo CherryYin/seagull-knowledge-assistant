@@ -1,14 +1,11 @@
 from datetime import datetime, timezone
-from collections import Counter
 from typing import Any
 
-from sqlalchemy import and_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.models.discovery import DiscoveryItem
-from pkg.models.foundation.memory import MemoryNode
 from pkg.models.foundation.note import Note
-from pkg.models.foundation.source import Source
 from pkg.models.foundation.wiki import WikiPage, WikiRecompileSuggestion
 
 
@@ -31,22 +28,6 @@ async def collect_core_simplification_audit(
         raise ValueError("id_limit must be non-negative")
 
     audit_time = now or datetime.now(timezone.utc)
-    orphan_rows = await session.execute(
-        select(MemoryNode.id, MemoryNode.metadata_)
-        .outerjoin(
-            Source,
-            and_(
-                Source.id == MemoryNode.scope_id,
-                Source.user_id == MemoryNode.user_id,
-            ),
-        )
-        .where(
-            MemoryNode.node_type == "source",
-            MemoryNode.level == "source",
-            Source.id.is_(None),
-        )
-        .order_by(MemoryNode.id)
-    )
     expired_digest_rows = await session.execute(
         select(Note.id, Note.file_path)
         .where(
@@ -73,13 +54,7 @@ async def collect_core_simplification_audit(
         .order_by(WikiRecompileSuggestion.id)
     )
 
-    orphan_memory_records = list(orphan_rows.all())
     expired_digest_records = list(expired_digest_rows.all())
-    orphan_memory_ids = [record[0] for record in orphan_memory_records]
-    orphan_source_types = Counter(
-        str((record[1] or {}).get("source_type") or "unknown")
-        for record in orphan_memory_records
-    )
     expired_digest_ids = [record[0] for record in expired_digest_records]
     digest_storage_uris = [
         record[1]
@@ -93,10 +68,6 @@ async def collect_core_simplification_audit(
     return {
         "generated_at": audit_time.isoformat(),
         "read_only": True,
-        "orphan_source_memory": {
-            **_audit_section(orphan_memory_ids, id_limit=id_limit),
-            "by_source_type": dict(sorted(orphan_source_types.items())),
-        },
         "expired_digest_notes": {
             **_audit_section(expired_digest_ids, id_limit=id_limit),
             "storage_object_count": len(digest_storage_uris),

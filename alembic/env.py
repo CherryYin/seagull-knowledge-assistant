@@ -19,7 +19,6 @@ from pkg.models.stats import KnowledgeStats  # noqa: F401
 from pkg.models.agent_profile import AgentProfile  # noqa: F401
 from pkg.models.agent_run import AgentRun, AgentRunEvent  # noqa: F401
 from pkg.models.wiki import WikiEmbedding, WikiPage, WikiPageSource, WikiRecompileSuggestion  # noqa: F401
-from pkg.models.memory import MemoryEmbedding, MemoryNode  # noqa: F401
 from pkg.models.calendar_reminder import CalendarReminder  # noqa: F401
 from pkg.models.connector_trend import ConnectorTrendItem  # noqa: F401
 from pkg.models.connector_cache import ConnectorSearchItem  # noqa: F401

@@ -23,7 +23,6 @@ from pkg.models.user import User
 from pkg.schemas.source import ChunkRead, SourceCreate, SourceList, SourceRead, SourceUpdate
 from pkg.services.foundation.chunking import chunk_text
 from pkg.services.cross_cutting.embedding import get_embedding_service
-from pkg.services.foundation.source_memory import delete_source_memory_derivatives
 from pkg.services.cross_cutting.storage import get_storage_service
 from pkg.services.foundation.web_extractor import WebPageFetchError, fetch_web_page
 
@@ -632,7 +631,6 @@ async def delete_source_by_id(
     for chunk in chunks.scalars():
         await session.delete(chunk)
 
-    await delete_source_memory_derivatives(session, user_id=user.id, source_id=source_id)
     await session.delete(source)
     await session.commit()
 

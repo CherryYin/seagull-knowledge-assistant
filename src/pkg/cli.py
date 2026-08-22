@@ -398,36 +398,5 @@ def cleanup_expired_digests(
     _run(_cleanup())
 
 
-@app.command(name="cleanup-orphan-source-memory")
-def cleanup_orphan_source_memory_command(
-    apply: bool = typer.Option(False, "--apply", help="Delete orphan Source Memory derivatives"),
-    id_limit: int = typer.Option(20, min=0, help="Maximum IDs shown in dry-run mode"),
-):
-    """Dry-run or explicitly delete Source Memory nodes without an active Source."""
-
-    async def _cleanup():
-        from pkg.db import async_session
-        from pkg.services.cross_cutting.orphan_memory_cleanup import (
-            audit_orphan_source_memory_cleanup,
-            cleanup_orphan_source_memory,
-        )
-
-        async with async_session() as session:
-            if apply:
-                result = {
-                    "mode": "apply",
-                    **await cleanup_orphan_source_memory(session),
-                }
-            else:
-                result = {
-                    "mode": "dry-run",
-                    "apply_required": True,
-                    **await audit_orphan_source_memory_cleanup(session, id_limit=id_limit),
-                }
-        console.print_json(json.dumps(result, ensure_ascii=False))
-
-    _run(_cleanup())
-
-
 if __name__ == "__main__":
     app()
