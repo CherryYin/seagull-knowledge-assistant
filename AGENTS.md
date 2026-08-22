@@ -23,7 +23,7 @@ deepseek-knowledge-lab/
 
 ## 核心工作流
 
-1. **知识获取**：agent 通过 pkg-client 插件调用 PKG 的 `/api/search`、`/api/notes`、`/api/memory` 等接口检索知识。
+1. **知识获取**：agent 通过 pkg-client 插件调用 PKG 的 `/api/search`、`/api/notes`、`/api/sources` 等接口检索知识。
 2. **知识消费**：agent 阅读、分析、关联检索到的知识片段。
 3. **知识产出**：agent 结果保留在 Harness Session/Workflow；用户在 Seagull UI 明确 Keep/Save/Publish 后才写回 PKG。
 4. **实验追踪**：DeepSeek Harness 的 Trajectory View 记录完整执行轨迹，可 replay/fork/对比。
@@ -38,9 +38,6 @@ deepseek-knowledge-lab/
   - `POST /api/search` — 知识检索（支持 sql/vector/hybrid 模式）
   - `GET/POST /api/notes` — 笔记 CRUD
   - `GET /api/sources` — 知识源列表
-  - `GET /api/memory` — 记忆图谱
-  - `POST /api/knowledge/save-document` — 保存产出文档
-  - `POST /api/knowledge/remember` — 保存临时记忆
   - `GET /api/wiki` — wiki 页面
 
 ## 开发约定

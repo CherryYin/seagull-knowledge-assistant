@@ -45,14 +45,6 @@ class PkgClient {
     return this.request(sessionId, "GET", `/sources?${query.toString()}`);
   }
   readSource(sessionId, sourceId) { return this.request(sessionId, "GET", `/sources/${sourceId}`); }
-  searchMemory(sessionId, query, topK) {
-    return this.request(sessionId, "POST", "/memory/search", {
-      query,
-      node_type: "",
-      level: "",
-      top_k: topK || 5,
-    });
-  }
   dashboard(sessionId) { return this.request(sessionId, "GET", "/knowledge/dashboard"); }
 }
 
@@ -144,15 +136,5 @@ export function apply(ctx) {
     execute: async (args, exec) => JSON.stringify(await client.readSource(sessionId(exec), args.source_id)),
   });
 
-  ctx.tools.register({
-    name: "pkg_search_memory",
-    description: "搜索当前用户的 PKG 记忆图谱。",
-    parameters: { type: "object", properties: { query: { type: "string" }, top_k: { type: "number", default: 5 } }, required: ["query"] },
-    output: textOutput("JSON 记忆搜索结果"),
-    execute: async (args, exec) => JSON.stringify(
-      await client.searchMemory(sessionId(exec), args.query, args.top_k || 5),
-    ),
-  });
-
-  ctx.logger?.info(`[pkg-client] connected through ${baseUrl} (7 read-only tools, session-scoped Gateway auth)`);
+  ctx.logger?.info(`[pkg-client] connected through ${baseUrl} (6 read-only tools, session-scoped Gateway auth)`);
 }

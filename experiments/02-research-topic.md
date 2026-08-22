@@ -16,7 +16,7 @@
 步骤：
 1. 用 pkg_search 以 hybrid 模式搜索，找最相关的 5 条结果
 2. 用 pkg_read_note / pkg_read_source 阅读最相关的 2-3 条
-3. 用 pkg_search_memory 搜索记忆图谱中是否有相关节点
+3. 对核心概念补充执行一次 pkg_search hybrid 检索，确认是否遗漏相关 Source、Note 或 Wiki
 4. 综合所有发现，形成一份结构化报告：
 
 # {TOPIC} 研究报告

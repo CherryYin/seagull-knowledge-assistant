@@ -27,7 +27,6 @@ test("pkg-client exposes only read-only Agent tools", () => {
     "pkg_knowledge_stats",
     "pkg_read_note",
     "pkg_read_source",
-    "pkg_search_memory",
   ]);
   assert.equal(providedClient.createNote, undefined);
   assert.equal(providedClient.saveDocument, undefined);

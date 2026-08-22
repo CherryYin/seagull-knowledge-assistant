@@ -20,7 +20,6 @@ declare class PkgClient {
         limit?: number;
     }): Promise<SourceList>;
     readSource(sessionId: string, sourceId: string): Promise<SourceRead>;
-    searchMemory(sessionId: string, query: string, topK?: number): Promise<MemorySearchResult[]>;
     dashboard(sessionId: string): Promise<DashboardResponse>;
 }
 interface SearchResult {
@@ -56,14 +55,6 @@ interface SourceRead {
     source_type: string;
     raw_content?: string;
     created_at: string;
-}
-interface MemorySearchResult {
-    id: string;
-    title: string;
-    node_type: string;
-    level: string;
-    snippet: string;
-    score: number;
 }
 interface DashboardResponse {
     counts: {

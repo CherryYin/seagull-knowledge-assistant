@@ -78,10 +78,9 @@ deepseek-knowledge-lab/
 | `pkg_list_notes` | 浏览笔记列表 | `GET /api/notes` |
 | `pkg_read_source` | 读取知识源全文 | `GET /api/sources/:id` |
 | `pkg_list_sources` | 浏览知识源列表 | `GET /api/sources` |
-| `pkg_search_memory` | 搜索记忆图谱 | `POST /api/memory/search` |
 | `pkg_knowledge_stats` | 知识库统计 | `GET /api/dashboard` |
 
-`pkg-client` 对 Agent 仅暴露读取/检索工具。保存笔记、Writing Document 或其他持久化操作由 Seagull UI 的显式用户动作发起。
+`pkg-client` 对 Agent 仅暴露 6 个读取/检索工具。PKG 知识统一通过 `pkg_search` 的 hybrid 模式检索；保存笔记、Writing Document 或其他持久化操作由 Seagull UI 的显式用户动作发起。
 
 ## 实验工作流
 

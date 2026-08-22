@@ -15,7 +15,7 @@
 ```
 在 Harness Web UI 中设计一个知识研究任务，例如：
 "搜索 PKG 中关于 {topic} 的所有 notes 和 sources，
- 阅读最相关的 3 条，用 pkg_search_memory 查记忆图谱，
+ 阅读最相关的 3 条，再用 pkg_search hybrid 补充检索相关概念，
  然后输出结构化研究报告，等待用户决定是否保存。"
 
 跑通后观察 Trajectory View，记录：
@@ -73,7 +73,7 @@ args:
 ```markdown
 ---
 name: research-topic-validated
-description: 经过 Harness 实验验证的深度研究流程 — 搜索 PKG + 记忆图谱 → 综合报告
+description: 经过 Harness 实验验证的深度研究流程 — 统一搜索 PKG → 综合报告
 args:
   - name: topic
     description: 研究主题
@@ -86,7 +86,7 @@ args:
 
 1. **知识检索**：用 search_knowledge 以 hybrid 模式搜索 $@，top_k=5
 2. **深度阅读**：对最相关的 2-3 条结果用 read_note / read_source 读取全文
-3. **记忆关联**：用 search_memory 搜索记忆图谱中与 $@ 相关的节点
+3. **关联补检**：用 search_knowledge hybrid 搜索核心概念，补充相关 Source、Note 或 Wiki
 4. **综合输出**：基于所有证据输出结构化报告：
 
 ## 研究报告
@@ -94,8 +94,8 @@ args:
 ### 核心发现
 - 从 PKG 中检索到的关键信息（标注来源 ID）
 
-### 记忆关联
-- 知识图谱中已有的相关概念
+### 知识关联
+- PKG Source、Note 或 Wiki 中已有的相关概念
 
 ### 知识缺口
 - 当前 PKG 中缺失但相关的内容
@@ -128,13 +128,13 @@ model:
 tools:
   - pkg_search
   - pkg_read_note
-  - pkg_search_memory
+  - pkg_read_source
 
 system_prompt: |
   你是 PKG 知识研究 agent。执行经过实验验证的深度研究流程：
   1. 先用 pkg_search 以 hybrid 模式检索
   2. 阅读最相关的 2-3 条
-  3. 搜索记忆图谱
+  3. 用 pkg_search hybrid 补充检索核心概念
   4. 输出结构化报告
   5. 等待用户 review 和显式保存
 
