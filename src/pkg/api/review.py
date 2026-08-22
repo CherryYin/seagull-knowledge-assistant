@@ -26,7 +26,7 @@ def _utc_now_naive() -> datetime:
 
 @router.get("/suggestions", response_model=ReviewSuggestionList)
 async def list_review_suggestions(
-    suggestion_type: str | None = Query(default=None, pattern=r"^(low_confidence_fact|profile_update)$"),
+    suggestion_type: str | None = Query(default=None, pattern=r"^profile_update$"),
     status: str | None = Query(default="pending", pattern=r"^(pending|accepted|rejected|dismissed|applied)$"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
@@ -55,7 +55,6 @@ async def generate_review_suggestions(
     created, skipped = await ensure_review_suggestions(
         session,
         user_id=user.id,
-        include_low_confidence_facts=body.include_low_confidence_facts,
         include_profile_suggestions=body.include_profile_suggestions,
         limit=body.limit,
     )

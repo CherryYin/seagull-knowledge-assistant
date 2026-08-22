@@ -1,38 +1,29 @@
-import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Clock, RefreshCw, Sparkles, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { reviewApi, ReviewSuggestion, ReviewSuggestionType } from "@/lib/api";
+import { reviewApi, ReviewSuggestion } from "@/lib/api";
 import { getReviewConflictMessage, getReviewStatusLabel } from "@/lib/reviewStatus";
 import { ModuleSectionNav } from "@/components/SectionNav";
 
-const titles: Record<ReviewSuggestionType, string> = {
-  low_confidence_fact: "Low-Confidence Facts",
-  profile_update: "Profile Suggestions",
-};
-
 export function ReviewSuggestionsPage() {
-  const [params] = useSearchParams();
-  const type = (params.get("type") || "low_confidence_fact") as ReviewSuggestionType;
   const queryClient = useQueryClient();
   const { data, isLoading, error } = useQuery({
-    queryKey: ["review-suggestions", type],
-    queryFn: () => reviewApi.suggestions({ suggestion_type: type, status: "pending", limit: 100 }),
+    queryKey: ["review-suggestions", "profile_update"],
+    queryFn: () => reviewApi.suggestions({ suggestion_type: "profile_update", status: "pending", limit: 100 }),
   });
   const generateMutation = useMutation({
     mutationFn: () => reviewApi.generateSuggestions({
-      include_low_confidence_facts: type === "low_confidence_fact",
-      include_profile_suggestions: type === "profile_update",
+      include_profile_suggestions: true,
       limit: 100,
     }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["review-suggestions", type] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["review-suggestions", "profile_update"] }),
   });
   const updateMutation = useMutation({
     mutationFn: ({ id, status }: { id: number; status: "dismissed" | "applied" }) => reviewApi.updateSuggestion(id, status),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["review-suggestions", type] }),
-    onError: () => queryClient.invalidateQueries({ queryKey: ["review-suggestions", type] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["review-suggestions", "profile_update"] }),
+    onError: () => queryClient.invalidateQueries({ queryKey: ["review-suggestions", "profile_update"] }),
   });
 
   const suggestions = data?.items ?? [];
@@ -47,18 +38,12 @@ export function ReviewSuggestionsPage() {
               <Sparkles className="h-5 w-5" />
               <span className="text-sm font-medium">Phase B Review</span>
             </div>
-            <h1 className="mt-2 text-2xl font-semibold tracking-tight">{titles[type] ?? "Review Suggestions"}</h1>
+            <h1 className="mt-2 text-2xl font-semibold tracking-tight">Profile Suggestions</h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-              Review uncertain memory facts and profile-quality suggestions before they become trusted long-term context.
+              Review generated profile-quality suggestions before they affect personalization.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button asChild variant={type === "low_confidence_fact" ? "default" : "outline"} size="sm">
-              <Link to="/review/suggestions?type=low_confidence_fact">Facts</Link>
-            </Button>
-            <Button asChild variant={type === "profile_update" ? "default" : "outline"} size="sm">
-              <Link to="/review/suggestions?type=profile_update">Profile</Link>
-            </Button>
             <Button size="sm" variant="outline" onClick={() => generateMutation.mutate()} disabled={generateMutation.isPending}>
               {generateMutation.isPending && <RefreshCw className="mr-1 h-4 w-4 animate-spin" />} Scan
             </Button>
@@ -123,9 +108,6 @@ function ReviewSuggestionCard({
           <div className="flex flex-wrap items-center gap-2">
             <Badge>{suggestion.suggestion_type.replace(/_/g, " ")}</Badge>
             <Badge variant="outline">{getReviewStatusLabel(suggestion.status)}</Badge>
-            {typeof suggestion.evidence?.confidence_score === "number" && (
-              <span className="text-xs text-muted-foreground">confidence {suggestion.evidence.confidence_score}</span>
-            )}
           </div>
           <h2 className="mt-2 font-medium">{suggestion.title}</h2>
           {suggestion.summary && <p className="mt-1 text-sm leading-6 text-muted-foreground">{suggestion.summary}</p>}

@@ -35,7 +35,6 @@ class ReviewSuggestionUpdate(BaseModel):
 
 
 class ReviewSuggestionGenerateRequest(BaseModel):
-    include_low_confidence_facts: bool = True
     include_profile_suggestions: bool = True
     limit: int = Field(default=50, ge=1, le=200)
 

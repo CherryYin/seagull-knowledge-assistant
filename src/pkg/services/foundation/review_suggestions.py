@@ -3,14 +3,9 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pkg.models.foundation.memory import MemoryNode
 from pkg.models.foundation.review import ReviewSuggestion
 from pkg.models.user import UserMemory
-from pkg.services.foundation.memory_lifecycle import get_memory_status, set_memory_status
-from pkg.services.foundation.memory_role import get_memory_family
 from pkg.services.cross_cutting.user_profiler import PROFILE_MEMORY_KEY
-
-LOW_CONFIDENCE_FACT_THRESHOLD = 0.55
 
 
 def _utc_now_naive() -> datetime:
@@ -21,22 +16,14 @@ async def ensure_review_suggestions(
     session: AsyncSession,
     *,
     user_id: str,
-    include_low_confidence_facts: bool = True,
     include_profile_suggestions: bool = True,
     limit: int = 50,
 ) -> tuple[int, int]:
     created = 0
     skipped = 0
-    remaining = limit
 
-    if include_low_confidence_facts and remaining > 0:
-        made, missed = await _ensure_low_confidence_fact_suggestions(session, user_id=user_id, limit=remaining)
-        created += made
-        skipped += missed
-        remaining -= made
-
-    if include_profile_suggestions and remaining > 0:
-        made, missed = await _ensure_profile_suggestions(session, user_id=user_id, limit=remaining)
+    if include_profile_suggestions:
+        made, missed = await _ensure_profile_suggestions(session, user_id=user_id, limit=limit)
         created += made
         skipped += missed
 
@@ -45,16 +32,7 @@ async def ensure_review_suggestions(
 
 
 async def apply_review_suggestion(session: AsyncSession, suggestion: ReviewSuggestion) -> None:
-    if suggestion.suggestion_type == "low_confidence_fact":
-        node = await session.get(MemoryNode, suggestion.target_id)
-        if node and node.user_id == suggestion.user_id:
-            metadata = dict(node.metadata_ or {})
-            metadata["low_confidence_reviewed_at"] = _utc_now_naive().isoformat()
-            node.metadata_ = metadata
-            set_memory_status(node, "active")
-            if node.confidence_score is None or node.confidence_score < LOW_CONFIDENCE_FACT_THRESHOLD:
-                node.confidence_score = LOW_CONFIDENCE_FACT_THRESHOLD
-    elif suggestion.suggestion_type == "profile_update":
+    if suggestion.suggestion_type == "profile_update":
         profile = await _get_profile_memory(session, suggestion.user_id)
         if profile:
             current = dict(profile.value or {})
@@ -62,62 +40,6 @@ async def apply_review_suggestion(session: AsyncSession, suggestion: ReviewSugge
             current["_reviewed_suggestions"].append(suggestion.proposed_value or {})
             current["_last_profile_suggestion_applied_at"] = _utc_now_naive().isoformat()
             profile.value = current
-
-
-async def _ensure_low_confidence_fact_suggestions(
-    session: AsyncSession,
-    *,
-    user_id: str,
-    limit: int,
-) -> tuple[int, int]:
-    rows = await session.execute(
-        select(MemoryNode)
-        .where(MemoryNode.user_id == user_id)
-        .where(MemoryNode.confidence_score.is_not(None))
-        .where(MemoryNode.confidence_score < LOW_CONFIDENCE_FACT_THRESHOLD)
-        .order_by(MemoryNode.confidence_score.asc(), MemoryNode.updated_at.desc())
-        .limit(limit)
-    )
-    created = 0
-    skipped = 0
-    for node in rows.scalars():
-        if get_memory_status(node) in {"archived", "rejected", "merged"}:
-            skipped += 1
-            continue
-        existing = await _has_open_suggestion(
-            session,
-            user_id=user_id,
-            suggestion_type="low_confidence_fact",
-            target_type="memory_node",
-            target_id=node.id,
-        )
-        if existing:
-            skipped += 1
-            continue
-        session.add(
-            ReviewSuggestion(
-                user_id=user_id,
-                suggestion_type="low_confidence_fact",
-                target_type="memory_node",
-                target_id=node.id,
-                title=f"Review low-confidence memory: {node.title}",
-                summary=node.summary or node.content[:500],
-                proposed_value={"action": "confirm_memory", "confidence_score": LOW_CONFIDENCE_FACT_THRESHOLD},
-                evidence={
-                    "memory_node_id": node.id,
-                    "node_type": node.node_type,
-                    "level": node.level,
-                    "family": get_memory_family(node),
-                    "confidence_score": node.confidence_score,
-                    "derived_from_notes": node.derived_from_notes or [],
-                    "derived_from_sources": node.derived_from_sources or [],
-                },
-                metadata_={"source": "memory_confidence_scan", "threshold": LOW_CONFIDENCE_FACT_THRESHOLD},
-            )
-        )
-        created += 1
-    return created, skipped
-
 
 async def _ensure_profile_suggestions(
     session: AsyncSession,

@@ -26,10 +26,6 @@ export function ReviewPage() {
     queryKey: ["review-source-imported"],
     queryFn: () => sourcesApi.list({ limit: 100, feed_view: "parents" }),
   });
-  const { data: lowConfidenceData, isLoading: lowConfidenceLoading } = useQuery({
-    queryKey: ["review-low-confidence-facts"],
-    queryFn: () => reviewApi.suggestions({ suggestion_type: "low_confidence_fact", status: "pending", limit: 5 }),
-  });
   const { data: profileSuggestionData, isLoading: profileSuggestionLoading } = useQuery({
     queryKey: ["review-profile-suggestions"],
     queryFn: () => reviewApi.suggestions({ suggestion_type: "profile_update", status: "pending", limit: 5 }),
@@ -121,18 +117,9 @@ export function ReviewPage() {
             items={reviewableSources.map((source) => ({ title: source.title, meta: source.source_type }))}
           />
           <ReviewQueueCard
-            title="Low-Confidence Fact Review"
-            description="Profile facts with weak confidence that need confirmation before they should be trusted."
-            to="/review/suggestions?type=low_confidence_fact"
-            icon={Sparkles}
-            count={lowConfidenceData?.total ?? 0}
-            loading={lowConfidenceLoading}
-            items={(lowConfidenceData?.items ?? []).map((item) => ({ title: item.title, meta: item.summary || item.target_id }))}
-          />
-          <ReviewQueueCard
             title="Profile Update Review"
             description="Generated profile updates and quality checks that may improve personalization."
-            to="/review/suggestions?type=profile_update"
+            to="/review/suggestions"
             icon={UserRoundCheck}
             workflowLabel="Run Production Retrospective"
             onWorkflow={() =>

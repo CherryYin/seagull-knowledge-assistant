@@ -1,6 +1,6 @@
 import { request } from "./client";
 
-export type ReviewSuggestionType = "low_confidence_fact" | "profile_update";
+export type ReviewSuggestionType = "profile_update";
 export type ReviewSuggestionStatus = "pending" | "accepted" | "rejected" | "dismissed" | "applied";
 
 export interface ReviewSuggestion {
@@ -39,7 +39,7 @@ export const reviewApi = {
     if (params?.offset) q.set("offset", String(params.offset));
     return request<ReviewSuggestionList>(`/review/suggestions?${q}`);
   },
-  generateSuggestions: (body?: { include_low_confidence_facts?: boolean; include_profile_suggestions?: boolean; limit?: number }) =>
+  generateSuggestions: (body?: { include_profile_suggestions?: boolean; limit?: number }) =>
     request<{ created: number; skipped: number }>("/review/suggestions/generate", {
       method: "POST",
       body: JSON.stringify(body ?? {}),
