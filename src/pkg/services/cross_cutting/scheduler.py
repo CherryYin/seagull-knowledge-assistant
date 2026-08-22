@@ -107,18 +107,6 @@ async def run_scheduled_task(task: ScheduledTask) -> TaskRunResult:
         )
 
 
-async def run_daily_summarizer_step() -> dict:
-    from pkg.services.foundation.daily_summarizer import summarize_all_users_temporary_notes
-
-    note_ids = await summarize_all_users_temporary_notes()
-    created = len(note_ids)
-    return {
-        "note_ids": note_ids,
-        "created": created,
-        "reason": None if created else "no_temporary_notes",
-    }
-
-
 async def run_maintenance_step() -> dict:
     from pkg.services.cross_cutting.maintenance import run_maintenance_cleanup_step
 

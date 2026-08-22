@@ -12,7 +12,6 @@ from pkg.services.cross_cutting.scheduler import (
     get_scheduled_tasks,
     is_task_due,
     next_task_run_at,
-    run_daily_summarizer_step,
     run_discovery_generate_step,
     run_maintenance_step,
     run_news_auto_search_step,
@@ -445,26 +444,6 @@ async def test_run_discovery_generate_step_reports_candidate_counts():
     assert result["updated"] == 1
     assert result["skipped"] == 3
     assert result["candidate_count"] == 6
-    assert result["reason"] is None
-
-
-@pytest.mark.asyncio
-async def test_run_daily_summarizer_step_reports_no_temporary_notes_reason():
-    with patch("pkg.services.foundation.daily_summarizer.summarize_all_users_temporary_notes", AsyncMock(return_value=[])):
-        result = await run_daily_summarizer_step()
-
-    assert result["created"] == 0
-    assert result["note_ids"] == []
-    assert result["reason"] == "no_temporary_notes"
-
-
-@pytest.mark.asyncio
-async def test_run_daily_summarizer_step_reports_created_note_ids():
-    with patch("pkg.services.foundation.daily_summarizer.summarize_all_users_temporary_notes", AsyncMock(return_value=["note-a", "note-b"])):
-        result = await run_daily_summarizer_step()
-
-    assert result["created"] == 2
-    assert result["note_ids"] == ["note-a", "note-b"]
     assert result["reason"] is None
 
 
