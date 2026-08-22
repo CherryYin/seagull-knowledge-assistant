@@ -25,7 +25,6 @@ def _make_asset(asset_id: str, user_id: str):
         brief="Write about architecture",
         source_refs=["src-1"],
         note_refs=[],
-        memory_refs=[],
         wiki_refs=[],
     )
     asset.created_at = datetime(2026, 6, 8, tzinfo=timezone.utc)

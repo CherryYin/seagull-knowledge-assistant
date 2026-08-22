@@ -17,7 +17,6 @@ async def test_generate_outline_uses_llm_when_available():
         brief="Write about retrieval",
         source_refs=[],
         note_refs=[],
-        memory_refs=[],
         wiki_refs=[],
     )
     session = AsyncMock()
@@ -44,7 +43,6 @@ async def test_generate_draft_falls_back_when_llm_fails():
         outline="## Outline",
         source_refs=[],
         note_refs=[],
-        memory_refs=[],
         wiki_refs=[],
     )
     session = AsyncMock()
@@ -68,7 +66,6 @@ async def test_generate_draft_falls_back_when_llm_returns_empty_content():
         outline="## Issue Overview",
         source_refs=[],
         note_refs=[],
-        memory_refs=[],
         wiki_refs=[],
     )
     session = AsyncMock()

@@ -27,7 +27,6 @@ async def test_record_asset_production_event_creates_memory():
         editor_feedback=None,
         source_refs=[],
         note_refs=[],
-        memory_refs=[],
         wiki_refs=[],
         export_format=None,
         exported_at=None,

@@ -22,7 +22,6 @@ class Asset(Base):
     editor_feedback: Mapped[str | None] = mapped_column(Text)
     source_refs: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
     note_refs: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
-    memory_refs: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
     wiki_refs: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
     export_format: Mapped[str | None] = mapped_column(String(50))
     exported_at: Mapped[datetime | None] = mapped_column()

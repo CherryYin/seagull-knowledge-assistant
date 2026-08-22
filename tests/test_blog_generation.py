@@ -18,7 +18,6 @@ def test_render_generation_context_groups_raw_stable_and_candidate_wiki():
         brief="brief",
         source_refs=["src-1"],
         note_refs=["note-1"],
-        memory_refs=[],
         wiki_refs=["wiki-stable", "wiki-draft"],
         metadata_={"opinion_notes": "take", "style_notes": "clear"},
     )
