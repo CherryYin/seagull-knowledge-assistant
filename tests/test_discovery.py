@@ -105,9 +105,7 @@ async def test_generate_discovery_items_scores_profile_match():
     cached.updated_at = datetime(2026, 5, 25, tzinfo=timezone.utc)
     session.execute.side_effect = _select_router(profile=profile, cached=[cached])
 
-    with patch("pkg.services.foundation.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
-        mock_memory.return_value = []
-        created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["arxiv"])
+    created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["arxiv"])
 
     assert (created, updated, skipped) == (1, 0, 0)
     item = session.add.call_args.args[0]
@@ -133,9 +131,7 @@ async def test_generate_discovery_items_from_rss_source():
     )
     session.execute.side_effect = _select_router(sources=[rss_source])
 
-    with patch("pkg.services.foundation.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
-        mock_memory.return_value = []
-        created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["rss"])
+    created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["rss"])
 
     assert (created, updated, skipped) == (1, 0, 0)
     item = session.add.call_args.args[0]
@@ -167,9 +163,7 @@ async def test_generate_discovery_items_from_news_connector_cache():
     cached.updated_at = datetime(2026, 5, 25, tzinfo=timezone.utc)
     session.execute.side_effect = _select_router(cached=[cached])
 
-    with patch("pkg.services.foundation.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
-        mock_memory.return_value = []
-        created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["news"])
+    created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["news"])
 
     assert (created, updated, skipped) == (1, 0, 0)
     item = session.add.call_args.args[0]
@@ -201,9 +195,7 @@ async def test_generate_discovery_items_from_imported_news_source():
     )
     session.execute.side_effect = _select_router(sources=[news_source])
 
-    with patch("pkg.services.foundation.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
-        mock_memory.return_value = []
-        created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["news"])
+    created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["news"])
 
     assert (created, updated, skipped) == (1, 0, 0)
     item = session.add.call_args.args[0]
@@ -231,9 +223,7 @@ async def test_generate_discovery_items_from_web_source_with_credibility_and_pre
     )
     session.execute.side_effect = _select_router(profile=profile, sources=[web_source])
 
-    with patch("pkg.services.foundation.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
-        mock_memory.return_value = []
-        created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["web"])
+    created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["web"])
 
     assert (created, updated, skipped) == (1, 0, 0)
     item = session.add.call_args.args[0]
@@ -243,7 +233,7 @@ async def test_generate_discovery_items_from_web_source_with_credibility_and_pre
 
 
 @pytest.mark.asyncio
-async def test_generate_discovery_items_adds_memory_similarity_reason():
+async def test_generate_discovery_items_does_not_query_memory_tree():
     session = AsyncMock()
     session.add = MagicMock()
     cached = ConnectorSearchItem(
@@ -264,17 +254,13 @@ async def test_generate_discovery_items_adds_memory_similarity_reason():
         },
     )
     cached.updated_at = datetime(2026, 5, 25, tzinfo=timezone.utc)
-    memory_node = MagicMock()
-    memory_node.title = "Memory retrieval architecture"
     session.execute.side_effect = _select_router(cached=[cached])
 
-    with patch("pkg.services.foundation.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
-        mock_memory.return_value = [MagicMock(node=memory_node)]
-        created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["github"])
+    created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["github"])
 
     assert (created, updated, skipped) == (1, 0, 0)
     item = session.add.call_args.args[0]
-    assert any("Similar to memory" in reason for reason in item.why)
+    assert not any("memory" in reason.lower() for reason in item.why)
 
 
 @pytest.mark.asyncio
@@ -315,9 +301,7 @@ async def test_generate_discovery_items_uses_trend_metadata_payload():
 
     session.execute.side_effect = execute
 
-    with patch("pkg.services.foundation.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
-        mock_memory.return_value = []
-        created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["github"])
+    created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["github"])
 
     assert (created, updated, skipped) == (1, 0, 0)
     item = session.add.call_args.args[0]
@@ -448,14 +432,12 @@ async def test_web_discovery_ingest_scores_trusted_domain():
     profile = UserMemory(user_id="user-1", key=PROFILE_MEMORY_KEY, value={})
     session.execute.side_effect = _select_router(profile=profile)
 
-    with patch("pkg.services.foundation.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
-        mock_memory.return_value = []
-        created, updated, skipped = await ingest_web_discovery_results(
-            session,
-            user_id="user-1",
-            query="knowledge graph",
-            items=[{"title": "OpenAI docs", "url": "https://openai.com/research", "summary": "Research update"}],
-        )
+    created, updated, skipped = await ingest_web_discovery_results(
+        session,
+        user_id="user-1",
+        query="knowledge graph",
+        items=[{"title": "OpenAI docs", "url": "https://openai.com/research", "summary": "Research update"}],
+    )
 
     assert (created, updated, skipped) == (1, 0, 0)
     item = session.add.call_args.args[0]
@@ -538,9 +520,7 @@ async def test_generate_discovery_items_uses_domain_preferences():
     )
     session.execute.side_effect = _select_router(profile=profile, sources=[web_source])
 
-    with patch("pkg.services.foundation.discovery.retrieve_for_query", new_callable=AsyncMock) as mock_memory:
-        mock_memory.return_value = []
-        created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["web"])
+    created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["web"])
 
     assert (created, updated, skipped) == (1, 0, 0)
     item = session.add.call_args.args[0]

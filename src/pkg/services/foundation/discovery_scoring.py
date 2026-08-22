@@ -79,35 +79,11 @@ async def score_candidate(session: AsyncSession, *, user_id: str, candidate: dic
         score += 18 + len(matched) * 2
         why.append("Matches profile interests: " + ", ".join(matched[:4]))
 
-    memory_score, memory_reasons = await _memory_similarity_score(session, user_id=user_id, candidate=candidate)
-    score += memory_score
-    why.extend(memory_reasons)
-
     if not candidate.get("source_id"):
         score += 5
         why.append("Novel item not yet saved as a source")
 
     return round(score, 3), why[:6]
-
-
-async def _memory_similarity_score(session: AsyncSession, *, user_id: str, candidate: dict) -> tuple[float, list[str]]:
-    from pkg.services.foundation.discovery import retrieve_for_query
-
-    summary = candidate_summary(candidate)
-    query = candidate.get("title") or summary
-    if not query:
-        return 0.0, []
-    try:
-        matches = await retrieve_for_query(session, user_id=user_id, query=query, limit=2)
-    except Exception:
-        return 0.0, []
-    if not matches:
-        return 0.0, []
-    titles = [getattr(match.node, "title", None) for match in matches if getattr(match, "node", None) is not None]
-    titles = [title for title in titles if title]
-    if not titles:
-        return 0.5, ["Close to existing memory"]
-    return 0.75, [f"Similar to memory: {titles[0]}"]
 
 
 def _profile_matches(candidate: dict, profile: dict) -> list[str]:
