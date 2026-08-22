@@ -9,14 +9,13 @@ import logging
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from pkg.db import async_session
 from pkg.models.chat_session import ChatSession
 from pkg.models.foundation.note import Note
 from pkg.models.foundation.source import Source
 from pkg.models.user import ActivityLog, User, UserMemory
-from pkg.services.foundation.memory_retriever import format_memory_context, retrieve_for_profile
 
 PRODUCTION_MEMORY_KEY = "production_memory"
 
@@ -105,7 +104,6 @@ async def generate_user_profile(user_id: str) -> dict | None:
     note_stats = await _get_note_stats(user_id)
     source_stats = await _get_source_stats(user_id)
     chat_stats = await _get_chat_stats(user_id, days=30)
-    memory_context = await _get_profile_memory_context(user_id)
     production_summary = await _get_production_memory_summary(user_id)
 
     # Check if we have enough data to generate a meaningful profile
@@ -114,7 +112,6 @@ async def generate_user_profile(user_id: str) -> dict | None:
         + len(activities.get("chat_topics", []))
         + note_stats.get("total", 0)
         + source_stats.get("total", 0)
-        + (1 if memory_context else 0)
         + production_summary.get("total_events", 0)
     )
     if total_signals < 3:
@@ -127,7 +124,6 @@ async def generate_user_profile(user_id: str) -> dict | None:
         note_stats,
         source_stats,
         chat_stats,
-        memory_context=memory_context,
         production_summary=production_summary,
     )
 
@@ -156,7 +152,7 @@ async def profile_all_users() -> int:
     """Generate profiles for all active users. Returns count of profiles generated."""
     async with async_session() as session:
         result = await session.execute(
-            select(User.id).where(User.is_active == True)
+            select(User.id).where(User.is_active.is_(True))
         )
         user_ids = [row[0] for row in result]
 
@@ -303,13 +299,6 @@ async def _get_chat_stats(user_id: str, days: int = 30) -> dict:
     }
 
 
-async def _get_profile_memory_context(user_id: str) -> str:
-    """Get compact Memory Tree context for profile generation."""
-    async with async_session() as session:
-        results = await retrieve_for_profile(session, user_id=user_id, limit=20)
-    return format_memory_context(results, max_chars_per_item=500)
-
-
 async def _get_production_memory_summary(user_id: str) -> dict:
     async with async_session() as session:
         result = await session.execute(
@@ -362,7 +351,6 @@ def _format_activity_summary(
     source_stats: dict,
     chat_stats: dict,
     *,
-    memory_context: str = "",
     production_summary: dict | None = None,
 ) -> str:
     """Format collected data into a text summary for the LLM."""
@@ -371,10 +359,6 @@ def _format_activity_summary(
     parts.append("## 活动概览")
     parts.append(f"- 最近30天总活动数: {activities['total_activities']}")
     parts.append(f"- 活跃时间段: {activities['active_period']}")
-
-    if memory_context:
-        parts.append("\n## Memory Tree 长期上下文")
-        parts.append(memory_context)
 
     production_summary = production_summary or {}
     if production_summary.get("total_events", 0) > 0:
