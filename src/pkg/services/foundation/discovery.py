@@ -402,8 +402,16 @@ async def _upsert_discovery_item(
         )
     )
     item = row.scalar_one_or_none()
+    is_saved_connector_candidate = (
+        candidate.get("source") == "connector_cache" and bool(candidate.get("source_id"))
+    )
     if item:
         if item.status in {"kept", "saved", "dismissed"}:
+            return item, False
+        if is_saved_connector_candidate:
+            item.status = "saved"
+            item.source_id = candidate["source_id"]
+            item.reviewed_at = _utc_now_naive()
             return item, False
         item.title = candidate["title"]
         item.url = url
@@ -414,9 +422,10 @@ async def _upsert_discovery_item(
         item.source_id = candidate.get("source_id") or item.source_id
         return item, False
 
-    if not allow_recommended_create:
+    if not is_saved_connector_candidate and not allow_recommended_create:
         return None, False
 
+    source_id = candidate.get("source_id")
     item = DiscoveryItem(
         user_id=user_id,
         provider=candidate["provider"],
@@ -425,10 +434,11 @@ async def _upsert_discovery_item(
         url=url,
         summary=summary,
         payload=candidate["payload"],
-        status="recommended",
+        status="saved" if is_saved_connector_candidate else "recommended",
         score=round(score, 3),
         why=list(dict.fromkeys(why))[:6],
-        source_id=candidate.get("source_id"),
+        source_id=source_id,
+        reviewed_at=_utc_now_naive() if is_saved_connector_candidate else None,
     )
     session.add(item)
     return item, True

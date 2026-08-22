@@ -8,7 +8,11 @@ from pkg.models.connector_trend import ConnectorTrendItem
 from pkg.models.discovery import DiscoveryItem
 from pkg.models.source import Source
 from pkg.models.user import UserMemory
-from pkg.services.foundation.discovery import apply_discovery_feedback, generate_discovery_items
+from pkg.services.foundation.discovery import (
+    apply_discovery_feedback,
+    generate_discovery_items,
+)
+from pkg.services.foundation.discovery_review import sync_discovery_review_for_source
 from pkg.services.cross_cutting.user_profiler import PROFILE_MEMORY_KEY
 from pkg.services.foundation.discovery_profile import DISCOVERY_PREFERENCES_MEMORY_KEY, load_discovery_preferences, load_discovery_profile
 
@@ -23,11 +27,16 @@ class _ScalarResult:
     def scalar_one_or_none(self):
         return self._items[0] if self._items else None
 
+    def scalar_one(self):
+        if len(self._items) != 1:
+            raise AssertionError(f"Expected one scalar, got {len(self._items)}")
+        return self._items[0]
+
 
 def _select_router(*, profile=None, preferences=None, cached=None, sources=None, discovery_items=None):
     async def _execute(stmt, *args, **kwargs):
         sql = str(stmt)
-        if 'FROM user_memories' in sql and f"key = :key_1" in sql:
+        if 'FROM user_memories' in sql and "key = :key_1" in sql:
             params = stmt.compile().params
             key = params.get("key_1")
             if key == PROFILE_MEMORY_KEY:
@@ -76,6 +85,37 @@ async def test_generate_discovery_items_applies_recommended_capacity(monkeypatch
     assert upsert.await_args_list[0].kwargs["allow_recommended_create"] is True
     assert upsert.await_args_list[1].kwargs["allow_recommended_create"] is False
     session.commit.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_upsert_discovery_item_allows_saved_connector_when_capacity_is_full():
+    from pkg.services.foundation.discovery import _upsert_discovery_item
+
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.execute.return_value = _ScalarResult([])
+    candidate = {
+        "source": "connector_cache",
+        "provider": "github",
+        "item_key": "owner/repo",
+        "title": "owner/repo",
+        "payload": {"full_name": "owner/repo"},
+        "source_id": "src-github-owner-repo",
+    }
+
+    with patch("pkg.services.foundation.discovery.score_candidate", AsyncMock(return_value=(10, []))):
+        item, created = await _upsert_discovery_item(
+            session,
+            user_id="user-1",
+            candidate=candidate,
+            profile={},
+            allow_recommended_create=False,
+        )
+
+    assert created is True
+    assert item is not None
+    assert item.status == "saved"
+    session.add.assert_called_once_with(item)
 
 
 @pytest.mark.asyncio
@@ -330,6 +370,76 @@ async def test_dismiss_discovery_item_updates_profile_feedback():
     assert item.status == "dismissed"
     assert preference_memory.value["discovery_feedback"]["github"]["dismiss"] == 1
     session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_source_delete_dismisses_matching_github_discovery_item():
+    session = AsyncMock()
+    item = DiscoveryItem(
+        user_id="user-1",
+        provider="github",
+        item_key="owner/repo",
+        title="owner/repo",
+        payload={},
+        status="recommended",
+        source_id=None,
+    )
+    session.execute.return_value = _ScalarResult([item])
+    source = Source(
+        id="src-github-owner-repo",
+        user_id="user-1",
+        category_id=1,
+        title="owner/repo",
+        source_type="github",
+        metadata_={"connector": "github", "repo_full_name": "owner/repo"},
+    )
+
+    updated = await sync_discovery_review_for_source(session, source=source, status="dismissed")
+
+    assert updated == 1
+    assert item.status == "dismissed"
+    assert item.source_id is None
+    assert item.feedback["action"] == "source_delete"
+
+
+@pytest.mark.asyncio
+async def test_existing_source_candidate_self_heals_recommended_item_to_saved():
+    from pkg.services.foundation.discovery import _upsert_discovery_item
+
+    session = AsyncMock()
+    existing = DiscoveryItem(
+        user_id="user-1",
+        provider="github",
+        item_key="owner/repo",
+        title="owner/repo",
+        payload={},
+        status="recommended",
+    )
+    session.execute.return_value = _ScalarResult([existing])
+    candidate = {
+        "source": "connector_cache",
+        "provider": "github",
+        "item_key": "owner/repo",
+        "title": "owner/repo",
+        "payload": {"full_name": "owner/repo"},
+        "source_id": "src-github-owner-repo",
+    }
+
+    with patch(
+        "pkg.services.foundation.discovery.score_candidate",
+        new=AsyncMock(return_value=(10, [])),
+    ):
+        item, created = await _upsert_discovery_item(
+            session,
+            user_id="user-1",
+            candidate=candidate,
+            profile={},
+        )
+
+    assert created is False
+    assert item.status == "saved"
+    assert item.source_id == "src-github-owner-repo"
+    assert item.reviewed_at is not None
 
 
 @pytest.mark.asyncio

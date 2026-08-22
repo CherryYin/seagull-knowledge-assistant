@@ -9,8 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pkg.models.category import Category
 from pkg.models.foundation.note import Note, NoteEmbedding
 from pkg.models.foundation.source import Source, SourceChunk, SourceEmbedding
-from pkg.services.foundation.chunking import chunk_text
 from pkg.services.cross_cutting.embedding import get_embedding_service
+from pkg.services.foundation.chunking import chunk_text
+from pkg.services.foundation.source_retention import apply_source_retention
 
 
 def _content_hash(content: str) -> str:
@@ -242,7 +243,7 @@ async def sync_sources_from_directory(
         source.content_hash = file_hash
         source.raw_content = content
         source.file_path = str(src_file)
-        source.metadata_ = extra_meta
+        source.metadata_ = apply_source_retention(source_type, extra_meta)
 
         if not existing:
             if user_id:

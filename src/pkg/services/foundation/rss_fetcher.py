@@ -18,13 +18,17 @@ from datetime import datetime, timedelta, timezone
 
 import feedparser
 import httpx
-from sqlalchemy import select, text, delete
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.config import settings
 from pkg.db import async_session
 from pkg.models.foundation.source import Source, SourceChunk, SourceEmbedding
 from pkg.services.cross_cutting.storage import get_storage_service
+from pkg.services.foundation.source_retention import (
+    PERMANENT_SOURCE_TYPES,
+    is_auto_cleanup_protected,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -534,6 +538,7 @@ async def cleanup_old_rss_articles() -> int:
         result = await session.execute(
             select(Source).where(
                 Source.ingested_at < cutoff,
+                Source.source_type.notin_(PERMANENT_SOURCE_TYPES),
                 text("metadata->>'feed_source_id' IS NOT NULL"),
             )
         )
@@ -545,6 +550,8 @@ async def cleanup_old_rss_articles() -> int:
         storage = get_storage_service()
         for article in old_articles:
             try:
+                if is_auto_cleanup_protected(article.source_type):
+                    continue
                 metadata = dict(article.metadata_ or {})
                 if metadata.get("review_status") == "reviewed_kept":
                     continue

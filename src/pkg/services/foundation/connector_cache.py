@@ -6,6 +6,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.models.connector_cache import ConnectorSearchItem
+from pkg.services.foundation.discovery_review import mark_discovery_item_saved
 
 CACHE_TTL_DAYS = 7
 
@@ -103,6 +104,13 @@ async def mark_connector_item_saved(
     cached.source_id = source_id
     cached.saved_at = datetime.now(timezone.utc)
     cached.expires_at = None
+    await mark_discovery_item_saved(
+        session,
+        user_id=user_id,
+        provider=provider,
+        item_key=item_key,
+        source_id=source_id,
+    )
     return cached
 
 

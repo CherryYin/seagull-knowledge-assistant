@@ -21,9 +21,11 @@ from pkg.models.category import Category
 from pkg.models.foundation.source import Source, SourceChunk, SourceEmbedding
 from pkg.models.user import User
 from pkg.schemas.source import ChunkRead, SourceCreate, SourceList, SourceRead, SourceUpdate
-from pkg.services.foundation.chunking import chunk_text
 from pkg.services.cross_cutting.embedding import get_embedding_service
 from pkg.services.cross_cutting.storage import get_storage_service
+from pkg.services.foundation.chunking import chunk_text
+from pkg.services.foundation.discovery_review import sync_discovery_review_for_source
+from pkg.services.foundation.source_retention import apply_source_retention
 from pkg.services.foundation.web_extractor import WebPageFetchError, fetch_web_page
 
 router = APIRouter()
@@ -220,7 +222,7 @@ async def persist_source(
         raw_content=raw_content,
         file_path=file_path or body.file_path,
         content_hash=content_hash,
-        metadata_=body.metadata,
+        metadata_=apply_source_retention(body.source_type, body.metadata),
     )
     session.add(source)
 
@@ -538,6 +540,8 @@ async def update_source(
             continue
         setattr(source, key, value)
 
+    source.metadata_ = apply_source_retention(source.source_type, source.metadata_)
+
     # Re-embed if title changed
     if "title" in patch:
         emb_svc = get_embedding_service()
@@ -593,6 +597,7 @@ async def keep_imported_source(
     metadata["retention"] = "permanent"
     metadata.setdefault("kept_at", metadata["reviewed_at"])
     source.metadata_ = metadata
+    await sync_discovery_review_for_source(session, source=source, status="saved")
 
     await session.commit()
     await session.refresh(source)
@@ -611,6 +616,8 @@ async def delete_source_by_id(
     source = await session.get(Source, source_id)
     if not source or source.user_id != user.id:
         raise HTTPException(status_code=404, detail="Source not found")
+
+    await sync_discovery_review_for_source(session, source=source, status="dismissed")
 
     # Delete stored file from MinIO
     if source.file_path and source.file_path.startswith("minio://"):

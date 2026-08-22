@@ -1,4 +1,3 @@
-from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -7,8 +6,9 @@ from pkg.services.foundation.rss_fetcher import cleanup_old_rss_articles
 
 
 class _Article:
-    def __init__(self, article_id: str, *, metadata=None, file_path=None):
+    def __init__(self, article_id: str, *, source_type="web", metadata=None, file_path=None):
         self.id = article_id
+        self.source_type = source_type
         self.metadata_ = metadata or {}
         self.file_path = file_path
 
@@ -37,3 +37,26 @@ async def test_cleanup_old_rss_articles_skips_reviewed_kept_articles():
     sql_texts = [str(stmt) for stmt in executed]
     assert any("DELETE FROM source_chunks" in sql for sql in sql_texts)
     assert any("DELETE FROM source_embeddings" in sql for sql in sql_texts)
+
+
+@pytest.mark.asyncio
+async def test_cleanup_old_rss_articles_never_deletes_pdf_or_article_sources():
+    old_pdf = _Article("pdf-old", source_type="pdf", metadata={"feed_source_id": "feed-1"})
+    old_article = _Article(
+        "article-old",
+        source_type="article",
+        metadata={"feed_source_id": "feed-1"},
+    )
+
+    session = AsyncMock()
+    rows = MagicMock()
+    rows.scalars.return_value = [old_pdf, old_article]
+    session.execute.return_value = rows
+
+    with patch("pkg.services.foundation.rss_fetcher.async_session") as session_factory:
+        session_factory.return_value.__aenter__.return_value = session
+        deleted = await cleanup_old_rss_articles()
+
+    assert deleted == 0
+    session.delete.assert_not_awaited()
+    assert len(session.execute.await_args_list) == 1

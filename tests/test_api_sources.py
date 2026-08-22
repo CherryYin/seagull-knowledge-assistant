@@ -73,7 +73,13 @@ class TestListSources:
         mock_cat_rows.scalars.return_value = [category]
         mock_session.execute.side_effect = [mock_count, mock_rows, mock_cat_rows]
 
-        result = await list_sources(kind="news", user=fake_user, session=mock_session)
+        result = await list_sources(
+            kind="news",
+            offset=0,
+            limit=50,
+            user=fake_user,
+            session=mock_session,
+        )
 
         assert result.total == 1
         assert len(result.items) == 1
@@ -109,6 +115,28 @@ class TestUpdateSource:
         assert source.metadata_ == {"auto_refresh": True, "refresh_interval_days": 7}
         mock_session.commit.assert_awaited()
         mock_session.refresh.assert_awaited_with(source)
+
+    @pytest.mark.asyncio
+    async def test_update_article_source_cannot_remove_permanent_retention(self, mock_session, fake_user):
+        from pkg.api.sources import update_source
+        from pkg.schemas.source import SourceUpdate
+
+        source = _make_source("src-article", fake_user.id)
+        source.source_type = "article"
+        source.metadata_ = {"retention": "permanent"}
+        category = MagicMock()
+        category.name = "General"
+        mock_session.get.side_effect = [source, category]
+
+        result = await update_source(
+            "src-article",
+            SourceUpdate(metadata={"retention": "temporary", "tags": ["updated"]}),
+            user=fake_user,
+            session=mock_session,
+        )
+
+        assert result.metadata_["retention"] == "permanent"
+        assert result.metadata_["tags"] == ["updated"]
 
     @pytest.mark.asyncio
     async def test_update_source_empty_patch_returns_existing_source(self, mock_session, fake_user):
@@ -260,9 +288,12 @@ class TestDeleteSource:
         mock_chunks.scalars.return_value = []
         mock_session.execute.return_value = mock_chunks
 
-        resp = client.delete("/sources/src-1")
+        sync_review = AsyncMock()
+        with patch("pkg.api.sources.sync_discovery_review_for_source", sync_review):
+            resp = client.delete("/sources/src-1")
 
         assert resp.status_code == 204
+        sync_review.assert_awaited_once_with(mock_session, source=source, status="dismissed")
         mock_session.commit.assert_awaited()
 
     def test_not_found(self, client, mock_session):
@@ -283,9 +314,12 @@ class TestDeleteSource:
         mock_chunks.scalars.return_value = []
         mock_session.execute.return_value = mock_chunks
 
-        await delete_source_by_id(legacy_id, user=fake_user, session=mock_session)
+        sync_review = AsyncMock()
+        with patch("pkg.api.sources.sync_discovery_review_for_source", sync_review):
+            await delete_source_by_id(legacy_id, user=fake_user, session=mock_session)
 
         assert mock_session.get.await_args_list[0].args == (Source, legacy_id)
+        sync_review.assert_awaited_once_with(mock_session, source=source, status="dismissed")
         mock_session.delete.assert_awaited_with(source)
         mock_session.commit.assert_awaited_once()
 
@@ -392,7 +426,11 @@ async def test_keep_imported_source_marks_reviewed_kept(mock_session, fake_user)
     category.name = "General"
     mock_session.get.side_effect = [source, category]
 
-    result = await keep_imported_source("src-imported", user=fake_user, session=mock_session)
+    with patch(
+        "pkg.api.sources.sync_discovery_review_for_source",
+        new_callable=AsyncMock,
+    ) as mock_sync_discovery:
+        result = await keep_imported_source("src-imported", user=fake_user, session=mock_session)
 
     assert result.id == "src-imported"
     assert result.category_name == "General"
@@ -400,6 +438,7 @@ async def test_keep_imported_source_marks_reviewed_kept(mock_session, fake_user)
     assert source.metadata_["retention"] == "permanent"
     assert source.metadata_["reviewed_at"]
     assert source.metadata_["kept_at"]
+    mock_sync_discovery.assert_awaited_once_with(mock_session, source=source, status="saved")
     mock_session.commit.assert_awaited()
     mock_session.refresh.assert_awaited_with(source)
 
