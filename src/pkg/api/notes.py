@@ -19,7 +19,6 @@ from pkg.models.user import User
 from pkg.schemas.note import DigestMergeRequest, NoteCreate, NoteList, NoteRead, NoteUpdate
 from pkg.services.cross_cutting.embedding import get_embedding_service
 from pkg.services.cross_cutting.storage import get_storage_service
-from pkg.services.orchestration.agent_memory import create_memory_from_note
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -169,9 +168,6 @@ async def persist_note(
         session.add(NoteEmbedding(note_id=note_id, title_vec=title_vec, abstract_vec=abstract_vec))
     except Exception:
         logger.error("Embedding generation failed for note %s — saving without embeddings", note_id, exc_info=True)
-
-    if note.note_type == "digest" and note.status == "kept":
-        await create_memory_from_note(session, user_id=user_id, note_id=note.id, memory_kind="digest", confidence_score=0.7)
 
     await session.commit()
     await session.refresh(note)
@@ -378,8 +374,6 @@ async def merge_digest_notes(
     except Exception:
         logger.error("Embedding generation failed for merged digest %s", target.id, exc_info=True)
 
-    await create_memory_from_note(session, user_id=user.id, note_id=target.id, memory_kind="digest", confidence_score=0.7)
-
     await session.commit()
     await session.refresh(target)
 
@@ -404,7 +398,6 @@ async def update_note(
     if not patch:
         return note
 
-    previous_status = getattr(note, "status", None)
     for key, value in patch.items():
         setattr(note, key, value)
 
@@ -430,9 +423,6 @@ async def update_note(
                 session.add(NoteEmbedding(note_id=note_id, title_vec=title_vec, abstract_vec=abstract_vec))
         except Exception:
             logger.error("Embedding update failed for note %s", note_id, exc_info=True)
-
-    if note.note_type == "digest" and note.status == "kept" and previous_status != "kept":
-        await create_memory_from_note(session, user_id=user.id, note_id=note.id, memory_kind="digest", confidence_score=0.7)
 
     await session.commit()
     await session.refresh(note)
