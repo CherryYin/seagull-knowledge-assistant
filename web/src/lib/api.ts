@@ -8,7 +8,6 @@ export * from "./api/sync";
 export * from "./api/skills";
 export * from "./api/chat-sessions";
 export * from "./api/knowledge";
-export * from "./api/agent-profiles";
 export * from "./api/auth";
 export * from "./api/wiki";
 export * from "./api/connectors";

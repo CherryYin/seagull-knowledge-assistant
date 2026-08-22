@@ -6,7 +6,6 @@ import { ModuleRouteGate } from "./components/ModuleRouteGate";
 
 const LoginPage = lazy(() => import("./pages/LoginPage").then((m) => ({ default: m.LoginPage })));
 const HomePage = lazy(() => import("./pages/HomePage").then((m) => ({ default: m.HomePage })));
-const ChatPage = lazy(() => import("./pages/ChatPage").then((m) => ({ default: m.ChatPage })));
 const SearchPage = lazy(() => import("./pages/SearchPage").then((m) => ({ default: m.SearchPage })));
 const NotesPage = lazy(() => import("./pages/NotesPage").then((m) => ({ default: m.NotesPage })));
 const NoteDetailPage = lazy(() => import("./pages/NoteDetailPage").then((m) => ({ default: m.NoteDetailPage })));
@@ -26,8 +25,6 @@ const WikiSuggestionsPage = lazy(() => import("./pages/WikiSuggestionsPage").the
 const WikiDiscoveryPage = lazy(() => import("./pages/WikiDiscoveryPage").then((m) => ({ default: m.WikiDiscoveryPage })));
 const WikiRulesPage = lazy(() => import("./pages/WikiRulesPage").then((m) => ({ default: m.WikiRulesPage })));
 const AdminUsersPage = lazy(() => import("./pages/AdminUsersPage").then((m) => ({ default: m.AdminUsersPage })));
-const AgentProfilesPage = lazy(() => import("./pages/AgentProfilesPage").then((m) => ({ default: m.AgentProfilesPage })));
-const AgentWorkspacePage = lazy(() => import("./pages/AgentWorkspacePage").then((m) => ({ default: m.AgentWorkspacePage })));
 const UserProfilePage = lazy(() => import("./pages/UserProfilePage").then((m) => ({ default: m.UserProfilePage })));
 const ConnectorSettingsPage = lazy(() => import("./pages/ConnectorSettingsPage").then((m) => ({ default: m.ConnectorSettingsPage })));
 const ApiKeysPage = lazy(() => import("./pages/ApiKeysPage").then((m) => ({ default: m.ApiKeysPage })));
@@ -96,7 +93,7 @@ export default function App() {
             }
           >
             <Route path="/" element={<LazyPage><HomePage /></LazyPage>} />
-            <Route path="/chat" element={<LazyPage><ChatPage /></LazyPage>} />
+            <Route path="/chat" element={<Navigate to="/" replace />} />
             <Route path="/search" element={<LazyPage><SearchPage /></LazyPage>} />
             <Route path="/notes" element={<LazyPage><NotesPage /></LazyPage>} />
             <Route path="/notes/:id" element={<LazyPage><NoteDetailPage /></LazyPage>} />
@@ -112,13 +109,9 @@ export default function App() {
             <Route path="/settings/api-keys" element={<LazyPage><ApiKeysPage /></LazyPage>} />
             <Route path="/settings/connectors" element={<LazyPage><ConnectorSettingsPage /></LazyPage>} />
             <Route path="/settings/skills" element={<LazyPage><SkillsPage /></LazyPage>} />
-            <Route path="/settings/agents" element={<LazyPage><AgentProfilesPage /></LazyPage>} />
-            <Route path="/settings/workspace" element={<LazyPage><AgentWorkspacePage /></LazyPage>} />
             <Route path="/settings/jobs" element={<LazyPage><SystemJobsPage /></LazyPage>} />
             <Route path="/settings/profile" element={<LazyPage><UserProfilePage /></LazyPage>} />
             <Route path="/skills" element={<Navigate to="/settings/skills" replace />} />
-            <Route path="/profiles" element={<Navigate to="/settings/agents" replace />} />
-            <Route path="/workspace" element={<Navigate to="/settings/workspace" replace />} />
             <Route path="/profile" element={<Navigate to="/settings/profile" replace />} />
             <Route path="/wiki" element={<LazyPage><WikiPage /></LazyPage>} />
             <Route path="/wiki/:id" element={<LazyPage><WikiDetailPage /></LazyPage>} />

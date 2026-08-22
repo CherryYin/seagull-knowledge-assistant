@@ -1,14 +1,5 @@
 import { BASE, TOKEN_KEY } from "./client";
 
-export interface ActionRequest {
-  task: string;
-  session_id?: string;
-  profile_id?: string;
-  model_id?: string;
-  provider_id?: string;
-  conversation_history?: { role: string; content: string }[];
-}
-
 export type SSEvent =
   | { type: "step"; tool: string; status: "running" | "done" }
   | { type: "content"; text: string }
@@ -16,11 +7,27 @@ export type SSEvent =
   | { type: "error"; message: string }
   | { type: "done"; session_id: string };
 
-export async function* streamAction(body: ActionRequest, signal?: AbortSignal): AsyncGenerator<SSEvent> {
+export interface CompleteMessage {
+  role: string;
+  content: string;
+}
+
+export interface CompleteRequest {
+  messages: CompleteMessage[];
+  model_id?: string;
+  provider_id?: string;
+  temperature?: number;
+}
+
+/**
+ * Stream a direct LLM completion (no agent tools / no run persistence).
+ * Yields the completion SSE event vocabulary.
+ */
+export async function* streamComplete(body: CompleteRequest, signal?: AbortSignal): AsyncGenerator<SSEvent> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const token = localStorage.getItem(TOKEN_KEY);
   if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(`${BASE}/action/stream`, {
+  const res = await fetch(`${BASE}/action/complete`, {
     method: "POST",
     headers,
     body: JSON.stringify(body),

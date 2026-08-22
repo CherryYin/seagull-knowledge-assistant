@@ -14,7 +14,6 @@ export const BASIC_MODULE_IDS = [
   "notes",
   "review",
   "discover",
-  "agent-chat",
   "settings",
 ];
 
@@ -22,7 +21,7 @@ export const MODULE_PRESETS: ModulePreset[] = [
   {
     id: "basic",
     label: "Basic",
-    description: "Lightweight workspace for sources, notes, search, review, discovery, and agent chat.",
+    description: "Lightweight workspace for sources, notes, search, review, and discovery.",
     enabledModuleIds: BASIC_MODULE_IDS,
   },
   {
