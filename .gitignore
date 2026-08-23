@@ -5,5 +5,7 @@ dist/
 !.env.example
 *.tsbuildinfo
 coverage/
+playwright-report/
+test-results/
 *.log
 .DS_Store
