@@ -300,9 +300,9 @@ function DiscoveryArticleCard({ article, selected, onToggleSelected, onAccept, o
             to="/assets/new"
             state={{
               assetHandoff: {
-                title: `${article.title} Issue`,
-                brief: `Create a newsletter issue from wiki concept discovery article: ${article.title}`,
-                asset_type: "newsletter_issue",
+                title: `${article.title} Report`,
+                brief: `Create a topic report from wiki concept discovery article: ${article.title}`,
+                asset_type: "topic_report",
               },
             }}
           >

@@ -56,7 +56,7 @@ export function SearchResultCard({ result }: Props) {
 
   const createAsset = (event: React.MouseEvent) => {
     event.stopPropagation();
-    navigate("/assets", {
+    navigate("/assets/new", {
       state: {
         assetHandoff: buildAssetHandoffState({
           title: result.title,

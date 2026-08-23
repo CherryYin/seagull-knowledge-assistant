@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, BookOpen, FileText, NotebookPen, Sparkles } from "lucide-react";
-import { useNavigate } from "react-router-dom";
-import { notesApi, sourcesApi, wikiApi, type AssetType } from "@/lib/api";
+import { useLocation, useNavigate } from "react-router-dom";
+import { notesApi, sourcesApi, wikiApi } from "@/lib/api";
+import { buildAssetGenerationSeed, type AssetHandoffState } from "@/lib/asset-handoff";
 import { MANUAL_ASSET_TYPES, type AssetGenerationRequest } from "@/lib/asset-generation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,14 +16,18 @@ function toggle(values: string[], id: string) {
 
 export function AssetGenerationPage() {
   const navigate = useNavigate();
-  const [assetType, setAssetType] = useState<Exclude<AssetType, "newsletter_issue">>("blog_post");
-  const [title, setTitle] = useState("");
-  const [audience, setAudience] = useState("");
-  const [brief, setBrief] = useState("");
-  const [styleNotes, setStyleNotes] = useState("");
-  const [sourceRefs, setSourceRefs] = useState<string[]>([]);
-  const [noteRefs, setNoteRefs] = useState<string[]>([]);
-  const [wikiRefs, setWikiRefs] = useState<string[]>([]);
+  const location = useLocation();
+  const initialSeed = useMemo(() => buildAssetGenerationSeed(
+    (location.state as { assetHandoff?: AssetHandoffState } | null)?.assetHandoff,
+  ), [location.state]);
+  const [assetType, setAssetType] = useState(initialSeed.assetType);
+  const [title, setTitle] = useState(initialSeed.title);
+  const [audience, setAudience] = useState(initialSeed.audience);
+  const [brief, setBrief] = useState(initialSeed.brief);
+  const [styleNotes, setStyleNotes] = useState(initialSeed.styleNotes);
+  const [sourceRefs, setSourceRefs] = useState<string[]>(initialSeed.sourceRefs);
+  const [noteRefs, setNoteRefs] = useState<string[]>(initialSeed.noteRefs);
+  const [wikiRefs, setWikiRefs] = useState<string[]>(initialSeed.wikiRefs);
 
   const sources = useQuery({ queryKey: ["asset-wizard-sources"], queryFn: () => sourcesApi.list({ limit: 50 }) });
   const notes = useQuery({ queryKey: ["asset-wizard-notes"], queryFn: () => notesApi.list({ status: "kept", limit: 50 }) });

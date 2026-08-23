@@ -653,7 +653,7 @@ export function SourceDetailPage() {
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => source && navigate("/assets", {
+                  onClick={() => source && navigate("/assets/new", {
                     state: {
                       assetHandoff: buildAssetHandoffState({
                         title: source.title,

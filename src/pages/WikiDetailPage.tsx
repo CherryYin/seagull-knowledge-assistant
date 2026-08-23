@@ -357,7 +357,7 @@ export function WikiDetailPage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => navigate("/assets", {
+                onClick={() => navigate("/assets/new", {
                   state: {
                     assetHandoff: buildAssetHandoffState({
                       title: page.title,
@@ -374,7 +374,7 @@ export function WikiDetailPage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => navigate("/assets", {
+                onClick={() => navigate("/assets/new", {
                   state: {
                     assetHandoff: buildAssetHandoffState({
                       title: `${page.title} Brief`,
@@ -392,7 +392,7 @@ export function WikiDetailPage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => navigate("/assets", {
+                onClick={() => navigate("/assets/new", {
                   state: {
                     assetHandoff: buildAssetHandoffState({
                       title: `${page.title} Pack`,
@@ -410,25 +410,7 @@ export function WikiDetailPage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => navigate("/assets", {
-                  state: {
-                    assetHandoff: buildAssetHandoffState({
-                      title: `${page.title} Issue`,
-                      brief: `Create a newsletter issue from wiki: ${page.title}`,
-                      asset_type: "newsletter_issue",
-                      wiki_refs: [page.id],
-                      source_refs: page.derived_from_sources,
-                      note_refs: page.derived_from_notes,
-                    }),
-                  },
-                })}
-              >
-                <ExternalLink className="h-4 w-4" /> Create Newsletter
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => navigate("/assets", {
+                onClick={() => navigate("/assets/new", {
                   state: {
                     assetHandoff: buildAssetHandoffState({
                       title: `${page.title} Report`,

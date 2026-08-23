@@ -159,6 +159,18 @@ async function installMockBff(page: Page, state: MockState) {
     if (path === "/api/wiki/suggestions") return json(route, { items: [], total: 0 });
     if (path === "/api/wiki/mining/runs") return json(route, { items: [], total: 0 });
     if (path === "/api/sources") return json(route, { items: [{ id: "source-input", title: "E2E Source Evidence", source_type: "document", category_id: 1, ingested_at: now, metadata_: {} }], total: 1 });
+    if (path === "/api/sources/source-input") {
+      return json(route, {
+        id: "source-input",
+        title: "E2E Source Evidence",
+        source_type: "document",
+        category_id: 1,
+        category_name: "Inbox",
+        raw_content: "Evidence collected for the Asset handoff regression.",
+        metadata_: {},
+        ingested_at: now,
+      });
+    }
     if (path === "/api/wiki") return json(route, { items: [{ id: "wiki-input", title: "E2E Stable Wiki", page_type: "topic", content: "Stable knowledge", domains: [], tags: [], derived_from_notes: [], derived_from_sources: [], open_questions: [], needs_recompile: false, created_at: now, updated_at: now }], total: 1 });
     if (path === "/api/review/suggestions") return json(route, { items: [], total: 0 });
 
@@ -269,4 +281,21 @@ test("manual Asset generation creates PKG state only after the user confirms the
   await expect(page.getByRole("heading", { name: "Revised finding" })).toBeVisible();
   await page.getByRole("tab", { name: "Production" }).click();
   await expect(page.getByText("Production Actions")).toBeVisible();
+});
+
+test("Source Asset handoff opens the generation guide with evidence preselected", async ({ page }) => {
+  const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/sources/source-input");
+  await expect(page.getByRole("heading", { name: "E2E Source Evidence" })).toBeVisible();
+  await page.getByRole("button", { name: "Create Asset", exact: true }).click();
+
+  await expect(page).toHaveURL(/\/assets\/new$/);
+  await expect(page.getByLabel("Asset title")).toHaveValue("E2E Source Evidence");
+  await expect(page.getByLabel("Asset brief")).toHaveValue("Create a blog asset from source: E2E Source Evidence");
+  await expect(page.getByLabel("E2E Source Evidence")).toBeChecked();
+  await expect(page.getByText("1 knowledge records selected")).toBeVisible();
+  await expect.poll(() => state.savedAssetBody).toBeNull();
 });

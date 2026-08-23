@@ -298,7 +298,7 @@ function MiningRunCard({
                 onMarkInReview={() => onMarkInReview(article.id)}
                 onMerge={() => onMergeArticle(article.id)}
                 onConvert={() => onConvertArticle(article.id)}
-                onCreateAssetHref={`/assets?handoff_title=${encodeURIComponent(article.title)}`}
+                onCreateAssetHref="/assets/new"
               />
             ))}
           </div>
@@ -480,20 +480,6 @@ function MiningArticlePreview({
             }}
           >
             <ScrollText className="mr-1 h-4 w-4" /> Create Pack
-          </Link>
-        </Button>
-        <Button size="sm" variant="outline" asChild disabled={disabled}>
-          <Link
-            to={onCreateAssetHref}
-            state={{
-              assetHandoff: {
-                title: `${article.title} Issue`,
-                brief: `Create a newsletter issue from wiki candidate article: ${article.title}`,
-                asset_type: "newsletter_issue",
-              },
-            }}
-          >
-            <ScrollText className="mr-1 h-4 w-4" /> Create Newsletter
           </Link>
         </Button>
         <Button size="sm" variant="outline" asChild disabled={disabled}>
