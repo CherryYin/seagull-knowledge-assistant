@@ -5,6 +5,7 @@ import http from "node:http";
 import { pathToFileURL } from "node:url";
 import {
   AgentMemoryStore,
+  PostgresAgentMemoryBackend,
   defaultAgentMemoryStorePath,
   formatAgentMemoryContext,
 } from "../../deepseek-knowledge-lab/plugins/agent-memory/src/index.js";
@@ -37,9 +38,15 @@ export function resolveHarnessServiceToken(endpoint, configuredToken = process.e
 const HARNESS_SERVICE_TOKEN = resolveHarnessServiceToken(`http://${HOST}`);
 const SESSION_AUTH_TTL_MS = Number(process.env.SESSION_AUTH_TTL_MS || 28_800_000);
 const sessionAuthRegistry = new Map();
-const defaultAgentMemoryStore = new AgentMemoryStore({
-  path: process.env.AGENT_MEMORY_STORE_PATH || defaultAgentMemoryStorePath(),
-});
+const agentMemoryDatabaseUrl = process.env.AGENT_MEMORY_DATABASE_URL || process.env.PKG_DATABASE_URL;
+const defaultAgentMemoryStore = process.env.AGENT_MEMORY_STORE_PATH || !agentMemoryDatabaseUrl
+  ? new AgentMemoryStore({ path: process.env.AGENT_MEMORY_STORE_PATH || defaultAgentMemoryStorePath() })
+  : new AgentMemoryStore({
+      backend: new PostgresAgentMemoryBackend({
+        connectionString: agentMemoryDatabaseUrl,
+        schema: process.env.AGENT_MEMORY_DATABASE_SCHEMA || "public",
+      }),
+    });
 
 let counter = 0;
 function rid() { return `req-${Date.now()}-${++counter}`; }
