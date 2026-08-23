@@ -221,7 +221,11 @@ test("manual Asset generation creates PKG state only after the user confirms the
   await installMockBff(page, state);
   await signIn(page);
 
-  await page.goto("/assets/new");
+  await page.goto("/assets");
+  await expect(page.getByRole("heading", { name: "Asset Library" })).toBeVisible();
+  await expect(page.getByText("Start with the delivery need, not an empty record")).toBeVisible();
+  await page.getByRole("button", { name: "Create Asset", exact: true }).first().click();
+  await expect(page).toHaveURL(/\/assets\/new$/);
   await page.getByRole("button", { name: "Research Brief" }).click();
   await page.getByLabel("Asset title").fill("E2E Research Brief");
   await page.getByLabel("Target audience").fill("Architecture reviewers");

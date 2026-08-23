@@ -1,19 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { ArrowRight, BookOpen, FileText, Filter, Search, Sparkles } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
-import { FileText, Sparkles, Download, CheckCircle2, Trash2 } from "lucide-react";
-import { assetsApi, notesApi, sourcesApi, type Asset, type AssetStatus, type AssetType } from "@/lib/api";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { assetsApi, type Asset, type AssetStatus, type AssetType } from "@/lib/api";
+import { assetTypeLabel, MANUAL_ASSET_TYPES } from "@/lib/asset-generation";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-
-function readinessTone(ready: boolean) {
-  return ready
-    ? "border-emerald-200 bg-emerald-50/80"
-    : "border-amber-200 bg-amber-50/70";
-}
 
 const STATUS_LABELS: Record<AssetStatus, string> = {
   draft: "Draft",
@@ -24,686 +18,90 @@ const STATUS_LABELS: Record<AssetStatus, string> = {
   archived: "Archived",
 };
 
-function assetTypeLabel(assetType: AssetType) {
-  if (assetType === "research_brief") return "Research Brief";
-  if (assetType === "knowledge_pack") return "Knowledge Pack";
-  if (assetType === "newsletter_issue") return "Newsletter Issue";
-  if (assetType === "topic_report") return "Topic Report";
-  return "Blog Post";
-}
-
-function assetTypeDescription(assetType: AssetType) {
-  if (assetType === "research_brief") {
-    return "Structured synthesis with findings, risks, recommendations, and evidence-backed references.";
-  }
-  if (assetType === "knowledge_pack") {
-    return "A reusable bundle of related knowledge artifacts with themes, reading order, and references.";
-  }
-  if (assetType === "newsletter_issue") {
-    return "A curated issue draft with editorial framing, featured items, and suggested next reads.";
-  }
-  if (assetType === "topic_report") {
-    return "A systematic topic-level report with themes, findings, risks, and next-step recommendations.";
-  }
-  return "Readable, publish-oriented writing for a clear audience and angle.";
-}
-
-function assetTypeBriefPlaceholder(assetType: AssetType) {
-  if (assetType === "research_brief") {
-    return "Decision question, scope, intended audience, and why this brief matters";
-  }
-  if (assetType === "knowledge_pack") {
-    return "Who this pack is for, what it includes, and why it should exist";
-  }
-  if (assetType === "newsletter_issue") {
-    return "Theme of this issue, target reader, and what featured items it should include";
-  }
-  if (assetType === "topic_report") {
-    return "Topic scope, key question, why it matters now, and what the report should clarify";
-  }
-  return "Audience, angle, thesis, and why this post should exist";
-}
-
-function assetTypeBriefGuidance(assetType: AssetType) {
-  if (assetType === "research_brief") {
-    return "Include the decision question, scope, intended reader, and the recommendation pressure behind the brief.";
-  }
-  if (assetType === "knowledge_pack") {
-    return "Include who the pack serves, what materials belong in the bundle, and how readers should work through it.";
-  }
-  if (assetType === "newsletter_issue") {
-    return "Include the issue theme, target reader, the kind of featured items to include, and the editorial tone of the send.";
-  }
-  if (assetType === "topic_report") {
-    return "Include the topic boundary, central question, why the topic matters now, and what the report should resolve or recommend.";
-  }
-  return "Include the audience, angle, core thesis, and what should make this post worth reading.";
-}
-
-function assetTypeReadinessGuidance(assetType: AssetType) {
-  if (assetType === "research_brief") {
-    return "A strong brief usually has at least one grounded wiki angle, attached source evidence, and clear sections for executive summary, findings, risks, and recommendations.";
-  }
-  if (assetType === "knowledge_pack") {
-    return "A strong knowledge pack usually has enough linked material to justify the bundle, a clear 'what’s included' section, a guided reading path, and readable references for later reuse.";
-  }
-  if (assetType === "newsletter_issue") {
-    return "A strong newsletter issue usually has a clear theme, a short editor's note, a focused set of featured items, and readable references behind each highlighted item.";
-  }
-  if (assetType === "topic_report") {
-    return "A strong topic report usually has stable wiki grounding, enough material to support themes and findings, explicit risks or gaps, and recommendations that remain traceable to references.";
-  }
-  return "A strong blog post usually has a clear angle, enough evidence to support the thesis, and readable references before export.";
-}
-
-function assetTypeReadinessTitle(assetType: AssetType) {
-  if (assetType === "research_brief") return "Research Brief Readiness";
-  if (assetType === "knowledge_pack") return "Knowledge Pack Readiness";
-  if (assetType === "newsletter_issue") return "Newsletter Issue Readiness";
-  if (assetType === "topic_report") return "Topic Report Readiness";
-  return "Blog Post Readiness";
-}
-
-function assetTypeReadinessIntro(assetType: AssetType) {
-  if (assetType === "research_brief") {
-    return "Check whether this brief is evidence-backed, decision-ready, and complete enough to export.";
-  }
-  if (assetType === "knowledge_pack") {
-    return "Check whether this pack has enough material, a clear reading path, and reusable references before export.";
-  }
-  if (assetType === "newsletter_issue") {
-    return "Check whether this issue has a clear theme, curated featured items, and enough source grounding to send.";
-  }
-  if (assetType === "topic_report") {
-    return "Check whether this report has enough topic grounding, clear structure, and traceable findings before export.";
-  }
-  return "Check whether this post has a clear angle, enough support, and readable references before export.";
-}
-
-const RESEARCH_BRIEF_CHECKLIST = [
-  "Define the decision question or research objective",
-  "Scope the material and intended audience",
-  "Summarize key findings, not just source summaries",
-  "Call out risks, uncertainty, or conflicting evidence",
-  "End with recommendations backed by references",
-];
-
-const KNOWLEDGE_PACK_CHECKLIST = [
-  "Define the audience and use case for this pack",
-  "Include enough linked material to justify a bundle",
-  "Explain what is included, not just why it matters",
-  "Suggest a reading path or onboarding order",
-  "Keep the pack reusable with clear references",
-];
-
-const NEWSLETTER_ISSUE_CHECKLIST = [
-  "Clarify the theme or angle of this issue",
-  "Select a small set of featured items worth sending",
-  "Write a short editor's note that frames the issue",
-  "Explain why the items matter right now",
-  "End with clear next reads and readable references",
-];
-
-const TOPIC_REPORT_CHECKLIST = [
-  "Define the topic scope and why it matters now",
-  "Anchor the report in at least one stable wiki page",
-  "Surface key themes across the material",
-  "Separate findings from risks and gaps",
-  "End with clear recommendations and references",
-];
-
-function ReadinessList({
-  title,
-  items,
-  tone,
-  empty,
-}: {
-  title: string;
-  items: string[];
-  tone: string;
-  empty: string;
-}) {
-  return (
-    <div className="space-y-2 rounded-md border bg-background/70 p-3">
-      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</p>
-      {items.length > 0 ? (
-        <ul className={`list-disc space-y-1 pl-5 text-sm ${tone}`}>
-          {items.map((item) => <li key={item}>{item}</li>)}
-        </ul>
-      ) : (
-        <p className="text-sm text-muted-foreground">{empty}</p>
-      )}
-    </div>
-  );
-}
+const STATUS_OPTIONS: Array<AssetStatus | "all"> = ["all", "draft", "in_review", "ready_to_export", "exported", "published", "archived"];
 
 export function AssetsPage() {
-  const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [exportedMarkdown, setExportedMarkdown] = useState<string | null>(null);
-  const [editTitle, setEditTitle] = useState("");
-  const [editBrief, setEditBrief] = useState("");
-  const [editOutline, setEditOutline] = useState("");
-  const [editDraft, setEditDraft] = useState("");
-  const [editFeedback, setEditFeedback] = useState("");
-  const [editOpinion, setEditOpinion] = useState("");
-  const [editStyle, setEditStyle] = useState("");
-  const [publishUrl, setPublishUrl] = useState("");
-  const [publishChannel, setPublishChannel] = useState("");
-  const [publishFeedback, setPublishFeedback] = useState("");
+  const [query, setQuery] = useState("");
+  const [assetType, setAssetType] = useState<AssetType | "all">("all");
+  const [status, setStatus] = useState<AssetStatus | "all">("all");
+  const assetsQuery = useQuery({ queryKey: ["assets"], queryFn: () => assetsApi.list({ limit: 100 }) });
 
-  const assetsQuery = useQuery({
-    queryKey: ["assets"],
-    queryFn: () => assetsApi.list({ limit: 100 }),
-  });
-
-  const sourcesQuery = useQuery({
-    queryKey: ["asset-source-options"],
-    queryFn: () => sourcesApi.list({ limit: 50 }),
-  });
-
-  const notesQuery = useQuery({
-    queryKey: ["asset-note-options"],
-    queryFn: () => notesApi.list({ limit: 50 }),
-  });
-
-  const sourceMap = new Map((sourcesQuery.data?.items ?? []).map((item) => [item.id, item]));
-  const noteMap = new Map((notesQuery.data?.items ?? []).map((item) => [item.id, item]));
-
-  const selectedAsset = useMemo(
-    () => assetsQuery.data?.items.find((item) => item.id === selectedId) ?? assetsQuery.data?.items[0] ?? null,
-    [assetsQuery.data, selectedId],
-  );
-
-  const selectedAssetId = selectedAsset?.id ?? null;
-
-  const refreshAsset = async (assetId: string) => {
-    await queryClient.invalidateQueries({ queryKey: ["assets"] });
-    setSelectedId(assetId);
-  };
-
-  const refreshGeneratedAsset = async (asset: Asset) => {
-    loadEditorState(asset);
-    await refreshAsset(asset.id);
-  };
-
-  const saveMutation = useMutation({
-    mutationFn: (payload: { assetId: string; body: { title?: string; brief?: string; outline?: string; draft_content?: string; editor_feedback?: string; opinion_notes?: string; style_notes?: string } }) =>
-      assetsApi.update(payload.assetId, payload.body),
-    onSuccess: async (asset) => {
-      await refreshAsset(asset.id);
-      setSelectedId(asset.id);
-    },
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: (assetId: string) => assetsApi.delete(assetId),
-    onSuccess: async (_result, assetId) => {
-      if (selectedId === assetId) {
-        setSelectedId(null);
-      }
-      await queryClient.invalidateQueries({ queryKey: ["assets"] });
-    },
-  });
-
-  const loadEditorState = (asset: Asset | null) => {
-    setEditTitle(asset?.title ?? "");
-    setEditBrief(asset?.brief ?? "");
-    setEditOutline(asset?.outline ?? "");
-    setEditDraft(asset?.draft_content ?? "");
-    setEditFeedback(asset?.editor_feedback ?? "");
-    setEditOpinion(asset?.opinion_notes ?? "");
-    setEditStyle(asset?.style_notes ?? "");
-  };
-
-  useEffect(() => {
-    loadEditorState(selectedAsset);
-  }, [selectedAssetId]);
-
-  const developInAgentChat = (asset: Asset) => {
-    const existingContent = (asset.draft_content || asset.outline || "").slice(0, 4000);
-    navigate("/chat", {
-      state: {
-        workflowId: "draft-blog-asset",
-        objectRef: {
-          object_type: "asset",
-          object_id: asset.id,
-          title: asset.title,
-        },
-        promptSeed: [
-          `Develop this ${assetTypeLabel(asset.asset_type)} as a reviewable writing asset.`,
-          asset.brief ? `Brief: ${asset.brief}` : null,
-          asset.source_refs.length ? `Source refs: ${asset.source_refs.join(", ")}` : null,
-          asset.note_refs.length ? `Note refs: ${asset.note_refs.join(", ")}` : null,
-          existingContent ? `Existing working content:\n${existingContent}` : null,
-          "Return the complete proposed draft. Do not save it automatically; the user will explicitly save it back to this asset.",
-        ].filter(Boolean).join("\n\n"),
-      },
-    });
-  };
-
-  const attachReferencesMutation = useMutation({
-    mutationFn: (assetId: string) => assetsApi.attachReferences(assetId, true),
-    onSuccess: async (asset) => refreshGeneratedAsset(asset),
-  });
-
-  const readinessMutation = useMutation({
-    mutationFn: (assetId: string) => assetsApi.checkReadiness(assetId),
-  });
-
-  const exportMutation = useMutation({
-    mutationFn: (assetId: string) => assetsApi.exportMarkdown(assetId),
-    onSuccess: async (result) => {
-      setExportedMarkdown(result.content);
-      await refreshAsset(result.asset_id);
-    },
-  });
-
-  const publishFeedbackMutation = useMutation({
-    mutationFn: (assetId: string) => assetsApi.updatePublishFeedback(assetId, {
-      publish_url: publishUrl || null,
-      channel: publishChannel || null,
-      published_at: new Date().toISOString(),
-      feedback: publishFeedback || null,
-    }),
-    onSuccess: async (asset) => refreshAsset(asset.id),
-  });
-
-  const feedbackToNoteMutation = useMutation({
-    mutationFn: (assetId: string) => assetsApi.feedbackToNote(assetId),
-  });
+  const assets = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    return (assetsQuery.data?.items ?? [])
+      .filter((asset) => assetType === "all" || asset.asset_type === assetType)
+      .filter((asset) => status === "all" || asset.status === status)
+      .filter((asset) => !normalized || [asset.title, asset.brief, asset.draft_content].some((value) => value?.toLowerCase().includes(normalized)))
+      .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at));
+  }, [assetType, assetsQuery.data, query, status]);
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-6xl px-6 py-8 space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold">Assets</h1>
-          <p className="text-sm text-muted-foreground">
-            Source-driven blog posts and research briefs for the knowledge asset loop.
-          </p>
-        </div>
+      <div className="mx-auto max-w-7xl space-y-8 px-6 py-8">
+        <header className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary">Knowledge Deliverables</p>
+            <h1 className="mt-2 text-3xl font-semibold tracking-tight">Asset Library</h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">Read, refine, and deliver knowledge Assets created from explicit user needs and traceable Sources, Notes, and Wiki pages.</p>
+          </div>
+          <Button size="lg" onClick={() => navigate("/assets/new")}><Sparkles className="mr-2 h-4 w-4" />Create Asset</Button>
+        </header>
 
-        <Card className="border-primary/20 bg-primary/5">
-          <CardContent className="flex flex-col gap-4 py-6 sm:flex-row sm:items-center sm:justify-between">
+        <Card className="border-primary/20 bg-gradient-to-r from-primary/10 via-primary/5 to-background">
+          <CardContent className="grid gap-5 py-6 md:grid-cols-[1fr_auto] md:items-center">
             <div>
-              <CardTitle className="text-lg">Create an Asset from a delivery need</CardTitle>
-              <CardDescription className="mt-1">Choose the audience, objective, format, and knowledge evidence before starting a Harness generation session.</CardDescription>
+              <h2 className="text-xl font-semibold">Start with the delivery need, not an empty record</h2>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">Choose the audience, objective, format, and evidence. A Harness Session produces the draft; PKG stores it only after you explicitly confirm.</p>
             </div>
-            <Button onClick={() => navigate("/assets/new")}><Sparkles className="mr-2 h-4 w-4" />Create Asset</Button>
+            <Button variant="outline" onClick={() => navigate("/assets/new")}>Open generation guide<ArrowRight className="ml-2 h-4 w-4" /></Button>
           </CardContent>
         </Card>
-        <div className="grid gap-6 lg:grid-cols-[320px,1fr]">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Asset List</CardTitle>
-              <CardDescription>{assetsQuery.data?.total ?? 0} assets</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {(assetsQuery.data?.items ?? []).map((asset) => (
-                <button
-                  key={asset.id}
-                  className={`w-full rounded-lg border p-3 text-left transition ${selectedAsset?.id === asset.id ? "border-primary bg-primary/5" : "hover:border-primary/40"}`}
-                  onClick={() => setSelectedId(asset.id)}
-                >
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline">{STATUS_LABELS[asset.status]}</Badge>
-                      <Badge variant="secondary">{assetTypeLabel(asset.asset_type)}</Badge>
-                    </div>
-                    <span className="text-[10px] text-muted-foreground">{new Date(asset.updated_at).toLocaleDateString()}</span>
-                  </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm font-medium">{asset.title}</p>
-                    <Link
-                      to={`/assets/${encodeURIComponent(asset.id)}`}
-                      state={{ backTo: "/assets", backLabel: "Back to Assets" }}
-                      className="text-[11px] text-primary hover:underline"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      Open
-                    </Link>
-                    <button
-                      type="button"
-                      className="text-[11px] text-destructive hover:underline"
-                      disabled={deleteMutation.isPending}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (window.confirm(`Delete asset \"${asset.title}\"? This cannot be undone.`)) {
-                          deleteMutation.mutate(asset.id);
-                        }
-                      }}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                  {asset.brief && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{asset.brief}</p>}
-                </button>
-              ))}
-            </CardContent>
-          </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Asset Workspace</CardTitle>
-              <CardDescription>
-                {selectedAsset
-                  ? selectedAsset.asset_type === "research_brief"
-                    ? `Working on research brief: ${selectedAsset.title}`
-                    : selectedAsset.asset_type === "knowledge_pack"
-                      ? `Working on knowledge pack: ${selectedAsset.title}`
-                      : selectedAsset.asset_type === "newsletter_issue"
-                        ? `Working on newsletter issue: ${selectedAsset.title}`
-                        : selectedAsset.asset_type === "topic_report"
-                          ? `Working on topic report: ${selectedAsset.title}`
-                    : `Working on ${selectedAsset.title}`
-                  : "Select or create an asset"}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {!selectedAsset && <p className="text-sm text-muted-foreground">No asset selected.</p>}
-              {selectedAsset && (
-                <>
-                  <div className="rounded-lg border border-border/70 bg-muted/30 p-3 text-sm text-muted-foreground">
-                    <span className="font-medium text-foreground">{assetTypeLabel(selectedAsset.asset_type)}:</span> {assetTypeDescription(selectedAsset.asset_type)}
-                  </div>
-                  {selectedAsset.asset_type === "research_brief" && (
-                    <div className="rounded-lg border border-border/70 bg-background p-4">
-                      <p className="text-sm font-semibold text-foreground">Research Brief Checklist</p>
-                      <div className="mt-3 grid gap-2 md:grid-cols-2">
-                        {RESEARCH_BRIEF_CHECKLIST.map((item) => (
-                          <div key={item} className="rounded-md border border-border/60 px-3 py-2 text-xs text-muted-foreground">
-                            {item}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {selectedAsset.asset_type === "knowledge_pack" && (
-                    <div className="rounded-lg border border-border/70 bg-background p-4">
-                      <p className="text-sm font-semibold text-foreground">Knowledge Pack Checklist</p>
-                      <div className="mt-3 grid gap-2 md:grid-cols-2">
-                        {KNOWLEDGE_PACK_CHECKLIST.map((item) => (
-                          <div key={item} className="rounded-md border border-border/60 px-3 py-2 text-xs text-muted-foreground">
-                            {item}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {selectedAsset.asset_type === "newsletter_issue" && (
-                    <div className="rounded-lg border border-border/70 bg-background p-4">
-                      <p className="text-sm font-semibold text-foreground">Newsletter Issue Checklist</p>
-                      <div className="mt-3 grid gap-2 md:grid-cols-2">
-                        {NEWSLETTER_ISSUE_CHECKLIST.map((item) => (
-                          <div key={item} className="rounded-md border border-border/60 px-3 py-2 text-xs text-muted-foreground">
-                            {item}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {selectedAsset.asset_type === "topic_report" && (
-                    <div className="rounded-lg border border-border/70 bg-background p-4">
-                      <p className="text-sm font-semibold text-foreground">Topic Report Checklist</p>
-                      <div className="mt-3 grid gap-2 md:grid-cols-2">
-                        {TOPIC_REPORT_CHECKLIST.map((item) => (
-                          <div key={item} className="rounded-md border border-border/60 px-3 py-2 text-xs text-muted-foreground">
-                            {item}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  <div className="flex flex-wrap gap-2">
-                    <Button variant="outline" onClick={() => developInAgentChat(selectedAsset)}>
-                      <Sparkles className="mr-2 h-4 w-4" />
-                      Develop in Agent Chat
-                    </Button>
-                    <Button variant="outline" onClick={() => attachReferencesMutation.mutate(selectedAsset.id)}>
-                      <CheckCircle2 className="mr-2 h-4 w-4" />
-                      Attach References
-                    </Button>
-                    <Button variant="outline" onClick={() => readinessMutation.mutate(selectedAsset.id)}>
-                      Check Readiness
-                    </Button>
-                    <Button variant="outline" onClick={() => exportMutation.mutate(selectedAsset.id)}>
-                      <Download className="mr-2 h-4 w-4" />
-                      Export Markdown
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        if (window.confirm(`Delete asset \"${selectedAsset.title}\"? This cannot be undone.`)) {
-                          deleteMutation.mutate(selectedAsset.id);
-                        }
-                      }}
-                      disabled={deleteMutation.isPending}
-                    >
-                      <Trash2 className="mr-2 h-4 w-4" />
-                      {deleteMutation.isPending ? "Deleting…" : "Delete"}
-                    </Button>
-                  </div>
+        <section className="space-y-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div><h2 className="text-xl font-semibold">Your Assets</h2><p className="text-sm text-muted-foreground">{assetsQuery.data?.total ?? 0} total · {assets.length} shown</p></div>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <div className="relative min-w-[260px]"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input aria-label="Search Assets" className="pl-9" placeholder="Search title, brief, or content" value={query} onChange={(event) => setQuery(event.target.value)} /></div>
+              <label className="flex items-center gap-2 rounded-md border bg-background px-3 text-sm"><Filter className="h-4 w-4 text-muted-foreground" /><select aria-label="Asset type filter" className="h-9 bg-transparent outline-none" value={assetType} onChange={(event) => setAssetType(event.target.value as AssetType | "all")}><option value="all">All types</option>{MANUAL_ASSET_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}<option value="newsletter_issue">Newsletter Issue</option></select></label>
+              <label className="rounded-md border bg-background px-3 text-sm"><select aria-label="Asset status filter" className="h-9 bg-transparent outline-none" value={status} onChange={(event) => setStatus(event.target.value as AssetStatus | "all")}>{STATUS_OPTIONS.map((item) => <option key={item} value={item}>{item === "all" ? "All statuses" : STATUS_LABELS[item]}</option>)}</select></label>
+            </div>
+          </div>
 
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="space-y-2">
-                      <h3 className="text-sm font-semibold">Title</h3>
-                      <Input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} />
-                    </div>
-                    <div className="space-y-2">
-                      <h3 className="text-sm font-semibold">Brief</h3>
-                      <Textarea value={editBrief} onChange={(e) => setEditBrief(e.target.value)} rows={6} />
-                      <p className="text-xs text-muted-foreground">{assetTypeBriefGuidance(selectedAsset.asset_type)}</p>
-                    </div>
-                    <div className="space-y-2">
-                      <h3 className="text-sm font-semibold">References</h3>
-                      <pre className="whitespace-pre-wrap rounded-md border bg-muted/30 p-3 text-xs">{selectedAsset.reference_notes || "(empty)"}</pre>
-                      {selectedAsset.asset_type === "research_brief" && (
-                        <p className="text-xs text-muted-foreground">
-                          Research briefs should attach readable references before export so findings and recommendations stay auditable.
-                        </p>
-                      )}
-                      {selectedAsset.asset_type === "knowledge_pack" && (
-                        <p className="text-xs text-muted-foreground">
-                          Knowledge packs should attach readable references before export so the bundle stays reusable and navigable.
-                        </p>
-                      )}
-                      {selectedAsset.asset_type === "newsletter_issue" && (
-                        <p className="text-xs text-muted-foreground">
-                          Newsletter issues should attach readable references before export so every featured item can be traced back to source material.
-                        </p>
-                      )}
-                      {selectedAsset.asset_type === "topic_report" && (
-                        <p className="text-xs text-muted-foreground">
-                          Topic reports should attach readable references before export so themes and findings remain traceable to source material and wiki context.
-                        </p>
-                      )}
-                    </div>
-                  </div>
+          {assetsQuery.isLoading && <div className="rounded-2xl border p-10 text-center text-sm text-muted-foreground">Loading Asset Library…</div>}
+          {assetsQuery.isError && <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-6 text-sm text-destructive">Could not load Assets.</div>}
+          {!assetsQuery.isLoading && !assetsQuery.isError && assets.length === 0 && <EmptyLibrary hasAssets={Boolean(assetsQuery.data?.total)} onCreate={() => navigate("/assets/new")} />}
 
-                  <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                    <span>Sources: {selectedAsset.source_refs.length}</span>
-                    <span>Notes: {selectedAsset.note_refs.length}</span>
-                    <span>Wiki: {selectedAsset.wiki_refs.length}</span>
-                  </div>
-
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="space-y-2">
-                      <h3 className="text-sm font-semibold">Opinion / Thesis</h3>
-                      <Textarea value={editOpinion} onChange={(e) => setEditOpinion(e.target.value)} rows={5} />
-                    </div>
-                    <div className="space-y-2">
-                      <h3 className="text-sm font-semibold">Style Notes</h3>
-                      <Textarea value={editStyle} onChange={(e) => setEditStyle(e.target.value)} rows={5} />
-                    </div>
-                  </div>
-
-                  {(selectedAsset.source_refs.length > 0 || selectedAsset.note_refs.length > 0) && (
-                    <div className="grid gap-4 md:grid-cols-2">
-                      {selectedAsset.source_refs.length > 0 && (
-                        <div className="space-y-2 rounded-md border p-3">
-                          <h3 className="text-sm font-semibold">Source refs</h3>
-                          <ul className="space-y-1 text-xs">
-                            {selectedAsset.source_refs.map((sourceId) => {
-                              const source = sourceMap.get(sourceId);
-                              return (
-                                <li key={sourceId}>
-                                  <Link className="text-primary hover:underline" to={`/sources/${encodeURIComponent(sourceId)}`}>
-                                    {source?.title ?? sourceId}
-                                  </Link>
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        </div>
-                      )}
-
-                      {selectedAsset.note_refs.length > 0 && (
-                        <div className="space-y-2 rounded-md border p-3">
-                          <h3 className="text-sm font-semibold">Note refs</h3>
-                          <ul className="space-y-1 text-xs">
-                            {selectedAsset.note_refs.map((noteId) => {
-                              const note = noteMap.get(noteId);
-                              return (
-                                <li key={noteId}>
-                                  <Link className="text-primary hover:underline" to={`/notes/${encodeURIComponent(noteId)}`}>
-                                    {note?.title ?? noteId}
-                                  </Link>
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  <div className="space-y-2">
-                    <h3 className="text-sm font-semibold">Outline</h3>
-                    <Textarea value={editOutline} onChange={(e) => setEditOutline(e.target.value)} rows={10} />
-                  </div>
-
-                  <div className="space-y-2">
-                    <h3 className="text-sm font-semibold">Draft</h3>
-                    <Textarea value={editDraft} onChange={(e) => setEditDraft(e.target.value)} rows={16} />
-                  </div>
-
-                  <div className="space-y-2">
-                    <h3 className="text-sm font-semibold">Editor Feedback</h3>
-                    <Textarea value={editFeedback} onChange={(e) => setEditFeedback(e.target.value)} rows={6} />
-                  </div>
-
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="space-y-2">
-                      <h3 className="text-sm font-semibold">Publish URL</h3>
-                      <Input value={publishUrl} onChange={(e) => setPublishUrl(e.target.value)} placeholder="https://..." />
-                    </div>
-                    <div className="space-y-2">
-                      <h3 className="text-sm font-semibold">Channel</h3>
-                      <Input value={publishChannel} onChange={(e) => setPublishChannel(e.target.value)} placeholder="blog, x, newsletter" />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <h3 className="text-sm font-semibold">Publish Feedback</h3>
-                    <Textarea value={publishFeedback} onChange={(e) => setPublishFeedback(e.target.value)} rows={4} />
-                  </div>
-
-                  <div>
-                    {saveMutation.isError && (
-                      <p className="mb-3 text-sm text-destructive">Failed to save asset edits. Please retry.</p>
-                    )}
-                    {saveMutation.isSuccess && !saveMutation.isPending && (
-                      <p className="mb-3 text-sm text-emerald-600">Saved.</p>
-                    )}
-                    <Button
-                      onClick={() => selectedAsset && saveMutation.mutate({
-                        assetId: selectedAsset.id,
-                        body: {
-                          title: editTitle,
-                          brief: editBrief,
-                          outline: editOutline,
-                          draft_content: editDraft,
-                          editor_feedback: editFeedback,
-                          opinion_notes: editOpinion,
-                          style_notes: editStyle,
-                        },
-                      })}
-                      disabled={!selectedAsset || !editTitle.trim() || saveMutation.isPending}
-                    >
-                      {saveMutation.isPending ? "Saving…" : "Save Edits"}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      className="ml-2"
-                      onClick={() => selectedAsset && feedbackToNoteMutation.mutate(selectedAsset.id)}
-                      disabled={!selectedAsset || feedbackToNoteMutation.isPending || (!editFeedback.trim() && !publishFeedback.trim())}
-                    >
-                      {feedbackToNoteMutation.isPending ? "Converting…" : "Feedback to Note"}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      className="ml-2"
-                      onClick={() => selectedAsset && publishFeedbackMutation.mutate(selectedAsset.id)}
-                      disabled={!selectedAsset || publishFeedbackMutation.isPending || (!publishUrl.trim() && !publishChannel.trim() && !publishFeedback.trim())}
-                    >
-                      {publishFeedbackMutation.isPending ? "Saving Publish Feedback…" : "Save Publish Feedback"}
-                    </Button>
-                  </div>
-
-                  {readinessMutation.data && (
-                    <div className={`space-y-4 rounded-lg border p-4 ${readinessTone(readinessMutation.data.ready)}`}>
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold">{assetTypeReadinessTitle(selectedAsset.asset_type)}</p>
-                          <p className="mt-1 text-sm text-muted-foreground">
-                            {assetTypeReadinessIntro(selectedAsset.asset_type)}
-                          </p>
-                        </div>
-                        <Badge variant={readinessMutation.data.ready ? "default" : "secondary"}>
-                          {readinessMutation.data.ready ? "Ready to export" : "Needs work"}
-                        </Badge>
-                      </div>
-
-                      <div className="grid gap-3 md:grid-cols-3">
-                        <ReadinessList
-                          title="Blocking"
-                          items={readinessMutation.data.blocking_reasons}
-                          tone="text-destructive"
-                          empty="No blocking issues."
-                        />
-                        <ReadinessList
-                          title="Warnings"
-                          items={readinessMutation.data.warning_reasons}
-                          tone="text-amber-700"
-                          empty="No warning signals."
-                        />
-                        <ReadinessList
-                          title="Suggested next steps"
-                          items={readinessMutation.data.suggestion_reasons}
-                          tone="text-sky-700"
-                          empty="No extra suggestions right now."
-                        />
-                      </div>
-
-                      <div className="rounded-md border bg-background/80 p-3 text-sm text-muted-foreground">
-                        {assetTypeReadinessGuidance(selectedAsset.asset_type)}
-                      </div>
-                    </div>
-                  )}
-
-                  {exportedMarkdown && selectedAsset.id === exportMutation.variables && (
-                    <div className="space-y-2">
-                      <h3 className="text-sm font-semibold">Exported Markdown</h3>
-                      <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap rounded-md border bg-muted/30 p-3 text-xs">{exportedMarkdown}</pre>
-                    </div>
-                  )}
-                </>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+          <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+            {assets.map((asset) => <AssetCard key={asset.id} asset={asset} />)}
+          </div>
+        </section>
       </div>
     </div>
   );
+}
+
+function AssetCard({ asset }: { asset: Asset }) {
+  const evidenceCount = asset.source_refs.length + asset.note_refs.length + asset.wiki_refs.length;
+  const preview = asset.brief?.trim() || asset.draft_content?.replace(/^#+\s+/gm, "").trim().slice(0, 220) || "This Asset does not have a preview yet.";
+  return (
+    <Link to={`/assets/${encodeURIComponent(asset.id)}`} className="group block h-full">
+      <Card className="h-full overflow-hidden transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md">
+        <div className="h-1.5 bg-gradient-to-r from-primary via-sky-400 to-transparent" />
+        <CardContent className="flex h-full flex-col p-5">
+          <div className="flex flex-wrap items-center gap-2"><Badge variant="secondary">{assetTypeLabel(asset.asset_type)}</Badge><Badge variant="outline">{STATUS_LABELS[asset.status]}</Badge></div>
+          <h3 className="mt-4 line-clamp-2 text-xl font-semibold leading-7 group-hover:text-primary">{asset.title}</h3>
+          <p className="mt-3 line-clamp-4 text-sm leading-6 text-muted-foreground">{preview}</p>
+          <div className="mt-6 flex items-center justify-between border-t pt-4 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1.5"><BookOpen className="h-3.5 w-3.5" />{evidenceCount} evidence records</span>
+            <span>{new Date(asset.updated_at).toLocaleDateString()}</span>
+          </div>
+        </CardContent>
+      </Card>
+    </Link>
+  );
+}
+
+function EmptyLibrary({ hasAssets, onCreate }: { hasAssets: boolean; onCreate: () => void }) {
+  return <div className="rounded-3xl border border-dashed bg-muted/20 px-6 py-16 text-center"><div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary"><FileText className="h-6 w-6" /></div><h3 className="mt-4 text-lg font-semibold">{hasAssets ? "No Assets match these filters" : "Create your first knowledge Asset"}</h3><p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">{hasAssets ? "Change the search, type, or status filters." : "Start from a real delivery need and selected knowledge evidence. No empty Asset will be created."}</p>{!hasAssets && <Button className="mt-5" onClick={onCreate}>Create Asset</Button>}</div>;
 }
