@@ -48,6 +48,19 @@ class PkgClient {
   dashboard(sessionId) { return this.request(sessionId, "GET", "/knowledge/dashboard"); }
 }
 
+const LOOPBACK_SERVICE_TOKEN = "seagull-loopback-harness";
+const INSECURE_SERVICE_TOKENS = new Set([LOOPBACK_SERVICE_TOKEN, "replace-with-a-random-service-token"]);
+
+export function resolveHarnessServiceToken(baseUrl, configuredToken = process.env.HARNESS_SERVICE_TOKEN) {
+  const hostname = new URL(baseUrl).hostname;
+  const loopback = hostname === "localhost" || hostname === "::1" || hostname.startsWith("127.");
+  const token = configuredToken || (loopback ? LOOPBACK_SERVICE_TOKEN : "");
+  if (!loopback && (!token || token.length < 32 || INSECURE_SERVICE_TOKENS.has(token))) {
+    throw new Error("HARNESS_SERVICE_TOKEN must be an explicit random value of at least 32 characters for a non-loopback PKG Gateway");
+  }
+  return token;
+}
+
 function sessionId(exec) {
   const id = exec?.agent?.session?.id;
   if (!id) throw new Error("PKG tool call is missing its Harness session context");
@@ -66,7 +79,7 @@ function textOutput(description) {
 
 export function apply(ctx) {
   const baseUrl = process.env.PKG_GATEWAY_URL || "http://127.0.0.1:4000/internal/pkg";
-  const serviceToken = process.env.HARNESS_SERVICE_TOKEN || "seagull-loopback-harness";
+  const serviceToken = resolveHarnessServiceToken(baseUrl);
   const client = new PkgClient({ baseUrl, serviceToken });
   ctx.provide("pkg", client);
 

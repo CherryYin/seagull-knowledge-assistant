@@ -94,7 +94,7 @@ deepseek-knowledge-lab/
 ## 配置
 
 - `PKG_GATEWAY_URL`：Harness 的 PKG 工具代理地址，默认 `http://127.0.0.1:4000/internal/pkg`
-- `HARNESS_SERVICE_TOKEN`：Harness 调用 BFF 内部 PKG Proxy 的服务密钥；非回环部署必须设置随机值
+- `HARNESS_SERVICE_TOKEN`：Harness 调用 BFF 内部 PKG Proxy 的服务密钥；非回环部署必须显式设置至少 32 字符的随机值，本地默认 token 仅允许 loopback Gateway
 - `PKG_DATABASE_URL`：Stage C PostgreSQL shadow write 连接串；必须是 `postgresql://` 格式
 - 模型和参数在 `config/settings.yaml` 中配置，或在 dsh UI 中实时修改
 
