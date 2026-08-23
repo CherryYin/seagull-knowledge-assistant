@@ -18,6 +18,7 @@
     "test:sessions:verify-shadow": "node --test scripts/verify-session-shadow.test.mjs",
     "test:sessions:stage-e": "node --test scripts/check-stage-e-readiness.test.mjs",
     "test:agent-memory": "node --test plugins/agent-memory/test/store.test.js",
+    "test:session-context": "node --test plugins/session-context/test/store.test.js",
     "test:agent-memory-migration": "node --test scripts/migrate-agent-memory-to-postgres.test.mjs",
     "agent-memory:migrate-postgres": "node scripts/migrate-agent-memory-to-postgres.mjs",
     "smoke:agent-memory-postgres": "node scripts/check-agent-memory-postgres.mjs",
