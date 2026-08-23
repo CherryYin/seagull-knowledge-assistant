@@ -28,7 +28,7 @@ deepseek-knowledge-lab/
 2. **知识消费**：agent 阅读、分析、关联检索到的知识片段。
 3. **知识产出**：agent 结果保留在 Harness Session/Workflow；用户在 Seagull UI 明确 Keep/Save/Publish 后才写回 PKG。
 4. **实验追踪**：DeepSeek Harness 的 Trajectory View 记录完整执行轨迹，可 replay/fork/对比。
-5. **长期记忆**：Agent Memory Candidate 由用户确认后才激活，保存在 Harness/Lab 自有存储，不写入 PKG 知识实体。
+5. **长期记忆**：Agent Memory Candidate 由用户确认后才激活，默认保存在 Harness/Lab 所有的 PostgreSQL 独立表，不写入 PKG 知识实体；文件后端只用于隔离测试或显式本地回退。
 
 ## PKG API 对接要点
 

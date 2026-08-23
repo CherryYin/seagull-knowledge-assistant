@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { Pool } from 'pg'
 
 const CANDIDATE_STATUSES = new Set(['pending', 'accepted', 'rejected', 'expired'])
 const MEMORY_STATUSES = new Set(['active', 'archived'])
@@ -84,6 +85,59 @@ function freshState() {
   return { version: 1, candidates: [], memories: [], recallAudits: [] }
 }
 
+function quotedSchema(value) {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) throw new TypeError('schema is invalid')
+  return `"${value}"`
+}
+
+export class PostgresAgentMemoryBackend {
+  #pool
+  #table
+
+  constructor({ connectionString, schema = 'public', maxConnections = 5, pool } = {}) {
+    this.#table = `${quotedSchema(schema)}.harness_agent_memory_state`
+    this.#pool = pool ?? new Pool({
+      connectionString: requiredText(connectionString, 'connectionString'),
+      max: maxConnections,
+      application_name: 'deepseek-knowledge-lab-agent-memory',
+    })
+  }
+
+  async read(userId) {
+    const result = await this.#pool.query(`SELECT state FROM ${this.#table} WHERE user_id = $1`, [userId])
+    return result.rows[0] ? assertState(result.rows[0].state) : freshState()
+  }
+
+  async mutate(userId, operation) {
+    const client = await this.#pool.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query(
+        `INSERT INTO ${this.#table} (user_id, state) VALUES ($1, $2::jsonb) ON CONFLICT (user_id) DO NOTHING`,
+        [userId, JSON.stringify(freshState())],
+      )
+      const selected = await client.query(`SELECT state FROM ${this.#table} WHERE user_id = $1 FOR UPDATE`, [userId])
+      const state = assertState(selected.rows[0].state)
+      const result = await operation(state)
+      await client.query(
+        `UPDATE ${this.#table} SET state = $2::jsonb, revision = revision + 1, updated_at = now() WHERE user_id = $1`,
+        [userId, JSON.stringify(state)],
+      )
+      await client.query('COMMIT')
+      return result
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined)
+      throw error
+    } finally {
+      client.release()
+    }
+  }
+
+  async close() {
+    await this.#pool.end()
+  }
+}
+
 function clone(value) {
   return structuredClone(value)
 }
@@ -121,17 +175,21 @@ function relevance(memory, query) {
 
 export class AgentMemoryStore {
   #path
+  #backend
   #clock
   #id
   #queue = Promise.resolve()
 
-  constructor({ path, clock = () => new Date(), id = randomUUID }) {
-    this.#path = requiredText(path, 'path')
+  constructor({ path, backend, clock = () => new Date(), id = randomUUID }) {
+    if (!backend && !path) throw new TypeError('path or backend is required')
+    this.#path = path ? requiredText(path, 'path') : null
+    this.#backend = backend
     this.#clock = clock
     this.#id = id
   }
 
-  async #read() {
+  async #read(userId) {
+    if (this.#backend) return this.#backend.read(userId)
     try {
       return assertState(JSON.parse(await readFile(this.#path, 'utf8')))
     } catch (error) {
@@ -147,9 +205,10 @@ export class AgentMemoryStore {
     await rename(temporary, this.#path)
   }
 
-  #mutate(operation) {
+  #mutate(userId, operation) {
+    if (this.#backend) return this.#backend.mutate(userId, operation)
     const current = this.#queue.then(async () => {
-      const state = await this.#read()
+      const state = await this.#read(userId)
       const result = await operation(state)
       await this.#write(state)
       return result
@@ -160,20 +219,21 @@ export class AgentMemoryStore {
 
   async list(userId, { candidateStatus, memoryStatus } = {}) {
     const owner = requiredText(userId, 'userId')
-    const state = await this.#read()
-    if (this.#expireCandidates(state)) await this.#write(state)
-    const candidates = state.candidates
-      .filter(item => item.userId === owner && (!candidateStatus || item.status === candidateStatus))
-      .map(candidateView)
-    const memories = state.memories
-      .filter(item => item.userId === owner && (!memoryStatus || item.status === memoryStatus))
-      .map(memoryView)
-    return { candidates, memories }
+    return this.#mutate(owner, async (state) => {
+      this.#expireCandidates(state)
+      const candidates = state.candidates
+        .filter(item => item.userId === owner && (!candidateStatus || item.status === candidateStatus))
+        .map(candidateView)
+      const memories = state.memories
+        .filter(item => item.userId === owner && (!memoryStatus || item.status === memoryStatus))
+        .map(memoryView)
+      return { candidates, memories }
+    })
   }
 
   propose(userId, input) {
     const owner = requiredText(userId, 'userId')
-    return this.#mutate(async (state) => {
+    return this.#mutate(owner, async (state) => {
       const now = iso(this.#clock)
       const fields = normalizeFields(input, 'proposed')
       const candidate = {
@@ -201,8 +261,9 @@ export class AgentMemoryStore {
   }
 
   updateCandidate(userId, candidateId, input) {
-    return this.#mutate(async (state) => {
-      const candidate = this.#candidate(state, userId, candidateId)
+    const owner = requiredText(userId, 'userId')
+    return this.#mutate(owner, async (state) => {
+      const candidate = this.#candidate(state, owner, candidateId)
       if (candidate.status !== 'pending') throw new Error('only pending candidates can be edited')
       const patch = cleanPatch(input)
       if (Object.hasOwn(patch, 'scopeType')) candidate.proposedScopeType = patch.scopeType
@@ -217,7 +278,7 @@ export class AgentMemoryStore {
 
   accept(userId, candidateId, input = {}) {
     const owner = requiredText(userId, 'userId')
-    return this.#mutate(async (state) => {
+    return this.#mutate(owner, async (state) => {
       const candidate = this.#candidate(state, owner, candidateId)
       this.#expireCandidate(candidate)
       if (candidate.status !== 'pending') throw new Error('only pending candidates can be accepted')
@@ -251,8 +312,9 @@ export class AgentMemoryStore {
   }
 
   reject(userId, candidateId) {
-    return this.#mutate(async (state) => {
-      const candidate = this.#candidate(state, userId, candidateId)
+    const owner = requiredText(userId, 'userId')
+    return this.#mutate(owner, async (state) => {
+      const candidate = this.#candidate(state, owner, candidateId)
       this.#expireCandidate(candidate)
       if (candidate.status !== 'pending') throw new Error('only pending candidates can be rejected')
       const now = iso(this.#clock)
@@ -264,8 +326,9 @@ export class AgentMemoryStore {
   }
 
   updateMemory(userId, memoryId, input) {
-    return this.#mutate(async (state) => {
-      const memory = this.#memory(state, userId, memoryId)
+    const owner = requiredText(userId, 'userId')
+    return this.#mutate(owner, async (state) => {
+      const memory = this.#memory(state, owner, memoryId)
       Object.assign(memory, cleanPatch(input), { updatedAt: iso(this.#clock) })
       return memoryView(memory)
     })
@@ -280,8 +343,9 @@ export class AgentMemoryStore {
   }
 
   #setMemoryStatus(userId, memoryId, expected, status) {
-    return this.#mutate(async (state) => {
-      const memory = this.#memory(state, userId, memoryId)
+    const owner = requiredText(userId, 'userId')
+    return this.#mutate(owner, async (state) => {
+      const memory = this.#memory(state, owner, memoryId)
       if (memory.status !== expected) throw new Error(`only ${expected} memories can become ${status}`)
       memory.status = status
       memory.updatedAt = iso(this.#clock)
@@ -290,8 +354,9 @@ export class AgentMemoryStore {
   }
 
   delete(userId, memoryId) {
-    return this.#mutate(async (state) => {
-      const memory = this.#memory(state, userId, memoryId)
+    const owner = requiredText(userId, 'userId')
+    return this.#mutate(owner, async (state) => {
+      const memory = this.#memory(state, owner, memoryId)
       state.memories.splice(state.memories.indexOf(memory), 1)
       return { deleted: true, id: memory.id }
     })
@@ -303,7 +368,7 @@ export class AgentMemoryStore {
     const requestedScopeId = optionalText(scopeId, 'scopeId')
     const recallSessionId = requiredText(sessionId, 'sessionId')
     const safeLimit = Math.max(1, Math.min(5, Number(limit) || 5))
-    return this.#mutate(async (state) => {
+    return this.#mutate(owner, async (state) => {
       const now = this.#clock()
       const eligible = state.memories.filter(memory => {
         if (memory.userId !== owner || memory.status !== 'active') return false
@@ -341,7 +406,7 @@ export class AgentMemoryStore {
 
   async listRecallAudits(userId, { sessionId } = {}) {
     const owner = requiredText(userId, 'userId')
-    const state = await this.#read()
+    const state = await this.#read(owner)
     return state.recallAudits
       .filter(item => item.userId === owner && (!sessionId || item.sessionId === sessionId))
       .map(clone)

@@ -95,7 +95,19 @@ deepseek-knowledge-lab/
 
 - `PKG_GATEWAY_URL`：Harness 的 PKG 工具代理地址，默认 `http://127.0.0.1:4000/internal/pkg`
 - `HARNESS_SERVICE_TOKEN`：Harness 调用 BFF 内部 PKG Proxy 的服务密钥；非回环部署必须显式设置至少 32 字符的随机值，本地默认 token 仅允许 loopback Gateway
-- `PKG_DATABASE_URL`：Stage C PostgreSQL shadow write 连接串；必须是 `postgresql://` 格式
+- `PKG_DATABASE_URL`：Harness Session 与 Agent Memory 使用的 PostgreSQL 连接串；必须是 `postgresql://` 格式
+- `AGENT_MEMORY_DATABASE_URL`：可选的 Agent Memory 独立连接串；未设置时 BFF 使用 `PKG_DATABASE_URL`
+- `AGENT_MEMORY_DATABASE_SCHEMA`：Agent Memory 表所在 schema，默认 `public`
 - 模型和参数在 `config/settings.yaml` 中配置，或在 dsh UI 中实时修改
 
-当前 Session 持久化处于 Stage D：PKG PostgreSQL 是主存储和请求成功边界，Harness 每次完成提交后异步将完整 Session 对账到 JSONL 回滚副本。JSONL 写入失败只触发重试与告警，不会使已经提交的 PostgreSQL 请求失败。
+当前 Session 持久化已完成 Stage E：PostgreSQL 是唯一 writer，JSONL Shadow 已关闭，旧 JSONL 仅作为只读迁移归档。
+
+Agent Memory 首次切换 PostgreSQL 前执行：
+
+```bash
+npm run agent-memory:migrate-postgres        # dry-run
+npm run agent-memory:migrate-postgres -- --apply
+npm run smoke:agent-memory-postgres
+```
+
+迁移使用 `public.harness_agent_memory_state`（或配置 schema）按用户保存独立 JSONB 领域状态，并通过行级锁支持多 BFF 实例。原 `.dsh/agent-memory.json` 不会被迁移脚本删除。
