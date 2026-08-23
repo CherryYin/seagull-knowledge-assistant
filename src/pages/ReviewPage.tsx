@@ -50,7 +50,7 @@ export function ReviewPage() {
   const inboxItems = useMemo<InboxItem[]>(() => [
     ...(discoveryData?.items ?? []).map((item) => ({
       id: `discovery-${item.id}`,
-      domain: discoveryDomain(item.why),
+      domain: discoveryDomain(item.payload, item.why),
       title: item.title,
       summary: item.summary || item.why?.[0] || item.provider,
       createdAt: item.created_at,
@@ -120,7 +120,7 @@ export function ReviewPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-wrap gap-2">
-              {(["all", "Discovery", "Connector Trend", "Digest", "Wiki", "Profile", "Agent Memory"] as const).map((filter) => (
+              {(["all", "Discovery", "Paper Candidate", "Connector Trend", "Digest", "Wiki", "Profile", "Agent Memory"] as const).map((filter) => (
                 <Button key={filter} type="button" size="sm" variant={inboxFilter === filter ? "default" : "outline"} onClick={() => setInboxFilter(filter)}>
                   {filter === "all" ? "All" : filter}
                 </Button>
@@ -238,7 +238,7 @@ export function ReviewPage() {
   );
 }
 
-type InboxDomain = "Discovery" | "Connector Trend" | "Digest" | "Wiki" | "Profile" | "Agent Memory";
+type InboxDomain = "Discovery" | "Paper Candidate" | "Connector Trend" | "Digest" | "Wiki" | "Profile" | "Agent Memory";
 
 interface InboxItem {
   id: string;
@@ -249,7 +249,8 @@ interface InboxItem {
   to: string;
 }
 
-function discoveryDomain(why?: string[] | null): InboxDomain {
+function discoveryDomain(payload: Record<string, unknown>, why?: string[] | null): InboxDomain {
+  if (payload.origin === "paper_discovery") return "Paper Candidate";
   return why?.some((reason) => reason.toLowerCase().includes("connector trend")) ? "Connector Trend" : "Discovery";
 }
 
