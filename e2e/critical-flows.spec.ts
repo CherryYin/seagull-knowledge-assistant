@@ -302,6 +302,12 @@ test("manual Asset generation creates PKG state only after the user confirms the
   await expect(page.getByRole("heading", { name: "Revised finding" })).toBeVisible();
   await page.getByRole("tab", { name: "Production" }).click();
   await expect(page.getByText("Production Actions")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Publish Details" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Production Timeline" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "References", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Brief", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Outline", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Draft", exact: true })).toHaveCount(0);
 });
 
 test("Source Asset handoff opens the generation guide with evidence preselected", async ({ page }) => {
