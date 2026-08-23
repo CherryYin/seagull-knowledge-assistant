@@ -62,13 +62,18 @@ async def active_admin_username() -> str:
     return username
 
 
-async def stream_chat(client: httpx.AsyncClient, session_id: str) -> list[str]:
+async def stream_chat(
+    client: httpx.AsyncClient,
+    session_id: str,
+    prompt: str = "Reply with OK only.",
+) -> tuple[list[str], str]:
     event_types: list[str] = []
+    content_parts: list[str] = []
     async with client.stream(
         "POST",
         "/api/chat",
         json={
-            "prompt": "Reply with OK only.",
+            "prompt": prompt,
             "preset": "knowledge-lab",
             "session_id": session_id,
             "create_session": True,
@@ -84,7 +89,9 @@ async def stream_chat(client: httpx.AsyncClient, session_id: str) -> list[str]:
             except json.JSONDecodeError:
                 continue
             event_types.append(str(event.get("type")))
-    return event_types
+            if event.get("type") == "text" and isinstance(event.get("content"), str):
+                content_parts.append(event["content"])
+    return event_types, "".join(content_parts).strip()
 
 
 async def run_smoke(*, skip_chat: bool) -> dict[str, object]:
@@ -96,6 +103,7 @@ async def run_smoke(*, skip_chat: bool) -> dict[str, object]:
     bff_url = f"http://127.0.0.1:{port}"
     temporary_directory = tempfile.TemporaryDirectory(prefix="seagull-four-service-smoke-")
     memory_path = Path(temporary_directory.name) / "agent-memory.json"
+    session_context_path = Path(temporary_directory.name) / "session-contexts.json"
     process = subprocess.Popen(
         ["node", "src/index.js"],
         cwd=BFF_ROOT,
@@ -105,11 +113,14 @@ async def run_smoke(*, skip_chat: bool) -> dict[str, object]:
             "PKG_API_URL": "http://127.0.0.1:8000",
             "HARNESS_API_URL": "http://127.0.0.1:3080",
             "AGENT_MEMORY_STORE_PATH": str(memory_path),
+            "SESSION_CONTEXT_STORE_PATH": str(session_context_path),
         },
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
     note_id = f"note-smoke-{uuid.uuid4()}"
+    asset_session = f"smoke-asset-{uuid.uuid4()}"
+    asset_id: str | None = None
     results: dict[str, object] = {}
     try:
         await wait_for_url(f"{bff_url}/api/health")
@@ -163,10 +174,39 @@ async def run_smoke(*, skip_chat: bool) -> dict[str, object]:
                 },
             )
             note.raise_for_status()
-            deleted_note = await client.delete(f"/api/notes/{note_id}")
-            if deleted_note.status_code != 204:
-                raise RuntimeError(f"Note delete returned {deleted_note.status_code}")
             results["note_crud"] = True
+
+            created_chat_session = await client.post(
+                "/api/chat-sessions",
+                json={"id": asset_session, "title": "Four-service Asset smoke", "messages": []},
+            )
+            created_chat_session.raise_for_status()
+            generation_context = {
+                "kind": "asset_generation",
+                "assetDraft": {
+                    "assetType": "research_brief",
+                    "title": "Four-service Asset smoke",
+                    "brief": "Verify the real manual Asset production boundary.",
+                    "audience": "Architecture reviewers",
+                    "styleNotes": "Concise and evidence-led.",
+                    "sourceRefs": [],
+                    "noteRefs": [note_id],
+                    "wikiRefs": [],
+                },
+            }
+            saved_context = await client.put(
+                f"/api/harness/session-contexts/{asset_session}",
+                json=generation_context,
+            )
+            saved_context.raise_for_status()
+            restored_context = await client.get(
+                f"/api/harness/session-contexts/{asset_session}"
+            )
+            restored_context.raise_for_status()
+            restored = restored_context.json()["context"]
+            if restored["assetDraft"]["noteRefs"] != [note_id]:
+                raise RuntimeError("Asset generation context did not preserve Note evidence")
+            results["asset_session_context"] = True
 
             candidate = await client.post(
                 "/api/harness/memory-candidates",
@@ -202,14 +242,21 @@ async def run_smoke(*, skip_chat: bool) -> dict[str, object]:
             )
             accepted.raise_for_status()
             memory_id = accepted.json()["memory"]["id"]
-            session_ids: list[str] = []
+            session_ids: list[str] = [asset_session]
             results["memory_lifecycle"] = True
 
             if not skip_chat:
-                active_session = f"smoke-active-{uuid.uuid4()}"
+                active_session = asset_session
                 archived_session = f"smoke-archived-{uuid.uuid4()}"
-                session_ids.extend((active_session, archived_session))
-                active_events = await stream_chat(client, active_session)
+                session_ids.append(archived_session)
+                active_events, asset_draft = await stream_chat(
+                    client,
+                    active_session,
+                    "Write a concise research brief with exactly two Markdown sections: "
+                    "## Finding and ## Recommendation. Keep the full response under 120 words.",
+                )
+                if not asset_draft:
+                    raise RuntimeError("Harness returned no Asset draft content")
                 active_audits = await client.get(
                     f"/api/harness/memory-recalls?session_id={active_session}"
                 )
@@ -217,7 +264,7 @@ async def run_smoke(*, skip_chat: bool) -> dict[str, object]:
                 active_matches = len(active_audits.json()["items"][-1]["matches"])
                 archived = await client.post(f"/api/harness/memories/{memory_id}/archive")
                 archived.raise_for_status()
-                archived_events = await stream_chat(client, archived_session)
+                archived_events, _ = await stream_chat(client, archived_session)
                 archived_audits = await client.get(
                     f"/api/harness/memory-recalls?session_id={archived_session}"
                 )
@@ -232,14 +279,60 @@ async def run_smoke(*, skip_chat: bool) -> dict[str, object]:
                 results["active_recall_matches"] = active_matches
                 results["archived_recall_matches"] = archived_matches
 
+                saved_asset = await client.post(
+                    "/api/assets",
+                    json={
+                        "asset_type": "research_brief",
+                        "title": "Four-service Asset smoke",
+                        "brief": "Verify the real manual Asset production boundary.",
+                        "draft_content": asset_draft,
+                        "status": "draft",
+                        "note_refs": [note_id],
+                        "style_notes": "Concise and evidence-led.",
+                        "metadata": {
+                            "audience": "Architecture reviewers",
+                            "generation_mode": "manual_request",
+                        },
+                        "provenance": {
+                            "origin_type": "harness_session",
+                            "origin_ref": active_session,
+                            "action": "save",
+                        },
+                    },
+                )
+                saved_asset.raise_for_status()
+                asset_id = saved_asset.json()["id"]
+                persisted_asset = await client.get(f"/api/assets/{asset_id}")
+                persisted_asset.raise_for_status()
+                persisted = persisted_asset.json()
+                provenance = (persisted.get("metadata_") or {}).get("provenance") or {}
+                if (
+                    persisted.get("asset_type") != "research_brief"
+                    or persisted.get("note_refs") != [note_id]
+                    or provenance.get("origin_ref") != active_session
+                    or "## Finding" not in (persisted.get("draft_content") or "")
+                ):
+                    raise RuntimeError("Persisted Asset lost type, evidence, provenance, or draft content")
+                reader_route = await client.get(f"http://127.0.0.1:5173/assets/{asset_id}")
+                reader_route.raise_for_status()
+                results["asset_explicit_save"] = asset_id
+                results["asset_reader_route"] = reader_route.status_code
+
             deleted_memory = await client.delete(f"/api/harness/memories/{memory_id}")
             deleted_memory.raise_for_status()
+            if asset_id:
+                deleted_asset = await client.delete(f"/api/assets/{asset_id}")
+                if deleted_asset.status_code != 204:
+                    raise RuntimeError(f"Asset delete returned {deleted_asset.status_code}")
             for session_id in session_ids:
                 deleted_session = await client.delete(f"/api/sessions/{session_id}")
                 if deleted_session.status_code != 204:
                     raise RuntimeError(
                         f"Session cleanup returned {deleted_session.status_code}: {session_id}"
                     )
+            deleted_note = await client.delete(f"/api/notes/{note_id}")
+            if deleted_note.status_code != 204:
+                raise RuntimeError(f"Note delete returned {deleted_note.status_code}")
             results["cleanup"] = True
     finally:
         process.terminate()
