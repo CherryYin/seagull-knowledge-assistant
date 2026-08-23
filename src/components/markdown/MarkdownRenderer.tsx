@@ -51,7 +51,52 @@ interface MarkdownRendererProps {
   children: string;
   components?: Components;
   enableHighlight?: boolean;
+  evidenceLinks?: Record<string, string>;
   noteId?: string;
+}
+
+type MarkdownNode = {
+  type: string;
+  value?: string;
+  url?: string;
+  children?: MarkdownNode[];
+};
+
+const evidenceMarkerPattern = /\[(Source|Note|Wiki):\s*([^\]\s]+)\]/g;
+
+function linkEvidenceMarkers(node: MarkdownNode, evidenceLinks: Record<string, string>, insideLink = false) {
+  if (!node.children?.length) return;
+
+  const nextChildren: MarkdownNode[] = [];
+  for (const child of node.children) {
+    if (child.type === "text" && child.value && !insideLink) {
+      let cursor = 0;
+      let match: RegExpExecArray | null;
+      evidenceMarkerPattern.lastIndex = 0;
+      while ((match = evidenceMarkerPattern.exec(child.value)) !== null) {
+        const marker = match[0];
+        const key = `${match[1].toLowerCase()}:${match[2]}`;
+        const href = evidenceLinks[key];
+        if (!href) continue;
+        if (match.index > cursor) nextChildren.push({ type: "text", value: child.value.slice(cursor, match.index) });
+        nextChildren.push({ type: "link", url: href, children: [{ type: "text", value: marker }] });
+        cursor = match.index + marker.length;
+      }
+      if (cursor > 0) {
+        if (cursor < child.value.length) nextChildren.push({ type: "text", value: child.value.slice(cursor) });
+        continue;
+      }
+    }
+
+    const blocksLinks = insideLink || child.type === "link" || child.type === "code" || child.type === "inlineCode";
+    linkEvidenceMarkers(child, evidenceLinks, blocksLinks);
+    nextChildren.push(child);
+  }
+  node.children = nextChildren;
+}
+
+function remarkEvidenceLinks(options?: { links?: Record<string, string> }) {
+  return (tree: MarkdownNode) => linkEvidenceMarkers(tree, options?.links ?? {});
 }
 
 /** Resolve a relative note-image URL (e.g. "api/notes/{id}/images/{imgId}") into
@@ -69,7 +114,7 @@ function resolveNoteImageSrc(src: string, noteId?: string): string {
   return `/api/${tail}${sep}token=${encodeURIComponent(token)}`;
 }
 
-export function MarkdownRenderer({ children, components, enableHighlight = true, noteId }: MarkdownRendererProps) {
+export function MarkdownRenderer({ children, components, enableHighlight = true, evidenceLinks, noteId }: MarkdownRendererProps) {
   const markdownComponents: Components = {
     ...components,
     img({ src, alt, ...props }) {
@@ -95,7 +140,7 @@ export function MarkdownRenderer({ children, components, enableHighlight = true,
 
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
+      remarkPlugins={[remarkGfm, [remarkEvidenceLinks, { links: evidenceLinks ?? {} }]]}
       rehypePlugins={enableHighlight ? [rehypeHighlight, [rehypeSanitize, sanitizeSchema]] : [[rehypeSanitize, sanitizeSchema]]}
       components={markdownComponents}
     >

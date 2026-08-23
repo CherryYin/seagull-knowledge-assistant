@@ -323,6 +323,12 @@ test("manual Asset generation creates PKG state only after the user confirms the
   await expect(page.getByText("Evidence base", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "E2E Research Brief", exact: true }).last()).toBeVisible();
   await expect(page.getByText("E2E answer with a durable result.")).toBeVisible();
+  const sourceEvidenceLink = page.getByRole("link", { name: "[Source: source-input]" }).first();
+  await expect(sourceEvidenceLink).toHaveAttribute("href", "/sources/source-input");
+  await sourceEvidenceLink.click();
+  await expect(page).toHaveURL(/\/sources\/source-input$/);
+  await expect(page.getByRole("heading", { name: "E2E Source Evidence" })).toBeVisible();
+  await page.goto("/assets/asset-e2e");
   await expect(page.getByText("Production Actions")).toHaveCount(0);
   await page.getByRole("tab", { name: "Edit" }).click();
   await page.getByLabel("Draft Markdown").fill("## Revised finding\n\nA clearer evidence-backed recommendation.");

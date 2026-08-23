@@ -418,6 +418,13 @@ export function AssetDetailPage() {
 
   const stableWikiItems = (wikiRefsQuery.data?.items ?? []).filter((item) => item.status === "stable") as ReferenceItem[];
   const candidateWikiItems = (wikiRefsQuery.data?.items ?? []).filter((item) => item.status !== "stable") as ReferenceItem[];
+  const evidenceLinks = useMemo(() => {
+    const links: Record<string, string> = {};
+    for (const sourceId of asset?.source_refs ?? []) links[`source:${sourceId}`] = `/sources/${encodeURIComponent(sourceId)}`;
+    for (const noteId of asset?.note_refs ?? []) links[`note:${noteId}`] = `/notes/${encodeURIComponent(noteId)}`;
+    for (const wikiId of asset?.wiki_refs ?? []) links[`wiki:${wikiId}`] = `/wiki/${encodeURIComponent(wikiId)}`;
+    return links;
+  }, [asset?.note_refs, asset?.source_refs, asset?.wiki_refs]);
   const productionEvents: ProductionEvent[] = ((productionMemoryQuery.data?.[0]?.value as { events?: ProductionEvent[] } | undefined)?.events ?? [])
     .filter((event) => String(event.asset_id || "") === id)
     .slice(0, 12);
@@ -555,7 +562,20 @@ export function AssetDetailPage() {
                     <p className="mb-6 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{readerPresentation.documentLabel}</p>
                     {asset.draft_content?.trim() ? (
                       <div className="prose prose-slate max-w-none text-base leading-8 dark:prose-invert prose-headings:scroll-mt-24 prose-headings:tracking-tight prose-h2:mt-12 prose-h2:border-b prose-h2:pb-3 prose-p:my-5 prose-li:my-2 prose-blockquote:border-primary/40 prose-blockquote:bg-muted/30 prose-blockquote:px-5 prose-blockquote:py-1">
-                        <MarkdownRenderer>{asset.draft_content}</MarkdownRenderer>
+                        <MarkdownRenderer
+                          evidenceLinks={evidenceLinks}
+                          components={{
+                            a({ href, children, node, ...props }) {
+                              void node;
+                              if (href?.startsWith("/")) {
+                                return <Link to={href} className="font-medium text-primary underline decoration-primary/30 underline-offset-4 hover:decoration-primary" {...props}>{children}</Link>;
+                              }
+                              return <a href={href} {...props}>{children}</a>;
+                            },
+                          }}
+                        >
+                          {asset.draft_content}
+                        </MarkdownRenderer>
                       </div>
                     ) : (
                       <div className="rounded-2xl border border-dashed p-10 text-center text-muted-foreground">This Asset does not have draft content yet. Continue it from the production workspace.</div>
