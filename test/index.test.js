@@ -76,8 +76,13 @@ test("login cookie authenticates direct API requests and preserves query params"
       res.end(JSON.stringify({ access_token: "test-token" }));
       return;
     }
-    if (req.url === "/auth/me" && req.headers.authorization === "Bearer test-token") {
+    if (req.url === "/auth/me" && ["Bearer test-token", "Bearer refreshed-token"].includes(req.headers.authorization)) {
       res.end(JSON.stringify({ id: "user-1", username: "admin" }));
+      return;
+    }
+    if (req.url === "/auth/me" && req.headers.authorization === "Bearer expired-token") {
+      res.writeHead(401);
+      res.end(JSON.stringify({ detail: "Could not validate credentials" }));
       return;
     }
     if (req.url === "/chat-sessions?limit=200&offset=0") {
@@ -341,6 +346,17 @@ test("login cookie authenticates direct API requests and preserves query params"
   const health = await fetch(`${base}/api/health`);
   assert.equal(health.status, 200);
 
+  const expired = await fetch(`${base}/api/auth/me`, {
+    headers: { Authorization: "Bearer expired-token" },
+  });
+  assert.equal(expired.status, 401);
+  assert.match(expired.headers.get("set-cookie") || "", /Max-Age=0/);
+  assert.deepEqual(await expired.json(), {
+    error: "PKG authentication expired",
+    code: "PKG_AUTH_EXPIRED",
+    reauth_required: true,
+  });
+
   const sessions = await fetch(`${base}/api/sessions?limit=5`, {
     headers: { Cookie: cookie, "X-Request-Id": "sessions-request" },
   });
@@ -486,6 +502,19 @@ test("login cookie authenticates direct API requests and preserves query params"
   const experimentCall = harnessReceived.find((call) => call.url === "/api/experiments");
   assert.deepEqual(JSON.parse(experimentCall.body), { name: "test experiment" });
 
+  const reboundChat = await fetch(`${base}/api/chat`, {
+    method: "POST",
+    headers: { Authorization: "Bearer refreshed-token", "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt: "continue after login",
+      preset: "research-topic",
+      session_id: "local-session",
+      create_session: false,
+    }),
+  });
+  assert.equal(reboundChat.status, 200);
+  await reboundChat.text();
+
   const proxied = await fetch(`${base}/internal/pkg/knowledge/dashboard`, {
     headers: {
       "X-Harness-Session-Id": "local-session",
@@ -494,8 +523,8 @@ test("login cookie authenticates direct API requests and preserves query params"
   });
   assert.equal(proxied.status, 200);
   assert.deepEqual(await proxied.json(), { counts: { notes: 1 } });
-  const proxiedCall = pkgReceived.find((call) => call.url === "/knowledge/dashboard");
-  assert.equal(proxiedCall.authorization, "Bearer test-token");
+  const proxiedCalls = pkgReceived.filter((call) => call.url === "/knowledge/dashboard");
+  assert.equal(proxiedCalls.at(-1).authorization, "Bearer refreshed-token");
 
   const forbiddenProxy = await fetch(`${base}/internal/pkg/knowledge/dashboard`, {
     headers: {

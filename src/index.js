@@ -136,6 +136,16 @@ function clearSessionAuth(authorization) {
   }
 }
 
+function respondAuthExpired(req, res, authorization) {
+  if (authorization) clearSessionAuth(authorization);
+  clearAuthCookie(res);
+  return json(req, res, 401, {
+    error: "PKG authentication expired",
+    code: "PKG_AUTH_EXPIRED",
+    reauth_required: true,
+  });
+}
+
 async function currentPkgUser(authorization, requestId) {
   const response = await fetch(`${PKG_BASE}/auth/me`, {
     headers: {
@@ -233,6 +243,9 @@ async function pkgForward(req, res, pkgPath, { captureLogin = false, requestId }
 
   try {
     const pkgRes = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+    if (pkgRes.status === 401 && authorization && !captureLogin) {
+      return respondAuthExpired(req, res, authorization);
+    }
     if (pkgRes.status === 204 || pkgRes.status === 205) {
       setCORS(req, res);
       res.writeHead(pkgRes.status);
@@ -484,6 +497,7 @@ async function harnessChat(req, res, requestId, agentMemoryStore) {
       bindSessionAuth(requestedSessionId, user.id, authorization);
     }
   } catch (error) {
+    if (error.status === 401) return respondAuthExpired(req, res, authorization);
     return json(req, res, error.status || 502, { error: error.message });
   }
   const abort = new AbortController();
@@ -687,6 +701,7 @@ async function harnessMemories(req, res, path, url, requestId, agentMemoryStore)
     }
     return json(req, res, 404, { error: "Not found" });
   } catch (error) {
+    if (error.status === 401) return respondAuthExpired(req, res, authorization);
     return json(req, res, error.status || memoryErrorStatus(error), { error: error.message });
   }
 }
@@ -747,6 +762,7 @@ async function harnessSessions(req, res, path, requestId) {
     const value = await harnessRpc("session.history", { sessionId }, { requestId });
     return json(req, res, 200, { id: sessionId, ...value });
   } catch (err) {
+    if (err.status === 401) return respondAuthExpired(req, res, authorization);
     return json(req, res, err.status || 502, { error: err.message });
   }
 }
