@@ -9,6 +9,7 @@ import { ReferenceList } from "@/components/ReferenceList";
 import { type ReferenceItem } from "@/components/ReferenceChips";
 import { ModuleSectionNav } from "@/components/SectionNav";
 import { wikiApi, type WikiArticleDraft, type WikiInsightCandidate, type WikiMiningRunDetail } from "@/lib/api";
+import { candidateActionLabel } from "@/lib/candidateActions";
 
 export function WikiDiscoveryPage() {
   const navigate = useNavigate();
@@ -175,7 +176,7 @@ export function WikiDiscoveryPage() {
               </CardTitle>
               <div className="flex gap-2">
                 <Button size="sm" variant="outline" onClick={bulkRejectInsights} disabled={selectedInsightIds.length === 0}>
-                  <XCircle className="h-4 w-4" /> Reject Selected
+                  <XCircle className="h-4 w-4" /> {candidateActionLabel("dismiss", "Selected")}
                 </Button>
                 <Button size="sm" variant="outline" onClick={bulkDeleteInsights} disabled={selectedInsightIds.length === 0}>
                   Delete Selected
@@ -213,7 +214,7 @@ export function WikiDiscoveryPage() {
               </CardTitle>
               <div className="flex gap-2">
                 <Button size="sm" variant="outline" onClick={bulkRejectArticles} disabled={selectedArticleIds.length === 0}>
-                  <XCircle className="h-4 w-4" /> Reject Selected
+                  <XCircle className="h-4 w-4" /> {candidateActionLabel("dismiss", "Selected")}
                 </Button>
                 <Button size="sm" variant="outline" onClick={bulkDeleteArticles} disabled={selectedArticleIds.length === 0}>
                   Delete Selected
@@ -265,10 +266,10 @@ function DiscoveryInsightCard({ item, selected, onToggleSelected, onAccept, onRe
       <ReferenceList items={(item.evidence_refs ?? []) as ReferenceItem[]} title="Evidence" />
       <div className="mt-3 flex flex-wrap gap-2">
         <Button size="sm" onClick={onAccept} disabled={disabled || item.status === "accepted"}>
-          <CheckCircle2 className="h-4 w-4" /> Accept Insight
+          <CheckCircle2 className="h-4 w-4" /> {candidateActionLabel("keep", "Insight")}
         </Button>
         <Button size="sm" variant="outline" onClick={onReject} disabled={disabled || item.status === "rejected"}>
-          <XCircle className="h-4 w-4" /> Reject
+          <XCircle className="h-4 w-4" /> {candidateActionLabel("dismiss")}
         </Button>
         <Button size="sm" variant="outline" onClick={onDelete} disabled={disabled}>
           Delete
@@ -312,10 +313,10 @@ function DiscoveryArticleCard({ article, selected, onToggleSelected, onAccept, o
       <ReferenceList items={(article.evidence_refs ?? []) as ReferenceItem[]} title="Evidence" />
       <div className="mt-3 flex flex-wrap gap-2">
         <Button size="sm" onClick={onAccept} disabled={disabled || article.status === "accepted"}>
-          <CheckCircle2 className="h-4 w-4" /> Accept as Draft
+          <CheckCircle2 className="h-4 w-4" /> {candidateActionLabel("keep", "as Draft")}
         </Button>
         <Button size="sm" variant="outline" onClick={onReject} disabled={disabled || article.status === "rejected"}>
-          <XCircle className="h-4 w-4" /> Reject
+          <XCircle className="h-4 w-4" /> {candidateActionLabel("dismiss")}
         </Button>
         <Button size="sm" variant="outline" onClick={onDelete} disabled={disabled}>
           Delete

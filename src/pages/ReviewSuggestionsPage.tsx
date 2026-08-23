@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { reviewApi, ReviewSuggestion } from "@/lib/api";
 import { getReviewConflictMessage, getReviewStatusLabel } from "@/lib/reviewStatus";
+import { candidateActionLabel } from "@/lib/candidateActions";
 import { ModuleSectionNav } from "@/components/SectionNav";
 
 export function ReviewSuggestionsPage() {
@@ -117,10 +118,10 @@ function ReviewSuggestionCard({
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
             <Button size="sm" variant="outline" onClick={onReject} disabled={isUpdating}>
-            <XCircle className="mr-1 h-4 w-4" /> Dismiss
+            <XCircle className="mr-1 h-4 w-4" /> {candidateActionLabel("dismiss")}
           </Button>
           <Button size="sm" onClick={onApply} disabled={isUpdating}>
-            <CheckCircle2 className="mr-1 h-4 w-4" /> Apply
+            <CheckCircle2 className="mr-1 h-4 w-4" /> {candidateActionLabel("keep", "& Apply")}
           </Button>
         </div>
       </div>

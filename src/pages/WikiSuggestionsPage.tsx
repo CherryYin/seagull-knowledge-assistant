@@ -10,6 +10,7 @@ import { ReferenceList } from "@/components/ReferenceList";
 import { getReviewConflictMessage, getReviewStatusLabel } from "@/lib/reviewStatus";
 import { SUMMARY_LAYER_DESCRIPTION } from "@/lib/summaryLayer";
 import { ModuleSectionNav } from "@/components/SectionNav";
+import { candidateActionLabel } from "@/lib/candidateActions";
 
 export function WikiSuggestionsPage() {
   const queryClient = useQueryClient();
@@ -355,10 +356,10 @@ function MiningInsightPreview({
       <ReferenceList items={(resolvedRefs?.items ?? []) as ReferenceItem[]} title="Evidence" />
       <div className="mt-3 flex flex-wrap gap-2">
         <Button size="sm" variant="outline" onClick={onReject} disabled={disabled}>
-          <XCircle className="mr-1 h-4 w-4" /> Reject
+          <XCircle className="mr-1 h-4 w-4" /> {candidateActionLabel("dismiss")}
         </Button>
         <Button size="sm" onClick={onAccept} disabled={disabled}>
-          <CheckCircle2 className="mr-1 h-4 w-4" /> Accept
+          <CheckCircle2 className="mr-1 h-4 w-4" /> {candidateActionLabel("keep")}
         </Button>
       </div>
     </div>
@@ -429,7 +430,7 @@ function MiningArticlePreview({
           <Bot className="mr-1 h-4 w-4" /> Ask Agent
         </Button>
         <Button size="sm" variant="outline" onClick={onReject} disabled={disabled}>
-          <XCircle className="mr-1 h-4 w-4" /> Reject
+          <XCircle className="mr-1 h-4 w-4" /> {candidateActionLabel("dismiss")}
         </Button>
         <Button size="sm" variant="outline" onClick={onMarkInReview} disabled={disabled}>
           <Clock className="mr-1 h-4 w-4" /> In Review
@@ -510,7 +511,7 @@ function MiningArticlePreview({
           </Link>
         </Button>
         <Button size="sm" onClick={onAccept} disabled={disabled || shouldGateAccept} title={shouldGateAccept ? "Reduce weak claims or keep this article in review before accepting it as a draft." : undefined}>
-          <CheckCircle2 className="mr-1 h-4 w-4" /> {shouldGateAccept ? "Weak Claims Block Accept" : "Accept as Draft"}
+          <CheckCircle2 className="mr-1 h-4 w-4" /> {shouldGateAccept ? "Weak Claims Block Keep" : candidateActionLabel("keep", "as Draft")}
         </Button>
       </div>
     </div>
@@ -573,7 +574,7 @@ function SuggestionCard({
           {suggestion.status === "pending" && (
             <>
               <Button size="sm" variant="outline" onClick={onReject} disabled={isUpdating}>
-                <XCircle className="mr-1 h-4 w-4" /> Dismiss
+                <XCircle className="mr-1 h-4 w-4" /> {candidateActionLabel("dismiss")}
               </Button>
               {canCreateUpdateDraft && (
                 <Button size="sm" variant="outline" onClick={onCreateUpdateDraft} disabled={isCreatingUpdateDraft}>

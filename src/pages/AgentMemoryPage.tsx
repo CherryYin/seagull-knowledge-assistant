@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, Check, History, Pencil, RotateCcw, Trash2, X } from "lucide-react";
 import { agentMemoryApi, type AgentMemory } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { candidateActionLabel } from "@/lib/candidateActions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 function sourceLabel(sessionId: string) {
@@ -47,12 +48,12 @@ export function AgentMemoryPage() {
               <p>{candidate.content}</p>
               <p className="text-xs text-muted-foreground">{candidate.reason} · {sourceLabel(candidate.provenance.sessionId)}</p>
               <div className="flex gap-2">
-                <Button size="sm" onClick={() => action.mutate(() => agentMemoryApi.accept(candidate.id))}><Check className="mr-1 h-4 w-4" />Confirm</Button>
+                <Button size="sm" onClick={() => action.mutate(() => agentMemoryApi.accept(candidate.id))}><Check className="mr-1 h-4 w-4" />{candidateActionLabel("keep", "Memory")}</Button>
                 <Button size="sm" variant="outline" onClick={() => {
                   const content = window.prompt("Edit candidate before review", candidate.content);
                   if (content !== null) action.mutate(() => agentMemoryApi.updateCandidate(candidate.id, { content }));
                 }}><Pencil className="mr-1 h-4 w-4" />Edit</Button>
-                <Button size="sm" variant="ghost" onClick={() => action.mutate(() => agentMemoryApi.reject(candidate.id))}><X className="mr-1 h-4 w-4" />Reject</Button>
+                <Button size="sm" variant="ghost" onClick={() => action.mutate(() => agentMemoryApi.reject(candidate.id))}><X className="mr-1 h-4 w-4" />{candidateActionLabel("dismiss")}</Button>
               </div>
             </CardContent>
           </Card>
@@ -68,7 +69,7 @@ export function AgentMemoryPage() {
               <p className="text-xs text-muted-foreground">{memory.kind} · {memory.scopeType} · {sourceLabel(memory.provenance.sessionId)}{memory.lastUsedAt ? ` · Last used ${new Date(memory.lastUsedAt).toLocaleString()}` : ""}</p>
               <div className="flex gap-2">
                 <Button size="sm" variant="outline" onClick={() => editMemory(memory)}><Pencil className="mr-1 h-4 w-4" />Edit</Button>
-                <Button size="sm" variant="outline" onClick={() => action.mutate(() => agentMemoryApi.archive(memory.id))}><Archive className="mr-1 h-4 w-4" />Archive</Button>
+                <Button size="sm" variant="outline" onClick={() => action.mutate(() => agentMemoryApi.archive(memory.id))}><Archive className="mr-1 h-4 w-4" />{candidateActionLabel("archive")}</Button>
                 <Button size="sm" variant="ghost" onClick={() => window.confirm("Permanently delete this Agent Memory?") && action.mutate(() => agentMemoryApi.delete(memory.id))}><Trash2 className="mr-1 h-4 w-4" />Delete</Button>
               </div>
             </CardContent>

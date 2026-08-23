@@ -13,6 +13,7 @@ import { ModuleSectionNav } from "@/components/SectionNav";
 import { StateMessage } from "@/components/StateMessage";
 import { DiscoveryDetailDialog, type DiscoveryDetailData } from "@/components/DiscoveryDetailDialog";
 import { toDiscoveryDetail } from "@/lib/discovery-detail";
+import { candidateActionLabel } from "@/lib/candidateActions";
 
 const providerIcons: Record<string, typeof BookOpen> = {
   arxiv: BookOpen,
@@ -391,16 +392,16 @@ function DiscoveryCard({
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
           <Button size="sm" variant="outline" onClick={onDismiss} disabled={isUpdating}>
-            <XCircle className="mr-1 h-4 w-4" /> Ignore
+            <XCircle className="mr-1 h-4 w-4" /> {candidateActionLabel("dismiss")}
           </Button>
           <Button size="sm" variant="outline" onClick={onKeep} disabled={isUpdating}>
-            <CheckCircle2 className="mr-1 h-4 w-4" /> Keep for later
+            <CheckCircle2 className="mr-1 h-4 w-4" /> {candidateActionLabel("keep")}
           </Button>
           <Button size="sm" variant="outline" onClick={onAskAgent} disabled={isUpdating}>
             <Bot className="mr-1 h-4 w-4" /> Ask Agent
           </Button>
           <Button size="sm" onClick={onSave} disabled={isUpdating}>
-            <CheckCircle2 className="mr-1 h-4 w-4" /> Import as Source
+            <CheckCircle2 className="mr-1 h-4 w-4" /> {candidateActionLabel("publish", "as Source")}
           </Button>
         </div>
       </div>
