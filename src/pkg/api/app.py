@@ -1,7 +1,6 @@
 import logging
 import os
 from contextlib import asynccontextmanager
-import asyncio
 from pathlib import Path
 
 try:
@@ -113,30 +112,7 @@ async def lifespan(app: FastAPI):
     is_test_process = bool(os.environ.get("PYTEST_CURRENT_TEST"))
     if not is_test_process:
         await _enforce_admin_init_password_if_needed()
-    if os.environ.get("KG_DISABLE_BACKGROUND_TASKS", "").lower() in {"1", "true", "yes"} or is_test_process:
-        logger.info("Background loops disabled for this process.")
-        yield
-        return
-
-    try:
-        from pkg.services.cross_cutting.system_jobs import mark_stale_running_jobs_failed
-
-        recovered = await mark_stale_running_jobs_failed()
-        if recovered:
-            logger.warning("Recovered %d stale running system job(s) left by a previous process.", recovered)
-    except Exception:
-        logger.exception("Failed to recover stale running system jobs during startup")
-
-    from pkg.services.cross_cutting.scheduler import get_scheduled_tasks, scheduled_pipeline_loop
-
-    for task in get_scheduled_tasks():
-        if not task.enabled:
-            logger.info("Scheduled task %s disabled.", task.name)
-
-    background_tasks = [asyncio.create_task(scheduled_pipeline_loop())]
     yield
-    for background_task in background_tasks:
-        background_task.cancel()
 
 
 app = FastAPI(

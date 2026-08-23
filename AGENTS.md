@@ -87,7 +87,8 @@ Use the project virtual environment when available.
 - Type/syntax sanity for touched Python files: `python -m py_compile <files>`
 - Apply migrations: `alembic upgrade head`
 - Start infrastructure: `docker compose up -d`
-- Start API: `pkg serve` or the project-specific documented command.
+- Start API: `pkg serve`; add `--reload` only for local development.
+- Start scheduled jobs separately: `pkg worker`.
 - Set strong `JWT_SECRET_KEY` and `ADMIN_INIT_PASSWORD`; weak or missing admin initialization password blocks normal app startup.
 - Frontend dependencies/build commands are in `package.json`; inspect scripts before running.
 

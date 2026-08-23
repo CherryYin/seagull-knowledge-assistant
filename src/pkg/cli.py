@@ -240,10 +240,26 @@ def stats():
 def serve(
     host: str = typer.Option("127.0.0.1", help="Host"),
     port: int = typer.Option(8000, help="Port"),
+    reload: bool = typer.Option(False, "--reload", help="Reload on source changes"),
 ):
     """Start the FastAPI server."""
     import uvicorn
-    uvicorn.run("pkg.api.app:app", host=host, port=port, reload=True)
+    uvicorn.run("pkg.api.app:app", host=host, port=port, reload=reload)
+
+
+@app.command()
+def worker(
+    poll_interval: int = typer.Option(
+        30,
+        "--poll-interval",
+        min=1,
+        help="Seconds between scheduled task checks",
+    ),
+):
+    """Run scheduled background jobs in a dedicated process."""
+    from pkg.worker import run_worker
+
+    _run(run_worker(poll_interval_seconds=poll_interval))
 
 
 @app.command(name="fetch-feeds")

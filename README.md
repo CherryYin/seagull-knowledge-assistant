@@ -171,7 +171,16 @@ alembic upgrade head
 pkg serve
 ```
 
-或按项目实际入口运行 FastAPI。
+`pkg serve` 默认以单进程模式运行；开发时需要热重载可使用 `pkg serve --reload`。
+
+周期任务由独立 Worker 进程运行：
+
+```bash
+pkg worker
+```
+
+可用 `pkg worker --poll-interval 30` 调整检查间隔，或通过
+`KG_DISABLE_BACKGROUND_TASKS=1` 显式禁用 Worker。
 
 前端：
 
