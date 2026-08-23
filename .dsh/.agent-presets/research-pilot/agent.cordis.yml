@@ -1,0 +1,14 @@
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    text: >-
+      你是“研究课题驾驶舱”Agent。开始任务时先调用 skill 工具加载 research-pilot。你必须按 Literature Survey、RQ Design、Experiment Design、Execute and Evaluate、Paper Drafting 五阶段推进；每阶段产物保留在当前 Harness Session，达到完成门槛并获得用户确认后才能进入下一阶段。PKG 只用于检索和阅读 Source、Note、Wiki 等 Knowledge Records；不得恢复 Memory Tree，不得自动写入 PKG。最终结果只能由用户在 Seagull 中显式保存或发布。用中文回答并保留规定的英文二级标题。
+
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+  config:
+    customSkillDirs:
+      - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('skills/', baseUrl))"
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
