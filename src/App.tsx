@@ -19,6 +19,7 @@ const CalendarPage = lazy(() => import("./pages/CalendarPage").then((m) => ({ de
 const CompletedTodosPage = lazy(() => import("./pages/CompletedTodosPage").then((m) => ({ default: m.CompletedTodosPage })));
 const WritingPage = lazy(() => import("./pages/WritingPage").then((m) => ({ default: m.WritingPage })));
 const AssetsPage = lazy(() => import("./pages/AssetsPage").then((m) => ({ default: m.AssetsPage })));
+const AssetGenerationPage = lazy(() => import("./pages/AssetGenerationPage").then((m) => ({ default: m.AssetGenerationPage })));
 const AssetDetailPage = lazy(() => import("./pages/AssetDetailPage").then((m) => ({ default: m.AssetDetailPage })));
 const DigestPage = lazy(() => import("./pages/DigestPage").then((m) => ({ default: m.DigestPage })));
 const WikiPage = lazy(() => import("./pages/WikiPage").then((m) => ({ default: m.WikiPage })));
@@ -123,6 +124,7 @@ export default function App() {
             <Route path="/review/digest" element={<LazyPage><DigestPage /></LazyPage>} />
             <Route path="/documents" element={<LazyPage><WritingPage /></LazyPage>} />
             <Route path="/assets" element={<LazyPage><AssetsPage /></LazyPage>} />
+            <Route path="/assets/new" element={<LazyPage><AssetGenerationPage /></LazyPage>} />
             <Route path="/assets/:id" element={<LazyPage><AssetDetailPage /></LazyPage>} />
             <Route path="/review/wiki-suggestions" element={<LazyPage><WikiSuggestionsPage /></LazyPage>} />
             <Route path="/wiki/discovery" element={<LazyPage><WikiDiscoveryPage /></LazyPage>} />

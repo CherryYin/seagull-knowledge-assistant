@@ -1,5 +1,6 @@
 import { assetsApi, notesApi, wikiApi, type ReferenceInfo } from "@/lib/api";
 import type { AgentWorkflowContext, WorkflowResultSaveTarget } from "@/lib/agent-workflows";
+import type { AssetGenerationRequest } from "@/lib/asset-generation";
 
 interface SaveWorkflowResultInput {
   target: WorkflowResultSaveTarget;
@@ -10,6 +11,7 @@ interface SaveWorkflowResultInput {
   categoryId?: number;
   objectRef?: AgentWorkflowContext["objectRef"];
   references?: ReferenceInfo[];
+  assetDraft?: AssetGenerationRequest;
 }
 
 function unique(values: Array<string | undefined>) {
@@ -52,9 +54,13 @@ export async function saveWorkflowResult({
   categoryId,
   objectRef,
   references,
+  assetDraft,
 }: SaveWorkflowResultInput) {
-  const title = deriveTitle(content, explicitTitle);
+  const title = deriveTitle(content, assetDraft?.title || explicitTitle);
   const { sourceRefs, noteRefs, wikiRefs } = collectReferences(references, objectRef);
+  sourceRefs.push(...(assetDraft?.sourceRefs ?? []));
+  noteRefs.push(...(assetDraft?.noteRefs ?? []));
+  wikiRefs.push(...(assetDraft?.wikiRefs ?? []));
   const workflowTag = workflowId ? `workflow:${workflowId}` : "workflow:general-chat";
 
   if (target === "asset") {
@@ -63,13 +69,19 @@ export async function saveWorkflowResult({
     }
     return assetsApi.create({
       title,
-      asset_type: workflowId === "draft-blog-asset" ? "blog_post" : "topic_report",
+      brief: assetDraft?.brief,
+      asset_type: assetDraft?.assetType ?? (workflowId === "draft-blog-asset" ? "blog_post" : "topic_report"),
       status: "draft",
       draft_content: content,
-      source_refs: sourceRefs,
-      note_refs: noteRefs,
-      wiki_refs: wikiRefs,
-      metadata: { workflow_id: workflowId || null },
+      source_refs: unique(sourceRefs),
+      note_refs: unique(noteRefs),
+      wiki_refs: unique(wikiRefs),
+      style_notes: assetDraft?.styleNotes,
+      metadata: {
+        workflow_id: workflowId || null,
+        audience: assetDraft?.audience || null,
+        generation_mode: assetDraft ? "manual_request" : "workflow",
+      },
       provenance: {
         origin_type: "harness_session",
         origin_ref: sessionId,

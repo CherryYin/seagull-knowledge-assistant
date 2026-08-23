@@ -6,6 +6,7 @@ const now = "2026-08-23T08:00:00.000Z";
 type MockState = {
   loggedIn: boolean;
   savedNoteBody: Record<string, unknown> | null;
+  savedAssetBody: Record<string, unknown> | null;
   candidate: Record<string, unknown> | null;
   memory: Record<string, unknown> | null;
 };
@@ -85,6 +86,10 @@ async function installMockBff(page: Page, state: MockState) {
       state.savedNoteBody = request.postDataJSON() as Record<string, unknown>;
       return json(route, { id: "note-e2e", ...state.savedNoteBody, created_at: now, updated_at: now });
     }
+    if (path === "/api/assets" && method === "POST") {
+      state.savedAssetBody = request.postDataJSON() as Record<string, unknown>;
+      return json(route, { id: "asset-e2e", ...state.savedAssetBody, created_at: now, updated_at: now });
+    }
 
     if (path === "/api/harness/memory-candidates" && method === "POST") {
       const body = request.postDataJSON() as Record<string, unknown>;
@@ -137,10 +142,14 @@ async function installMockBff(page: Page, state: MockState) {
         total: 1,
       });
     }
-    if (path === "/api/notes" && method === "GET") return json(route, { items: [], total: 0 });
+    if (path === "/api/notes" && method === "GET") {
+      if (url.searchParams.get("note_type") === "digest") return json(route, { items: [], total: 0 });
+      return json(route, { items: [{ id: "note-input", title: "E2E Knowledge Note", note_type: "inbox", status: "kept", category_id: 1, domains: [], tags: [], confidence: "medium", source_ids: [], created_at: now, updated_at: now }], total: 1 });
+    }
     if (path === "/api/wiki/suggestions") return json(route, { items: [], total: 0 });
     if (path === "/api/wiki/mining/runs") return json(route, { items: [], total: 0 });
-    if (path === "/api/sources") return json(route, { items: [], total: 0 });
+    if (path === "/api/sources") return json(route, { items: [{ id: "source-input", title: "E2E Source Evidence", source_type: "document", category_id: 1, ingested_at: now, metadata_: {} }], total: 1 });
+    if (path === "/api/wiki") return json(route, { items: [{ id: "wiki-input", title: "E2E Stable Wiki", page_type: "topic", content: "Stable knowledge", domains: [], tags: [], derived_from_notes: [], derived_from_sources: [], open_questions: [], needs_recompile: false, created_at: now, updated_at: now }], total: 1 });
     if (path === "/api/review/suggestions") return json(route, { items: [], total: 0 });
 
     return json(route, {});
@@ -156,7 +165,7 @@ async function signIn(page: Page) {
 }
 
 test("critical knowledge journey: login, chat, explicit save, inbox, and Agent Memory", async ({ page }) => {
-  const state: MockState = { loggedIn: false, savedNoteBody: null, candidate: null, memory: null };
+  const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null };
   await installMockBff(page, state);
   await signIn(page);
 
@@ -195,4 +204,41 @@ test("critical knowledge journey: login, chat, explicit save, inbox, and Agent M
   await expect(page.getByRole("heading", { name: "Agent Memory", exact: true })).toBeVisible();
   await expect(page.getByText("E2E Memory")).toBeVisible();
   await expect(page.getByText("Remember this E2E preference")).toBeVisible();
+});
+
+test("manual Asset generation creates PKG state only after the user confirms the Agent draft", async ({ page }) => {
+  const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/assets/new");
+  await page.getByRole("button", { name: "Research Brief" }).click();
+  await page.getByLabel("Asset title").fill("E2E Research Brief");
+  await page.getByLabel("Target audience").fill("Architecture reviewers");
+  await page.getByLabel("Asset brief").fill("Explain the evidence and recommend the next architecture decision.");
+  await page.getByLabel("Style guidance").fill("Concise and evidence-led.");
+  await page.getByText("E2E Source Evidence").click();
+  await expect.poll(() => state.savedAssetBody).toBeNull();
+
+  await page.getByRole("button", { name: "Start Generation Session" }).click();
+  await expect(page).toHaveURL(/\/chat$/);
+  const input = page.getByPlaceholder("Ask anything about your knowledge base...");
+  await expect(input).toContainText("E2E Research Brief");
+  await input.press("Enter");
+  await expect(page.getByText("E2E answer with a durable result.")).toBeVisible();
+  await expect.poll(() => state.savedAssetBody).toBeNull();
+
+  await page.getByRole("button", { name: "Save as Asset Draft" }).click();
+  await expect.poll(() => state.savedAssetBody?.title).toBe("E2E Research Brief");
+  expect(state.savedAssetBody).toMatchObject({
+    asset_type: "research_brief",
+    brief: "Explain the evidence and recommend the next architecture decision.",
+    style_notes: "Concise and evidence-led.",
+    source_refs: ["source-input"],
+    status: "draft",
+  });
+  expect(state.savedAssetBody?.metadata).toMatchObject({
+    audience: "Architecture reviewers",
+    generation_mode: "manual_request",
+  });
 });

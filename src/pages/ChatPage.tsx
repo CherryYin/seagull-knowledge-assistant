@@ -44,6 +44,7 @@ type ChatLocationState = {
   promptSeed?: string;
   workflowId?: string;
   objectRef?: AgentWorkflowContext["objectRef"];
+  assetDraft?: AgentWorkflowContext["assetDraft"];
 } | null;
 
 export function ChatPage() {
@@ -122,7 +123,7 @@ export function ChatPage() {
     if (!state?.promptSeed && !state?.workflowId) return;
     const nextWorkflowId =
       state.workflowId ?? inferAgentWorkflowId(state.objectRef?.object_type, state.promptSeed);
-    const nextContext = { objectRef: state.objectRef, promptSeed: state.promptSeed };
+    const nextContext = { objectRef: state.objectRef, promptSeed: state.promptSeed, assetDraft: state.assetDraft };
     const workflow = findAgentWorkflowTemplate(nextWorkflowId);
 
     setWorkflowContext(nextContext);
@@ -366,7 +367,6 @@ export function ChatPage() {
     const raw = input.trim();
     if (!raw || streaming) return;
     setInput("");
-    setSelectedWorkflowId(null);
     const task = deepResearch ? `/deep-research ${raw}` : raw;
     sendMessage(task);
   };
@@ -415,9 +415,10 @@ export function ChatPage() {
         categoryId: defaultCategoryId,
         objectRef: workflowContext.objectRef,
         references: assistantMsg.metadata?.references,
+        assetDraft: workflowContext.assetDraft,
       });
     },
-    [currentSession, defaultCategoryId, selectedWorkflow?.id, workflowContext.objectRef]
+    [currentSession, defaultCategoryId, selectedWorkflow?.id, workflowContext]
   );
 
   const handleKeyDown = (e: React.KeyboardEvent) => {

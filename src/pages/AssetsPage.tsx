@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useLocation, useNavigate } from "react-router-dom";
-import { FileText, Sparkles, Download, CheckCircle2, Plus, ScrollText, Trash2 } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { FileText, Sparkles, Download, CheckCircle2, Trash2 } from "lucide-react";
 import { assetsApi, notesApi, sourcesApi, type Asset, type AssetStatus, type AssetType } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -178,17 +178,8 @@ function ReadinessList({
 }
 
 export function AssetsPage() {
-  const location = useLocation();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const [title, setTitle] = useState("");
-  const [brief, setBrief] = useState("");
-  const [assetType, setAssetType] = useState<AssetType>("blog_post");
-  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
-  const [selectedNoteIds, setSelectedNoteIds] = useState<string[]>([]);
-  const [opinionNotes, setOpinionNotes] = useState("");
-  const [styleNotes, setStyleNotes] = useState("");
-  const [createError, setCreateError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [exportedMarkdown, setExportedMarkdown] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
@@ -226,40 +217,6 @@ export function AssetsPage() {
   );
 
   const selectedAssetId = selectedAsset?.id ?? null;
-
-  const createMutation = useMutation({
-    mutationFn: () => assetsApi.create({ asset_type: assetType, title, brief, source_refs: selectedSourceIds, note_refs: selectedNoteIds, opinion_notes: opinionNotes, style_notes: styleNotes }),
-    onSuccess: async (asset) => {
-      setCreateError(null);
-      loadEditorState(asset);
-      setTitle("");
-      setBrief("");
-      setAssetType("blog_post");
-      setSelectedSourceIds([]);
-      setSelectedNoteIds([]);
-      setOpinionNotes("");
-      setStyleNotes("");
-      setSelectedId(asset.id);
-      await queryClient.invalidateQueries({ queryKey: ["assets"] });
-    },
-  });
-
-  const toggleSelected = (current: string[], id: string, checked: boolean) => (
-    checked ? [...current, id] : current.filter((item) => item !== id)
-  );
-
-  const validateCreate = () => {
-    if (!title.trim()) {
-      setCreateError("Title is required.");
-      return false;
-    }
-    if (assetType === "research_brief" && selectedSourceIds.length === 0 && selectedNoteIds.length === 0) {
-      setCreateError("Research brief requires at least one source or note as input.");
-      return false;
-    }
-    setCreateError(null);
-    return true;
-  };
 
   const refreshAsset = async (assetId: string) => {
     await queryClient.invalidateQueries({ queryKey: ["assets"] });
@@ -303,17 +260,6 @@ export function AssetsPage() {
   useEffect(() => {
     loadEditorState(selectedAsset);
   }, [selectedAssetId]);
-
-  useEffect(() => {
-    const state = location.state as { assetHandoff?: { title?: string; brief?: string; asset_type?: AssetType; source_refs?: string[]; note_refs?: string[]; wiki_refs?: string[] } } | null;
-    const handoff = state?.assetHandoff;
-    if (!handoff) return;
-    setTitle(handoff.title ?? "");
-    setBrief(handoff.brief ?? "");
-    setAssetType(handoff.asset_type ?? "blog_post");
-    setSelectedSourceIds(handoff.source_refs ?? []);
-    setSelectedNoteIds(handoff.note_refs ?? []);
-  }, [location.state]);
 
   const developInAgentChat = (asset: Asset) => {
     const existingContent = (asset.draft_content || asset.outline || "").slice(0, 4000);
@@ -378,108 +324,15 @@ export function AssetsPage() {
           </p>
         </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Create Asset</CardTitle>
-            <CardDescription>
-              Start from a title and brief, then iterate into outline, draft, references, and export.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-5">
-              <button
-                type="button"
-                onClick={() => setAssetType("blog_post")}
-                className={`rounded-lg border p-3 text-left transition-colors ${assetType === "blog_post" ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}
-              >
-                <div className="flex items-center gap-2 font-medium"><FileText className="h-4 w-4" /> Blog Post</div>
-                <p className="mt-1 text-xs text-muted-foreground">Readable, publish-oriented writing for a clear audience.</p>
-              </button>
-              <button
-                type="button"
-                onClick={() => setAssetType("research_brief")}
-                className={`rounded-lg border p-3 text-left transition-colors ${assetType === "research_brief" ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}
-              >
-                <div className="flex items-center gap-2 font-medium"><ScrollText className="h-4 w-4" /> Research Brief</div>
-                <p className="mt-1 text-xs text-muted-foreground">Structured synthesis with findings, risks, recommendations, and evidence.</p>
-              </button>
-              <button
-                type="button"
-                onClick={() => setAssetType("knowledge_pack")}
-                className={`rounded-lg border p-3 text-left transition-colors ${assetType === "knowledge_pack" ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}
-              >
-                <div className="flex items-center gap-2 font-medium"><ScrollText className="h-4 w-4" /> Knowledge Pack</div>
-                <p className="mt-1 text-xs text-muted-foreground">Reusable bundle of related sources, notes, wiki pages, and guided reading order.</p>
-              </button>
-              <button
-                type="button"
-                onClick={() => setAssetType("newsletter_issue")}
-                className={`rounded-lg border p-3 text-left transition-colors ${assetType === "newsletter_issue" ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}
-              >
-                <div className="flex items-center gap-2 font-medium"><ScrollText className="h-4 w-4" /> Newsletter Issue</div>
-                <p className="mt-1 text-xs text-muted-foreground">Curated issue draft with editorial framing, featured items, and next reads.</p>
-              </button>
-              <button
-                type="button"
-                onClick={() => setAssetType("topic_report")}
-                className={`rounded-lg border p-3 text-left transition-colors ${assetType === "topic_report" ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}
-              >
-                <div className="flex items-center gap-2 font-medium"><ScrollText className="h-4 w-4" /> Topic Report</div>
-                <p className="mt-1 text-xs text-muted-foreground">Systematic report with key themes, findings, risks, and next-step recommendations.</p>
-              </button>
+        <Card className="border-primary/20 bg-primary/5">
+          <CardContent className="flex flex-col gap-4 py-6 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <CardTitle className="text-lg">Create an Asset from a delivery need</CardTitle>
+              <CardDescription className="mt-1">Choose the audience, objective, format, and knowledge evidence before starting a Harness generation session.</CardDescription>
             </div>
-            <Input placeholder={assetType === "research_brief" ? "Research brief title" : assetType === "knowledge_pack" ? "Knowledge pack title" : assetType === "newsletter_issue" ? "Newsletter issue title" : assetType === "topic_report" ? "Topic report title" : "Asset title"} value={title} onChange={(e) => setTitle(e.target.value)} />
-            <Textarea placeholder={assetTypeBriefPlaceholder(assetType)} value={brief} onChange={(e) => setBrief(e.target.value)} rows={4} />
-            <p className="text-xs text-muted-foreground">{assetTypeBriefGuidance(assetType)}</p>
-            <Textarea placeholder="Opinion / thesis" value={opinionNotes} onChange={(e) => setOpinionNotes(e.target.value)} rows={3} />
-            <Textarea placeholder="Style notes / tone instructions" value={styleNotes} onChange={(e) => setStyleNotes(e.target.value)} rows={3} />
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2 rounded-md border p-3">
-                <p className="text-sm font-medium">Source refs</p>
-                <div className="max-h-40 space-y-2 overflow-auto pr-1 text-sm">
-                  {(sourcesQuery.data?.items ?? []).map((source) => (
-                    <label key={source.id} className="flex items-start gap-2">
-                      <input
-                        type="checkbox"
-                        checked={selectedSourceIds.includes(source.id)}
-                        onChange={(e) => setSelectedSourceIds((current) => toggleSelected(current, source.id, e.target.checked))}
-                      />
-                      <span>
-                        <span className="font-medium">{source.title}</span>
-                        <span className="ml-2 text-xs text-muted-foreground">{source.source_type}</span>
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-2 rounded-md border p-3">
-                <p className="text-sm font-medium">Note refs</p>
-                <div className="max-h-40 space-y-2 overflow-auto pr-1 text-sm">
-                  {(notesQuery.data?.items ?? []).map((note) => (
-                    <label key={note.id} className="flex items-start gap-2">
-                      <input
-                        type="checkbox"
-                        checked={selectedNoteIds.includes(note.id)}
-                        onChange={(e) => setSelectedNoteIds((current) => toggleSelected(current, note.id, e.target.checked))}
-                      />
-                      <span>
-                        <span className="font-medium">{note.title}</span>
-                        <span className="ml-2 text-xs text-muted-foreground">{note.note_type}</span>
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            </div>
-            {createError && <p className="text-xs text-destructive">{createError}</p>}
-            <Button onClick={() => { if (validateCreate()) createMutation.mutate(); }} disabled={!title.trim() || createMutation.isPending}>
-              <Plus className="mr-2 h-4 w-4" />
-              Create Asset
-            </Button>
+            <Button onClick={() => navigate("/assets/new")}><Sparkles className="mr-2 h-4 w-4" />Create Asset</Button>
           </CardContent>
         </Card>
-
         <div className="grid gap-6 lg:grid-cols-[320px,1fr]">
           <Card>
             <CardHeader>

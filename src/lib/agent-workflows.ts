@@ -39,6 +39,7 @@ export interface AgentWorkflowContext {
   };
   promptSeed?: string;
   userInput?: string;
+  assetDraft?: import("@/lib/asset-generation").AssetGenerationRequest;
 }
 
 export const AGENT_WORKFLOW_SAVE_TARGET_LABELS: Record<WorkflowResultSaveTarget, string> = {
@@ -286,6 +287,37 @@ Output exactly these sections:
 ## Apply Recommendation`,
   },
   {
+    id: "draft-asset",
+    group: "produce",
+    title: "按需求起草 Asset",
+    description: "根据明确的交付目的、目标读者和知识材料，生成可审阅的 Asset 草稿。",
+    requiredInput: "Asset 类型、目标读者、交付目的和知识材料",
+    inputPlaceholder: "请先从 Assets 页面使用 Create Asset 向导填写生成需求。",
+    saveTargets: ["asset", "review_note"],
+    outputSections: [
+      "Audience and Objective",
+      "Editorial Approach",
+      "Outline",
+      "Draft",
+      "Evidence Used",
+      "Review Notes",
+    ],
+    promptTemplate: `Create an editable asset draft from the supplied generation request and knowledge references.
+The user has explicitly chosen the asset type, audience, objective, and style.
+Use available PKG tools to read referenced Sources, Notes, and Wiki pages when possible.
+Keep claims traceable to evidence and flag unsupported claims instead of inventing support.
+Produce a polished but reviewable draft. Do not save, export, or publish automatically.
+
+Output exactly these sections:
+
+## Audience and Objective
+## Editorial Approach
+## Outline
+## Draft
+## Evidence Used
+## Review Notes`,
+  },
+  {
     id: "draft-blog-asset",
     group: "produce",
     title: "起草 Blog Asset",
@@ -373,6 +405,21 @@ export function renderAgentWorkflowPrompt(
 
   if (context.userInput?.trim()) {
     parts.push(`User input or focus:\n${context.userInput.trim()}`);
+  }
+
+  if (context.assetDraft) {
+    const request = context.assetDraft;
+    parts.push([
+      "Asset generation request:",
+      `- Type: ${request.assetType}`,
+      `- Working title: ${request.title}`,
+      `- Audience: ${request.audience}`,
+      `- Objective and brief: ${request.brief}`,
+      request.styleNotes ? `- Style: ${request.styleNotes}` : null,
+      `- Source IDs: ${request.sourceRefs.join(", ") || "none selected"}`,
+      `- Note IDs: ${request.noteRefs.join(", ") || "none selected"}`,
+      `- Wiki IDs: ${request.wikiRefs.join(", ") || "none selected"}`,
+    ].filter(Boolean).join("\n"));
   }
 
   parts.push("Before answering, use available knowledge context when helpful. Do not expose internal tool names unless necessary for traceability.");
