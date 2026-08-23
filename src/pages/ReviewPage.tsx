@@ -1,15 +1,25 @@
+import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Bell, BookOpenCheck, FileSearch, GitPullRequestArrow, Sparkles, UserRoundCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { notesApi, reviewApi, sourcesApi, wikiApi } from "@/lib/api";
+import { agentMemoryApi, discoveryApi, notesApi, reviewApi, sourcesApi, wikiApi } from "@/lib/api";
 import { SUMMARY_LAYER_DESCRIPTION } from "@/lib/summaryLayer";
 import { ModuleSectionNav } from "@/components/SectionNav";
 
 export function ReviewPage() {
   const navigate = useNavigate();
+  const [inboxFilter, setInboxFilter] = useState<InboxDomain | "all">("all");
+  const { data: discoveryData, isLoading: discoveryLoading } = useQuery({
+    queryKey: ["review-discovery-candidates"],
+    queryFn: () => discoveryApi.list({ status: "recommended", limit: 20 }),
+  });
+  const { data: agentMemoryData, isLoading: agentMemoryLoading } = useQuery({
+    queryKey: ["review-agent-memory-candidates"],
+    queryFn: () => agentMemoryApi.list(),
+  });
   const { data: digestData, isLoading: digestLoading } = useQuery({
     queryKey: ["review-digest-pending"],
     queryFn: () => notesApi.list({ note_type: "digest", status: "pending_review", limit: 5 }),
@@ -37,6 +47,50 @@ export function ReviewPage() {
     const summary = run.metadata_?.input_summary as Record<string, number> | undefined;
     return run.status === "completed" && !!summary;
   });
+  const inboxItems = useMemo<InboxItem[]>(() => [
+    ...(discoveryData?.items ?? []).map((item) => ({
+      id: `discovery-${item.id}`,
+      domain: discoveryDomain(item.why),
+      title: item.title,
+      summary: item.summary || item.why?.[0] || item.provider,
+      createdAt: item.created_at,
+      to: "/discover",
+    })),
+    ...(digestData?.items ?? []).map((item) => ({
+      id: `digest-${item.id}`,
+      domain: "Digest" as const,
+      title: item.title,
+      summary: item.expires_at ? `Expires ${new Date(item.expires_at).toLocaleDateString()}` : "Pending digest review",
+      createdAt: item.created_at,
+      to: "/review/digest",
+    })),
+    ...(suggestionData?.items ?? []).map((item) => ({
+      id: `wiki-${item.id}`,
+      domain: "Wiki" as const,
+      title: item.wiki_title || item.wiki_id,
+      summary: item.reason,
+      createdAt: item.created_at,
+      to: "/review/wiki-suggestions",
+    })),
+    ...(profileSuggestionData?.items ?? []).map((item) => ({
+      id: `profile-${item.id}`,
+      domain: "Profile" as const,
+      title: item.title,
+      summary: item.summary || item.target_id,
+      createdAt: item.created_at,
+      to: "/review/suggestions",
+    })),
+    ...(agentMemoryData?.candidates ?? []).filter((item) => item.status === "pending").map((item) => ({
+      id: `agent-memory-${item.id}`,
+      domain: "Agent Memory" as const,
+      title: item.title,
+      summary: item.reason,
+      createdAt: item.createdAt,
+      to: "/agent-memory",
+    })),
+  ].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt)), [agentMemoryData, digestData, discoveryData, profileSuggestionData, suggestionData]);
+  const visibleInboxItems = inboxFilter === "all" ? inboxItems : inboxItems.filter((item) => item.domain === inboxFilter);
+  const inboxLoading = discoveryLoading || digestLoading || suggestionsLoading || profileSuggestionLoading || agentMemoryLoading;
 
   return (
     <div className="h-full overflow-y-auto">
@@ -56,6 +110,45 @@ export function ReviewPage() {
             </div>
           </div>
         </section>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center justify-between gap-3">
+              <span className="flex items-center gap-2"><Bell className="h-5 w-5" /> Pending Candidates</span>
+              <Badge variant={inboxItems.length ? "secondary" : "outline"}>{inboxLoading ? "..." : inboxItems.length}</Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-wrap gap-2">
+              {(["all", "Discovery", "Connector Trend", "Digest", "Wiki", "Profile", "Agent Memory"] as const).map((filter) => (
+                <Button key={filter} type="button" size="sm" variant={inboxFilter === filter ? "default" : "outline"} onClick={() => setInboxFilter(filter)}>
+                  {filter === "all" ? "All" : filter}
+                </Button>
+              ))}
+            </div>
+            <div className="divide-y rounded-xl border">
+              {!visibleInboxItems.length && (
+                <p className="p-4 text-sm text-muted-foreground">No pending candidates in this filter.</p>
+              )}
+              {visibleInboxItems.slice(0, 20).map((item) => (
+                <div key={item.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="outline">{item.domain}</Badge>
+                      <Badge variant="secondary">pending</Badge>
+                      <span className="truncate font-medium">{item.title}</span>
+                    </div>
+                    <p className="line-clamp-2 text-sm text-muted-foreground">{item.summary}</p>
+                  </div>
+                  <Button asChild variant="outline" size="sm"><Link to={item.to}>Review</Link></Button>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Keep, dismiss, publish, and archive remain domain actions. This Inbox aggregates decisions without creating a shared persistence model.
+            </p>
+          </CardContent>
+        </Card>
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <ReviewQueueCard
@@ -143,6 +236,21 @@ export function ReviewPage() {
       </div>
     </div>
   );
+}
+
+type InboxDomain = "Discovery" | "Connector Trend" | "Digest" | "Wiki" | "Profile" | "Agent Memory";
+
+interface InboxItem {
+  id: string;
+  domain: InboxDomain;
+  title: string;
+  summary: string;
+  createdAt: string;
+  to: string;
+}
+
+function discoveryDomain(why?: string[] | null): InboxDomain {
+  return why?.some((reason) => reason.toLowerCase().includes("connector trend")) ? "Connector Trend" : "Discovery";
 }
 
 function ReviewQueueCard({
