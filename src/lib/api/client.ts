@@ -1,3 +1,5 @@
+import { notifyAuthExpired } from "@/lib/authEvents";
+
 export const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:4000";
 export const TOKEN_KEY = "auth_token";
 
@@ -10,8 +12,8 @@ export function authHeaders(headers: Headers): Headers {
 }
 
 export class AuthError extends Error {
-  constructor() {
-    super("Unauthorized");
+  constructor(message = "Unauthorized") {
+    super(message);
     this.name = "AuthError";
   }
 }
@@ -28,8 +30,8 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     credentials: "include",
   });
   if (res.status === 401) {
-    // Delegate redirect to AuthProvider — don't redirect here
-    throw new AuthError();
+    notifyAuthExpired();
+    throw new AuthError("PKG authentication expired");
   }
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
@@ -43,6 +45,10 @@ export async function downloadFile(path: string, fallbackFilename = "download") 
   const headers = authHeaders(new Headers());
   const fullPath = path.startsWith("/api") ? path : `/api${path}`;
   const res = await fetch(`${API_BASE}${fullPath}`, { headers, credentials: "include" });
+  if (res.status === 401) {
+    notifyAuthExpired();
+    throw new AuthError("PKG authentication expired");
+  }
   if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`);
   const blob = await res.blob();
   const disposition = res.headers.get("content-disposition");

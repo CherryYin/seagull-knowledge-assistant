@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { authApi } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { AUTH_NOTICE_KEY } from "@/lib/authEvents";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -32,7 +33,11 @@ export function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState(() => {
+    const notice = sessionStorage.getItem(AUTH_NOTICE_KEY) || "";
+    sessionStorage.removeItem(AUTH_NOTICE_KEY);
+    return notice;
+  });
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: FormEvent) => {

@@ -1,4 +1,5 @@
 import { API_BASE, TOKEN_KEY } from "./client";
+import { notifyAuthExpired } from "@/lib/authEvents";
 
 export type SSEvent =
   | { type: "step"; tool: string; status: "running" | "done" }
@@ -34,6 +35,7 @@ export async function* streamComplete(body: CompleteRequest, signal?: AbortSigna
     signal,
     credentials: "include",
   });
+  if (res.status === 401) notifyAuthExpired();
   if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`);
   if (!res.body) throw new Error("No response body");
   const reader = res.body.getReader();

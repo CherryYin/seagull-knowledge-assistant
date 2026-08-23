@@ -6,6 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { AUTH_EXPIRED_EVENT, AUTH_EXPIRED_NOTICE, AUTH_NOTICE_KEY } from "@/lib/authEvents";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:4000";
 const TOKEN_KEY = "auth_token";
@@ -55,8 +56,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       credentials: "include",
     });
     clearAuthToken();
+    sessionStorage.removeItem(AUTH_NOTICE_KEY);
     setTokenState(null);
     setUser(null);
+  }, []);
+
+  useEffect(() => {
+    const expireSession = () => {
+      void fetch(`${API_BASE}/api/auth/logout`, {
+        method: "POST",
+        credentials: "include",
+      });
+      clearAuthToken();
+      sessionStorage.setItem(AUTH_NOTICE_KEY, AUTH_EXPIRED_NOTICE);
+      setTokenState(null);
+      setUser(null);
+      setLoading(false);
+    };
+    window.addEventListener(AUTH_EXPIRED_EVENT, expireSession);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, expireSession);
   }, []);
 
   useEffect(() => {
@@ -101,6 +119,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error(text);
     }
     const data = await res.json();
+    sessionStorage.removeItem(AUTH_NOTICE_KEY);
     setAuthToken(data.access_token);
     setTokenState(data.access_token);
   }, []);

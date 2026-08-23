@@ -1,4 +1,9 @@
 import { API_BASE, TOKEN_KEY } from "./client";
+import { notifyAuthExpired } from "@/lib/authEvents";
+
+function notifyIfAuthExpired(response: Response): void {
+  if (response.status === 401) notifyAuthExpired();
+}
 
 export interface HarnessChatEvent {
   type: "session" | "text" | "tool_call" | "tool_result" | "done" | "error";
@@ -39,6 +44,7 @@ export async function* harnessChat(prompt: string, options: HarnessChatOptions =
   });
 
   if (!res.ok) {
+    notifyIfAuthExpired(res);
     const text = await res.text().catch(() => res.statusText);
     throw new Error(`Harness chat failed: ${res.status} ${text}`);
   }
@@ -72,7 +78,10 @@ export async function listSessions(): Promise<HarnessSession[]> {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
     credentials: "include",
   });
-  if (!res.ok) throw new Error(`Failed to list sessions: ${res.status}`);
+  if (!res.ok) {
+    notifyIfAuthExpired(res);
+    throw new Error(`Failed to list sessions: ${res.status}`);
+  }
   return res.json();
 }
 
@@ -84,7 +93,10 @@ export async function listPresets(): Promise<HarnessPreset[]> {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
     credentials: "include",
   });
-  if (!res.ok) throw new Error(`Failed to list presets: ${res.status}`);
+  if (!res.ok) {
+    notifyIfAuthExpired(res);
+    throw new Error(`Failed to list presets: ${res.status}`);
+  }
   return res.json();
 }
 
@@ -96,6 +108,9 @@ export async function submitExperiment(body: Record<string, unknown>): Promise<u
     body: JSON.stringify(body),
     credentials: "include",
   });
-  if (!res.ok) throw new Error(`Failed to submit experiment: ${res.status}`);
+  if (!res.ok) {
+    notifyIfAuthExpired(res);
+    throw new Error(`Failed to submit experiment: ${res.status}`);
+  }
   return res.json();
 }
