@@ -10,6 +10,7 @@ import {
 } from "../../deepseek-knowledge-lab/plugins/agent-memory/src/index.js";
 
 const PORT = process.env.PORT || 4000;
+const HOST = process.env.HOST || "127.0.0.1";
 const PKG_BASE = process.env.PKG_API_URL || "http://127.0.0.1:8000";
 const HARNESS_BASE = process.env.HARNESS_API_URL || "http://127.0.0.1:3080";
 const UI_ORIGINS = new Set(
@@ -20,7 +21,20 @@ const UI_ORIGINS = new Set(
 );
 const AUTH_COOKIE = "seagull_access_token";
 const HARNESS_ROUTES = ["/api/experiments", "/api/lab"];
-const HARNESS_SERVICE_TOKEN = process.env.HARNESS_SERVICE_TOKEN || "seagull-loopback-harness";
+const LOOPBACK_SERVICE_TOKEN = "seagull-loopback-harness";
+const INSECURE_SERVICE_TOKENS = new Set([LOOPBACK_SERVICE_TOKEN, "replace-with-a-random-service-token"]);
+
+export function resolveHarnessServiceToken(endpoint, configuredToken = process.env.HARNESS_SERVICE_TOKEN) {
+  const hostname = new URL(endpoint).hostname;
+  const loopback = hostname === "localhost" || hostname === "::1" || hostname.startsWith("127.");
+  const token = configuredToken || (loopback ? LOOPBACK_SERVICE_TOKEN : "");
+  if (!loopback && (!token || token.length < 32 || INSECURE_SERVICE_TOKENS.has(token))) {
+    throw new Error("HARNESS_SERVICE_TOKEN must be an explicit random value of at least 32 characters for non-loopback deployment");
+  }
+  return token;
+}
+
+const HARNESS_SERVICE_TOKEN = resolveHarnessServiceToken(`http://${HOST}`);
 const SESSION_AUTH_TTL_MS = Number(process.env.SESSION_AUTH_TTL_MS || 28_800_000);
 const sessionAuthRegistry = new Map();
 const defaultAgentMemoryStore = new AgentMemoryStore({
@@ -850,7 +864,7 @@ export function createBffServer({ agentMemoryStore = defaultAgentMemoryStore } =
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const server = createBffServer();
-  server.listen(PORT, "127.0.0.1", () => {
-    console.log(`[BFF] http://127.0.0.1:${PORT} → PKG ${PKG_BASE} | Harness ${HARNESS_BASE}`);
+  server.listen(PORT, HOST, () => {
+    console.log(`[BFF] http://${HOST}:${PORT} → PKG ${PKG_BASE} | Harness ${HARNESS_BASE}`);
   });
 }

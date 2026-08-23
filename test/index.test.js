@@ -5,6 +5,23 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+test("non-loopback BFF deployments require a strong explicit Harness service token", async () => {
+  const { resolveHarnessServiceToken } = await import(`../src/index.js?token-test=${Date.now()}`);
+  assert.equal(resolveHarnessServiceToken("http://127.0.0.1:4000"), "seagull-loopback-harness");
+  assert.throws(
+    () => resolveHarnessServiceToken("http://0.0.0.0:4000"),
+    /explicit random value of at least 32 characters/,
+  );
+  assert.throws(
+    () => resolveHarnessServiceToken("https://bff.example.test", "replace-with-a-random-service-token"),
+    /explicit random value of at least 32 characters/,
+  );
+  assert.equal(
+    resolveHarnessServiceToken("https://bff.example.test", "0123456789abcdef0123456789abcdef"),
+    "0123456789abcdef0123456789abcdef",
+  );
+});
+
 function listen(server) {
   return new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 }
