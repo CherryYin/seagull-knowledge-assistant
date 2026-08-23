@@ -19,6 +19,7 @@
     "test:sessions:stage-e": "node --test scripts/check-stage-e-readiness.test.mjs",
     "test:agent-memory": "node --test plugins/agent-memory/test/store.test.js",
     "test:agent-memory-integration": "node scripts/check-agent-memory-integration.mjs",
+    "smoke:four-services": "../personal_knowledge_graph/.venv/bin/python scripts/smoke-four-services.py",
     "run-headless": "DSH_HOME=./.dsh node dsh-harness/apps/cli/lib/bin.js --profile headless",
     "run-web": "DSH_HOME=./.dsh node dsh-harness/apps/cli/lib/bin.js --profile web"
   },

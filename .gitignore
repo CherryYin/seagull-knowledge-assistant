@@ -1,4 +1,6 @@
 node_modules/
+__pycache__/
+*.py[cod]
 .dsh/.env
 .dsh/agent-memory.json
 .dsh/agent-memory.json.*.tmp
