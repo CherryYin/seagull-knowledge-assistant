@@ -18,6 +18,7 @@ export * from "./api/system-jobs";
 export * from "./api/system";
 export * from "./api/assets";
 export * from "./api/agent-memory";
+export * from "./api/session-contexts";
 
 // ── Harness API ────────────────────────────────────────
 export {

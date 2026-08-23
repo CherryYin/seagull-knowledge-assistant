@@ -9,6 +9,7 @@ type MockState = {
   savedAssetBody: Record<string, unknown> | null;
   candidate: Record<string, unknown> | null;
   memory: Record<string, unknown> | null;
+  sessionContext: Record<string, unknown> | null;
 };
 
 function json(route: Route, body: unknown, status = 200) {
@@ -76,6 +77,20 @@ async function installMockBff(page: Page, state: MockState) {
           "",
         ].join("\n"),
       });
+    }
+    if (path.startsWith("/api/harness/session-contexts/")) {
+      if (method === "GET") return json(route, { context: state.sessionContext });
+      if (method === "PUT") {
+        state.sessionContext = {
+          ...(request.postDataJSON() as Record<string, unknown>),
+          workflowId: "draft-asset",
+        };
+        return json(route, { context: state.sessionContext });
+      }
+      if (method === "DELETE") {
+        state.sessionContext = null;
+        return json(route, {}, 204);
+      }
     }
 
     if (path === "/api/knowledge/models") return json(route, []);
@@ -187,7 +202,7 @@ async function signIn(page: Page) {
 }
 
 test("critical knowledge journey: login, chat, explicit save, inbox, and Agent Memory", async ({ page }) => {
-  const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null };
+  const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null };
   await installMockBff(page, state);
   await signIn(page);
 
@@ -229,7 +244,7 @@ test("critical knowledge journey: login, chat, explicit save, inbox, and Agent M
 });
 
 test("manual Asset generation creates PKG state only after the user confirms the Agent draft", async ({ page }) => {
-  const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null };
+  const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null };
   await installMockBff(page, state);
   await signIn(page);
 
@@ -248,8 +263,14 @@ test("manual Asset generation creates PKG state only after the user confirms the
 
   await page.getByRole("button", { name: "Start Generation Session" }).click();
   await expect(page).toHaveURL(/\/chat$/);
-  const input = page.getByPlaceholder("Ask anything about your knowledge base...");
+  let input = page.getByPlaceholder("Ask anything about your knowledge base...");
   await expect(input).toContainText("E2E Research Brief");
+  await expect.poll(() => (state.sessionContext?.assetDraft as Record<string, unknown> | undefined)?.title).toBe("E2E Research Brief");
+
+  await page.goto("/chat");
+  input = page.getByPlaceholder("Ask anything about your knowledge base...");
+  await expect(input).toContainText("E2E Research Brief");
+  await expect(input).toContainText("Architecture reviewers");
   await input.press("Enter");
   await expect(page.getByText("E2E answer with a durable result.")).toBeVisible();
   await expect.poll(() => state.savedAssetBody).toBeNull();
@@ -284,7 +305,7 @@ test("manual Asset generation creates PKG state only after the user confirms the
 });
 
 test("Source Asset handoff opens the generation guide with evidence preselected", async ({ page }) => {
-  const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null };
+  const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null };
   await installMockBff(page, state);
   await signIn(page);
 

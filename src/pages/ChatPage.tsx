@@ -15,6 +15,7 @@ import {
   chatSessionsApi,
   knowledgeApi,
   categoriesApi,
+  sessionContextsApi,
   type ChatSessionMessage,
 } from "@/lib/api";
 import {
@@ -158,6 +159,38 @@ export function ChatPage() {
   }, []);
 
   useEffect(scrollToBottom, [currentSession?.messages, scrollToBottom]);
+
+  useEffect(() => {
+    if (!currentSession) return;
+    const state = location.state as ChatLocationState;
+    if (state?.assetDraft) {
+      void sessionContextsApi.putAssetGeneration(currentSession.id, state.assetDraft).catch((error) => {
+        console.error("Failed to persist Asset generation context:", error);
+      });
+      return;
+    }
+    if (state?.promptSeed || state?.workflowId) return;
+
+    let cancelled = false;
+    void sessionContextsApi.get(currentSession.id).then(({ context }) => {
+      if (cancelled) return;
+      if (!context) {
+        setSelectedWorkflowId(null);
+        setWorkflowContext({});
+        return;
+      }
+      const nextContext = { assetDraft: context.assetDraft };
+      setSelectedWorkflowId(context.workflowId);
+      setWorkflowContext(nextContext);
+      if (currentSession.messages.length === 0) {
+        const workflow = findAgentWorkflowTemplate(context.workflowId);
+        if (workflow) setInput(renderAgentWorkflowPrompt(workflow, nextContext));
+      }
+    }).catch((error) => {
+      if (!cancelled) console.error("Failed to restore Asset generation context:", error);
+    });
+    return () => { cancelled = true; };
+  }, [currentSession?.id, location.state]);
 
   const updateSessionLocal = useCallback(
     (sessionId: string, updater: (s: ChatSessionRecord) => ChatSessionRecord) => {
