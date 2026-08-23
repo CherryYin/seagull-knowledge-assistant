@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, Link, useNavigate, useLocation } from "react-router-dom";
-import { assetsApi, authApi, notesApi, sourcesApi, wikiApi, type Asset, type AssetStatus, type ReadinessCheckResult } from "@/lib/api";
+import { assetsApi, authApi, notesApi, sourcesApi, wikiApi, type Asset, type AssetStatus, type AssetType, type ReadinessCheckResult } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -52,6 +52,62 @@ function assetTypeDescription(assetType?: string) {
     return "A systematic topic-level report focused on themes, findings, risks, and recommendations.";
   }
   return "An editable blog draft focused on angle, audience, and readable publish-ready structure.";
+}
+
+function assetReaderPresentation(assetType?: AssetType) {
+  if (assetType === "research_brief") {
+    return {
+      layout: "research-brief",
+      kicker: "Decision document",
+      briefLabel: "Executive brief",
+      documentLabel: "Research findings",
+      contentsLabel: "Brief sections",
+      lineageLabel: "Evidence base",
+      headerTone: "from-sky-500/15",
+    };
+  }
+  if (assetType === "knowledge_pack") {
+    return {
+      layout: "knowledge-pack",
+      kicker: "Reusable collection",
+      briefLabel: "Pack purpose",
+      documentLabel: "Guided knowledge pack",
+      contentsLabel: "Reading path",
+      lineageLabel: "Included knowledge",
+      headerTone: "from-emerald-500/15",
+    };
+  }
+  if (assetType === "newsletter_issue") {
+    return {
+      layout: "newsletter-issue",
+      kicker: "Editorial issue",
+      briefLabel: "Issue theme",
+      documentLabel: "Curated issue",
+      contentsLabel: "Issue lineup",
+      lineageLabel: "Editorial sources",
+      headerTone: "from-rose-500/15",
+    };
+  }
+  if (assetType === "topic_report") {
+    return {
+      layout: "topic-report",
+      kicker: "Topic synthesis",
+      briefLabel: "Report scope",
+      documentLabel: "Topic analysis",
+      contentsLabel: "Report sections",
+      lineageLabel: "Research foundation",
+      headerTone: "from-violet-500/15",
+    };
+  }
+  return {
+    layout: "blog-post",
+    kicker: "Editorial draft",
+    briefLabel: "Article promise",
+    documentLabel: "Article",
+    contentsLabel: "Article map",
+    lineageLabel: "Supporting evidence",
+    headerTone: "from-amber-500/15",
+  };
 }
 
 function assetTypeReadinessGuidance(assetType?: string) {
@@ -223,6 +279,7 @@ export function AssetDetailPage() {
   });
 
   const asset = assetQuery.data;
+  const readerPresentation = assetReaderPresentation(asset?.asset_type);
   const assetQueryError = assetQuery.error instanceof Error ? assetQuery.error.message : null;
 
   const [publishUrl, setPublishUrl] = useState("");
@@ -470,16 +527,22 @@ export function AssetDetailPage() {
             </div>
 
             <TabsContent value="read" className="mt-0 space-y-8">
-              <article className="overflow-hidden rounded-3xl border bg-card shadow-sm">
-                <header className="border-b bg-gradient-to-br from-primary/10 via-background to-background px-6 py-10 sm:px-10 lg:px-14">
+              <article data-reader-layout={readerPresentation.layout} className="overflow-hidden rounded-3xl border bg-card shadow-sm">
+                <header className={`border-b bg-gradient-to-br ${readerPresentation.headerTone} via-background to-background px-6 py-10 sm:px-10 lg:px-14`}>
                   <div className="mx-auto max-w-4xl">
+                    <p className="mb-4 text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">{readerPresentation.kicker}</p>
                     <div className="mb-5 flex flex-wrap items-center gap-2">
                       <Badge>{assetTypeLabel(asset.asset_type)}</Badge>
                       <Badge variant="outline">{STATUS_LABELS[asset.status]}</Badge>
                       <span className="text-xs text-muted-foreground">Updated {new Date(asset.updated_at).toLocaleDateString()}</span>
                     </div>
                     <h2 className="max-w-3xl text-4xl font-semibold tracking-tight text-foreground sm:text-5xl">{asset.title}</h2>
-                    {asset.brief && <p className="mt-6 max-w-3xl text-lg leading-8 text-muted-foreground">{asset.brief}</p>}
+                    {asset.brief && (
+                      <div className="mt-7 max-w-3xl rounded-2xl border bg-background/70 p-5 shadow-sm">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{readerPresentation.briefLabel}</p>
+                        <p className="mt-2 text-lg leading-8 text-foreground/80">{asset.brief}</p>
+                      </div>
+                    )}
                     <div className="mt-6 flex flex-wrap gap-x-6 gap-y-2 text-sm text-muted-foreground">
                       {audience && <span><span className="font-medium text-foreground">Audience:</span> {audience}</span>}
                       <span><span className="font-medium text-foreground">Evidence:</span> {sourceRefItems.length + noteRefItems.length + stableWikiItems.length + candidateWikiItems.length} records</span>
@@ -489,6 +552,7 @@ export function AssetDetailPage() {
 
                 <div className="mx-auto grid max-w-6xl gap-10 px-6 py-10 sm:px-10 lg:grid-cols-[minmax(0,1fr)_240px] lg:px-14">
                   <div className="min-w-0">
+                    <p className="mb-6 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{readerPresentation.documentLabel}</p>
                     {asset.draft_content?.trim() ? (
                       <div className="prose prose-slate max-w-none text-base leading-8 dark:prose-invert prose-headings:scroll-mt-24 prose-headings:tracking-tight prose-h2:mt-12 prose-h2:border-b prose-h2:pb-3 prose-p:my-5 prose-li:my-2 prose-blockquote:border-primary/40 prose-blockquote:bg-muted/30 prose-blockquote:px-5 prose-blockquote:py-1">
                         <MarkdownRenderer>{asset.draft_content}</MarkdownRenderer>
@@ -499,16 +563,18 @@ export function AssetDetailPage() {
                   </div>
 
                   <aside className="space-y-6 lg:sticky lg:top-20 lg:self-start">
-                    {headings.length > 0 && (
-                      <div className="rounded-2xl border bg-muted/20 p-4">
-                        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Contents</p>
+                    <div className="rounded-2xl border bg-muted/20 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{readerPresentation.contentsLabel}</p>
+                      {headings.length > 0 ? (
                         <ol className="mt-3 space-y-2 text-sm">
                           {headings.map((heading, index) => <li key={`${heading.title}-${index}`} className={heading.level === 1 ? "font-medium" : heading.level === 2 ? "pl-2" : "pl-5 text-muted-foreground"}>{heading.title}</li>)}
                         </ol>
-                      </div>
-                    )}
+                      ) : (
+                        <p className="mt-3 text-sm text-muted-foreground">No navigable sections yet.</p>
+                      )}
+                    </div>
                     <div className="rounded-2xl border p-4">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Knowledge lineage</p>
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{readerPresentation.lineageLabel}</p>
                       <div className="mt-3 space-y-3 text-sm">
                         <div className="flex justify-between"><span>Sources</span><span className="font-medium">{sourceRefItems.length}</span></div>
                         <div className="flex justify-between"><span>Notes</span><span className="font-medium">{noteRefItems.length}</span></div>

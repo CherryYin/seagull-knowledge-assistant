@@ -291,6 +291,11 @@ test("manual Asset generation creates PKG state only after the user confirms the
 
   await page.goto("/assets/asset-e2e");
   await expect(page.getByRole("tab", { name: "Read" })).toHaveAttribute("data-state", "active");
+  await expect(page.locator('[data-reader-layout="research-brief"]')).toBeVisible();
+  await expect(page.getByText("Decision document", { exact: true })).toBeVisible();
+  await expect(page.getByText("Executive brief", { exact: true })).toBeVisible();
+  await expect(page.getByText("Brief sections", { exact: true })).toBeVisible();
+  await expect(page.getByText("Evidence base", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "E2E Research Brief", exact: true }).last()).toBeVisible();
   await expect(page.getByText("E2E answer with a durable result.")).toBeVisible();
   await expect(page.getByText("Production Actions")).toHaveCount(0);
