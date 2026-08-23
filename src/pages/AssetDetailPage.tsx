@@ -94,6 +94,16 @@ function assetTypeReadinessIntro(assetType?: string) {
   return "Check whether this post has a clear angle, enough support, and readable references before export.";
 }
 
+function markdownHeadings(content?: string | null) {
+  if (!content) return [];
+  return content
+    .split("\n")
+    .map((line) => line.match(/^(#{1,3})\s+(.+)$/))
+    .filter((match): match is RegExpMatchArray => Boolean(match))
+    .map((match) => ({ level: match[1].length, title: match[2].replace(/[*_`]/g, "").trim() }))
+    .slice(0, 16);
+}
+
 function readinessTone(ready: boolean) {
   return ready ? "border-emerald-200 bg-emerald-50/80" : "border-amber-200 bg-amber-50/70";
 }
@@ -218,12 +228,25 @@ export function AssetDetailPage() {
   const [publishUrl, setPublishUrl] = useState("");
   const [publishChannel, setPublishChannel] = useState("");
   const [publishFeedback, setPublishFeedback] = useState("");
+  const [editTitle, setEditTitle] = useState("");
+  const [editBrief, setEditBrief] = useState("");
+  const [editOutline, setEditOutline] = useState("");
+  const [editDraft, setEditDraft] = useState("");
+  const [editStyle, setEditStyle] = useState("");
 
   useEffect(() => {
     const feedback = ((asset?.metadata_ || {}) as Record<string, unknown>).publish_feedback as Record<string, unknown> | undefined;
     setPublishUrl(typeof feedback?.publish_url === "string" ? feedback.publish_url : "");
     setPublishChannel(typeof feedback?.channel === "string" ? feedback.channel : "");
     setPublishFeedback(typeof feedback?.feedback === "string" ? feedback.feedback : "");
+  }, [asset]);
+
+  useEffect(() => {
+    setEditTitle(asset?.title ?? "");
+    setEditBrief(asset?.brief ?? "");
+    setEditOutline(asset?.outline ?? "");
+    setEditDraft(asset?.draft_content ?? "");
+    setEditStyle(asset?.style_notes ?? "");
   }, [asset]);
 
   const sourceMap = new Map((sourceOptionsQuery.data?.items ?? []).map((item) => [item.id, item]));
@@ -261,6 +284,17 @@ export function AssetDetailPage() {
 
   const statusMutation = useMutation({
     mutationFn: (status: AssetStatus) => assetsApi.update(id, { status }),
+    onSuccess: refreshAsset,
+  });
+
+  const editMutation = useMutation({
+    mutationFn: () => assetsApi.update(id, {
+      title: editTitle.trim(),
+      brief: editBrief,
+      outline: editOutline,
+      draft_content: editDraft,
+      style_notes: editStyle,
+    }),
     onSuccess: refreshAsset,
   });
 
@@ -366,27 +400,17 @@ export function AssetDetailPage() {
 
   const isBusy = statusMutation.isPending || exportMutation.isPending || publishMutation.isPending || savePublishFeedbackMutation.isPending;
   const primaryAction = useMemo(() => (asset ? buildPrimaryAction(asset, readinessQuery.data) : null), [asset, readinessQuery.data]);
+  const headings = useMemo(() => markdownHeadings(asset?.draft_content), [asset?.draft_content]);
+  const audience = typeof asset?.metadata_?.audience === "string" ? asset.metadata_.audience : null;
 
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-5xl space-y-6 px-6 py-8">
         <div className="flex items-center justify-between gap-4">
-          <div>
-            <div className="mb-2 flex items-center gap-2">
-              {asset && <Badge variant="outline">{STATUS_LABELS[asset.status]}</Badge>}
-              <Link to={backTo} className="text-sm text-primary hover:underline">
-                {backLabel}
-              </Link>
-            </div>
-            <h1 className="text-2xl font-bold">{asset?.title ?? "Asset"}</h1>
-            <p className="text-sm text-muted-foreground">
-              {asset ? `Updated ${new Date(asset.updated_at).toLocaleString()}` : "Loading asset..."}
-            </p>
-            {asset && (
-              <p className="mt-2 text-sm text-muted-foreground">
-                <span className="font-medium text-foreground">{assetTypeLabel(asset.asset_type)}:</span> {assetTypeDescription(asset.asset_type)}
-              </p>
-            )}
+          <div className="flex flex-wrap items-center gap-2">
+            <Link to={backTo} className="text-sm text-primary hover:underline">{backLabel}</Link>
+            {asset && <><span className="text-muted-foreground">/</span><Badge variant="outline">{assetTypeLabel(asset.asset_type)}</Badge><Badge variant="secondary">{STATUS_LABELS[asset.status]}</Badge></>}
+            {!asset && <span className="text-sm text-muted-foreground">Loading Asset…</span>}
           </div>
           <div className="flex flex-wrap justify-end gap-2">
             <Button variant="outline" onClick={() => exportMutation.mutate()} disabled={!asset || isBusy || asset.status !== "ready_to_export"}>
@@ -435,7 +459,96 @@ export function AssetDetailPage() {
         {!asset && !assetQuery.isError && <p className="text-sm text-muted-foreground">Loading...</p>}
 
         {asset && !assetQuery.isError && (
-          <>
+          <Tabs defaultValue="read" className="space-y-6">
+            <div className="sticky top-0 z-10 -mx-2 border-b bg-background/95 px-2 py-2 backdrop-blur">
+              <TabsList>
+                <TabsTrigger value="read">Read</TabsTrigger>
+                <TabsTrigger value="edit">Edit</TabsTrigger>
+                <TabsTrigger value="evidence">Evidence</TabsTrigger>
+                <TabsTrigger value="production">Production</TabsTrigger>
+              </TabsList>
+            </div>
+
+            <TabsContent value="read" className="mt-0 space-y-8">
+              <article className="overflow-hidden rounded-3xl border bg-card shadow-sm">
+                <header className="border-b bg-gradient-to-br from-primary/10 via-background to-background px-6 py-10 sm:px-10 lg:px-14">
+                  <div className="mx-auto max-w-4xl">
+                    <div className="mb-5 flex flex-wrap items-center gap-2">
+                      <Badge>{assetTypeLabel(asset.asset_type)}</Badge>
+                      <Badge variant="outline">{STATUS_LABELS[asset.status]}</Badge>
+                      <span className="text-xs text-muted-foreground">Updated {new Date(asset.updated_at).toLocaleDateString()}</span>
+                    </div>
+                    <h2 className="max-w-3xl text-4xl font-semibold tracking-tight text-foreground sm:text-5xl">{asset.title}</h2>
+                    {asset.brief && <p className="mt-6 max-w-3xl text-lg leading-8 text-muted-foreground">{asset.brief}</p>}
+                    <div className="mt-6 flex flex-wrap gap-x-6 gap-y-2 text-sm text-muted-foreground">
+                      {audience && <span><span className="font-medium text-foreground">Audience:</span> {audience}</span>}
+                      <span><span className="font-medium text-foreground">Evidence:</span> {sourceRefItems.length + noteRefItems.length + stableWikiItems.length + candidateWikiItems.length} records</span>
+                    </div>
+                  </div>
+                </header>
+
+                <div className="mx-auto grid max-w-6xl gap-10 px-6 py-10 sm:px-10 lg:grid-cols-[minmax(0,1fr)_240px] lg:px-14">
+                  <div className="min-w-0">
+                    {asset.draft_content?.trim() ? (
+                      <div className="prose prose-slate max-w-none text-base leading-8 dark:prose-invert prose-headings:scroll-mt-24 prose-headings:tracking-tight prose-h2:mt-12 prose-h2:border-b prose-h2:pb-3 prose-p:my-5 prose-li:my-2 prose-blockquote:border-primary/40 prose-blockquote:bg-muted/30 prose-blockquote:px-5 prose-blockquote:py-1">
+                        <MarkdownRenderer>{asset.draft_content}</MarkdownRenderer>
+                      </div>
+                    ) : (
+                      <div className="rounded-2xl border border-dashed p-10 text-center text-muted-foreground">This Asset does not have draft content yet. Continue it from the production workspace.</div>
+                    )}
+                  </div>
+
+                  <aside className="space-y-6 lg:sticky lg:top-20 lg:self-start">
+                    {headings.length > 0 && (
+                      <div className="rounded-2xl border bg-muted/20 p-4">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Contents</p>
+                        <ol className="mt-3 space-y-2 text-sm">
+                          {headings.map((heading, index) => <li key={`${heading.title}-${index}`} className={heading.level === 1 ? "font-medium" : heading.level === 2 ? "pl-2" : "pl-5 text-muted-foreground"}>{heading.title}</li>)}
+                        </ol>
+                      </div>
+                    )}
+                    <div className="rounded-2xl border p-4">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Knowledge lineage</p>
+                      <div className="mt-3 space-y-3 text-sm">
+                        <div className="flex justify-between"><span>Sources</span><span className="font-medium">{sourceRefItems.length}</span></div>
+                        <div className="flex justify-between"><span>Notes</span><span className="font-medium">{noteRefItems.length}</span></div>
+                        <div className="flex justify-between"><span>Wiki</span><span className="font-medium">{stableWikiItems.length + candidateWikiItems.length}</span></div>
+                      </div>
+                    </div>
+                  </aside>
+                </div>
+              </article>
+            </TabsContent>
+
+            <TabsContent value="edit" className="mt-0">
+              <Card>
+                <CardHeader><CardTitle>Edit Asset</CardTitle><CardDescription>Update the working document, then return to Read to review the rendered result.</CardDescription></CardHeader>
+                <CardContent className="space-y-5">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2"><label className="text-sm font-medium" htmlFor="asset-edit-title">Title</label><Input id="asset-edit-title" value={editTitle} onChange={(event) => setEditTitle(event.target.value)} /></div>
+                    <div className="space-y-2"><label className="text-sm font-medium" htmlFor="asset-edit-style">Style guidance</label><Input id="asset-edit-style" value={editStyle} onChange={(event) => setEditStyle(event.target.value)} /></div>
+                  </div>
+                  <div className="space-y-2"><label className="text-sm font-medium" htmlFor="asset-edit-brief">Brief</label><Textarea id="asset-edit-brief" rows={4} value={editBrief} onChange={(event) => setEditBrief(event.target.value)} /></div>
+                  <div className="space-y-2"><label className="text-sm font-medium" htmlFor="asset-edit-outline">Outline</label><Textarea id="asset-edit-outline" className="font-mono text-sm" rows={8} value={editOutline} onChange={(event) => setEditOutline(event.target.value)} /></div>
+                  <div className="space-y-2"><label className="text-sm font-medium" htmlFor="asset-edit-draft">Draft Markdown</label><Textarea id="asset-edit-draft" className="min-h-[520px] font-mono text-sm leading-6" value={editDraft} onChange={(event) => setEditDraft(event.target.value)} /></div>
+                  <div className="flex items-center gap-3"><Button onClick={() => editMutation.mutate()} disabled={!editTitle.trim() || editMutation.isPending}>{editMutation.isPending ? "Saving…" : "Save Changes"}</Button>{editMutation.isSuccess && <span className="text-sm text-emerald-700">Saved. Open Read to inspect the rendered document.</span>}{editMutation.isError && <span className="text-sm text-destructive">Could not save Asset changes.</span>}</div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="evidence" className="mt-0">
+              <Card>
+                <CardHeader><CardTitle>Knowledge Evidence</CardTitle><CardDescription>Sources, Notes, and Wiki pages used to produce this Asset.</CardDescription></CardHeader>
+                <CardContent className="grid gap-6 md:grid-cols-2">
+                  <div className="space-y-2"><h3 className="text-sm font-semibold">Sources</h3><ReferenceChips items={sourceRefItems} />{sourceRefItems.length === 0 && <p className="text-sm text-muted-foreground">No Source references attached.</p>}</div>
+                  <div className="space-y-2"><h3 className="text-sm font-semibold">Notes</h3><ReferenceChips items={noteRefItems} />{noteRefItems.length === 0 && <p className="text-sm text-muted-foreground">No Note references attached.</p>}</div>
+                  <div className="space-y-2"><h3 className="text-sm font-semibold">Stable Wiki</h3><ReferenceChips items={stableWikiItems} />{stableWikiItems.length === 0 && <p className="text-sm text-muted-foreground">No stable Wiki references attached.</p>}</div>
+                  <div className="space-y-2"><h3 className="text-sm font-semibold">Draft Wiki</h3><ReferenceChips items={candidateWikiItems} />{candidateWikiItems.length === 0 && <p className="text-sm text-muted-foreground">No draft Wiki references attached.</p>}</div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="production" className="mt-0 space-y-6">
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Production Actions</CardTitle>
@@ -680,7 +793,8 @@ export function AssetDetailPage() {
                 )}
               </CardContent>
             </Card>
-          </>
+            </TabsContent>
+          </Tabs>
         )}
       </div>
     </div>

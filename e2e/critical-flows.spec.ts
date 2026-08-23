@@ -90,6 +90,16 @@ async function installMockBff(page: Page, state: MockState) {
       state.savedAssetBody = request.postDataJSON() as Record<string, unknown>;
       return json(route, { id: "asset-e2e", ...state.savedAssetBody, created_at: now, updated_at: now });
     }
+    if (path === "/api/assets/asset-e2e" && method === "GET") {
+      return json(route, { id: "asset-e2e", user_id: "user-e2e", ...state.savedAssetBody, source_refs: state.savedAssetBody?.source_refs ?? [], note_refs: state.savedAssetBody?.note_refs ?? [], wiki_refs: state.savedAssetBody?.wiki_refs ?? [], created_at: now, updated_at: now });
+    }
+    if (path === "/api/assets/asset-e2e" && method === "PATCH") {
+      state.savedAssetBody = { ...state.savedAssetBody, ...(request.postDataJSON() as Record<string, unknown>) };
+      return json(route, { id: "asset-e2e", user_id: "user-e2e", ...state.savedAssetBody, source_refs: state.savedAssetBody?.source_refs ?? [], note_refs: state.savedAssetBody?.note_refs ?? [], wiki_refs: state.savedAssetBody?.wiki_refs ?? [], created_at: now, updated_at: now });
+    }
+    if (path === "/api/assets/asset-e2e/check-readiness") {
+      return json(route, { ready: false, blocking_reasons: ["Review the draft before export"], warning_reasons: [], suggestion_reasons: [] });
+    }
 
     if (path === "/api/harness/memory-candidates" && method === "POST") {
       const body = request.postDataJSON() as Record<string, unknown>;
@@ -241,4 +251,18 @@ test("manual Asset generation creates PKG state only after the user confirms the
     audience: "Architecture reviewers",
     generation_mode: "manual_request",
   });
+
+  await page.goto("/assets/asset-e2e");
+  await expect(page.getByRole("tab", { name: "Read" })).toHaveAttribute("data-state", "active");
+  await expect(page.getByRole("heading", { name: "E2E Research Brief", exact: true }).last()).toBeVisible();
+  await expect(page.getByText("E2E answer with a durable result.")).toBeVisible();
+  await expect(page.getByText("Production Actions")).toHaveCount(0);
+  await page.getByRole("tab", { name: "Edit" }).click();
+  await page.getByLabel("Draft Markdown").fill("## Revised finding\n\nA clearer evidence-backed recommendation.");
+  await page.getByRole("button", { name: "Save Changes" }).click();
+  await expect.poll(() => state.savedAssetBody?.draft_content).toContain("Revised finding");
+  await page.getByRole("tab", { name: "Read" }).click();
+  await expect(page.getByRole("heading", { name: "Revised finding" })).toBeVisible();
+  await page.getByRole("tab", { name: "Production" }).click();
+  await expect(page.getByText("Production Actions")).toBeVisible();
 });
