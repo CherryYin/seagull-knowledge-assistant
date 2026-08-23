@@ -166,6 +166,7 @@ test("critical knowledge journey: login, chat, explicit save, inbox, and Agent M
   await input.fill("Give me one durable E2E result");
   await input.press("Enter");
   await expect(page.getByText("E2E answer with a durable result.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save as Asset Draft" })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Save as Personal Note" }).click();
   await expect(page.getByRole("button", { name: "Saved" })).toBeVisible();

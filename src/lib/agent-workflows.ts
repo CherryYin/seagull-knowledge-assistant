@@ -43,7 +43,7 @@ export interface AgentWorkflowContext {
 
 export const AGENT_WORKFLOW_SAVE_TARGET_LABELS: Record<WorkflowResultSaveTarget, string> = {
   note: "Save as Personal Note",
-  asset: "Save as Writing Document",
+  asset: "Save as Asset Draft",
   wiki_draft: "Save as Wiki Draft",
   review_note: "Save as Review Note",
 };
@@ -138,10 +138,10 @@ Output exactly these sections:
     id: "summarize-source",
     group: "understand",
     title: "理解这份材料",
-    description: "把一份 Source 解释清楚，提炼重点，并指出它下一步更适合成为 Note、Wiki Draft 还是 Asset。",
+    description: "把一份 Source 解释清楚，提炼重点，并指出它下一步更适合成为 Note 还是 Wiki Draft。",
     requiredInput: "一份 source、一个角度，或一个具体问题",
     inputPlaceholder: "例如：重点看这篇材料的核心论点 / 它和我已有知识有什么关系...",
-    saveTargets: ["note", "asset"],
+    saveTargets: ["note"],
     outputSections: [
       "Summary",
       "Key Ideas",
@@ -201,7 +201,7 @@ Output exactly these sections:
     description: "先查你已有知识，再识别缺口，形成一版可继续深入的研究结果。",
     requiredInput: "一个研究问题",
     inputPlaceholder: "例如：LangGraph 和 Strands 在 agent orchestration 上的差异是什么？",
-    saveTargets: ["note", "asset"],
+    saveTargets: ["note"],
     outputSections: [
       "Question",
       "Existing Knowledge",

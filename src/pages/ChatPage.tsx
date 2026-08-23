@@ -574,7 +574,7 @@ export function ChatPage() {
                         }
                         saveTargets={
                           msg.role === "assistant" && !streaming
-                            ? selectedWorkflow?.saveTargets || ["note", "asset"]
+                            ? selectedWorkflow?.saveTargets || ["note"]
                             : []
                         }
                         onSaveTarget={
