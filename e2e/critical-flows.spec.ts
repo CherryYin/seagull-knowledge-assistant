@@ -265,6 +265,10 @@ test("manual Asset generation creates PKG state only after the user confirms the
   await expect(page).toHaveURL(/\/chat$/);
   let input = page.getByPlaceholder("Ask anything about your knowledge base...");
   await expect(input).toContainText("E2E Research Brief");
+  await expect(input).toContainText("## Executive Summary");
+  await expect(input).toContainText("## Evidence and Confidence");
+  await expect(input).toContainText("[Source: source-input]");
+  await expect(input).toContainText("Completion checklist");
   await expect.poll(() => (state.sessionContext?.assetDraft as Record<string, unknown> | undefined)?.title).toBe("E2E Research Brief");
 
   await page.goto("/chat");
@@ -329,5 +333,35 @@ test("Source Asset handoff opens the generation guide with evidence preselected"
   await expect(page.getByLabel("Asset brief")).toHaveValue("Create a blog asset from source: E2E Source Evidence");
   await expect(page.getByLabel("E2E Source Evidence")).toBeChecked();
   await expect(page.getByText("1 knowledge records selected")).toBeVisible();
+  await expect.poll(() => state.savedAssetBody).toBeNull();
+});
+
+test("manual Asset types produce distinct deliverable contracts before generation", async ({ page }) => {
+  const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  const cases = [
+    { type: "Blog Post", section: "## Main Argument" },
+    { type: "Research Brief", section: "## Executive Summary" },
+    { type: "Knowledge Pack", section: "## Guided Reading Path" },
+    { type: "Topic Report", section: "## Topic Landscape" },
+  ];
+
+  for (const item of cases) {
+    await page.goto("/assets/new");
+    await page.getByRole("button", { name: item.type }).click();
+    await page.getByLabel("Asset title").fill(`${item.type} contract smoke`);
+    await page.getByLabel("Target audience").fill("Knowledge workers");
+    await page.getByLabel("Asset brief").fill("Produce a grounded, reusable deliverable.");
+    await page.getByText("E2E Source Evidence").click();
+    await page.getByRole("button", { name: "Start Generation Session" }).click();
+
+    const input = page.getByPlaceholder("Ask anything about your knowledge base...");
+    await expect(input).toContainText(item.section);
+    await expect(input).toContainText("[Source: source-input]");
+    await expect(input).toContainText("Return the final response as the editable Markdown deliverable itself");
+  }
+
   await expect.poll(() => state.savedAssetBody).toBeNull();
 });

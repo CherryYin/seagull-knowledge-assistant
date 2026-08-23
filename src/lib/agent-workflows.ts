@@ -1,3 +1,5 @@
+import { renderAssetGenerationContract } from "@/lib/asset-generation";
+
 export type WorkflowResultSaveTarget =
   | "note"
   | "asset"
@@ -307,15 +309,7 @@ The user has explicitly chosen the asset type, audience, objective, and style.
 Use available PKG tools to read referenced Sources, Notes, and Wiki pages when possible.
 Keep claims traceable to evidence and flag unsupported claims instead of inventing support.
 Produce a polished but reviewable draft. Do not save, export, or publish automatically.
-
-Output exactly these sections:
-
-## Audience and Objective
-## Editorial Approach
-## Outline
-## Draft
-## Evidence Used
-## Review Notes`,
+The final answer must be the deliverable itself rather than a process report.`,
   },
   {
     id: "draft-blog-asset",
@@ -420,6 +414,7 @@ export function renderAgentWorkflowPrompt(
       `- Note IDs: ${request.noteRefs.join(", ") || "none selected"}`,
       `- Wiki IDs: ${request.wikiRefs.join(", ") || "none selected"}`,
     ].filter(Boolean).join("\n"));
+    parts.push(renderAssetGenerationContract(request));
   }
 
   parts.push("Before answering, use available knowledge context when helpful. Do not expose internal tool names unless necessary for traceability.");
