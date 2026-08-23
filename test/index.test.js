@@ -295,6 +295,7 @@ test("login cookie authenticates direct API requests and preserves query params"
   process.env.HARNESS_API_URL = `http://127.0.0.1:${harness.address().port}`;
   const memoryDirectory = await mkdtemp(join(tmpdir(), "bff-agent-memory-"));
   process.env.AGENT_MEMORY_STORE_PATH = join(memoryDirectory, "store.json");
+  process.env.SESSION_CONTEXT_STORE_PATH = join(memoryDirectory, "session-contexts.json");
   t.after(() => rm(memoryDirectory, { recursive: true, force: true }));
   const { createBffServer } = await import(`../src/index.js?test=${Date.now()}`);
   const bff = createBffServer();
@@ -377,6 +378,34 @@ test("login cookie authenticates direct API requests and preserves query params"
   const session = await fetch(`${base}/api/sessions/session-1`, { headers: { Cookie: cookie } });
   assert.equal(session.status, 200);
   assert.deepEqual(await session.json(), { id: "session-1", events: [], hasMore: false });
+
+  const generationContext = {
+    kind: "asset_generation",
+    assetDraft: {
+      assetType: "research_brief",
+      title: "Durable BFF brief",
+      brief: "Keep the manual generation request with the Harness Session.",
+      audience: "Architecture reviewers",
+      styleNotes: "Concise.",
+      sourceRefs: ["source-1"],
+      noteRefs: [],
+      wikiRefs: [],
+    },
+  };
+  const savedContext = await fetch(`${base}/api/harness/session-contexts/session-1`, {
+    method: "PUT",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify(generationContext),
+  });
+  assert.equal(savedContext.status, 200);
+  assert.equal((await savedContext.json()).context.assetDraft.title, "Durable BFF brief");
+
+  const restoredContext = await fetch(`${base}/api/harness/session-contexts/session-1`, { headers: { Cookie: cookie } });
+  assert.equal(restoredContext.status, 200);
+  assert.deepEqual((await restoredContext.json()).context.assetDraft.sourceRefs, ["source-1"]);
+
+  const foreignContext = await fetch(`${base}/api/harness/session-contexts/foreign-session`, { headers: { Cookie: cookie } });
+  assert.equal(foreignContext.status, 404);
 
   const presets = await fetch(`${base}/api/presets`, { headers: { Cookie: cookie } });
   assert.equal(presets.status, 200);

@@ -9,6 +9,11 @@ import {
   defaultAgentMemoryStorePath,
   formatAgentMemoryContext,
 } from "../../deepseek-knowledge-lab/plugins/agent-memory/src/index.js";
+import {
+  PostgresSessionContextBackend,
+  SessionContextStore,
+  defaultSessionContextStorePath,
+} from "../../deepseek-knowledge-lab/plugins/session-context/src/index.js";
 
 const PORT = process.env.PORT || 4000;
 const HOST = process.env.HOST || "127.0.0.1";
@@ -45,6 +50,17 @@ const defaultAgentMemoryStore = process.env.AGENT_MEMORY_STORE_PATH || !agentMem
       backend: new PostgresAgentMemoryBackend({
         connectionString: agentMemoryDatabaseUrl,
         schema: process.env.AGENT_MEMORY_DATABASE_SCHEMA || "public",
+      }),
+    });
+const sessionContextDatabaseUrl = process.env.SESSION_CONTEXT_DATABASE_URL
+  || process.env.AGENT_MEMORY_DATABASE_URL
+  || process.env.PKG_DATABASE_URL;
+const defaultSessionContextStore = process.env.SESSION_CONTEXT_STORE_PATH || !sessionContextDatabaseUrl
+  ? new SessionContextStore({ path: process.env.SESSION_CONTEXT_STORE_PATH || defaultSessionContextStorePath() })
+  : new SessionContextStore({
+      backend: new PostgresSessionContextBackend({
+        connectionString: sessionContextDatabaseUrl,
+        schema: process.env.SESSION_CONTEXT_DATABASE_SCHEMA || "public",
       }),
     });
 
@@ -725,7 +741,7 @@ function projectionTitle(summary) {
   return undefined;
 }
 
-async function harnessSessions(req, res, path, requestId) {
+async function harnessSessions(req, res, path, requestId, sessionContextStore) {
   const authorization = authHeader(req);
   if (!authorization) return json(req, res, 401, { error: "Unauthorized" });
   try {
@@ -756,10 +772,12 @@ async function harnessSessions(req, res, path, requestId) {
       return json(req, res, 200, value);
     }
     if (req.method === "DELETE") {
+      const user = await currentPkgUser(authorization, requestId);
       await harnessRpc("session.cancel", { sessionId }, { requestId }).catch((error) => {
         if (!(error instanceof HarnessRpcError) || error.code !== "session-not-found") throw error;
       });
       await deletePkgChatSession(sessionId, authorization, requestId);
+      await sessionContextStore.delete(user.id, sessionId);
       sessionAuthRegistry.delete(sessionId);
       setCORS(req, res);
       res.writeHead(204);
@@ -771,6 +789,36 @@ async function harnessSessions(req, res, path, requestId) {
   } catch (err) {
     if (err.status === 401) return respondAuthExpired(req, res, authorization);
     return json(req, res, err.status || 502, { error: err.message });
+  }
+}
+
+async function harnessSessionContexts(req, res, path, requestId, sessionContextStore) {
+  const authorization = authHeader(req);
+  if (!authorization) return json(req, res, 401, { error: "Unauthorized" });
+  const encodedSessionId = path.slice("/api/harness/session-contexts/".length);
+  const sessionId = decodeURIComponent(encodedSessionId);
+  if (!sessionId || sessionId.includes("/")) return json(req, res, 404, { error: "Not found" });
+  try {
+    await ensurePkgChatSession(sessionId, authorization, { requestId });
+    const user = await currentPkgUser(authorization, requestId);
+    if (req.method === "GET") {
+      return json(req, res, 200, { context: await sessionContextStore.get(user.id, sessionId) });
+    }
+    if (req.method === "PUT") {
+      const context = await sessionContextStore.put(user.id, sessionId, await readBody(req));
+      return json(req, res, 200, { context });
+    }
+    if (req.method === "DELETE") {
+      await sessionContextStore.delete(user.id, sessionId);
+      setCORS(req, res);
+      res.writeHead(204);
+      return res.end();
+    }
+    return json(req, res, 405, { error: "Method not allowed" });
+  } catch (error) {
+    if (error.status === 401) return respondAuthExpired(req, res, authorization);
+    const status = error instanceof TypeError ? 400 : error.status || 500;
+    return json(req, res, status, { error: error.message });
   }
 }
 
@@ -819,7 +867,10 @@ function isHarnessRoute(path) {
 
 // ── Server ──────────────────────────────────────
 
-export function createBffServer({ agentMemoryStore = defaultAgentMemoryStore } = {}) {
+export function createBffServer({
+  agentMemoryStore = defaultAgentMemoryStore,
+  sessionContextStore = defaultSessionContextStore,
+} = {}) {
   return http.createServer(async (req, res) => {
   const id = req.headers["x-request-id"] || rid();
   const method = req.method.toUpperCase();
@@ -863,13 +914,16 @@ export function createBffServer({ agentMemoryStore = defaultAgentMemoryStore } =
   // ── Harness REST adapter ──
   if (path === "/api/chat") return harnessChat(req, res, id, agentMemoryStore);
   if (path === "/api/sessions" || path.startsWith("/api/sessions/")) {
-    return harnessSessions(req, res, path, id);
+    return harnessSessions(req, res, path, id, sessionContextStore);
   }
   if (path === "/api/presets") return harnessPresets(req, res, id);
 
   if (path === "/api/harness/memories" || path === "/api/harness/memory-recalls"
     || path.startsWith("/api/harness/memory-candidates") || path.startsWith("/api/harness/memories/")) {
     return harnessMemories(req, res, path, url, id, agentMemoryStore);
+  }
+  if (path.startsWith("/api/harness/session-contexts/")) {
+    return harnessSessionContexts(req, res, path, id, sessionContextStore);
   }
 
   // ── PKG streaming APIs ──
