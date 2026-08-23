@@ -88,6 +88,72 @@ const ASSET_REQUIRED_SECTIONS: Record<AssetType, string[]> = {
   ],
 };
 
+export interface AssetDraftQualityAssessment {
+  ready: boolean;
+  blockingIssues: string[];
+  warnings: string[];
+}
+
+function normalizedHeading(value: string) {
+  return value.trim().toLocaleLowerCase().replace(/[’']/g, "'").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+
+function markdownH2Sections(content: string) {
+  const sections = new Map<string, string[]>();
+  let current: string | null = null;
+  for (const line of content.split("\n")) {
+    const heading = line.match(/^##\s+(.+?)\s*$/);
+    if (heading) {
+      current = normalizedHeading(heading[1]);
+      sections.set(current, []);
+      continue;
+    }
+    if (current) sections.get(current)?.push(line);
+  }
+  return new Map([...sections].map(([heading, lines]) => [heading, lines.join("\n").trim()]));
+}
+
+export function assessAssetDraft(content: string, request: AssetGenerationRequest): AssetDraftQualityAssessment {
+  const blockingIssues: string[] = [];
+  const warnings: string[] = [];
+  const trimmed = content.trim();
+  const sections = markdownH2Sections(trimmed);
+  const title = trimmed.match(/^#\s+(.+?)\s*$/m)?.[1]?.trim();
+
+  for (const required of ASSET_REQUIRED_SECTIONS[request.assetType]) {
+    const sectionContent = sections.get(normalizedHeading(required));
+    if (sectionContent === undefined) blockingIssues.push(`Missing required section: ${required}.`);
+    else if (sectionContent.length < 10) blockingIssues.push(`Required section is empty or too thin: ${required}.`);
+  }
+
+  const expectedMarkers = [
+    ...request.sourceRefs.map((id) => `[Source: ${id}]`),
+    ...request.noteRefs.map((id) => `[Note: ${id}]`),
+    ...request.wikiRefs.map((id) => `[Wiki: ${id}]`),
+  ];
+  const missingMarkers = expectedMarkers.filter((marker) => !trimmed.includes(marker));
+  if (missingMarkers.length > 0) {
+    blockingIssues.push(`Selected evidence is not cited: ${missingMarkers.join(", ")}.`);
+  }
+
+  if (/\b(?:TODO|TBD|FIXME|PLACEHOLDER|INSERT\s+HERE)\b|\[citation needed\]/i.test(trimmed)) {
+    blockingIssues.push("Draft still contains unfinished placeholders or citation-needed markers.");
+  }
+
+  const reviewNotes = sections.get(normalizedHeading("Review Notes"));
+  if (reviewNotes !== undefined && /^(?:none|n\/a|no review notes\.?|nothing)$/i.test(reviewNotes)) {
+    blockingIssues.push("Review Notes is too shallow; record evidence gaps, uncertainty, or the explicit absence of remaining issues.");
+  }
+
+  if (!title) warnings.push("Draft does not start with an H1 title.");
+  else if (normalizedHeading(title) !== normalizedHeading(request.title)) {
+    warnings.push(`H1 title differs from the requested working title: ${request.title}.`);
+  }
+  if (trimmed.length < 500) warnings.push("Draft is unusually short for a finished deliverable.");
+
+  return { ready: blockingIssues.length === 0, blockingIssues, warnings };
+}
+
 const ASSET_QUALITY_CRITERIA: Record<AssetType, string[]> = {
   blog_post: [
     "Open with a concrete reader problem and state one clear thesis.",

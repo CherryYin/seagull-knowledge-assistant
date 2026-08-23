@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { MarkdownRenderer } from "@/components/markdown";
 import type { MessageMetadata, ReferenceInfo } from "@/lib/api";
 import { AGENT_WORKFLOW_SAVE_TARGET_LABELS, type WorkflowResultSaveTarget } from "@/lib/agent-workflows";
+import { assessAssetDraft, type AssetGenerationRequest } from "@/lib/asset-generation";
 
 const CITATION_RE = /\[来源[：:]\s*((?:note|src|source)-[^\]]+)\]/g;
 
@@ -40,6 +41,7 @@ interface Props {
   onRemember?: () => Promise<void>;
   saveTargets?: WorkflowResultSaveTarget[];
   onSaveTarget?: (target: WorkflowResultSaveTarget) => Promise<void>;
+  assetDraft?: AssetGenerationRequest;
 }
 
 export function ChatMessage({
@@ -51,12 +53,16 @@ export function ChatMessage({
   onRemember,
   saveTargets = [],
   onSaveTarget,
+  assetDraft,
 }: Props) {
   const isUser = role === "user";
   const navigate = useNavigate();
   const [retryLoading, setRetryLoading] = useState(false);
   const [saveState, setSaveState] = useState<Partial<Record<WorkflowResultSaveTarget, "loading" | "done">>>({});
   const [actionError, setActionError] = useState<string | null>(null);
+  const assetQuality = !isUser && assetDraft && saveTargets.includes("asset")
+    ? assessAssetDraft(metadata?.document_content || content, assetDraft)
+    : null;
 
   const markdownComponents: Components = {
     a: ({ href, children, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { children?: React.ReactNode }) => {
@@ -203,6 +209,27 @@ export function ChatMessage({
           )}
         </div>
 
+        {assetQuality && (
+          <div className={cn(
+            "mt-2 max-w-2xl rounded-lg border px-3 py-2 text-xs",
+            assetQuality.ready
+              ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-800"
+              : "border-amber-500/30 bg-amber-500/5 text-amber-900",
+          )}>
+            <p className="font-medium">{assetQuality.ready ? "Asset draft quality check passed" : "Asset draft save is blocked"}</p>
+            {!assetQuality.ready && (
+              <ul className="mt-1 list-disc space-y-1 pl-4">
+                {assetQuality.blockingIssues.map((issue) => <li key={issue}>{issue}</li>)}
+              </ul>
+            )}
+            {assetQuality.warnings.length > 0 && (
+              <ul className="mt-1 list-disc space-y-1 pl-4 opacity-80">
+                {assetQuality.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+              </ul>
+            )}
+          </div>
+        )}
+
         {/* Action buttons */}
         {!streaming && content && (
           <div className="mt-1 flex items-center gap-1">
@@ -235,7 +262,7 @@ export function ChatMessage({
                   size="sm"
                   className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
                   onClick={() => handleSaveTarget(target)}
-                  disabled={Boolean(state)}
+                  disabled={Boolean(state) || (target === "asset" && assetQuality !== null && !assetQuality.ready)}
                 >
                   {saveIcon(target, state)}
                   {state === "done" ? "Saved" : AGENT_WORKFLOW_SAVE_TARGET_LABELS[target]}

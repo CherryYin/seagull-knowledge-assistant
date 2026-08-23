@@ -1,6 +1,6 @@
 import { assetsApi, notesApi, wikiApi, type ReferenceInfo } from "@/lib/api";
 import type { AgentWorkflowContext, WorkflowResultSaveTarget } from "@/lib/agent-workflows";
-import type { AssetGenerationRequest } from "@/lib/asset-generation";
+import { assessAssetDraft, type AssetGenerationRequest } from "@/lib/asset-generation";
 
 interface SaveWorkflowResultInput {
   target: WorkflowResultSaveTarget;
@@ -64,6 +64,12 @@ export async function saveWorkflowResult({
   const workflowTag = workflowId ? `workflow:${workflowId}` : "workflow:general-chat";
 
   if (target === "asset") {
+    if (assetDraft) {
+      const quality = assessAssetDraft(content, assetDraft);
+      if (!quality.ready) {
+        throw new Error(`Asset draft quality check failed: ${quality.blockingIssues.join(" ")}`);
+      }
+    }
     if (objectRef?.object_type === "asset" && objectRef.object_id) {
       return assetsApi.update(objectRef.object_id, { draft_content: content });
     }

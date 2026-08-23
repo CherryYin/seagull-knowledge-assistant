@@ -2,6 +2,25 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 
 const apiBase = "http://127.0.0.1:4000";
 const now = "2026-08-23T08:00:00.000Z";
+const validResearchBrief = `# E2E Research Brief
+
+## Executive Summary
+E2E answer with a durable result. It is intended for architecture reviewers.
+
+## Key Findings
+The selected source supports a focused architecture decision. [Source: source-input]
+
+## Evidence and Confidence
+Confidence is medium because this draft currently relies on one selected source. [Source: source-input]
+
+## Risks and Gaps
+The recommendation should be reviewed against implementation constraints before adoption.
+
+## Recommendations
+Review the evidence with the architecture group and record the final decision explicitly.
+
+## Review Notes
+The selected evidence is sufficient for this draft; final editorial review should confirm wording.`;
 
 type MockState = {
   loggedIn: boolean;
@@ -10,6 +29,7 @@ type MockState = {
   candidate: Record<string, unknown> | null;
   memory: Record<string, unknown> | null;
   sessionContext: Record<string, unknown> | null;
+  chatResponse?: string;
 };
 
 function json(route: Route, body: unknown, status = 200) {
@@ -65,13 +85,14 @@ async function installMockBff(page: Page, state: MockState) {
       });
     }
     if (path === "/api/chat" && method === "POST") {
+      const content = state.chatResponse ?? validResearchBrief;
       return route.fulfill({
         status: 200,
         contentType: "text/event-stream",
         body: [
           'data: {"type":"session","session_id":"session-e2e"}',
           "",
-          'data: {"type":"text","content":"E2E answer with a durable result."}',
+          `data: ${JSON.stringify({ type: "text", content })}`,
           "",
           'data: {"type":"done","session_id":"session-e2e"}',
           "",
@@ -363,5 +384,34 @@ test("manual Asset types produce distinct deliverable contracts before generatio
     await expect(input).toContainText("Return the final response as the editable Markdown deliverable itself");
   }
 
+  await expect.poll(() => state.savedAssetBody).toBeNull();
+});
+
+test("Asset save is blocked when the generated draft fails structural quality checks", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: null,
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+    chatResponse: "# Incomplete brief\n\nTODO: add evidence and recommendations.",
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/assets/new");
+  await page.getByRole("button", { name: "Research Brief" }).click();
+  await page.getByLabel("Asset title").fill("Incomplete brief");
+  await page.getByLabel("Target audience").fill("Architecture reviewers");
+  await page.getByLabel("Asset brief").fill("Recommend an architecture decision from the selected evidence.");
+  await page.getByText("E2E Source Evidence").click();
+  await page.getByRole("button", { name: "Start Generation Session" }).click();
+  await page.getByPlaceholder("Ask anything about your knowledge base...").press("Enter");
+
+  await expect(page.getByText("Asset draft save is blocked")).toBeVisible();
+  await expect(page.getByText("Missing required section: Executive Summary.")).toBeVisible();
+  await expect(page.getByText("Draft still contains unfinished placeholders or citation-needed markers.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save as Asset Draft" })).toBeDisabled();
   await expect.poll(() => state.savedAssetBody).toBeNull();
 });

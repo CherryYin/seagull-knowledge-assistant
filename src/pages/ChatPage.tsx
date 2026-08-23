@@ -616,6 +616,7 @@ export function ChatPage() {
                             ? (target) => handleSaveTarget(msg, target)
                             : undefined
                         }
+                        assetDraft={msg.role === "assistant" ? workflowContext.assetDraft : undefined}
                       />
                     ))}
                     {streaming && steps.length > 0 && (
