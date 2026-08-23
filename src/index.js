@@ -219,6 +219,11 @@ async function pkgForward(req, res, pkgPath, { captureLogin = false, requestId }
 
   try {
     const pkgRes = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+    if (pkgRes.status === 204 || pkgRes.status === 205) {
+      setCORS(req, res);
+      res.writeHead(pkgRes.status);
+      return res.end();
+    }
     const ct = pkgRes.headers.get("content-type") || "";
     const data = ct.includes("application/json") ? await pkgRes.json() : await pkgRes.text();
     if (captureLogin && pkgRes.ok && data?.access_token) setAuthCookie(res, data.access_token);

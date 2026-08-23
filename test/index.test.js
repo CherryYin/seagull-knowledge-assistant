@@ -110,6 +110,11 @@ test("login cookie authenticates direct API requests and preserves query params"
       res.end("event: content\ndata: {\"text\":\"hello\"}\n\n");
       return;
     }
+    if (req.url === "/notes/smoke-note" && req.method === "DELETE") {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
     if (req.url === "/knowledge/dashboard") {
       res.end(JSON.stringify({ counts: { notes: 1 } }));
       return;
@@ -308,6 +313,13 @@ test("login cookie authenticates direct API requests and preserves query params"
     authorization: "Bearer test-token",
     requestId: "action-request",
   });
+
+  const deletedNote = await fetch(`${base}/api/notes/smoke-note`, {
+    method: "DELETE",
+    headers: { Cookie: cookie },
+  });
+  assert.equal(deletedNote.status, 204);
+  assert.equal(await deletedNote.text(), "");
 
   const health = await fetch(`${base}/api/health`);
   assert.equal(health.status, 200);
