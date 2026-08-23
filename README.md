@@ -120,12 +120,14 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-前端依赖：
+正式 Seagull UI 位于同级独立仓库 `seagull-ui`。安装前端依赖：
 
 ```bash
-cd web
+cd ../seagull-ui
 npm install
 ```
+
+本仓库内的 `web/` 已于 2026-08-23 归档，仅保留历史参考，不再作为可部署产品前端。
 
 ### 3. 配置环境变量
 
@@ -185,7 +187,7 @@ pkg worker
 前端：
 
 ```bash
-cd web
+cd ../seagull-ui
 npm run dev
 ```
 

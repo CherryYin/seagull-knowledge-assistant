@@ -63,6 +63,7 @@ The core product goal is a durable personal knowledge graph with deterministic r
 - PKG no longer registers `/action`, `/action/stream`, `/agent-profiles`, or `/agent-runs`.
 - `/action/complete` remains available only for lightweight note-writing assistance.
 - The legacy Memory Tree API, services, ORM models, and database schema have been removed. Do not reintroduce MemoryNode as an intermediate knowledge layer.
+- The in-repo `web/` client is archived and must not receive new product work. The supported frontend is the sibling `seagull-ui` repository; legacy `/chat` links in `web/` are historical and must not be treated as active Agent entry points.
 
 When changing gateway authentication, Harness tools, Session ownership, or completion streaming, update this file.
 
