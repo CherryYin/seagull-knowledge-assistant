@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { MarkdownRenderer } from "@/components/markdown";
 import type { MessageMetadata, ReferenceInfo } from "@/lib/api";
 import { AGENT_WORKFLOW_SAVE_TARGET_LABELS, type WorkflowResultSaveTarget } from "@/lib/agent-workflows";
-import { assessAssetDraft, type AssetGenerationRequest } from "@/lib/asset-generation";
+import { assessAssetDraft, renderAssetDraftRepairRequest, type AssetGenerationRequest } from "@/lib/asset-generation";
 
 const CITATION_RE = /\[来源[：:]\s*((?:note|src|source)-[^\]]+)\]/g;
 
@@ -41,6 +41,7 @@ interface Props {
   onRemember?: () => Promise<void>;
   saveTargets?: WorkflowResultSaveTarget[];
   onSaveTarget?: (target: WorkflowResultSaveTarget) => Promise<void>;
+  onRepairAssetDraft?: (prompt: string) => void;
   assetDraft?: AssetGenerationRequest;
 }
 
@@ -53,6 +54,7 @@ export function ChatMessage({
   onRemember,
   saveTargets = [],
   onSaveTarget,
+  onRepairAssetDraft,
   assetDraft,
 }: Props) {
   const isUser = role === "user";
@@ -250,6 +252,18 @@ export function ChatMessage({
             {isUser && onRemember && (
               <Button variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground" onClick={() => void onRemember()}>
                 <Brain className="h-3 w-3" />Remember
+              </Button>
+            )}
+
+            {!isUser && assetDraft && assetQuality && !assetQuality.ready && onRepairAssetDraft && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1 px-2 text-xs"
+                onClick={() => onRepairAssetDraft(renderAssetDraftRepairRequest(assetDraft, assetQuality))}
+              >
+                <RotateCw className="h-3 w-3" />
+                Regenerate to fix issues
               </Button>
             )}
 

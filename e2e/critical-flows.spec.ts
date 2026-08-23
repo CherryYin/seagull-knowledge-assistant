@@ -30,6 +30,7 @@ type MockState = {
   memory: Record<string, unknown> | null;
   sessionContext: Record<string, unknown> | null;
   chatResponse?: string;
+  chatPrompts?: string[];
 };
 
 function json(route: Route, body: unknown, status = 200) {
@@ -85,6 +86,8 @@ async function installMockBff(page: Page, state: MockState) {
       });
     }
     if (path === "/api/chat" && method === "POST") {
+      const body = request.postDataJSON() as { prompt?: string };
+      state.chatPrompts = [...(state.chatPrompts ?? []), body.prompt ?? ""];
       const content = state.chatResponse ?? validResearchBrief;
       return route.fulfill({
         status: 200,
@@ -393,7 +396,7 @@ test("manual Asset types produce distinct deliverable contracts before generatio
   await expect.poll(() => state.savedAssetBody).toBeNull();
 });
 
-test("Asset save is blocked when the generated draft fails structural quality checks", async ({ page }) => {
+test("Asset quality issues can be regenerated before the corrected draft is saved", async ({ page }) => {
   const state: MockState = {
     loggedIn: false,
     savedNoteBody: null,
@@ -420,4 +423,15 @@ test("Asset save is blocked when the generated draft fails structural quality ch
   await expect(page.getByText("Draft still contains unfinished placeholders or citation-needed markers.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Save as Asset Draft" })).toBeDisabled();
   await expect.poll(() => state.savedAssetBody).toBeNull();
+
+  state.chatResponse = validResearchBrief.replace("E2E Research Brief", "Incomplete brief");
+  await page.getByRole("button", { name: "Regenerate to fix issues" }).click();
+  await expect.poll(() => state.chatPrompts?.at(-1)).toContain("Fix every blocking issue below");
+  expect(state.chatPrompts?.at(-1)).toContain("Missing required section: Executive Summary.");
+  expect(state.chatPrompts?.at(-1)).toContain("Return the full corrected Markdown document");
+  await expect(page.getByText("Asset draft quality check passed")).toBeVisible();
+  const saveButton = page.getByRole("button", { name: "Save as Asset Draft" }).last();
+  await expect(saveButton).toBeEnabled();
+  await saveButton.click();
+  await expect.poll(() => state.savedAssetBody?.title).toBe("Incomplete brief");
 });

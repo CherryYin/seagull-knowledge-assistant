@@ -616,6 +616,11 @@ export function ChatPage() {
                             ? (target) => handleSaveTarget(msg, target)
                             : undefined
                         }
+                        onRepairAssetDraft={
+                          msg.role === "assistant" && !streaming
+                            ? (prompt) => void sendMessage(prompt)
+                            : undefined
+                        }
                         assetDraft={msg.role === "assistant" ? workflowContext.assetDraft : undefined}
                       />
                     ))}

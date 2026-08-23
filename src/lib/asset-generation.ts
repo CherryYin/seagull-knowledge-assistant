@@ -154,6 +154,27 @@ export function assessAssetDraft(content: string, request: AssetGenerationReques
   return { ready: blockingIssues.length === 0, blockingIssues, warnings };
 }
 
+export function renderAssetDraftRepairRequest(
+  request: AssetGenerationRequest,
+  assessment: AssetDraftQualityAssessment,
+) {
+  const warningSection = assessment.warnings.length > 0
+    ? ["", "Quality warnings to address when accurate:", ...assessment.warnings.map((warning) => `- ${warning}`)]
+    : [];
+
+  return [
+    "Revise the immediately preceding Asset draft into a complete replacement document.",
+    "The current draft failed the save quality gate. Fix every blocking issue below:",
+    ...assessment.blockingIssues.map((issue) => `- ${issue}`),
+    ...warningSection,
+    "",
+    "Return the full corrected Markdown document, not a patch, critique, plan, or explanation.",
+    "Preserve useful grounded material, re-check the selected knowledge records, and do not invent evidence.",
+    "The replacement must satisfy the original delivery contract in full:",
+    renderAssetGenerationContract(request),
+  ].join("\n");
+}
+
 const ASSET_QUALITY_CRITERIA: Record<AssetType, string[]> = {
   blog_post: [
     "Open with a concrete reader problem and state one clear thesis.",
