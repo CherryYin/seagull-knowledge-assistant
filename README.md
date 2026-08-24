@@ -44,6 +44,30 @@ npm run dev
 
 打开 `http://127.0.0.1:3080`，在聊天框中输入任务即可开始实验。
 
+### 一键启动完整平台
+
+在本目录运行：
+
+```bash
+npm run stack:check   # 首次运行先检查环境
+npm run stack:start   # PostgreSQL/MinIO、PKG API/Worker、Harness、BFF、Seagull
+npm run stack:status  # 查看各进程状态
+npm run stack:logs    # 汇总跟踪日志，Ctrl-C 只退出日志查看
+npm run stack:stop    # 停止应用进程和 Docker 基础设施
+```
+
+启动完成后访问 Seagull `http://127.0.0.1:5173`；Harness 调试界面位于
+`http://127.0.0.1:3080`。PID 保存到 `.dsh/run/dev-stack/`，日志保存到
+`.dsh/logs/dev-stack/`。
+
+也可以直接使用 `./scripts/dev-stack.sh`：
+
+```bash
+./scripts/dev-stack.sh restart --skip-worker
+./scripts/dev-stack.sh stop --keep-infra
+./scripts/dev-stack.sh logs harness
+```
+
 ### 注册 pkg-client 插件
 
 ```bash

@@ -7,6 +7,8 @@ __pycache__/
 .dsh/sessions/
 .dsh/storages/
 .dsh/migration-reports/
+.dsh/run/
+.dsh/logs/
 dist/
 *.tsbuildinfo
 .dsh/profiles/node_modules/

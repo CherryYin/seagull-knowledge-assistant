@@ -25,6 +25,12 @@
     "test:agent-memory-integration": "node scripts/check-agent-memory-integration.mjs",
     "test:research-pilot": "node scripts/check-research-pilot.mjs",
     "smoke:four-services": "../personal_knowledge_graph/.venv/bin/python scripts/smoke-four-services.py",
+    "stack:check": "bash scripts/dev-stack.sh check",
+    "stack:start": "bash scripts/dev-stack.sh start",
+    "stack:stop": "bash scripts/dev-stack.sh stop",
+    "stack:restart": "bash scripts/dev-stack.sh restart",
+    "stack:status": "bash scripts/dev-stack.sh status",
+    "stack:logs": "bash scripts/dev-stack.sh logs",
     "run-headless": "DSH_HOME=./.dsh node dsh-harness/apps/cli/lib/bin.js --profile headless",
     "run-web": "DSH_HOME=./.dsh node dsh-harness/apps/cli/lib/bin.js --profile web"
   },
