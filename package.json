@@ -23,6 +23,7 @@
     "agent-memory:migrate-postgres": "node scripts/migrate-agent-memory-to-postgres.mjs",
     "smoke:agent-memory-postgres": "node scripts/check-agent-memory-postgres.mjs",
     "test:agent-memory-integration": "node scripts/check-agent-memory-integration.mjs",
+    "test:research-pilot": "node scripts/check-research-pilot.mjs",
     "smoke:four-services": "../personal_knowledge_graph/.venv/bin/python scripts/smoke-four-services.py",
     "run-headless": "DSH_HOME=./.dsh node dsh-harness/apps/cli/lib/bin.js --profile headless",
     "run-web": "DSH_HOME=./.dsh node dsh-harness/apps/cli/lib/bin.js --profile web"
