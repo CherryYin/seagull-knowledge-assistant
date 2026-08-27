@@ -14,6 +14,7 @@ from pkg.schemas.discovery import (
     DiscoveryGenerateRequest,
     DiscoveryGenerateResult,
     DiscoveryWebIngestRequest,
+    DiscoveryWebResult,
     DiscoveryWebSearchRequest,
     DiscoveryItemList,
     DiscoveryItemRead,
@@ -89,6 +90,19 @@ async def search_web_results(
     except asyncio.TimeoutError as exc:
         raise HTTPException(status_code=504, detail="Web search timed out") from exc
     return DiscoveryGenerateResult(created=created, updated=updated, skipped=skipped)
+
+
+@router.post("/web-search/preview", response_model=list[DiscoveryWebResult])
+async def preview_web_search_results(
+    body: DiscoveryWebSearchRequest,
+    user: User = Depends(get_current_user),
+):
+    try:
+        return await search_external_web_results(body.query, max_results=body.max_results, user_id=user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="Web search timed out") from exc
 
 
 @router.patch("/{item_id}/feedback", response_model=DiscoveryFeedbackResult)

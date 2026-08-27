@@ -226,7 +226,11 @@ async def persist_source(
     )
     session.add(source)
 
-    await upsert_source_embeddings(session, source)
+    index_succeeded = await upsert_source_embeddings(session, source)
+    metadata = dict(source.metadata_ or {})
+    metadata["index_status"] = "completed" if index_succeeded else "failed"
+    metadata["indexed_at"] = datetime.now(timezone.utc).isoformat()
+    source.metadata_ = metadata
 
     try:
         await session.commit()
@@ -245,7 +249,7 @@ def source_embedding_text(source: Source) -> str:
     return (source.raw_content or source.title or "").strip()
 
 
-async def upsert_source_embeddings(session: AsyncSession, source: Source) -> None:
+async def upsert_source_embeddings(session: AsyncSession, source: Source) -> bool:
     try:
         emb_svc = get_embedding_service()
         title_vec = await emb_svc.embed_text(source.title)
@@ -270,8 +274,10 @@ async def upsert_source_embeddings(session: AsyncSession, source: Source) -> Non
                         content=chunk_content,
                         embedding=vec,
                     ))
+        return True
     except Exception:
         logger.error("Embedding generation failed for source %s — saving without embeddings", source.id, exc_info=True)
+        return False
 
 
 @router.post("", response_model=SourceRead, status_code=201)
@@ -398,12 +404,26 @@ async def upload_source(
         raise HTTPException(status_code=400, detail="Uploaded source file is empty")
 
     inferred_title = title or Path(file.filename or "source").stem
+    extracted_text = await extract_text_content(file.filename, file.content_type, payload, pdf_type=pdf_type)
+    suffix = Path(file.filename or "").suffix.lower()
+    extraction_mode = (
+        "pymupdf" if suffix == ".pdf" and pdf_type == "text"
+        else "vlm" if suffix == ".pdf" and pdf_type == "vlm"
+        else "docling_ocr" if suffix == ".pdf" and pdf_type == "ocr"
+        else "direct" if (file.content_type or "").startswith("text/") or suffix in TEXT_FILE_SUFFIXES
+        else "docling"
+    )
     body = SourceCreate(
         title=inferred_title,
         source_type=source_type,
         category_id=category_id,
         url=url,
-        raw_content=await extract_text_content(file.filename, file.content_type, payload, pdf_type=pdf_type),
+        raw_content=extracted_text,
+        metadata={
+            "extraction_status": "completed" if extracted_text else "missing_text",
+            "extraction_mode": extraction_mode,
+            "extracted_at": datetime.now(timezone.utc).isoformat(),
+        },
     )
 
     source_id = make_source_id(body.title, body.id)
@@ -579,6 +599,21 @@ async def get_source_chunks(
     return list(rows.scalars())
 
 
+@router.get("/{source_id}/chunk-count")
+async def get_source_chunk_count(
+    source_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    source = await session.get(Source, source_id)
+    if not source or (source.user_id != user.id and not source.is_shared):
+        raise HTTPException(status_code=404, detail="Source not found")
+    result = await session.execute(
+        select(func.count()).select_from(SourceChunk).where(SourceChunk.source_id == source_id)
+    )
+    return {"count": result.scalar() or 0}
+
+
 @router.post("/{source_id}/review/keep", response_model=SourceRead)
 async def keep_imported_source(
     source_id: str,
@@ -707,7 +742,10 @@ async def retry_source_extraction(
     metadata["extracted_at"] = datetime.now(timezone.utc).isoformat()
     source.metadata_ = metadata
 
-    await upsert_source_embeddings(session, source)
+    index_succeeded = await upsert_source_embeddings(session, source)
+    metadata["index_status"] = "completed" if index_succeeded else "failed"
+    metadata["indexed_at"] = datetime.now(timezone.utc).isoformat()
+    source.metadata_ = metadata
     await session.commit()
     await session.refresh(source)
     return source

@@ -1,9 +1,10 @@
 import hashlib
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from sqlalchemy import select
@@ -102,6 +103,7 @@ class _ReadableTextParser(HTMLParser):
         self._title_depth = 0
         self._main_depth = 0
         self._noise_depth = 0
+        self._noise_tags: list[str] = []
         self.title_parts: list[str] = []
         self.text_parts: list[str] = []
         self.main_text_parts: list[str] = []
@@ -114,15 +116,16 @@ class _ReadableTextParser(HTMLParser):
             self._title_depth += 1
         if tag in {"article", "main"}:
             self._main_depth += 1
-        if tag in NOISE_CONTAINER_TAGS:
-            self._noise_depth += 1
         role = (attributes.get("role") or "").lower()
         element_id = (attributes.get("id") or "").lower()
         class_name = (attributes.get("class") or "").lower()
-        if role in {"navigation", "banner", "contentinfo", "complementary"}:
+        starts_noise = tag in NOISE_CONTAINER_TAGS or role in {"navigation", "banner", "contentinfo", "complementary"}
+        if starts_noise:
             self._noise_depth += 1
+            self._noise_tags.append(tag)
         elif any(token in f" {class_name} {element_id} " for token in (" sidebar ", " sidenav ", " toc ", " table-of-contents ", " breadcrumb ", " pagination ", " navbar ", " header ", " footer ", " search ")):
             self._noise_depth += 1
+            self._noise_tags.append(tag)
         if tag == "br":
             self._append_text("\n")
         elif tag in BLOCK_TAGS:
@@ -135,7 +138,8 @@ class _ReadableTextParser(HTMLParser):
             self._title_depth -= 1
         if tag in {"article", "main"} and self._main_depth:
             self._main_depth -= 1
-        if tag in NOISE_CONTAINER_TAGS and self._noise_depth:
+        if self._noise_tags and self._noise_tags[-1] == tag and self._noise_depth:
+            self._noise_tags.pop()
             self._noise_depth -= 1
         if tag in BLOCK_TAGS:
             self._append_text("\n\n")
@@ -156,6 +160,106 @@ class _ReadableTextParser(HTMLParser):
         self.text_parts.append(text)
         if self._main_depth:
             self.main_text_parts.append(text)
+
+
+class _SemanticMarkdownParser(HTMLParser):
+    def __init__(self, *, base_url: str) -> None:
+        super().__init__()
+        self.base_url = base_url
+        self._skip_depth = 0
+        self._main_depth = 0
+        self._noise_depth = 0
+        self._noise_tags: list[str] = []
+        self._pending_space = False
+        self._link_stack: list[str | None] = []
+        self.text_parts: list[str] = []
+        self.main_text_parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = {key.lower(): value for key, value in attrs if value}
+        if tag in {"script", "style", "noscript", "svg", "canvas"}:
+            self._skip_depth += 1
+        if tag in {"article", "main"}:
+            self._main_depth += 1
+        role = (attributes.get("role") or "").lower()
+        element_id = (attributes.get("id") or "").lower()
+        class_name = (attributes.get("class") or "").lower()
+        starts_noise = tag in NOISE_CONTAINER_TAGS or role in {"navigation", "banner", "contentinfo", "complementary"}
+        if starts_noise:
+            self._noise_depth += 1
+            self._noise_tags.append(tag)
+        elif any(token in f" {class_name} {element_id} " for token in (" sidebar ", " sidenav ", " toc ", " table-of-contents ", " breadcrumb ", " pagination ", " navbar ", " header ", " footer ", " search ")):
+            self._noise_depth += 1
+            self._noise_tags.append(tag)
+
+        if self._skip_depth or self._noise_depth:
+            if tag == "a":
+                self._link_stack.append(None)
+            return
+        if tag in {"h1", "h2", "h3", "h4"}:
+            self._append_raw(f"\n\n{'#' * int(tag[1])} ")
+        elif tag == "li":
+            self._append_raw("\n\n- ")
+        elif tag == "br":
+            self._append_raw("\n")
+        elif tag in {"p", "div", "section", "article", "main", "blockquote", "pre"}:
+            self._append_raw("\n\n")
+        elif tag == "a":
+            href = attributes.get("href")
+            resolved = urljoin(self.base_url, href) if href else None
+            if resolved and urlparse(resolved).scheme in {"http", "https", "mailto"}:
+                self._append_raw("[")
+                self._link_stack.append(resolved)
+            else:
+                self._link_stack.append(None)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "a":
+            href = self._link_stack.pop() if self._link_stack else None
+            if href and not self._skip_depth and not self._noise_depth:
+                self._append_raw(f"]({href})")
+        elif not self._skip_depth and not self._noise_depth and tag in BLOCK_TAGS:
+            self._append_raw("\n\n")
+
+        if tag in {"script", "style", "noscript", "svg", "canvas"} and self._skip_depth:
+            self._skip_depth -= 1
+        if tag in {"article", "main"} and self._main_depth:
+            self._main_depth -= 1
+        if self._noise_tags and self._noise_tags[-1] == tag and self._noise_depth:
+            self._noise_tags.pop()
+            self._noise_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth or self._noise_depth:
+            return
+        text = " ".join(data.split())
+        if not text:
+            return
+        if data[:1].isspace():
+            self._pending_space = True
+        self._append_text(text)
+        self._pending_space = data[-1:].isspace()
+
+    def _buffers(self) -> list[list[str]]:
+        buffers = [self.text_parts]
+        if self._main_depth:
+            buffers.append(self.main_text_parts)
+        return buffers
+
+    def _append_text(self, text: str) -> None:
+        for parts in self._buffers():
+            previous = parts[-1][-1:] if parts and parts[-1] else ""
+            if (self._pending_space or (previous and previous not in "\n [")) and text[:1] not in ".,;:!?)]}":
+                parts.append(" ")
+            parts.append(text)
+        self._pending_space = False
+
+    def _append_raw(self, value: str) -> None:
+        for parts in self._buffers():
+            if self._pending_space and value == "[":
+                parts.append(" ")
+            parts.append(value)
+        self._pending_space = False
 
 
 class _MetadataParser(HTMLParser):
@@ -190,6 +294,38 @@ def _format_readable_text(text: str) -> str:
     return "\n\n".join(paragraph for paragraph in paragraphs if paragraph).strip()
 
 
+def _extract_semantic_markdown(html: str, *, url: str) -> str | None:
+    parser = _SemanticMarkdownParser(base_url=url)
+    parser.feed(html)
+    parts = parser.main_text_parts if parser.main_text_parts else parser.text_parts
+    text = "".join(parts)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n[ \t]+", "\n", text)
+    text = re.sub(r"\[\]\((?:https?|mailto):[^)]+\)", "", text)
+    text = re.sub(r"(?m)^#{1,4}\s*$", "", text)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    return text or None
+
+
+def _prefer_semantic_markdown(extracted: str, semantic: str | None) -> str:
+    if not semantic:
+        return extracted
+    extracted_headings = len(re.findall(r"(?m)^#{1,4}\s+", extracted))
+    semantic_headings = len(re.findall(r"(?m)^#{1,4}\s+", semantic))
+    if semantic_headings <= extracted_headings:
+        return extracted
+
+    length_ratio = len(semantic) / max(len(extracted), 1)
+    if not 0.65 <= length_ratio <= 1.5:
+        return extracted
+
+    extracted_words = set(re.findall(r"[\w'-]+", extracted.lower()))
+    semantic_words = set(re.findall(r"[\w'-]+", semantic.lower()))
+    if extracted_words and len(extracted_words & semantic_words) / len(extracted_words) < 0.8:
+        return extracted
+    return semantic
+
+
 def _strip_common_page_chrome(text: str) -> str:
     start_markers = [
         "Introducing dynamic workflows in Claude Code",
@@ -214,7 +350,11 @@ def _strip_common_page_chrome(text: str) -> str:
         if index > 0:
             text = text[:index]
             break
-    return text.strip()
+
+    lines = text.strip().splitlines()
+    while lines and not lines[-1].strip("# "):
+        lines.pop()
+    return "\n".join(lines).strip()
 
 
 def _strip_docs_page_chrome(text: str) -> str:
@@ -249,6 +389,7 @@ def _validate_web_url(url: str) -> str:
 
 
 def _extract_text(html: str, *, url: str) -> str | None:
+    semantic = _extract_semantic_markdown(html, url=url)
     try:
         import trafilatura
 
@@ -258,10 +399,14 @@ def _extract_text(html: str, *, url: str) -> str | None:
             include_comments=False,
             include_tables=True,
             favor_precision=True,
-            output_format="txt",
+            output_format="markdown",
+            include_formatting=True,
+            include_links=True,
         )
         if text and text.strip():
-            return _format_readable_text(text)
+            extracted = _strip_docs_page_chrome(_strip_common_page_chrome(text)).strip()
+            structured = _strip_docs_page_chrome(_strip_common_page_chrome(semantic)).strip() if semantic else None
+            return _prefer_semantic_markdown(extracted, structured)
 
         text = trafilatura.extract(
             html,
@@ -269,12 +414,19 @@ def _extract_text(html: str, *, url: str) -> str | None:
             include_comments=False,
             include_tables=True,
             favor_recall=True,
-            output_format="txt",
+            output_format="markdown",
+            include_formatting=True,
+            include_links=True,
         )
         if text and text.strip():
-            return _format_readable_text(text)
+            extracted = _strip_docs_page_chrome(_strip_common_page_chrome(text)).strip()
+            structured = _strip_docs_page_chrome(_strip_common_page_chrome(semantic)).strip() if semantic else None
+            return _prefer_semantic_markdown(extracted, structured)
     except ImportError:
         pass
+
+    if semantic:
+        return _strip_docs_page_chrome(_strip_common_page_chrome(semantic)).strip()
 
     parser = _ReadableTextParser()
     parser.feed(html)
@@ -367,6 +519,8 @@ async def fetch_web_page(url: str) -> WebPageFetchResult:
         "web_fetch_status_code": response.status_code,
         "web_fetch_fetched_at": datetime.now(timezone.utc).isoformat(),
         "web_fetch_extractor": "trafilatura",
+        "web_fetch_content_format": "markdown",
+        "web_fetch_preserves_links": True,
     }
     updated_at = _extract_updated_at(html, response.headers)
     if updated_at:

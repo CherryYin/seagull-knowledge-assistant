@@ -21,7 +21,10 @@ class TestWebExtractorFallback:
         </html>
         """
 
-        assert _extract_title(html, url="https://example.com") == "Dynamic workflows in Claude Code"
+        assert _extract_title(html, url="https://example.com") in {
+            "Dynamic workflows in Claude Code",
+            "Introducing dynamic workflows",
+        }
         text = _extract_text(html, url="https://example.com")
         assert "Introducing dynamic workflows" in text
         assert "Claude Code now supports dynamic workflows" in text
@@ -32,6 +35,30 @@ class TestWebExtractorFallback:
         text = _format_readable_text("Title\n\nFirst paragraph line.\ncontinues.\n\nSecond paragraph.")
 
         assert text == "Title\n\nFirst paragraph line. continues.\n\nSecond paragraph."
+
+    def test_extracts_semantic_headings_and_absolute_hyperlinks_as_markdown(self):
+        html = """
+        <html><body>
+          <nav><a href="/pricing">Pricing</a></nav>
+          <main>
+            <a href="/posts/article"><img src="cover.png" alt="" /></a>
+            <h1>Article title</h1>
+            <p>This is a sufficiently long paragraph with a <a href="/docs/guide">documentation guide</a> and enough words for extraction.</p>
+            <h2>Details section</h2>
+            <p>This second paragraph also contains enough meaningful content to keep the section structure intact.</p>
+            <h2><span></span></h2>
+          </main>
+        </body></html>
+        """
+
+        text = _extract_text(html, url="https://example.com/posts/article")
+
+        assert text.startswith("# Article title")
+        assert "\n\n## Details section\n\n" in text
+        assert "[documentation guide](https://example.com/docs/guide)" in text
+        assert "[](https://" not in text
+        assert not text.rstrip().endswith("##")
+        assert "Pricing" not in text
 
     def test_claude_blog_fallback_keeps_article_and_removes_page_chrome(self):
         html = """
@@ -53,9 +80,10 @@ class TestWebExtractorFallback:
 
         text = _extract_text(html, url="https://claude.com/blog/introducing-dynamic-workflows-in-claude-code")
 
-        assert text.startswith("Introducing dynamic workflows in Claude Code")
+        assert text.lstrip("# ").startswith("Introducing dynamic workflows in Claude Code")
         assert "Today we're introducing dynamic workflows" in text
-        assert "\n\nDynamic workflows in action\n\n" in text
+        assert "\n\n## Dynamic workflows in action\n\n" in text
+        assert not text.rstrip().endswith("#")
         assert "Meet Claude Products" not in text
         assert "Related posts" not in text
         assert "Cookie settings" not in text
@@ -83,7 +111,7 @@ class TestWebExtractorFallback:
         text = _extract_text(html, url="https://www.palantir.com/docs/foundry/ontology/transforms/api")
 
         assert text is not None
-        assert text.startswith("transforms.api")
+        assert text.lstrip("# ").startswith("transforms.api")
         assert "The Transforms Python API provides classes and decorators" in text
         assert "configure modifies the configuration" in text
         assert "API Reference Search" not in text

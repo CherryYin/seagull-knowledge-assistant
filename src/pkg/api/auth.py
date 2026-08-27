@@ -13,6 +13,8 @@ from pkg.schemas.user import (
     LoginRequest,
     MemoryRead,
     MemoryWrite,
+    PublishingSettingsRead,
+    PublishingSettingsUpdate,
     RegisterRequest,
     RegisterResponse,
     SettingsRead,
@@ -299,6 +301,45 @@ async def update_settings(
     await session.commit()
     await session.refresh(obj)
     return obj
+
+
+@router.get("/me/settings/publishing", response_model=PublishingSettingsRead)
+async def get_publishing_settings(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    obj = await session.get(UserSettings, user.id)
+    publishing = obj.settings.get("publishing", {}) if obj and isinstance(obj.settings, dict) else {}
+    return PublishingSettingsRead(
+        primary_site_url=str(publishing.get("primary_site_url") or ""),
+        default_channel=str(publishing.get("default_channel") or ""),
+        updated_at=obj.updated_at if obj else user.created_at,
+    )
+
+
+@router.patch("/me/settings/publishing", response_model=PublishingSettingsRead)
+async def update_publishing_settings(
+    body: PublishingSettingsUpdate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    obj = await session.get(UserSettings, user.id)
+    existing_settings = dict(obj.settings) if obj and isinstance(obj.settings, dict) else {}
+    publishing = dict(existing_settings.get("publishing") or {})
+    publishing.update(body.model_dump(exclude_none=True))
+    existing_settings["publishing"] = publishing
+    if not obj:
+        obj = UserSettings(user_id=user.id, settings=existing_settings)
+        session.add(obj)
+    else:
+        obj.settings = existing_settings
+    await session.commit()
+    await session.refresh(obj)
+    return PublishingSettingsRead(
+        primary_site_url=str(publishing.get("primary_site_url") or ""),
+        default_channel=str(publishing.get("default_channel") or ""),
+        updated_at=obj.updated_at,
+    )
 
 
 @router.get("/me/api-credentials", response_model=UserApiCredentialList)

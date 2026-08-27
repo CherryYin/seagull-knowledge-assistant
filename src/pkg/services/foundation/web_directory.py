@@ -223,11 +223,6 @@ async def import_web_directory_articles(
         existing = await _find_existing_directory_article(session, directory_source, page.final_url)
         if existing:
             existing_meta = dict(existing.metadata_ or {})
-            fetched_updated_at = page.metadata.get("web_fetch_updated_at")
-            existing_updated_at = existing_meta.get("web_fetch_updated_at")
-            if fetched_updated_at and existing_updated_at == fetched_updated_at:
-                skipped += 1
-                continue
             if existing.content_hash == content_hash:
                 skipped += 1
                 continue

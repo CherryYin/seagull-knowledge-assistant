@@ -1,3 +1,4 @@
+import hashlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -132,7 +133,7 @@ async def test_import_web_directory_articles_skips_same_updated_article():
         metadata={"web_fetch_status": "fetched", "web_fetch_updated_at": "2026-05-28T00:00:00Z"},
     )
     existing = MagicMock()
-    existing.content_hash = "different-hash"
+    existing.content_hash = hashlib.sha256(page.text.encode()).hexdigest()
     existing.metadata_ = {
         "feed_source_id": "src-claude-blog",
         "article_url": article_url,
@@ -159,7 +160,7 @@ async def test_import_web_directory_articles_skips_same_updated_article():
 
 
 @pytest.mark.asyncio
-async def test_import_web_directory_articles_updates_changed_article():
+async def test_import_web_directory_articles_updates_changed_article_when_updated_at_is_unchanged():
     session = AsyncMock()
     parent = MagicMock()
     parent.id = "src-claude-blog"
@@ -173,7 +174,7 @@ async def test_import_web_directory_articles_updates_changed_article():
         final_url=article_url,
         title="Introducing dynamic workflows in Claude Code",
         text="New article body",
-        metadata={"web_fetch_status": "fetched", "web_fetch_updated_at": "2026-05-29T00:00:00Z"},
+        metadata={"web_fetch_status": "fetched", "web_fetch_updated_at": "2026-05-28T00:00:00Z"},
     )
     existing = MagicMock()
     existing.title = "Old title"
@@ -200,6 +201,6 @@ async def test_import_web_directory_articles_updates_changed_article():
     assert result.updated == 1
     assert result.skipped == 0
     assert existing.title == "Introducing dynamic workflows in Claude Code"
-    assert existing.metadata_["web_fetch_updated_at"] == "2026-05-29T00:00:00Z"
+    assert existing.metadata_["web_fetch_updated_at"] == "2026-05-28T00:00:00Z"
     mock_persist.assert_not_called()
     mock_update.assert_awaited_once_with(existing, "New article body", session)

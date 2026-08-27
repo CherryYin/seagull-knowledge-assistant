@@ -1,6 +1,7 @@
 from datetime import datetime
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 USER_MEMORY_TYPE_PATTERN = r"^(profile|preference|activity_profile|production_memory)$"
@@ -94,6 +95,35 @@ class SettingsRead(BaseModel):
 
 class SettingsUpdate(BaseModel):
     settings: dict
+
+
+class PublishingSettingsRead(BaseModel):
+    primary_site_url: str = ""
+    default_channel: str = ""
+    updated_at: datetime
+
+
+class PublishingSettingsUpdate(BaseModel):
+    primary_site_url: str | None = None
+    default_channel: str | None = None
+
+    @field_validator("primary_site_url")
+    @classmethod
+    def validate_primary_site_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().rstrip("/")
+        if not normalized:
+            return ""
+        parsed = urlsplit(normalized)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("primary_site_url must be a complete HTTP or HTTPS URL")
+        return normalized
+
+    @field_validator("default_channel")
+    @classmethod
+    def normalize_default_channel(cls, value: str | None) -> str | None:
+        return value.strip() if value is not None else None
 
 
 # --- Activity Log ---

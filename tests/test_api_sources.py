@@ -6,6 +6,74 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
+@pytest.mark.asyncio
+async def test_upload_pdf_records_extraction_metadata_without_review(mock_session, fake_user):
+    from pkg.api.sources import upload_source
+
+    category = MagicMock()
+    category.name = "General"
+    mock_session.get.return_value = category
+    uploaded = _make_source("src-upload", fake_user.id)
+    captured = {}
+
+    async def fake_persist_source(*, body, **_kwargs):
+        captured["body"] = body
+        uploaded.metadata_ = body.metadata
+        return uploaded
+
+    storage = MagicMock()
+    storage.build_object_key.return_value = "sources/upload.pdf"
+    storage.upload_bytes = AsyncMock(return_value="minio://sources/upload.pdf")
+    file = MagicMock()
+    file.filename = "upload.pdf"
+    file.content_type = "application/pdf"
+    file.read = AsyncMock(return_value=b"%PDF-1.7 mock")
+
+    with (
+        patch("pkg.api.sources.extract_text_content", new=AsyncMock(return_value="Extracted PDF text")),
+        patch("pkg.api.sources.get_storage_service", return_value=storage),
+        patch("pkg.api.sources.persist_source", new=AsyncMock(side_effect=fake_persist_source)),
+    ):
+        result = await upload_source(
+            file=file,
+            title="Uploaded PDF",
+            source_type="pdf",
+            category_id=1,
+            url=None,
+            pdf_type="text",
+            user=fake_user,
+            session=mock_session,
+        )
+
+    assert result.id == "src-upload"
+    assert captured["body"].metadata["extraction_status"] == "completed"
+    assert captured["body"].metadata["extraction_mode"] == "pymupdf"
+    assert "review_status" not in captured["body"].metadata
+
+
+@pytest.mark.asyncio
+async def test_persist_source_records_index_status(mock_session, fake_user):
+    from pkg.api.sources import persist_source
+    from pkg.schemas.source import SourceCreate
+
+    with patch("pkg.api.sources.upsert_source_embeddings", new=AsyncMock(return_value=True)):
+        source = await persist_source(
+            session=mock_session,
+            body=SourceCreate(
+                title="Manual PDF",
+                source_type="pdf",
+                raw_content="Readable content",
+                metadata={"extraction_status": "completed"},
+            ),
+            user_id=fake_user.id,
+        )
+
+    assert source.metadata_["extraction_status"] == "completed"
+    assert source.metadata_["index_status"] == "completed"
+    assert source.metadata_["indexed_at"]
+    assert "review_status" not in source.metadata_
+
+
 # ---------------------------------------------------------------------------
 # GET /sources/{source_id}
 # ---------------------------------------------------------------------------
@@ -27,6 +95,21 @@ class TestGetSource:
 
         resp = client.get("/sources/nonexistent")
         assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_source_chunk_count_supports_owned_source(mock_session, fake_user):
+    from pkg.api.sources import get_source_chunk_count
+
+    source = _make_source("src-1", fake_user.id)
+    count_result = MagicMock()
+    count_result.scalar.return_value = 4
+    mock_session.get.return_value = source
+    mock_session.execute.return_value = count_result
+
+    result = await get_source_chunk_count("src-1", user=fake_user, session=mock_session)
+
+    assert result == {"count": 4}
 
     def test_wrong_user_not_shared(self, client, mock_session):
         source = _make_source("src-1", "other-user", is_shared=False)

@@ -60,6 +60,8 @@ The core product goal is a durable personal knowledge graph with deterministic r
 - Interactive Agent Chat, workflow presets, tool execution, and runtime event history live in DeepSeek Harness.
 - PKG owns users, knowledge assets, authentication, and `chat_sessions` ownership records.
 - BFF validates PKG ownership and relays the current user's PKG token to Harness tools.
+- Harness Web Search is provided by the project `pkg-web-search` plugin, which calls PKG's authenticated read-only `/discovery/web-search/preview` endpoint. It may use the user's Tavily credential but must not persist preview results automatically.
+- PKG does not own Chat Agent model selection or Agent runtime defaults. Its user settings may own Publishing defaults and PKG-specific background model choices, while Harness owns Chat model catalogs, defaults, and per-session selection.
 - PKG no longer registers `/action`, `/action/stream`, `/agent-profiles`, or `/agent-runs`.
 - `/action/complete` remains available only for lightweight note-writing assistance.
 - The legacy Memory Tree API, services, ORM models, and database schema have been removed. Do not reintroduce MemoryNode as an intermediate knowledge layer.
