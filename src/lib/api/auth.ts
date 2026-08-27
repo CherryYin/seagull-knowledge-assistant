@@ -95,6 +95,21 @@ export interface UserSettingsRecord {
   updated_at: string;
 }
 
+export interface PublishingSettings {
+  primary_site_url: string;
+  default_channel: string;
+  updated_at?: string;
+}
+
+export function readPublishingSettings(record?: UserSettingsRecord | null): PublishingSettings {
+  const publishing = record?.settings?.publishing;
+  const value = publishing && typeof publishing === "object" ? publishing as Record<string, unknown> : {};
+  return {
+    primary_site_url: typeof value.primary_site_url === "string" ? value.primary_site_url : "",
+    default_channel: typeof value.default_channel === "string" ? value.default_channel : "",
+  };
+}
+
 export interface UserApiCredentialRecord {
   id: number;
   user_id: string;
@@ -169,6 +184,12 @@ export const authApi = {
     request<UserSettingsRecord>("/auth/me/settings", {
       method: "PATCH",
       body: JSON.stringify({ settings }),
+    }),
+  getMyPublishingSettings: () => request<PublishingSettings>("/auth/me/settings/publishing"),
+  updateMyPublishingSettings: (body: Pick<PublishingSettings, "primary_site_url" | "default_channel">) =>
+    request<PublishingSettings>("/auth/me/settings/publishing", {
+      method: "PATCH",
+      body: JSON.stringify(body),
     }),
   listMyApiCredentials: () => request<UserApiCredentialListResponse>("/auth/me/api-credentials"),
   createMyApiCredential: (body: UserApiCredentialCreateRequest) =>

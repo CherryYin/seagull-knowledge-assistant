@@ -161,7 +161,7 @@ export function LabPage() {
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-bold">
             <FlaskConical className="h-6 w-6 text-purple-500" />
-            实验台
+            Experiment Lab
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             设计 agent 实验 → 调优验证 → 固化为 Skill + Workflow 双输出
@@ -402,7 +402,7 @@ export function LabPage() {
       {/* ── Quick Reference ── */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">实验台使用流程</CardTitle>
+          <CardTitle className="text-base">Experiment Lab Workflow</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-3 gap-4 text-sm">

@@ -1,12 +1,6 @@
 import type { Source } from "@/lib/api";
 
-export type SourceProcessingStage =
-  | "raw"
-  | "extracted"
-  | "chunked"
-  | "summarized"
-  | "reviewed"
-  | "promoted";
+export type SourceProcessingStage = "stored" | "extracted" | "indexed" | "ready" | "reviewed";
 
 export interface SourceProcessingState {
   stage: SourceProcessingStage;
@@ -18,97 +12,115 @@ export interface SourceProcessingState {
 export interface SourceProcessingStep {
   key: SourceProcessingStage | "review";
   label: string;
-  state: "done" | "current" | "pending" | "failed" | "skipped";
+  state: "done" | "current" | "pending" | "failed";
   detail: string;
+}
+
+function statusValue(value: unknown) {
+  return String(value ?? "").toLowerCase();
+}
+
+function isFailed(value: string) {
+  return ["failed", "error", "errored"].includes(value);
+}
+
+function reviewWorkflowStatus(source: Source) {
+  const value = statusValue(source.metadata_?.review_status);
+  return value === "imported_reviewable" || value === "reviewed_kept" ? value : "";
 }
 
 export function getSourceProcessingState(source: Source, options?: { chunkCount?: number | null }): SourceProcessingState {
   const metadata = source.metadata_ ?? {};
-  const reviewStatus = String(metadata.review_status ?? "").toLowerCase();
-  const webFetchStatus = String(metadata.web_fetch_status ?? metadata.last_fetch_status ?? "").toLowerCase();
-  const extractionStatus = String(metadata.extraction_status ?? "").toLowerCase();
-  const summaryStatus = String(metadata.summary_status ?? "").toLowerCase();
+  const reviewStatus = reviewWorkflowStatus(source);
+  const fetchStatus = statusValue(metadata.web_fetch_status ?? metadata.last_fetch_status);
+  const extractionStatus = statusValue(metadata.extraction_status);
+  const indexStatus = statusValue(metadata.index_status);
   const chunkCount = options?.chunkCount ?? null;
+  const hasReadable = Boolean(source.raw_content) || fetchStatus === "fetched" || extractionStatus === "completed";
+  const hasIndex = indexStatus === "completed" || (chunkCount ?? 0) > 0;
 
-  if ([webFetchStatus, extractionStatus, summaryStatus].some((value) => ["failed", "error", "errored"].includes(value))) {
-    return { stage: "extracted", status: "failed", label: "Processing failed", detail: "Fetching, extraction, or summary generation failed." };
+  if (isFailed(fetchStatus) || isFailed(extractionStatus)) {
+    return { stage: "extracted", status: "failed", label: "Extraction failed", detail: "Readable content could not be fetched or extracted." };
   }
-
-  if (String(metadata.stale ?? "").toLowerCase() === "true") {
+  if (isFailed(indexStatus)) {
+    return { stage: "indexed", status: "failed", label: "Indexing failed", detail: "The source was saved, but its search index could not be generated." };
+  }
+  if (statusValue(metadata.stale) === "true") {
     return { stage: "extracted", status: "stale", label: "Stale", detail: "This source may be outdated and worth reprocessing." };
   }
-
-  if (reviewStatus === "reviewed_kept") {
-    return { stage: "reviewed", status: "ready", label: "Reviewed", detail: "This source has been reviewed and kept." };
-  }
-
   if (reviewStatus === "imported_reviewable") {
-    return { stage: "reviewed", status: "needs_review", label: "Needs review", detail: "Imported source is waiting for review." };
+    return { stage: "reviewed", status: "needs_review", label: "Needs review", detail: "This automatically imported source is waiting for a keep or discard decision." };
   }
-
-  if (summaryStatus === "completed") {
-    return { stage: "summarized", status: "ready", label: "Summarized", detail: "Source text has been summarized and is ready to use." };
+  if (reviewStatus === "reviewed_kept") {
+    return { stage: "reviewed", status: "ready", label: "Kept", detail: "This imported source has been reviewed and kept." };
   }
-
-  if ((chunkCount ?? 0) > 0) {
-    return { stage: "chunked", status: "ready", label: "Chunked", detail: `Source has been split into ${chunkCount} chunks.` };
+  if (hasReadable && hasIndex) {
+    return { stage: "ready", status: "ready", label: "Ready", detail: "Readable content and a search index are available." };
   }
-
-  if (source.raw_content || webFetchStatus === "fetched" || extractionStatus === "completed") {
-    return { stage: "extracted", status: "ready", label: "Extracted", detail: "Readable content is available." };
+  if (hasReadable) {
+    return { stage: "extracted", status: "waiting", label: "Extracted", detail: "Readable content is available, but indexing is not confirmed." };
   }
-
-  return { stage: "raw", status: "waiting", label: "Raw", detail: "Source exists, but readable processing is still limited." };
+  return { stage: "stored", status: "waiting", label: "Stored", detail: "The source record exists, but readable content is not available yet." };
 }
 
 export function getSourceProcessingSteps(source: Source, options?: { chunkCount?: number | null }): SourceProcessingStep[] {
   const metadata = source.metadata_ ?? {};
-  const reviewStatus = String(metadata.review_status ?? "").toLowerCase();
-  const webFetchStatus = String(metadata.web_fetch_status ?? metadata.last_fetch_status ?? "").toLowerCase();
-  const extractionStatus = String(metadata.extraction_status ?? "").toLowerCase();
-  const summaryStatus = String(metadata.summary_status ?? "").toLowerCase();
+  const reviewStatus = reviewWorkflowStatus(source);
+  const fetchStatus = statusValue(metadata.web_fetch_status ?? metadata.last_fetch_status);
+  const extractionStatus = statusValue(metadata.extraction_status);
+  const extractionMode = statusValue(metadata.extraction_mode ?? metadata.web_fetch_extractor);
+  const indexStatus = statusValue(metadata.index_status);
   const chunkCount = options?.chunkCount ?? null;
-  const failed = [webFetchStatus, extractionStatus, summaryStatus].some((value) => ["failed", "error", "errored"].includes(value));
-  const hasReadable = !!source.raw_content || webFetchStatus === "fetched" || extractionStatus === "completed";
-  const hasChunks = (chunkCount ?? 0) > 0;
-  const hasSummary = summaryStatus === "completed";
-  const summarySupported = summaryStatus.length > 0;
-  const reviewed = reviewStatus === "reviewed_kept";
+  const extractionFailed = isFailed(fetchStatus) || isFailed(extractionStatus);
+  const indexFailed = isFailed(indexStatus);
+  const hasReadable = Boolean(source.raw_content) || fetchStatus === "fetched" || extractionStatus === "completed";
+  const hasIndex = indexStatus === "completed" || (chunkCount ?? 0) > 0;
+  const imported = Boolean(reviewStatus);
 
-  return [
+  const steps: SourceProcessingStep[] = [
     {
-      key: "raw",
-      label: "Raw",
+      key: "stored",
+      label: imported ? "Imported" : "Stored",
       state: "done",
-      detail: "Source has been saved with provenance.",
+      detail: imported ? "The discovered source has been imported with provenance." : "The source has been saved with provenance.",
     },
     {
       key: "extracted",
-      label: "Extracted",
-      state: failed ? "failed" : hasReadable ? "done" : "current",
-      detail: hasReadable ? "Readable content is available." : "Waiting for fetch or text extraction.",
+      label: "Content Extracted",
+      state: extractionFailed ? "failed" : hasReadable ? "done" : "current",
+      detail: extractionFailed
+        ? "Fetching or text extraction failed."
+        : hasReadable
+          ? `Readable content is available${extractionMode ? ` via ${extractionMode}` : ""}.`
+          : "Waiting for readable content to be fetched or extracted.",
     },
     {
-      key: "chunked",
-      label: "Chunked",
-      state: failed ? "failed" : hasChunks ? "done" : hasReadable ? "current" : "pending",
-      detail: hasChunks ? `Generated ${chunkCount} chunks.` : "Chunks are not available yet.",
-    },
-    {
-      key: "summarized",
-      label: "Summarized",
-      state: failed ? "failed" : hasSummary ? "done" : !summarySupported ? "skipped" : hasChunks ? "current" : "pending",
-      detail: hasSummary
-        ? "Summary is available."
-        : !summarySupported
-          ? "This source does not report a standalone summary status."
-          : "Summary has not been generated yet.",
-    },
-    {
-      key: "review",
-      label: "Reviewed",
-      state: reviewed ? "done" : reviewStatus === "imported_reviewable" ? "current" : "pending",
-      detail: reviewed ? "Reviewed and kept." : reviewStatus === "imported_reviewable" ? "Waiting for review." : "No explicit review recorded yet.",
+      key: "indexed",
+      label: "Indexed",
+      state: indexFailed ? "failed" : hasIndex ? "done" : hasReadable ? "current" : "pending",
+      detail: indexFailed
+        ? "Search embeddings or chunks could not be generated."
+        : hasIndex
+          ? (chunkCount === null ? "The source search index is available." : `The source search index contains ${chunkCount} chunks.`)
+          : "The source search index is not available yet.",
     },
   ];
+
+  if (imported) {
+    steps.push({
+      key: "review",
+      label: "Review",
+      state: reviewStatus === "reviewed_kept" ? "done" : "current",
+      detail: reviewStatus === "reviewed_kept" ? "Reviewed and kept." : "Choose whether to keep or discard this automatically imported source.",
+    });
+  } else {
+    steps.push({
+      key: "ready",
+      label: "Ready",
+      state: hasReadable && hasIndex ? "done" : extractionFailed || indexFailed ? "failed" : "pending",
+      detail: hasReadable && hasIndex ? "Ready for search, citation, and Agent use." : "Ready after readable content and indexing are both available.",
+    });
+  }
+
+  return steps;
 }

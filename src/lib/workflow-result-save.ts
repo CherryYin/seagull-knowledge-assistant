@@ -45,6 +45,23 @@ function collectReferences(
   };
 }
 
+function collectInlineKnowledgeReferences(content: string) {
+  const sourceRefs: string[] = [];
+  const noteRefs: string[] = [];
+  const wikiRefs: string[] = [];
+  for (const match of content.matchAll(/\[(Source|Note|Wiki):\s*([^\]\s]+)\]/g)) {
+    const [, type, id] = match;
+    if (type === "Source") sourceRefs.push(id);
+    if (type === "Note") noteRefs.push(id);
+    if (type === "Wiki") wikiRefs.push(id);
+  }
+  return {
+    sourceRefs: unique(sourceRefs),
+    noteRefs: unique(noteRefs),
+    wikiRefs: unique(wikiRefs),
+  };
+}
+
 export async function saveWorkflowResult({
   target,
   sessionId,
@@ -58,6 +75,10 @@ export async function saveWorkflowResult({
 }: SaveWorkflowResultInput) {
   const title = deriveTitle(content, assetDraft?.title || explicitTitle);
   const { sourceRefs, noteRefs, wikiRefs } = collectReferences(references, objectRef);
+  const inlineReferences = collectInlineKnowledgeReferences(content);
+  sourceRefs.push(...inlineReferences.sourceRefs);
+  noteRefs.push(...inlineReferences.noteRefs);
+  wikiRefs.push(...inlineReferences.wikiRefs);
   sourceRefs.push(...(assetDraft?.sourceRefs ?? []));
   noteRefs.push(...(assetDraft?.noteRefs ?? []));
   wikiRefs.push(...(assetDraft?.wikiRefs ?? []));
@@ -86,7 +107,8 @@ export async function saveWorkflowResult({
       metadata: {
         workflow_id: workflowId || null,
         audience: assetDraft?.audience || null,
-        generation_mode: assetDraft ? "manual_request" : "workflow",
+        generation_mode: assetDraft?.intakeMode === "agent_assisted" ? "agent_assisted" : assetDraft ? "manual_request" : "workflow",
+        research_mode: assetDraft?.researchMode || null,
       },
       provenance: {
         origin_type: "harness_session",

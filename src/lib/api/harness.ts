@@ -6,7 +6,7 @@ function notifyIfAuthExpired(response: Response): void {
 }
 
 export interface HarnessChatEvent {
-  type: "session" | "text" | "tool_call" | "tool_result" | "done" | "error";
+  type: "session" | "text" | "tool_call" | "tool_result" | "question" | "done" | "error";
   content?: string;
   tool?: string;
   args?: unknown;
@@ -14,10 +14,32 @@ export interface HarnessChatEvent {
   session_id?: string;
   preset?: string;
   call_id?: string;
+  rpc_id?: string;
+  questions?: HarnessQuestionItem[];
+}
+
+export interface HarnessQuestionOption {
+  label: string;
+  description?: string;
+}
+
+export interface HarnessQuestionItem {
+  id: string;
+  question: string;
+  header?: string;
+  options?: HarnessQuestionOption[];
+  multiSelect?: boolean;
+}
+
+export interface HarnessQuestionAnswer {
+  id: string;
+  selected: string[];
+  custom?: string;
 }
 
 export interface HarnessChatOptions {
   preset?: string;
+  model?: string | null;
   sessionId?: string;
   createSession?: boolean;
   clientTimeZone?: string;
@@ -35,6 +57,7 @@ export async function* harnessChat(prompt: string, options: HarnessChatOptions =
     body: JSON.stringify({
       prompt,
       preset: options.preset,
+      model: options.model,
       session_id: options.sessionId,
       create_session: options.createSession,
       client_time_zone: options.clientTimeZone,
@@ -67,6 +90,71 @@ export async function* harnessChat(prompt: string, options: HarnessChatOptions =
         try { yield JSON.parse(data) as HarnessChatEvent; } catch { /* skip */ }
       }
     }
+  }
+}
+
+export interface HarnessModelInfo {
+  id: string;
+  name: string;
+  provider: string;
+  provider_name: string;
+  reasoning?: { efforts?: Array<{ id: string; name: string; description?: string }>; defaultEffort?: string } | null;
+}
+
+export interface HarnessModelsResponse {
+  models: HarnessModelInfo[];
+  failures: Array<{ id: string; name: string; message: string }>;
+}
+
+export interface HarnessDefaultModelSettings {
+  writable: boolean;
+  provider: string | null;
+  model: string | null;
+  reasoning_effort: string | null;
+  revision: number | null;
+}
+
+async function harnessJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = localStorage.getItem(TOKEN_KEY);
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init?.headers || {}),
+    },
+    credentials: "include",
+  });
+  if (!response.ok) {
+    notifyIfAuthExpired(response);
+    const detail = await response.text().catch(() => response.statusText);
+    throw new Error(`${response.status}: ${detail}`);
+  }
+  return response.json();
+}
+
+export const harnessSettingsApi = {
+  listModels: () => harnessJson<HarnessModelsResponse>("/api/harness/models"),
+  getDefaultModel: () => harnessJson<HarnessDefaultModelSettings>("/api/harness/model-settings"),
+  updateDefaultModel: (body: { provider: string; model: string; reasoning_effort?: string | null; revision?: number | null }) =>
+    harnessJson<HarnessDefaultModelSettings>("/api/harness/model-settings", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+};
+
+export async function answerHarnessQuestion(rpcId: string, sessionId: string, answers: HarnessQuestionAnswer[]): Promise<void> {
+  const token = localStorage.getItem(TOKEN_KEY);
+  const res = await fetch(`${API_BASE}/api/harness/questions/respond`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({ rpc_id: rpcId, session_id: sessionId, answers }),
+    credentials: "include",
+  });
+  if (!res.ok) {
+    notifyIfAuthExpired(res);
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(body.error || `Failed to answer Harness question: ${res.status}`);
   }
 }
 

@@ -11,6 +11,7 @@ import { MarkdownRenderer } from "@/components/markdown";
 import { sourcesApi, notesApi, wikiApi, categoriesApi, downloadFile, type Source, type SourceChunk, type SourceUpdate, type SourceList } from "@/lib/api";
 import { buildAssetHandoffState } from "@/lib/asset-handoff";
 import { getSourceProcessingState, getSourceProcessingSteps } from "@/lib/sourceProcessingStatus";
+import { isRssFeedSource, sourcePresentationLabel } from "@/lib/source-presentation";
 
 type ViewMode = "full" | "slices";
 type SourceEditDraft = {
@@ -46,6 +47,12 @@ export function SourceDetailPage() {
     queryKey: ["source-chunks", id],
     queryFn: () => sourcesApi.chunks(id!),
     enabled: !!id && viewMode === "slices",
+  });
+
+  const { data: chunkCountData } = useQuery({
+    queryKey: ["source-chunk-count", id],
+    queryFn: () => sourcesApi.chunkCount(id!),
+    enabled: !!id,
   });
 
   const { data: catData } = useQuery({
@@ -90,7 +97,7 @@ export function SourceDetailPage() {
     },
   });
 
-  const isRssEnabled = source?.metadata_?.rss_enabled === "true";
+  const isRssEnabled = source ? isRssFeedSource(source) : false;
   const isWebDirectoryEnabled = source?.metadata_?.web_directory_enabled === true;
   const pdfUrl = typeof source?.metadata_?.pdf_url === "string"
     ? source.metadata_.pdf_url
@@ -297,8 +304,9 @@ export function SourceDetailPage() {
   }
 
   const hasChunks = chunks && chunks.length > 0;
-  const processing = getSourceProcessingState(source, { chunkCount: chunks?.length ?? null });
-  const processingSteps = getSourceProcessingSteps(source, { chunkCount: chunks?.length ?? null });
+  const chunkCount = chunkCountData?.count ?? chunks?.length ?? null;
+  const processing = getSourceProcessingState(source, { chunkCount });
+  const processingSteps = getSourceProcessingSteps(source, { chunkCount });
 
   return (
     <div className="h-full overflow-y-auto">
@@ -471,7 +479,7 @@ export function SourceDetailPage() {
           ) : (
             <>
               <div className="flex items-center gap-2 mb-2">
-                <Badge variant="source">{source.source_type}</Badge>
+                <Badge variant="source">{sourcePresentationLabel(source)}</Badge>
                 {isNews && <Badge variant="secondary">news</Badge>}
                 <Badge variant="outline">{processing.label}</Badge>
                 {source.category_name && source.category_name !== "general" && (
@@ -560,17 +568,17 @@ export function SourceDetailPage() {
         </div>
 
         {!editing && (
-          <div className="mb-6 rounded-lg border border-border bg-card p-4">
+          <div className="mb-6 rounded-lg border border-border bg-card p-4" data-source-processing-status>
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h2 className="text-sm font-medium">Processing Timeline</h2>
+                <h2 className="text-sm font-medium">Processing Status</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Track whether this source has readable content, chunks, summaries, and review status.
+                  Track storage, readable-content extraction, search indexing, and review only when this source came from an automatic import.
                 </p>
               </div>
               <Badge variant="outline">{processing.label}</Badge>
             </div>
-            <div className="mt-4 grid gap-3 md:grid-cols-5">
+            <div className="mt-4 grid gap-3 md:grid-cols-4">
               {processingSteps.map((step) => (
                 <div key={step.key} className="rounded-lg border p-3">
                   <div className="flex items-center justify-between gap-2">
@@ -584,19 +592,6 @@ export function SourceDetailPage() {
                   <p className="mt-2 text-xs leading-5 text-muted-foreground">{step.detail}</p>
                 </div>
               ))}
-              {(extractionMode || extractionStatus) && (
-                <div className="rounded-lg border p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Extraction</p>
-                    <Badge variant={extractionStatus === "completed" ? "secondary" : "outline"}>
-                      {extractionStatus || "unknown"}
-                    </Badge>
-                  </div>
-                  <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                    Mode: {extractionMode || "unknown"}
-                  </p>
-                </div>
-              )}
             </div>
           </div>
         )}
@@ -673,35 +668,14 @@ export function SourceDetailPage() {
           </div>
         )}
 
-        {/* RSS Section — only for web sources */}
-        {source.source_type === "web" && (
+        {/* RSS Section — only for sources configured as RSS feeds */}
+        {source.source_type === "web" && isRssEnabled && (
           <div className="mb-6 rounded-lg border border-border p-4">
             <div className="flex items-center gap-2 mb-3">
               <Rss className="h-4 w-4 text-orange-500" />
               <span className="text-sm font-medium">RSS Feed</span>
             </div>
-            {!isRssEnabled ? (
-              <div>
-                <p className="text-sm text-muted-foreground mb-2">
-                  Enable RSS to automatically fetch new articles from this feed.
-                </p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => enableRssMutation.mutate()}
-                  disabled={enableRssMutation.isPending}
-                >
-                  <Rss className="h-4 w-4" />
-                  {enableRssMutation.isPending ? "Validating feed..." : "Enable RSS"}
-                </Button>
-                {enableRssMutation.isError && (
-                  <p className="text-sm text-destructive mt-2">
-                    {enableRssMutation.error instanceof Error ? enableRssMutation.error.message : "Failed to enable RSS"}
-                  </p>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-3">
+            <div className="space-y-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge variant="secondary" className="bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300">
                     RSS Active
@@ -766,8 +740,7 @@ export function SourceDetailPage() {
                     </div>
                   </div>
                 )}
-              </div>
-            )}
+            </div>
           </div>
         )}
 
@@ -821,8 +794,8 @@ export function SourceDetailPage() {
 
         {/* Content area */}
         {viewMode === "full" ? (
-          <div className="rounded-lg border border-border p-6 max-h-[70vh] overflow-y-auto">
-            <div className="prose">
+          <div className="rounded-lg border border-border p-6 max-h-[70vh] overflow-y-auto" data-source-content>
+            <div className={`prose max-w-none ${source.source_type === "web" ? "whitespace-pre-wrap" : ""}`}>
               <MarkdownRenderer>{source.raw_content || (source.file_path ? "*(Original file stored in MinIO)*" : "*No content*")}</MarkdownRenderer>
             </div>
           </div>

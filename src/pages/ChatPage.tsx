@@ -12,11 +12,14 @@ import { QuestionCard } from "@/components/QuestionCard";
 import { ResearchSteps, type StepInfo } from "@/components/ResearchSteps";
 import {
   harnessChat,
+  harnessSettingsApi,
+  answerHarnessQuestion,
   chatSessionsApi,
-  knowledgeApi,
   categoriesApi,
   sessionContextsApi,
   type ChatSessionMessage,
+  type HarnessQuestionItem,
+  type HarnessQuestionAnswer,
 } from "@/lib/api";
 import {
   createEmptySession,
@@ -59,8 +62,9 @@ export function ChatPage() {
   const [steps, setSteps] = useState<StepInfo[]>([]);
   const [deepResearch, setDeepResearch] = useState(false);
   const [pendingQuestion, setPendingQuestion] = useState<{
-    question: string;
-    options?: string[];
+    rpcId: string;
+    sessionId: string;
+    questions: HarnessQuestionItem[];
   } | null>(null);
   const [activeModel, setActiveModel] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -107,8 +111,8 @@ export function ChatPage() {
   }, []);
 
   const { data: models } = useQuery({
-    queryKey: ["models"],
-    queryFn: () => knowledgeApi.models(),
+    queryKey: ["harness-models"],
+    queryFn: () => harnessSettingsApi.listModels(),
     staleTime: 60 * 60 * 1000,
   });
 
@@ -270,6 +274,7 @@ export function ChatPage() {
       try {
         const stream = harnessChat(task, {
           preset: harnessPreset,
+          model: activeModel,
           sessionId,
           createSession: createHarnessSession,
           clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -313,6 +318,15 @@ export function ChatPage() {
                     : s
                 );
               });
+              break;
+            case "question":
+              if (event.rpc_id && event.session_id && event.questions?.length) {
+                setPendingQuestion({
+                  rpcId: event.rpc_id,
+                  sessionId: event.session_id,
+                  questions: event.questions,
+                });
+              }
               break;
             case "error": {
               const errorText = `\n\nError: ${event.content ?? "Harness error"}`;
@@ -362,15 +376,6 @@ export function ChatPage() {
         abortRef.current = null;
         setStreaming(false);
         setSteps([]);
-        // Fallback: if ask_human SSE didn't fire but content has the marker
-        if (!stopped && fullResponse.includes("[WAITING_FOR_HUMAN]")) {
-          setPendingQuestion((prev) => {
-            if (prev) return prev; // SSE already set it
-            const lines = fullResponse.split("[WAITING_FOR_HUMAN]").pop()?.trim() || "";
-            const question = lines.split("\n---")[0].trim();
-            return question ? { question } : null;
-          });
-        }
         const finalMessages = [
           ...baseMessages,
           userMsg,
@@ -634,11 +639,10 @@ export function ChatPage() {
 
               {pendingQuestion ? (
                 <QuestionCard
-                  question={pendingQuestion.question}
-                  options={pendingQuestion.options}
-                  onAnswer={(answer) => {
+                  questions={pendingQuestion.questions}
+                  onSubmit={async (answers: HarnessQuestionAnswer[]) => {
+                    await answerHarnessQuestion(pendingQuestion.rpcId, pendingQuestion.sessionId, answers);
                     setPendingQuestion(null);
-                    sendMessage(answer);
                   }}
                 />
               ) : (
@@ -680,7 +684,7 @@ export function ChatPage() {
                     <Microscope className="h-3.5 w-3.5" />
                     Deep Research
                   </button>
-                  {models && models.length > 0 && (
+                  {models && models.models.length > 0 && (
                     <div className="flex items-center gap-1.5 rounded-full border border-border px-2 py-0.5">
                       <Cpu className="h-3.5 w-3.5 text-muted-foreground" />
                       <select
@@ -690,9 +694,9 @@ export function ChatPage() {
                       >
                         <option value="">System Default</option>
                         {(() => {
-                          const groups = new Map<string, typeof models>();
-                          for (const m of models) {
-                            const key = m.provider_id;
+                          const groups = new Map<string, typeof models.models>();
+                          for (const m of models.models) {
+                            const key = m.provider;
                             if (!groups.has(key)) groups.set(key, []);
                             groups.get(key)!.push(m);
                           }
@@ -700,7 +704,7 @@ export function ChatPage() {
                             <optgroup key={providerId} label={items[0].provider_name}>
                               {items.map((m) => (
                                 <option key={`${providerId}:${m.id}`} value={`${providerId}:${m.id}`}>
-                                  {m.display_name}
+                                  {m.name}
                                 </option>
                               ))}
                             </optgroup>

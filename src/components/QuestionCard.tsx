@@ -1,64 +1,104 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import type { HarnessQuestionAnswer, HarnessQuestionItem } from "@/lib/api";
 
 interface QuestionCardProps {
-  question: string;
-  options?: string[];
-  onAnswer: (answer: string) => void;
+  questions: HarnessQuestionItem[];
+  onSubmit: (answers: HarnessQuestionAnswer[]) => Promise<void> | void;
 }
 
-export function QuestionCard({ question, options, onAnswer }: QuestionCardProps) {
-  const [customInput, setCustomInput] = useState("");
+interface DraftAnswer {
+  selected: string[];
+  custom: string;
+}
 
-  const handleSubmitCustom = () => {
-    const text = customInput.trim();
-    if (!text) return;
-    setCustomInput("");
-    onAnswer(text);
-  };
+export function QuestionCard({ questions, onSubmit }: QuestionCardProps) {
+  const [drafts, setDrafts] = useState<Record<string, DraftAnswer>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const complete = useMemo(() => questions.every((question) => {
+    const draft = drafts[question.id];
+    return Boolean(draft && (draft.selected.length > 0 || draft.custom.trim()));
+  }), [drafts, questions]);
+
+  function update(questionId: string, updater: (current: DraftAnswer) => DraftAnswer) {
+    setDrafts((current) => ({
+      ...current,
+      [questionId]: updater(current[questionId] ?? { selected: [], custom: "" }),
+    }));
+  }
+
+  function toggleOption(question: HarnessQuestionItem, label: string) {
+    update(question.id, (current) => ({
+      ...current,
+      selected: question.multiSelect
+        ? current.selected.includes(label)
+          ? current.selected.filter((value) => value !== label)
+          : [...current.selected, label]
+        : [label],
+    }));
+  }
+
+  async function handleSubmit() {
+    if (!complete || submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await onSubmit(questions.map((question) => {
+        const draft = drafts[question.id] ?? { selected: [], custom: "" };
+        return {
+          id: question.id,
+          selected: draft.selected,
+          ...(draft.custom.trim() ? { custom: draft.custom.trim() } : {}),
+        };
+      }));
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : "Unable to submit the answer.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   return (
     <div className="border-t border-border bg-card/50 px-6 py-4">
-      <div className="mx-auto max-w-3xl">
-        <p className="mb-3 text-sm font-medium">{question}</p>
-
-        {options && options.length > 0 && (
-          <div className="mb-3 flex flex-wrap gap-2">
-            {options.map((opt, i) => (
-              <Button
-                key={i}
-                variant="outline"
-                size="sm"
-                className="h-auto whitespace-normal text-left py-2"
-                onClick={() => onAnswer(opt)}
-              >
-                {opt}
-              </Button>
-            ))}
-          </div>
-        )}
-
-        <div className="flex items-center gap-2">
-          <Input
-            value={customInput}
-            onChange={(e) => setCustomInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                handleSubmitCustom();
-              }
-            }}
-            placeholder={options?.length ? "或输入自定义回复..." : "输入你的回复..."}
-            className="flex-1"
-          />
-          <Button
-            size="icon"
-            onClick={handleSubmitCustom}
-            disabled={!customInput.trim()}
-          >
-            <Send className="h-4 w-4" />
+      <div className="mx-auto max-w-3xl space-y-5">
+        {questions.map((question) => {
+          const draft = drafts[question.id] ?? { selected: [], custom: "" };
+          return (
+            <div key={question.id} className="space-y-3">
+              {question.header && <p className="text-xs font-semibold uppercase tracking-wide text-primary">{question.header}</p>}
+              <p className="text-sm font-medium">{question.question}</p>
+              {question.options && question.options.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {question.options.map((option) => (
+                    <Button
+                      key={option.label}
+                      type="button"
+                      variant={draft.selected.includes(option.label) ? "default" : "outline"}
+                      size="sm"
+                      className="h-auto max-w-full whitespace-normal py-2 text-left"
+                      onClick={() => toggleOption(question, option.label)}
+                    >
+                      <span><span className="font-medium">{option.label}</span>{option.description && <span className="ml-1 opacity-75">— {option.description}</span>}</span>
+                    </Button>
+                  ))}
+                </div>
+              )}
+              <Input
+                value={draft.custom}
+                onChange={(event) => update(question.id, (current) => ({ ...current, custom: event.target.value }))}
+                placeholder={question.options?.length ? "补充说明或输入其他答案…" : "输入你的回复…"}
+              />
+            </div>
+          );
+        })}
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        <div className="flex justify-end">
+          <Button onClick={handleSubmit} disabled={!complete || submitting}>
+            <Send className="mr-2 h-4 w-4" />{submitting ? "Submitting…" : "Continue"}
           </Button>
         </div>
       </div>

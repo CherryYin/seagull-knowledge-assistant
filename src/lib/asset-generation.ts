@@ -9,6 +9,8 @@ export interface AssetGenerationRequest {
   sourceRefs: string[];
   noteRefs: string[];
   wikiRefs: string[];
+  intakeMode?: "manual" | "agent_assisted";
+  researchMode?: "local_only" | "local_then_web";
 }
 
 export const MANUAL_ASSET_TYPES: Array<{
@@ -146,7 +148,7 @@ export function assessAssetDraft(content: string, request: AssetGenerationReques
   }
 
   if (!title) warnings.push("Draft does not start with an H1 title.");
-  else if (normalizedHeading(title) !== normalizedHeading(request.title)) {
+  else if (request.title.trim() && normalizedHeading(title) !== normalizedHeading(request.title)) {
     warnings.push(`H1 title differs from the requested working title: ${request.title}.`);
   }
   if (trimmed.length < 500) warnings.push("Draft is unusually short for a finished deliverable.");
@@ -214,13 +216,28 @@ export function renderAssetGenerationContract(request: AssetGenerationRequest) {
 
   return [
     `${assetTypeLabel(request.assetType)} delivery contract:`,
+    `Intake mode: ${request.intakeMode === "agent_assisted" ? "agent-assisted clarification" : "user-specified brief"}.`,
+    `Research mode: ${request.researchMode === "local_then_web" ? "search PKG first, then run focused web research for at least one concrete freshness or evidence gap" : "PKG knowledge only"}.`,
+    ...(request.intakeMode === "agent_assisted" ? [
+      "Before drafting, assess whether the objective, audience, scope, decision to support, or constraints are materially ambiguous.",
+      "If important ambiguity remains, call ask_user_question with no more than three concise questions and wait for the answers.",
+      "Do not ask the user to manually locate knowledge records; discover relevant PKG evidence yourself.",
+    ] : []),
     "Return the final response as the editable Markdown deliverable itself, not as a description of how you would write it.",
-    `Start with exactly one H1 using the working title: # ${request.title}`,
+    request.title.trim()
+      ? `Start with exactly one H1 using the working title: # ${request.title}`
+      : "Start with exactly one H1 using a concise title inferred from the confirmed brief.",
     "Use these required H2 sections in this order:",
     ...requiredSections.map((section) => `- ## ${section}`),
     "",
     "Evidence rules:",
+    "- Search PKG before drafting. Read the full relevant Source or Note when a read tool is available.",
     "- Read the explicitly selected knowledge records before relying on them.",
+    ...(request.researchMode === "local_then_web" ? [
+      "- After the PKG pass, identify a concrete freshness or evidence gap and call web_search at least once for that gap.",
+      "- Keep web evidence visibly separate from PKG evidence and include its URL in the evidence section.",
+      "- If web_search fails or returns no citeable URL, state that failure in Review Notes instead of claiming network research completed.",
+    ] : ["- Do not use external web evidence for this request."]),
     "- Mark grounded claims inline with [Source: id], [Note: id], or [Wiki: id].",
     "- Never invent a citation. If a selected record is unavailable or does not support the claim, say so in Review Notes.",
     `- Selected reference markers: ${selectedReferences.join(", ") || "none"}`,
@@ -230,7 +247,7 @@ export function renderAssetGenerationContract(request: AssetGenerationRequest) {
     ...qualityCriteria.map((criterion) => `- ${criterion}`),
     "",
     "Completion checklist:",
-    "- The document directly answers the user’s objective and fits the named audience.",
+    `- The document directly answers the user’s objective and fits ${request.audience.trim() ? `the named audience (${request.audience})` : "the audience confirmed during intake"}.`,
     "- The requested style is applied without sacrificing clarity or evidence traceability.",
     "- Every selected reference was inspected or explicitly reported unavailable.",
     "- Unsupported claims, uncertainty, and remaining editorial work appear only in Review Notes.",

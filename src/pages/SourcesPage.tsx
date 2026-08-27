@@ -16,6 +16,7 @@ import { sourcesApi, categoriesApi, connectorsApi, type ArxivPaper, type GitHubR
 import { discoveryApi, type DiscoveryItem } from "@/lib/api";
 import { paperDiscoveryApi } from "@/lib/api/paper-discovery";
 import { ModuleSectionNav } from "@/components/SectionNav";
+import { isRssFeedSource, sourcePresentationLabel } from "@/lib/source-presentation";
 
 const SOURCE_TYPES = ["pdf", "article", "conversation", "video", "web", "github"];
 const FEED_VIEWS = [
@@ -389,6 +390,7 @@ export function SourcesPage() {
                     type="file"
                     onChange={(e) => {
                       const nextFile = e.target.files?.[0] || null;
+                      uploadMutation.reset();
                       setUploadFile(nextFile);
                       if (nextFile && !form.title) {
                         setForm({ ...form, title: nextFile.name.replace(/\.[^.]+$/, "") });
@@ -443,6 +445,15 @@ export function SourcesPage() {
                         ? "Upload & Create"
                         : "Create"}
                 </Button>
+                {(uploadMutation.isError || createMutation.isError) && (
+                  <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">
+                    {uploadMutation.error instanceof Error
+                      ? `Upload failed: ${uploadMutation.error.message}`
+                      : createMutation.error instanceof Error
+                        ? `Create failed: ${createMutation.error.message}`
+                        : "Unable to create this Source."}
+                  </p>
+                )}
               </div>
             </DialogContent>
           </Dialog>
@@ -690,12 +701,12 @@ function SourceRow({
   isKeeping?: boolean;
   isDeleting?: boolean;
 }) {
-  const isRss = (source.source_type === "web" || source.source_type === "article") && source.metadata_?.rss_enabled === "true";
+  const isRss = isRssFeedSource(source);
   const isFeedArticle = Boolean(source.metadata_?.feed_source_id);
   const isNews = source.source_type === "article" && source.metadata_?.kind === "news";
   const sourceName = typeof source.metadata_?.source_name === "string" ? source.metadata_.source_name : null;
   const publishedAt = typeof source.metadata_?.published_at === "string" ? source.metadata_.published_at : null;
-  const label = isFeedArticle ? "feed article" : isRss ? "feed" : source.source_type === "web" ? "web snapshot" : source.source_type;
+  const label = sourcePresentationLabel(source);
   const processing = getSourceProcessingState(source);
   return (
     <div

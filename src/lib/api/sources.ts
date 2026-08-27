@@ -56,6 +56,7 @@ export const sourcesApi = {
   },
   get: (id: string) => request<Source>(`/sources/${encodeURIComponent(id)}`),
   chunks: (id: string) => request<SourceChunk[]>(`/sources/${encodeURIComponent(id)}/chunks`),
+  chunkCount: (id: string) => request<{ count: number }>(`/sources/${encodeURIComponent(id)}/chunk-count`),
   create: (body: SourceCreate) =>
     request<Source>("/sources", { method: "POST", body: JSON.stringify(body) }),
   upload: (body: FormData) =>

@@ -122,7 +122,7 @@ export function HomePage() {
   const failedSourceItems = sources.filter((source) => isFailedSource(source));
   const unprocessedSources = sources.filter((source) => {
     const state = getSourceProcessingState(source);
-    return state.stage === "raw" || state.status === "waiting";
+    return state.stage === "stored" || state.status === "waiting";
   });
   const digestPending = counts?.digest_pending ?? 0;
   const pendingNotesCount = pendingNoteData?.total ?? 0;

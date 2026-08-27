@@ -28,13 +28,14 @@ export function AssetGenerationPage() {
   const [sourceRefs, setSourceRefs] = useState<string[]>(initialSeed.sourceRefs);
   const [noteRefs, setNoteRefs] = useState<string[]>(initialSeed.noteRefs);
   const [wikiRefs, setWikiRefs] = useState<string[]>(initialSeed.wikiRefs);
+  const [allowWebResearch, setAllowWebResearch] = useState(true);
 
   const sources = useQuery({ queryKey: ["asset-wizard-sources"], queryFn: () => sourcesApi.list({ limit: 50 }) });
   const notes = useQuery({ queryKey: ["asset-wizard-notes"], queryFn: () => notesApi.list({ status: "kept", limit: 50 }) });
   const wiki = useQuery({ queryKey: ["asset-wizard-wiki"], queryFn: () => wikiApi.list({ limit: 50 }) });
   const evidenceCount = sourceRefs.length + noteRefs.length + wikiRefs.length;
   const selectedType = useMemo(() => MANUAL_ASSET_TYPES.find((item) => item.value === assetType), [assetType]);
-  const canContinue = title.trim() && audience.trim() && brief.trim() && evidenceCount > 0;
+  const canContinue = Boolean(brief.trim());
 
   function startGeneration() {
     if (!canContinue) return;
@@ -47,12 +48,14 @@ export function AssetGenerationPage() {
       sourceRefs,
       noteRefs,
       wikiRefs,
+      intakeMode: "agent_assisted",
+      researchMode: allowWebResearch ? "local_then_web" : "local_only",
     };
     navigate("/chat", {
       state: {
         workflowId: "draft-asset",
         assetDraft: request,
-        promptSeed: `Create a ${selectedType?.label ?? "knowledge asset"} titled "${request.title}" for ${request.audience}.`,
+        promptSeed: `Help me turn this need into a ${selectedType?.label ?? "knowledge asset"}: ${request.brief}`,
       },
     });
   }
@@ -69,7 +72,7 @@ export function AssetGenerationPage() {
             <div>
               <h1 className="text-3xl font-semibold tracking-tight">Create an Asset</h1>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-                Define the delivery need and knowledge evidence first. Generation happens in a Harness Session; PKG receives an Asset only after you confirm the draft.
+                Describe what you need. The Asset Agent will clarify material ambiguity, search your PKG first, and optionally run focused web research. PKG receives an Asset only after you confirm the draft.
               </p>
             </div>
           </div>
@@ -87,17 +90,21 @@ export function AssetGenerationPage() {
         </Card>
 
         <Card>
-          <CardHeader><CardTitle>2. Define the need</CardTitle><CardDescription>The Agent should know what success means before it starts writing.</CardDescription></CardHeader>
+          <CardHeader><CardTitle>2. Describe the need</CardTitle><CardDescription>Only the objective is required. Title and audience can be clarified in Chat.</CardDescription></CardHeader>
           <CardContent className="space-y-4">
-            <Input aria-label="Asset title" placeholder="Working title" value={title} onChange={(event) => setTitle(event.target.value)} />
-            <Input aria-label="Target audience" placeholder="Target audience" value={audience} onChange={(event) => setAudience(event.target.value)} />
+            <Input aria-label="Asset title" placeholder="Optional working title" value={title} onChange={(event) => setTitle(event.target.value)} />
+            <Input aria-label="Target audience" placeholder="Optional target audience" value={audience} onChange={(event) => setAudience(event.target.value)} />
             <Textarea aria-label="Asset brief" placeholder="What question should this asset answer, and what should the reader be able to do afterward?" rows={5} value={brief} onChange={(event) => setBrief(event.target.value)} />
             <Textarea aria-label="Style guidance" placeholder="Optional style, tone, structure, or constraints" rows={3} value={styleNotes} onChange={(event) => setStyleNotes(event.target.value)} />
+            <label className="flex items-start gap-3 rounded-xl border p-4 text-sm">
+              <input type="checkbox" className="mt-1" checked={allowWebResearch} onChange={(event) => setAllowWebResearch(event.target.checked)} />
+              <span><span className="block font-medium">Include focused web research</span><span className="mt-1 block text-muted-foreground">After searching PKG, the Agent must run at least one web search for a concrete freshness or evidence gap. Network evidence remains separate from local knowledge.</span></span>
+            </label>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader><CardTitle>3. Select knowledge evidence</CardTitle><CardDescription>Choose at least one Source, Note, or Wiki page. The Agent may retrieve additional related knowledge during generation.</CardDescription></CardHeader>
+          <CardHeader><CardTitle>3. Add optional seed evidence</CardTitle><CardDescription>You no longer need to find everything yourself. Selected records are guaranteed starting points; the Agent searches for additional relevant PKG knowledge.</CardDescription></CardHeader>
           <CardContent className="grid gap-4 lg:grid-cols-3">
             <EvidenceColumn icon={<FileText className="h-4 w-4" />} title="Sources" items={(sources.data?.items ?? []).map((item) => ({ id: item.id, title: item.title, detail: item.source_type }))} selected={sourceRefs} onToggle={(id) => setSourceRefs((values) => toggle(values, id))} />
             <EvidenceColumn icon={<NotebookPen className="h-4 w-4" />} title="Notes" items={(notes.data?.items ?? []).map((item) => ({ id: item.id, title: item.title, detail: item.note_type }))} selected={noteRefs} onToggle={(id) => setNoteRefs((values) => toggle(values, id))} />
@@ -106,8 +113,8 @@ export function AssetGenerationPage() {
         </Card>
 
         <div className="flex items-center justify-between rounded-2xl border bg-card p-5">
-          <div><p className="font-medium">{selectedType?.label}</p><p className="text-sm text-muted-foreground">{evidenceCount} knowledge records selected · no Asset has been created yet</p></div>
-          <Button onClick={startGeneration} disabled={!canContinue}>Start Generation Session<ArrowRight className="ml-2 h-4 w-4" /></Button>
+          <div><p className="font-medium">{selectedType?.label}</p><p className="text-sm text-muted-foreground">Agent-assisted intake · {evidenceCount} optional seed records · no Asset has been created yet</p></div>
+          <Button onClick={startGeneration} disabled={!canContinue}>Start Agent-Assisted Session<ArrowRight className="ml-2 h-4 w-4" /></Button>
         </div>
       </div>
     </div>

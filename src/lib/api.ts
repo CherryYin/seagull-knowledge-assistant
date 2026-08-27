@@ -23,8 +23,10 @@ export * from "./api/session-contexts";
 // ── Harness API ────────────────────────────────────────
 export {
   harnessChat,
+  harnessSettingsApi,
+  answerHarnessQuestion,
   listSessions,
   listPresets,
   submitExperiment,
 } from "./api/harness";
-export type { HarnessChatEvent, HarnessSession, HarnessPreset } from "./api/harness";
+export type { HarnessChatEvent, HarnessSession, HarnessPreset, HarnessQuestionItem, HarnessQuestionAnswer, HarnessModelInfo, HarnessDefaultModelSettings } from "./api/harness";

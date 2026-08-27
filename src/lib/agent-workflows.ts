@@ -291,10 +291,10 @@ Output exactly these sections:
   {
     id: "draft-asset",
     group: "produce",
-    title: "按需求起草 Asset",
-    description: "根据明确的交付目的、目标读者和知识材料，生成可审阅的 Asset 草稿。",
-    requiredInput: "Asset 类型、目标读者、交付目的和知识材料",
-    inputPlaceholder: "请先从 Assets 页面使用 Create Asset 向导填写生成需求。",
+    title: "Agent 辅助生成 Asset",
+    description: "Agent 先澄清交付需求，再自动检索本地知识并按需补充网络证据，生成可审阅草稿。",
+    requiredInput: "一个希望解决的问题、表达目标或交付需求",
+    inputPlaceholder: "例如：帮我整理一份说明不同文档解析方案取舍的材料，受众和结构可以先和我确认...",
     saveTargets: ["asset", "review_note"],
     outputSections: [
       "Audience and Objective",
@@ -304,11 +304,13 @@ Output exactly these sections:
       "Evidence Used",
       "Review Notes",
     ],
-    promptTemplate: `Create an editable asset draft from the supplied generation request and knowledge references.
-The user has explicitly chosen the asset type, audience, objective, and style.
-Use available PKG tools to read referenced Sources, Notes, and Wiki pages when possible.
-Keep claims traceable to evidence and flag unsupported claims instead of inventing support.
-Produce a polished but reviewable draft. Do not save, export, or publish automatically.
+    promptTemplate: `Help the user turn the supplied need into an editable Asset draft.
+Do not assume the first request fully specifies the audience, scope, decision use, freshness requirement, or constraints.
+If important ambiguity remains, use ask_user_question and wait for the user's answer before drafting.
+Search PKG yourself instead of requiring the user to manually choose every knowledge record. Read relevant full records when possible.
+When the delivery contract allows it, use web_search/web_fetch only to fill material evidence gaps after local search.
+Keep PKG evidence and network evidence visibly separate. Keep claims traceable and flag unsupported claims instead of inventing support.
+Produce a polished but reviewable draft. Do not save, export, publish, or mutate PKG automatically.
 The final answer must be the deliverable itself rather than a process report.`,
   },
   {

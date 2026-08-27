@@ -368,11 +368,11 @@ export const APP_MODULES: AppModuleConfig[] = [
   },
   {
     id: "lab",
-    label: "实验台",
+    label: "Experiment Lab",
     group: "agent",
     route: "/lab",
     icon: FlaskConical,
-    description: "Agent 实验台 — 设计实验、对比结果、固化为 Skill。",
+    description: "Agent Experiment Lab — design experiments, compare results, and turn them into Skills.",
     nav: { primary: true, order: 5 },
     visibility: { defaultEnabled: false, configurable: true, experimental: true },
     dependencies: ["agent-chat"],
