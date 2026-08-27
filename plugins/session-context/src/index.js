@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url'
 import { Pool } from 'pg'
 
 const ASSET_TYPES = new Set(['blog_post', 'research_brief', 'knowledge_pack', 'topic_report'])
+const INTAKE_MODES = new Set(['manual', 'agent_assisted'])
+const RESEARCH_MODES = new Set(['local_only', 'local_then_web'])
 
 function requiredText(value, field) {
   if (typeof value !== 'string' || !value.trim()) throw new TypeError(`${field} is required`)
@@ -29,15 +31,25 @@ function normalizeAssetDraft(value) {
     throw new TypeError('assetDraft is required')
   }
   if (!ASSET_TYPES.has(value.assetType)) throw new TypeError('assetDraft.assetType is invalid')
+  const intakeMode = value.intakeMode === undefined ? 'manual' : value.intakeMode
+  const researchMode = value.researchMode === undefined ? 'local_only' : value.researchMode
+  if (!INTAKE_MODES.has(intakeMode)) throw new TypeError('assetDraft.intakeMode is invalid')
+  if (!RESEARCH_MODES.has(researchMode)) throw new TypeError('assetDraft.researchMode is invalid')
   return {
     assetType: value.assetType,
-    title: requiredText(value.title, 'assetDraft.title'),
+    title: intakeMode === 'agent_assisted'
+      ? optionalText(value.title, 'assetDraft.title')
+      : requiredText(value.title, 'assetDraft.title'),
     brief: requiredText(value.brief, 'assetDraft.brief'),
-    audience: requiredText(value.audience, 'assetDraft.audience'),
+    audience: intakeMode === 'agent_assisted'
+      ? optionalText(value.audience, 'assetDraft.audience')
+      : requiredText(value.audience, 'assetDraft.audience'),
     styleNotes: optionalText(value.styleNotes, 'assetDraft.styleNotes'),
     sourceRefs: stringList(value.sourceRefs, 'assetDraft.sourceRefs'),
     noteRefs: stringList(value.noteRefs, 'assetDraft.noteRefs'),
     wikiRefs: stringList(value.wikiRefs, 'assetDraft.wikiRefs'),
+    intakeMode,
+    researchMode,
   }
 }
 

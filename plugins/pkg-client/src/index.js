@@ -46,6 +46,12 @@ class PkgClient {
   }
   readSource(sessionId, sourceId) { return this.request(sessionId, "GET", `/sources/${sourceId}`); }
   dashboard(sessionId) { return this.request(sessionId, "GET", "/knowledge/dashboard"); }
+  webSearch(sessionId, query, maxResults) {
+    return this.request(sessionId, "POST", "/discovery/web-search/preview", {
+      query,
+      max_results: maxResults || 8,
+    });
+  }
 }
 
 const LOOPBACK_SERVICE_TOKEN = "seagull-loopback-harness";

@@ -29,13 +29,18 @@ deepseek-knowledge-lab/
 3. **知识产出**：agent 结果保留在 Harness Session/Workflow；用户在 Seagull UI 明确 Keep/Save/Publish 后才写回 PKG。
 4. **实验追踪**：DeepSeek Harness 的 Trajectory View 记录完整执行轨迹，可 replay/fork/对比。
 5. **长期记忆**：Agent Memory Candidate 由用户确认后才激活，默认保存在 Harness/Lab 所有的 PostgreSQL 独立表，不写入 PKG 知识实体；文件后端只用于隔离测试或显式本地回退。
+6. **Asset 生产**：`draft-asset` preset 先通过 `ask_user_question` 澄清交付意图，再自动检索 PKG；只有请求允许且本地证据不足时才使用 Web 工具补充。Agent 只生成草稿和 Session Context，不自动创建或发布 PKG Asset。
+7. **Asset Block 修订**：`revise-asset-block` preset 可针对单个 Block 澄清修改意图并检索证据，最终只能通过 `propose_asset_block_patch` 返回结构化候选补丁；Seagull 展示 Diff，用户确认后只更新本地编辑态，仍需显式保存才写入 PKG。
 
 ## PKG API 对接要点
 
 - PKG 是 FastAPI 服务，默认运行在 `http://localhost:8000`
 - 用户认证由 Seagull BFF 统一处理：浏览器登录 PKG 后，BFF 按 Harness Session 绑定当前用户 JWT
 - `pkg-client` 通过 BFF `/internal/pkg/*` 调用 PKG，并从工具执行上下文读取 Harness Session ID；禁止把用户名、密码或 JWT 写入 Prompt/工具参数
+- `pkg-web-search` 将 `web_search` 注册为 Harness 工具，并通过 `pkg-client`、BFF Session 认证和 PKG `/discovery/web-search/preview` 复用 PKG 的 Tavily 搜索；该接口只返回结果，不自动写入 Discovery 或其他 PKG 实体
+- Chat 模型目录、平台默认模型和 Session 模型选择归 Harness；Seagull 通过 BFF 的 `/api/harness/models` 与 `/api/harness/model-settings` 使用 `llm.models`、`settings.update` 和 `session.selectModel`，不得再从 PKG `/knowledge/models` 驱动 Chat Agent
 - `pkg-client` 的 Agent 工具面必须保持只读；PKG 写入由 Seagull UI 的显式用户动作负责
+- Asset 自动检索遵循“PKG 优先、Web 补缺”；Web 结果不会自动导入 PKG，只有用户显式保存的最终 Asset 才进入耐久知识层
 - 核心接口：
   - `POST /api/search` — 知识检索（支持 sql/vector/hybrid 模式）
   - `GET/POST /api/notes` — 笔记 CRUD

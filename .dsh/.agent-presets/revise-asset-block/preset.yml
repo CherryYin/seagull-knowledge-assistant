@@ -1,0 +1,3 @@
+name: Agent 修改 Asset Block
+description: 澄清单段修改意图，按需检索证据，并生成必须由用户确认后应用的 Block 补丁。
+order: 56

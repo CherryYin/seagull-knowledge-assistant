@@ -61,3 +61,26 @@ test('rejects Newsletter and incomplete generation requests', async t => {
     assetDraft: { ...context.assetDraft, audience: '' },
   }), /audience is required/)
 })
+
+test('accepts an agent-assisted request with unresolved title, audience, and evidence', async t => {
+  const store = await fixture(t)
+  const saved = await store.put('user-1', 'session-assisted', {
+    kind: 'asset_generation',
+    assetDraft: {
+      assetType: 'topic_report',
+      title: '',
+      brief: 'Help me explain why parser quality varies across document types.',
+      audience: '',
+      styleNotes: '',
+      sourceRefs: [],
+      noteRefs: [],
+      wikiRefs: [],
+      intakeMode: 'agent_assisted',
+      researchMode: 'local_then_web',
+    },
+  })
+  assert.equal(saved.assetDraft.title, '')
+  assert.equal(saved.assetDraft.audience, '')
+  assert.equal(saved.assetDraft.intakeMode, 'agent_assisted')
+  assert.equal(saved.assetDraft.researchMode, 'local_then_web')
+})

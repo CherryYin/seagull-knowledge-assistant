@@ -25,9 +25,12 @@ for (const profile of ["headless", "web"]) {
   if (!result.stdout.includes("session-persistence-postgres")) {
     throw new Error(`${profile} profile does not compose ${primaryPackage}`);
   }
+  if (!result.stdout.includes("pkg-web-search")) {
+    throw new Error(`${profile} profile does not compose the PKG-backed web_search plugin`);
+  }
   if (result.stdout.includes("session-persistence-jsonl-shadow")) {
     throw new Error(`${profile} profile still composes JSONL shadow after Stage E`);
   }
 }
 
-console.log("headless and web profiles compose PostgreSQL persistence without JSONL shadow");
+console.log("headless and web profiles compose PostgreSQL persistence and PKG-backed web_search without JSONL shadow");
