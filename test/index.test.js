@@ -68,8 +68,9 @@ test("login cookie authenticates direct API requests and preserves query params"
   t.after(() => { globalThis.WebSocket = originalWebSocket; });
 
   const pkgReceived = [];
+  let sourceUpload;
   const ownedChatSessions = new Set(["session-1", "local-session"]);
-  const pkg = http.createServer((req, res) => {
+  const pkg = http.createServer(async (req, res) => {
     pkgReceived.push({ url: req.url, authorization: req.headers.authorization, requestId: req.headers["x-request-id"] });
     res.setHeader("Content-Type", "application/json");
     if (req.url === "/auth/login") {
@@ -77,7 +78,7 @@ test("login cookie authenticates direct API requests and preserves query params"
       return;
     }
     if (req.url === "/auth/me" && ["Bearer test-token", "Bearer refreshed-token"].includes(req.headers.authorization)) {
-      res.end(JSON.stringify({ id: "user-1", username: "admin" }));
+      res.end(JSON.stringify({ id: "user-1", username: "admin", role: "admin" }));
       return;
     }
     if (req.url === "/auth/me" && req.headers.authorization === "Bearer expired-token") {
@@ -141,6 +142,18 @@ test("login cookie authenticates direct API requests and preserves query params"
       res.end(JSON.stringify({ counts: { notes: 1 } }));
       return;
     }
+    if (req.url === "/sources/upload" && req.method === "POST") {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      sourceUpload = {
+        contentType: req.headers["content-type"],
+        authorization: req.headers.authorization,
+        body: Buffer.concat(chunks),
+      };
+      res.writeHead(201);
+      res.end(JSON.stringify({ id: "source-uploaded", title: "Uploaded PDF", source_type: "pdf" }));
+      return;
+    }
     res.writeHead(404).end(JSON.stringify({ error: "not found" }));
   });
   await listen(pkg);
@@ -163,6 +176,11 @@ test("login cookie authenticates direct API requests and preserves query params"
     if (req.url === "/api/experiments" && req.method === "POST") {
       res.writeHead(201, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ id: "experiment-1" }));
+      return;
+    }
+    if (req.url === "/api/respond" && req.method === "POST") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ accepted: true }));
       return;
     }
     if (req.method === "POST" && req.url?.startsWith("/api/")) {
@@ -223,10 +241,58 @@ test("login cookie authenticates direct API requests and preserves query params"
         });
         return;
       }
+      if (envelope.method === "llm.models") {
+        reply({
+          groups: [{ id: "qwen", name: "Qwen", models: [{ id: "qwen-plus", name: "Qwen Plus" }] }],
+          failures: [],
+        });
+        return;
+      }
+      if (envelope.method === "settings.describe") {
+        reply({
+          writable: true,
+          hasDocument: true,
+          namespaces: [{
+            ns: "agent-default-model",
+            schema: {},
+            value: { provider: "qwen", model: "qwen-plus" },
+            applies: "live",
+            secrets: [],
+            revision: 3,
+          }],
+        });
+        return;
+      }
+      if (envelope.method === "settings.update") {
+        reply({
+          ns: "agent-default-model",
+          schema: {},
+          value: envelope.payload.patch,
+          applies: "live",
+          secrets: [],
+          revision: 4,
+        });
+        return;
+      }
       if (envelope.method === "session.create") {
         chatSessionId = envelope.payload.sessionId || chatSessionId;
         harnessSessions.add(chatSessionId);
         reply({ sessionId: chatSessionId, agentPreset: envelope.payload.agentPreset });
+        return;
+      }
+      if (envelope.method === "session.selectModel") {
+        if (!harnessSessions.has(envelope.payload.sessionId)) {
+          reject({
+            code: "session-not-found",
+            message: `session "${envelope.payload.sessionId}" not found`,
+            details: { sessionId: envelope.payload.sessionId },
+          });
+          return;
+        }
+        reply({ selected: {
+          provider: envelope.payload.provider,
+          model: envelope.payload.model,
+        } });
         return;
       }
       if (envelope.method === "session.prompt") {
@@ -247,6 +313,32 @@ test("login cookie authenticates direct API requests and preserves query params"
             method: payload.type,
             payload,
           });
+          const promptText = envelope.payload.content?.[0]?.text || "";
+          if (promptText.endsWith("clarify")) {
+            push({
+              type: "question/requested",
+              sessionId: chatSessionId,
+              questions: [{
+                id: "audience",
+                question: "Who should this Asset help?",
+                header: "Audience",
+                options: [{ label: "Architecture reviewers", description: "Decision-focused readers." }],
+                multiSelect: false,
+              }],
+            });
+            push({
+              type: "session/event",
+              sessionId: chatSessionId,
+              event: {
+                type: "turn/end",
+                seq: 3,
+                time: Date.now(),
+                data: { turn: 1, reason: { kind: "completed" } },
+              },
+            });
+            stream.close();
+            return;
+          }
           push({
             type: "session/event",
             sessionId: chatSessionId,
@@ -337,6 +429,27 @@ test("login cookie authenticates direct API requests and preserves query params"
     requestId: "action-request",
   });
 
+  const uploadForm = new FormData();
+  uploadForm.append("file", new Blob(["%PDF-1.7\nmock-pdf"], { type: "application/pdf" }), "upload.pdf");
+  uploadForm.append("title", "Uploaded PDF");
+  uploadForm.append("source_type", "pdf");
+  uploadForm.append("category_id", "1");
+  uploadForm.append("pdf_type", "text");
+  const uploadedSource = await fetch(`${base}/api/sources/upload`, {
+    method: "POST",
+    headers: { Cookie: cookie },
+    body: uploadForm,
+  });
+  assert.equal(uploadedSource.status, 201);
+  assert.equal((await uploadedSource.json()).id, "source-uploaded");
+  assert.match(sourceUpload.contentType, /^multipart\/form-data; boundary=/);
+  assert.equal(sourceUpload.authorization, "Bearer test-token");
+  const uploadBody = sourceUpload.body.toString("utf8");
+  assert.match(uploadBody, /filename="upload.pdf"/);
+  assert.match(uploadBody, /%PDF-1\.7/);
+  assert.match(uploadBody, /name="pdf_type"/);
+  assert.match(uploadBody, /\r\ntext\r\n/);
+
   const deletedNote = await fetch(`${base}/api/notes/smoke-note`, {
     method: "DELETE",
     headers: { Cookie: cookie },
@@ -404,6 +517,30 @@ test("login cookie authenticates direct API requests and preserves query params"
   assert.equal(restoredContext.status, 200);
   assert.deepEqual((await restoredContext.json()).context.assetDraft.sourceRefs, ["source-1"]);
 
+  const questionAnswer = await fetch(`${base}/api/harness/questions/respond`, {
+    method: "POST",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      rpc_id: "question-rpc-1",
+      session_id: "session-1",
+      answers: [{ id: "audience", selected: ["Architecture reviewers"] }],
+    }),
+  });
+  assert.equal(questionAnswer.status, 200);
+  assert.deepEqual(await questionAnswer.json(), { accepted: true });
+  const respondRequest = harnessReceived.find((request) => request.url === "/api/respond");
+  assert.deepEqual(JSON.parse(respondRequest.body), {
+    type: "client-response",
+    rpcId: "question-rpc-1",
+    result: {
+      ok: true,
+      value: {
+        sessionId: "session-1",
+        answer: { answers: [{ id: "audience", selected: ["Architecture reviewers"] }] },
+      },
+    },
+  });
+
   const foreignContext = await fetch(`${base}/api/harness/session-contexts/foreign-session`, { headers: { Cookie: cookie } });
   assert.equal(foreignContext.status, 404);
 
@@ -416,6 +553,37 @@ test("login cookie authenticates direct API requests and preserves query params"
     group: "user",
     is_default: false,
   }]);
+
+  const harnessModels = await fetch(`${base}/api/harness/models`, { headers: { Cookie: cookie } });
+  assert.equal(harnessModels.status, 200);
+  assert.deepEqual(await harnessModels.json(), {
+    models: [{
+      id: "qwen-plus",
+      name: "Qwen Plus",
+      provider: "qwen",
+      provider_name: "Qwen",
+      reasoning: null,
+    }],
+    failures: [],
+  });
+
+  const modelSettings = await fetch(`${base}/api/harness/model-settings`, { headers: { Cookie: cookie } });
+  assert.equal(modelSettings.status, 200);
+  assert.deepEqual(await modelSettings.json(), {
+    writable: true,
+    provider: "qwen",
+    model: "qwen-plus",
+    reasoning_effort: null,
+    revision: 3,
+  });
+
+  const updatedModelSettings = await fetch(`${base}/api/harness/model-settings`, {
+    method: "PATCH",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ provider: "qwen", model: "qwen-plus", revision: 3 }),
+  });
+  assert.equal(updatedModelSettings.status, 200);
+  assert.equal((await updatedModelSettings.json()).revision, 4);
 
   const experiments = await fetch(`${base}/api/experiments`, {
     method: "POST",
@@ -459,6 +627,7 @@ test("login cookie authenticates direct API requests and preserves query params"
     body: JSON.stringify({
       prompt: "hello",
       preset: "research-topic",
+      model: "qwen:qwen-plus",
       session_id: "local-session",
       create_session: false,
     }),
@@ -492,10 +661,32 @@ test("login cookie authenticates direct API requests and preserves query params"
     .map((frame) => JSON.parse(frame.slice("data: ".length)));
   assert.deepEqual(followupEvents.map((event) => event.type), ["session", "text", "tool_call", "done"]);
 
+  const clarification = await fetch(`${base}/api/chat`, {
+    method: "POST",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt: "clarify",
+      preset: "draft-asset",
+      session_id: "local-session",
+      create_session: false,
+    }),
+  });
+  assert.equal(clarification.status, 200);
+  const clarificationEvents = (await clarification.text())
+    .split("\n\n")
+    .filter(Boolean)
+    .map((frame) => JSON.parse(frame.slice("data: ".length)));
+  assert.deepEqual(clarificationEvents.map((event) => event.type), ["session", "question", "done"]);
+  assert.equal(clarificationEvents[1].rpc_id, "push-question/requested");
+  assert.equal(clarificationEvents[1].questions[0].id, "audience");
+
   const createCalls = harnessRpcCalls.filter((call) => call.method === "session.create");
   assert.equal(createCalls.length, 1);
   const createCall = createCalls[0];
   assert.deepEqual(createCall.payload, { sessionId: "local-session", agentPreset: "research-topic" });
+  const modelCalls = harnessRpcCalls.filter((call) => call.method === "session.selectModel");
+  assert.equal(modelCalls.length, 2);
+  assert.deepEqual(modelCalls[1].payload, { sessionId: "local-session", provider: "qwen", model: "qwen-plus" });
   const promptCalls = harnessRpcCalls.filter((call) => call.method === "session.prompt");
   assert.equal(promptCalls.length, 3);
   assert.equal(promptCalls[0].payload.sessionId, "local-session");
@@ -503,13 +694,13 @@ test("login cookie authenticates direct API requests and preserves query params"
   assert.match(promptCalls[0].payload.content[0].text, /explicitly confirmed by the user/);
   assert.match(promptCalls[0].payload.content[0].text, /Keep answers concise and direct\./);
   assert.match(promptCalls[0].payload.content[0].text, /\n\nhello$/);
-  assert.deepEqual(promptCalls[1].payload, promptCalls[0].payload);
-  assert.match(promptCalls[2].payload.content[0].text, /\n\nfollow up$/);
+  assert.match(promptCalls[1].payload.content[0].text, /\n\nfollow up$/);
+  assert.match(promptCalls[2].payload.content[0].text, /\n\nclarify$/);
   const recallAudits = await fetch(`${base}/api/harness/memory-recalls?session_id=local-session`, {
     headers: { Cookie: cookie },
   });
   assert.equal(recallAudits.status, 200);
-  assert.equal((await recallAudits.json()).items.length, 2);
+  assert.equal((await recallAudits.json()).items.length, 3);
 
   const archived = await fetch(`${base}/api/harness/memories/${agentMemory.id}/archive`, {
     method: "POST",

@@ -251,7 +251,7 @@ async function deletePkgChatSession(sessionId, authorization, requestId) {
 
 async function pkgForward(req, res, pkgPath, { captureLogin = false, requestId } = {}) {
   const url = `${PKG_BASE}${pkgPath}`;
-  const headers = { "Content-Type": "application/json" };
+  const headers = {};
   const authorization = authHeader(req);
   if (authorization) headers.Authorization = authorization;
   if (requestId) headers["X-Request-Id"] = requestId;
@@ -259,13 +259,14 @@ async function pkgForward(req, res, pkgPath, { captureLogin = false, requestId }
   const method = req.method;
   let body;
   if (method !== "GET" && method !== "HEAD") {
-    body = await readBody(req);
+    body = await readRawBody(req);
+    if (req.headers["content-type"]) headers["Content-Type"] = req.headers["content-type"];
   }
 
-  console.log(`  → PKG ${method} ${pkgPath}${body ? " (has body)" : ""}`);
+  console.log(`  → PKG ${method} ${pkgPath}${body?.length ? " (has body)" : ""}`);
 
   try {
-    const pkgRes = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+    const pkgRes = await fetch(url, { method, headers, body: body?.length ? body : undefined });
     if (pkgRes.status === 401 && authorization && !captureLogin) {
       return respondAuthExpired(req, res, authorization);
     }
@@ -391,6 +392,20 @@ async function harnessRpc(method, payload, { signal, requestId } = {}) {
   return envelope.result.value;
 }
 
+async function harnessRespond(message, { signal, requestId } = {}) {
+  const response = await fetch(`${HARNESS_BASE}/api/respond`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(requestId ? { "X-Request-Id": requestId } : {}),
+    },
+    body: JSON.stringify(message),
+    signal,
+  });
+  if (!response.ok) throw new Error(`Harness respond returned HTTP ${response.status}`);
+  return response.json();
+}
+
 async function openHarnessEvents(signal) {
   if (typeof WebSocket !== "function") {
     throw new Error("Harness event stream requires WebSocket support");
@@ -505,6 +520,9 @@ async function harnessChat(req, res, requestId, agentMemoryStore) {
   const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
   if (!prompt) return json(req, res, 400, { error: "prompt is required" });
   const preset = typeof body?.preset === "string" && body.preset.trim() ? body.preset.trim() : undefined;
+  const requestedModel = typeof body?.model === "string" && body.model.includes(":")
+    ? body.model.trim()
+    : undefined;
   const requestedSessionId = typeof body?.session_id === "string" && body.session_id.trim()
     ? body.session_id.trim()
     : undefined;
@@ -560,6 +578,26 @@ async function harnessChat(req, res, requestId, agentMemoryStore) {
     }
     bindSessionAuth(sessionId, user.id, authorization);
     activeHarnessSessionId = sessionId;
+    if (requestedModel) {
+      const separator = requestedModel.indexOf(":");
+      const selection = {
+        provider: requestedModel.slice(0, separator),
+        model: requestedModel.slice(separator + 1),
+      };
+      try {
+        await harnessRpc("session.selectModel", { sessionId, ...selection }, { signal: abort.signal, requestId });
+      } catch (error) {
+        if (!createRequestedSession && requestedSessionId && error instanceof HarnessRpcError && error.code === "session-not-found") {
+          created = await createSession();
+          sessionId = created.sessionId;
+          bindSessionAuth(sessionId, user.id, authorization);
+          activeHarnessSessionId = sessionId;
+          await harnessRpc("session.selectModel", { sessionId, ...selection }, { signal: abort.signal, requestId });
+        } else {
+          throw error;
+        }
+      }
+    }
     const recalled = await agentMemoryStore.recall(user.id, {
       query: prompt,
       scopeType: typeof body?.memory_scope_type === "string" ? body.memory_scope_type : "global",
@@ -597,15 +635,22 @@ async function harnessChat(req, res, requestId, agentMemoryStore) {
         break;
       }
       if (frame.sessionId !== sessionId) continue;
-      if (frame.type === "approval/requested" || frame.type === "question/requested") {
+      if (frame.type === "approval/requested") {
         sse(res, {
           type: "error",
-          content: frame.type === "approval/requested"
-            ? `Harness requires approval for ${frame.toolName}`
-            : "Harness requires an interactive answer",
+          content: `Harness requires approval for ${frame.toolName}`,
           session_id: sessionId,
         });
         break;
+      }
+      if (frame.type === "question/requested") {
+        sse(res, {
+          type: "question",
+          rpc_id: envelope.rpcId,
+          session_id: sessionId,
+          questions: frame.questions,
+        });
+        continue;
       }
       if (frame.type !== "session/event") continue;
       const event = frame.event;
@@ -653,6 +698,46 @@ async function harnessChat(req, res, requestId, agentMemoryStore) {
     if (!abort.signal.aborted) sse(res, { type: "error", content: err.message });
   } finally {
     if (!res.writableEnded) res.end();
+  }
+}
+
+async function harnessQuestionResponse(req, res, requestId) {
+  if (req.method !== "POST") return json(req, res, 405, { error: "Method not allowed" });
+  const authorization = authHeader(req);
+  if (!authorization) return json(req, res, 401, { error: "Unauthorized" });
+
+  try {
+    const body = await readBody(req);
+    const rpcIdValue = typeof body?.rpc_id === "string" ? body.rpc_id.trim() : "";
+    const sessionId = typeof body?.session_id === "string" ? body.session_id.trim() : "";
+    const answers = body?.answers;
+    if (!rpcIdValue) throw new TypeError("rpc_id is required");
+    if (!sessionId) throw new TypeError("session_id is required");
+    if (!Array.isArray(answers) || answers.length === 0) throw new TypeError("answers are required");
+
+    const user = await currentPkgUser(authorization, requestId);
+    await ensurePkgChatSession(sessionId, authorization, { requestId });
+    const binding = sessionAuth(sessionId);
+    if (binding && binding.userId !== user.id) return json(req, res, 403, { error: "Forbidden" });
+
+    const receipt = await harnessRespond({
+      type: "client-response",
+      rpcId: rpcIdValue,
+      result: {
+        ok: true,
+        value: {
+          sessionId,
+          answer: { answers },
+        },
+      },
+    }, { requestId });
+    if (!receipt?.accepted) {
+      return json(req, res, 409, { error: "Question is no longer pending", reason: receipt?.reason || "not-pending" });
+    }
+    return json(req, res, 200, receipt);
+  } catch (error) {
+    if (error.status === 401) return respondAuthExpired(req, res, authorization);
+    return json(req, res, error instanceof TypeError ? 400 : error.status || 502, { error: error.message });
   }
 }
 
@@ -841,6 +926,75 @@ async function harnessPresets(req, res, requestId) {
   }
 }
 
+async function harnessModels(req, res, requestId) {
+  const authorization = authHeader(req);
+  if (!authorization) return json(req, res, 401, { error: "Unauthorized" });
+  if (req.method !== "GET") return json(req, res, 405, { error: "Method not allowed" });
+  try {
+    await currentPkgUser(authorization, requestId);
+    const value = await harnessRpc("llm.models", {}, { requestId });
+    return json(req, res, 200, {
+      models: (value.groups || []).flatMap((group) => (group.models || []).map((model) => ({
+        id: model.id,
+        name: model.name || model.id,
+        provider: group.id,
+        provider_name: group.name || group.id,
+        reasoning: model.reasoning || null,
+      }))),
+      failures: value.failures || [],
+    });
+  } catch (error) {
+    if (error.status === 401) return respondAuthExpired(req, res, authorization);
+    return json(req, res, 502, { error: error.message });
+  }
+}
+
+async function harnessModelSettings(req, res, requestId) {
+  const authorization = authHeader(req);
+  if (!authorization) return json(req, res, 401, { error: "Unauthorized" });
+  try {
+    const user = await currentPkgUser(authorization, requestId);
+    if (req.method === "GET") {
+      const value = await harnessRpc("settings.describe", {}, { requestId });
+      const section = (value.namespaces || []).find((item) => item.ns === "agent-default-model");
+      return json(req, res, 200, {
+        writable: Boolean(value.writable),
+        provider: typeof section?.value?.provider === "string" ? section.value.provider : null,
+        model: typeof section?.value?.model === "string" ? section.value.model : null,
+        reasoning_effort: typeof section?.value?.reasoningEffort === "string" ? section.value.reasoningEffort : null,
+        revision: section?.revision ?? null,
+      });
+    }
+    if (req.method === "PATCH") {
+      if (user.role !== "admin") return json(req, res, 403, { error: "Admin access required" });
+      const body = await readBody(req);
+      const provider = typeof body?.provider === "string" ? body.provider.trim() : "";
+      const model = typeof body?.model === "string" ? body.model.trim() : "";
+      if (!provider || !model) return json(req, res, 400, { error: "provider and model are required" });
+      const patch = { provider, model };
+      if (typeof body?.reasoning_effort === "string" && body.reasoning_effort.trim()) {
+        patch.reasoningEffort = body.reasoning_effort.trim();
+      }
+      const section = await harnessRpc("settings.update", {
+        ns: "agent-default-model",
+        patch,
+        ...(Number.isInteger(body?.revision) ? { expectedRevision: body.revision } : {}),
+      }, { requestId });
+      return json(req, res, 200, {
+        writable: true,
+        provider: section.value?.provider || provider,
+        model: section.value?.model || model,
+        reasoning_effort: section.value?.reasoningEffort || null,
+        revision: section.revision,
+      });
+    }
+    return json(req, res, 405, { error: "Method not allowed" });
+  } catch (error) {
+    if (error.status === 401) return respondAuthExpired(req, res, authorization);
+    return json(req, res, error instanceof TypeError ? 400 : error.status || 502, { error: error.message });
+  }
+}
+
 // ── Helpers ─────────────────────────────────────
 
 function readBody(req) {
@@ -913,10 +1067,13 @@ export function createBffServer({
 
   // ── Harness REST adapter ──
   if (path === "/api/chat") return harnessChat(req, res, id, agentMemoryStore);
+  if (path === "/api/harness/questions/respond") return harnessQuestionResponse(req, res, id);
   if (path === "/api/sessions" || path.startsWith("/api/sessions/")) {
     return harnessSessions(req, res, path, id, sessionContextStore);
   }
   if (path === "/api/presets") return harnessPresets(req, res, id);
+  if (path === "/api/harness/models") return harnessModels(req, res, id);
+  if (path === "/api/harness/model-settings") return harnessModelSettings(req, res, id);
 
   if (path === "/api/harness/memories" || path === "/api/harness/memory-recalls"
     || path.startsWith("/api/harness/memory-candidates") || path.startsWith("/api/harness/memories/")) {
