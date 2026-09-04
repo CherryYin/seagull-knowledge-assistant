@@ -1,4 +1,5 @@
 import uuid
+from copy import deepcopy
 from datetime import datetime, timezone
 import logging
 
@@ -15,8 +16,51 @@ from pkg.services.application.blog_generation import check_readiness
 from pkg.services.application.production_memory import record_asset_production_event
 
 ALLOWED_ASSET_STATUSES = {"draft", "in_review", "ready_to_export", "exported", "published", "archived"}
+WORKSPACE_METADATA_KEY = "asset_workspace_v1"
 
 logger = logging.getLogger(__name__)
+
+
+def _preserve_workspace_metadata(current_metadata: dict, candidate_metadata: dict) -> dict:
+    metadata = deepcopy(candidate_metadata)
+    if WORKSPACE_METADATA_KEY in current_metadata:
+        metadata[WORKSPACE_METADATA_KEY] = deepcopy(current_metadata[WORKSPACE_METADATA_KEY])
+    else:
+        metadata.pop(WORKSPACE_METADATA_KEY, None)
+    return metadata
+
+
+def _validate_asset_document_claim_refs(*, current_metadata: dict, candidate_metadata: dict) -> None:
+    document = candidate_metadata.get("asset_document")
+    if not isinstance(document, dict):
+        return
+    blocks = document.get("blocks")
+    if not isinstance(blocks, list):
+        return
+    workspace = current_metadata.get(WORKSPACE_METADATA_KEY)
+    claims = workspace.get("claims", []) if isinstance(workspace, dict) else []
+    claim_statuses = {
+        claim.get("id"): claim.get("status")
+        for claim in claims
+        if isinstance(claim, dict) and isinstance(claim.get("id"), str)
+    }
+    invalid_refs: set[str] = set()
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        claim_refs = block.get("claim_refs", block.get("claimRefs", []))
+        if not isinstance(claim_refs, list) or any(not isinstance(claim_id, str) or not claim_id.strip() for claim_id in claim_refs):
+            raise HTTPException(status_code=422, detail="Asset Block claim_refs must be an array of non-empty Claim IDs")
+        invalid_refs.update(
+            claim_id
+            for claim_id in claim_refs
+            if claim_statuses.get(claim_id) not in {"accepted", "hypothesis"}
+        )
+    if invalid_refs:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Asset Blocks may only reference accepted Claims or retained Hypotheses: {', '.join(sorted(invalid_refs))}",
+        )
 
 
 def make_asset_id(title: str, explicit_id: str | None = None) -> str:
@@ -51,7 +95,9 @@ async def create_asset(session: AsyncSession, *, user_id: str, body: AssetCreate
         note_refs=body.note_refs,
         wiki_refs=body.wiki_refs,
     )
-    metadata = dict(body.metadata or {})
+    metadata = deepcopy(body.metadata or {})
+    metadata.pop(WORKSPACE_METADATA_KEY, None)
+    _validate_asset_document_claim_refs(current_metadata={}, candidate_metadata=metadata)
     if body.provenance is not None:
         metadata["provenance"] = body.provenance.model_dump(exclude_none=True)
     if body.opinion_notes is not None:
@@ -126,9 +172,14 @@ async def update_asset(session: AsyncSession, *, user_id: str, asset_id: str, bo
         note_refs=data.get("note_refs", asset.note_refs or []),
         wiki_refs=data.get("wiki_refs", asset.wiki_refs or []),
     )
-    effective_metadata = dict(asset.metadata_ or {})
+    current_metadata = deepcopy(asset.metadata_ or {})
+    effective_metadata = deepcopy(current_metadata)
     if "metadata" in data:
-        effective_metadata = dict(data["metadata"] or {})
+        effective_metadata = _preserve_workspace_metadata(current_metadata, data["metadata"] or {})
+        _validate_asset_document_claim_refs(
+            current_metadata=current_metadata,
+            candidate_metadata=effective_metadata,
+        )
     if "opinion_notes" in data:
         effective_metadata["opinion_notes"] = data["opinion_notes"]
     if "style_notes" in data:

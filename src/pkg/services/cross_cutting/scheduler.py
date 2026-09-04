@@ -324,6 +324,40 @@ async def run_news_auto_search_step() -> dict:
     }
 
 
+async def run_newsletter_automation_step() -> dict:
+    from pkg.services.application.newsletter_automation import generate_newsletter
+
+    async with async_session() as session:
+        rows = await session.execute(select(User.id).where(User.is_active.is_(True)))
+        user_ids = list(rows.scalars())
+
+    generated = 0
+    skipped = 0
+    failed = 0
+    asset_ids: list[str] = []
+    for user_id in user_ids:
+        async with async_session() as session:
+            try:
+                result = await generate_newsletter(session, user_id=user_id)
+            except Exception:
+                await session.rollback()
+                failed += 1
+                logger.exception("Newsletter automation failed for user %s", user_id)
+                continue
+        if result.status == "generated" and result.asset is not None:
+            generated += 1
+            asset_ids.append(result.asset.id)
+        else:
+            skipped += 1
+    return {
+        "active_users": len(user_ids),
+        "generated": generated,
+        "skipped": skipped,
+        "failed": failed,
+        "asset_ids": asset_ids,
+    }
+
+
 def get_scheduled_tasks() -> list[ScheduledTask]:
     tasks = [
         ScheduledTask(
@@ -419,6 +453,16 @@ def get_scheduled_tasks() -> list[ScheduledTask]:
             schedule_type="daily",
             daily_time_utc=_parse_daily_time_utc(settings.NEWS_AUTO_SEARCH_DAILY_TIME_UTC, fallback=time(hour=1, minute=30)),
             enabled=settings.NEWS_AUTO_SEARCH_ENABLED,
+        ),
+        ScheduledTask(
+            name="newsletter_automation",
+            job_type="newsletter_automation",
+            title="Scheduled Newsletter Asset generation",
+            handler=run_newsletter_automation_step,
+            schedule_type="interval",
+            interval_seconds=3600,
+            initial_delay_seconds=120,
+            enabled=True,
         ),
     ]
     return tasks

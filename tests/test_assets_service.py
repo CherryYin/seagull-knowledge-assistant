@@ -99,6 +99,25 @@ async def test_create_asset_raises_when_source_ref_missing():
 
 
 @pytest.mark.asyncio
+async def test_create_asset_cannot_seed_server_owned_workspace_metadata():
+    session = AsyncMock()
+    session.add = MagicMock()
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr("pkg.services.application.assets.record_asset_production_event", AsyncMock(return_value=None))
+        asset = await create_asset(
+            session,
+            user_id="user-1",
+            body=AssetCreate(
+                title="Draft post",
+                metadata={"asset_workspace_v1": {"workspace_revision": 99, "claims": [{"id": "claim-fake", "status": "accepted"}]}},
+            ),
+        )
+
+    assert "asset_workspace_v1" not in (asset.metadata_ or {})
+
+
+@pytest.mark.asyncio
 async def test_update_asset_persists_opinion_and_style_notes():
     session = AsyncMock()
     asset = Asset(
@@ -681,3 +700,159 @@ def test_export_markdown_uses_topic_report_template():
     assert "## Key Themes" in content
     assert "## Recommendations and Next Steps" in content
     assert "## Appendix B — References" in content
+
+
+def _workspace_with_claim(claim_status: str) -> dict:
+    return {
+        "workspace_revision": 3,
+        "intent": {
+            "revision": 1,
+            "question": "What access should Agents receive?",
+            "goal": "Define a safe boundary",
+            "audience": None,
+            "creation_mode": "make_decision",
+            "scope": [],
+            "constraints": [],
+            "status": "confirmed",
+            "confirmed_by": "user-1",
+            "confirmed_at": "2026-08-28T08:00:00+00:00",
+        },
+        "intent_history": [],
+        "evidence": [],
+        "claims": [{
+            "id": "claim-1",
+            "content": "Use capability-scoped gateway tools.",
+            "kind": "recommendation",
+            "status": claim_status,
+            "supporting_evidence": [],
+            "contradicting_evidence": [],
+            "agent_confidence": "medium",
+            "authorship": "agent",
+            "intent_revision": 1,
+            "source_session_id": None,
+            "created_at": "2026-08-28T08:00:00+00:00",
+            "decided_by": "user-1" if claim_status != "proposed" else None,
+            "decided_at": "2026-08-28T08:05:00+00:00" if claim_status != "proposed" else None,
+            "user_edited": False,
+        }],
+        "contribution": None,
+        "decision_items": [],
+    }
+
+
+def _asset_for_claim_link_test(claim_status: str) -> Asset:
+    return Asset(
+        id="asset-1",
+        user_id="user-1",
+        asset_type="blog_post",
+        status="draft",
+        title="Draft post",
+        brief="brief",
+        source_refs=[],
+        note_refs=[],
+        wiki_refs=[],
+        metadata_={"asset_workspace_v1": _workspace_with_claim(claim_status), "keep": True},
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_asset_rejects_block_link_to_unapproved_claim():
+    session = AsyncMock()
+    asset = _asset_for_claim_link_test("proposed")
+    scalar_result = MagicMock()
+    scalar_result.scalar_one_or_none.return_value = asset
+    session.execute.return_value = scalar_result
+
+    with pytest.raises(HTTPException) as exc:
+        await update_asset(
+            session,
+            user_id="user-1",
+            asset_id="asset-1",
+            body=AssetUpdate(metadata={
+                "asset_document": {
+                    "schemaVersion": 1,
+                    "blocks": [{"id": "block-1", "type": "paragraph", "markdown": "Draft", "revision": 1, "claim_refs": ["claim-1"]}],
+                }
+            }),
+        )
+
+    assert exc.value.status_code == 409
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("claim_status", ["accepted", "hypothesis"])
+async def test_update_asset_allows_block_link_to_reviewed_claim(claim_status):
+    session = AsyncMock()
+    asset = _asset_for_claim_link_test(claim_status)
+    scalar_result = MagicMock()
+    scalar_result.scalar_one_or_none.return_value = asset
+    session.execute.return_value = scalar_result
+
+    updated = await update_asset(
+        session,
+        user_id="user-1",
+        asset_id="asset-1",
+        body=AssetUpdate(metadata={
+            "asset_document": {
+                "schemaVersion": 1,
+                "blocks": [{"id": "block-1", "type": "paragraph", "markdown": "Draft", "revision": 1, "claim_refs": ["claim-1"]}],
+            }
+        }),
+    )
+
+    assert updated.metadata_["asset_document"]["blocks"][0]["claim_refs"] == ["claim-1"]
+    assert updated.metadata_["asset_workspace_v1"]["claims"][0]["status"] == claim_status
+
+
+@pytest.mark.asyncio
+async def test_update_asset_metadata_cannot_overwrite_workspace_state():
+    session = AsyncMock()
+    asset = _asset_for_claim_link_test("accepted")
+    original_workspace = asset.metadata_["asset_workspace_v1"]
+    scalar_result = MagicMock()
+    scalar_result.scalar_one_or_none.return_value = asset
+    session.execute.return_value = scalar_result
+
+    updated = await update_asset(
+        session,
+        user_id="user-1",
+        asset_id="asset-1",
+        body=AssetUpdate(metadata={
+            "asset_workspace_v1": {"workspace_revision": 999, "claims": []},
+            "asset_document": {"schemaVersion": 1, "blocks": []},
+        }),
+    )
+
+    assert updated.metadata_["asset_workspace_v1"] == original_workspace
+
+
+def test_export_html_wraps_markdown_in_safe_standalone_document():
+    from pkg.services.application.blog_generation import export_html
+
+    asset = Asset(
+        id="asset-html-1",
+        user_id="user-1",
+        asset_type="blog_post",
+        status="ready_to_export",
+        title="HTML <script>alert(1)</script>",
+        brief="A safe HTML export.",
+        draft_content="## Main Argument\n\n<strong>raw html</strong>\n\n- One\n- Two",
+        reference_notes="- Source: Example",
+        source_refs=["src-1"],
+        note_refs=[],
+        wiki_refs=[],
+        export_format=None,
+        exported_at=None,
+        published_at=None,
+        metadata_={},
+    )
+
+    content = export_html(asset)
+
+    assert content.startswith("<!doctype html>")
+    assert '<meta name="viewport"' in content
+    assert "<h2" in content and "Main Argument" in content
+    assert "<ul>" in content
+    assert "<script>alert(1)</script>" not in content
+    assert "&lt;strong&gt;raw html&lt;/strong&gt;" in content

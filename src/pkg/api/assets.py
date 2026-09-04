@@ -8,20 +8,55 @@ from pkg.models.user import User
 from pkg.schemas.application.asset import (
     AssetCreate,
     AssetExportResult,
+    AssetQualityAuditResult,
     AssetFeedbackNoteResult,
     AssetList,
     AssetPublishFeedbackUpdate,
     AssetRead,
     AssetUpdate,
     AttachReferencesRequest,
+    NewsletterAutomationConfig,
+    NewsletterAutomationRunResult,
+    NewsletterAutomationUpdate,
     ReadinessCheckResult,
+)
+from pkg.schemas.application.asset_workspace import (
+    AssetClaimDecisionRequest,
+    AssetClaimProposalBatchRequest,
+    AssetContributionDecisionRequest,
+    AssetEvidenceDecisionRequest,
+    AssetEvidenceProposalBatchRequest,
+    AssetIntentRevisionRequest,
+    AssetKnowledgeCandidateDecisionRequest,
+    AssetKnowledgePromotionRequest,
+    AssetKnowledgeProposalRequest,
+    AssetWorkspaceRead,
 )
 from pkg.schemas.note import NoteCreate
 from pkg.services.application.assets import create_asset, delete_asset, get_asset, list_assets, update_asset
+from pkg.services.application.asset_workspace import (
+    decide_asset_claim,
+    decide_asset_contribution,
+    decide_asset_evidence,
+    decide_asset_knowledge_candidate,
+    get_asset_workspace,
+    audit_asset_workspace,
+    promote_asset_knowledge_candidate,
+    propose_asset_evidence,
+    propose_asset_knowledge,
+    propose_asset_claims,
+    revise_asset_intent,
+)
 from pkg.services.application.blog_generation import (
     attach_references,
     check_readiness,
+    export_html,
     export_markdown,
+)
+from pkg.services.application.newsletter_automation import (
+    generate_newsletter,
+    get_newsletter_config,
+    update_newsletter_config,
 )
 from pkg.api.notes import persist_note
 
@@ -50,6 +85,31 @@ async def list_assets_route(
     return AssetList(items=items, total=total)
 
 
+@router.get("/newsletter/automation", response_model=NewsletterAutomationConfig)
+async def get_newsletter_automation_route(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await get_newsletter_config(session, user_id=user.id)
+
+
+@router.put("/newsletter/automation", response_model=NewsletterAutomationConfig)
+async def update_newsletter_automation_route(
+    body: NewsletterAutomationUpdate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await update_newsletter_config(session, user_id=user.id, body=body)
+
+
+@router.post("/newsletter/automation/run", response_model=NewsletterAutomationRunResult)
+async def run_newsletter_automation_route(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await generate_newsletter(session, user_id=user.id, force=True)
+
+
 @router.get("/{asset_id}", response_model=AssetRead)
 async def get_asset_route(
     asset_id: str,
@@ -57,6 +117,144 @@ async def get_asset_route(
     session: AsyncSession = Depends(get_session),
 ):
     return await get_asset(session, user_id=user.id, asset_id=asset_id)
+
+
+@router.get("/{asset_id}/workspace", response_model=AssetWorkspaceRead)
+async def get_asset_workspace_route(
+    asset_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await get_asset_workspace(session, user_id=user.id, asset_id=asset_id)
+
+
+@router.get("/{asset_id}/quality-audit", response_model=AssetQualityAuditResult)
+async def audit_asset_quality_route(
+    asset_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    asset = await get_asset(session, user_id=user.id, asset_id=asset_id)
+    workspace = await get_asset_workspace(session, user_id=user.id, asset_id=asset_id)
+    return audit_asset_workspace(asset, workspace.model_dump(mode="json"))
+
+
+@router.post("/{asset_id}/workspace/intent", response_model=AssetWorkspaceRead)
+async def revise_asset_intent_route(
+    asset_id: str,
+    body: AssetIntentRevisionRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await revise_asset_intent(session, user_id=user.id, asset_id=asset_id, body=body)
+
+
+@router.post("/{asset_id}/workspace/evidence/proposals", response_model=AssetWorkspaceRead)
+async def propose_asset_evidence_route(
+    asset_id: str,
+    body: AssetEvidenceProposalBatchRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await propose_asset_evidence(session, user_id=user.id, asset_id=asset_id, body=body)
+
+
+@router.post("/{asset_id}/workspace/evidence/{evidence_id}/decision", response_model=AssetWorkspaceRead)
+async def decide_asset_evidence_route(
+    asset_id: str,
+    evidence_id: str,
+    body: AssetEvidenceDecisionRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await decide_asset_evidence(
+        session,
+        user_id=user.id,
+        asset_id=asset_id,
+        evidence_id=evidence_id,
+        body=body,
+    )
+
+
+@router.post("/{asset_id}/workspace/claims/proposals", response_model=AssetWorkspaceRead)
+async def propose_asset_claims_route(
+    asset_id: str,
+    body: AssetClaimProposalBatchRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await propose_asset_claims(session, user_id=user.id, asset_id=asset_id, body=body)
+
+
+@router.post("/{asset_id}/workspace/claims/{claim_id}/decision", response_model=AssetWorkspaceRead)
+async def decide_asset_claim_route(
+    asset_id: str,
+    claim_id: str,
+    body: AssetClaimDecisionRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await decide_asset_claim(
+        session,
+        user_id=user.id,
+        asset_id=asset_id,
+        claim_id=claim_id,
+        body=body,
+    )
+
+
+@router.post("/{asset_id}/workspace/knowledge/proposals", response_model=AssetWorkspaceRead)
+async def propose_asset_knowledge_route(
+    asset_id: str,
+    body: AssetKnowledgeProposalRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await propose_asset_knowledge(session, user_id=user.id, asset_id=asset_id, body=body)
+
+
+@router.post("/{asset_id}/workspace/contribution/decision", response_model=AssetWorkspaceRead)
+async def decide_asset_contribution_route(
+    asset_id: str,
+    body: AssetContributionDecisionRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await decide_asset_contribution(session, user_id=user.id, asset_id=asset_id, body=body)
+
+
+@router.post("/{asset_id}/workspace/knowledge/{candidate_id}/decision", response_model=AssetWorkspaceRead)
+async def decide_asset_knowledge_candidate_route(
+    asset_id: str,
+    candidate_id: str,
+    body: AssetKnowledgeCandidateDecisionRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await decide_asset_knowledge_candidate(
+        session,
+        user_id=user.id,
+        asset_id=asset_id,
+        candidate_id=candidate_id,
+        body=body,
+    )
+
+
+@router.post("/{asset_id}/workspace/knowledge/{candidate_id}/promote", response_model=AssetWorkspaceRead)
+async def promote_asset_knowledge_candidate_route(
+    asset_id: str,
+    candidate_id: str,
+    body: AssetKnowledgePromotionRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await promote_asset_knowledge_candidate(
+        session,
+        user_id=user.id,
+        asset_id=asset_id,
+        candidate_id=candidate_id,
+        body=body,
+    )
 
 
 @router.patch("/{asset_id}", response_model=AssetRead)
@@ -128,6 +326,38 @@ async def export_markdown_route(
         body=AssetUpdate(status="exported", export_format="markdown"),
     )
     return AssetExportResult(asset_id=asset_id, export_format="markdown", content=content)
+
+
+@router.get("/{asset_id}/preview/html", response_model=AssetExportResult)
+async def preview_html_route(
+    asset_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    asset = await get_asset(session, user_id=user.id, asset_id=asset_id)
+    return AssetExportResult(asset_id=asset_id, export_format="html", content=export_html(asset))
+
+
+@router.post("/{asset_id}/export/html", response_model=AssetExportResult)
+async def export_html_route(
+    asset_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    asset = await get_asset(session, user_id=user.id, asset_id=asset_id)
+    ready, blocking_reasons, _, _ = check_readiness(asset)
+    if not ready:
+        raise HTTPException(status_code=409, detail="Asset is not ready to export: " + "; ".join(blocking_reasons))
+    if not (asset.reference_notes or "").strip():
+        raise HTTPException(status_code=409, detail="Asset export requires a references section. Attach references first.")
+    content = export_html(asset)
+    await update_asset(
+        session,
+        user_id=user.id,
+        asset_id=asset_id,
+        body=AssetUpdate(status="exported", export_format="html"),
+    )
+    return AssetExportResult(asset_id=asset_id, export_format="html", content=content)
 
 
 @router.post("/{asset_id}/publish-feedback", response_model=AssetRead)

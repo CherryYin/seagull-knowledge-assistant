@@ -71,6 +71,41 @@ async def test_list_assets_route_returns_items_and_total():
 
 
 @pytest.mark.asyncio
+async def test_newsletter_automation_routes_delegate_to_services():
+    from pkg.api.assets import (
+        get_newsletter_automation_route,
+        run_newsletter_automation_route,
+        update_newsletter_automation_route,
+    )
+    from pkg.schemas.application.asset import (
+        NewsletterAutomationConfig,
+        NewsletterAutomationRunResult,
+        NewsletterAutomationUpdate,
+    )
+
+    fake_user = MagicMock(id="user-1")
+    session = AsyncMock()
+    config = NewsletterAutomationConfig(enabled=True, frequency="daily")
+    body = NewsletterAutomationUpdate(**config.model_dump(exclude={"last_generated_at", "last_asset_id"}))
+
+    with patch("pkg.api.assets.get_newsletter_config", new=AsyncMock(return_value=config)) as get_mock:
+        result = await get_newsletter_automation_route(user=fake_user, session=session)
+    assert result.enabled is True
+    get_mock.assert_awaited_once_with(session, user_id="user-1")
+
+    with patch("pkg.api.assets.update_newsletter_config", new=AsyncMock(return_value=config)) as update_mock:
+        result = await update_newsletter_automation_route(body, user=fake_user, session=session)
+    assert result.frequency == "daily"
+    update_mock.assert_awaited_once_with(session, user_id="user-1", body=body)
+
+    run_result = NewsletterAutomationRunResult(status="skipped", reason="no_matching_items")
+    with patch("pkg.api.assets.generate_newsletter", new=AsyncMock(return_value=run_result)) as run_mock:
+        result = await run_newsletter_automation_route(user=fake_user, session=session)
+    assert result.reason == "no_matching_items"
+    run_mock.assert_awaited_once_with(session, user_id="user-1", force=True)
+
+
+@pytest.mark.asyncio
 async def test_check_readiness_route_returns_service_result():
     from pkg.api.assets import check_readiness_route
 
@@ -188,6 +223,52 @@ async def test_export_markdown_route_blocks_when_missing_references_section():
             await export_markdown_route("asset-1", user=fake_user, session=session)
 
     assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_preview_html_route_does_not_change_asset_status():
+    from pkg.api.assets import preview_html_route
+
+    fake_user = MagicMock()
+    fake_user.id = "user-1"
+    session = AsyncMock()
+    asset = _make_asset("asset-1", fake_user.id)
+
+    with (
+        patch("pkg.api.assets.get_asset", new=AsyncMock(return_value=asset)),
+        patch("pkg.api.assets.export_html", return_value="<!doctype html><p>Preview</p>"),
+        patch("pkg.api.assets.update_asset", new=AsyncMock()) as mock_update,
+    ):
+        result = await preview_html_route("asset-1", user=fake_user, session=session)
+
+    assert result.export_format == "html"
+    assert "Preview" in result.content
+    mock_update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_export_html_route_marks_asset_exported_as_html():
+    from pkg.api.assets import export_html_route
+
+    fake_user = MagicMock()
+    fake_user.id = "user-1"
+    session = AsyncMock()
+    asset = _make_asset("asset-1", fake_user.id)
+    asset.reference_notes = "- Source: src-1"
+
+    with (
+        patch("pkg.api.assets.get_asset", new=AsyncMock(return_value=asset)),
+        patch("pkg.api.assets.check_readiness", return_value=(True, [], [], [])),
+        patch("pkg.api.assets.export_html", return_value="<!doctype html><p>Export</p>"),
+        patch("pkg.api.assets.update_asset", new=AsyncMock(return_value=asset)) as mock_update,
+    ):
+        result = await export_html_route("asset-1", user=fake_user, session=session)
+
+    assert result.export_format == "html"
+    assert "Export" in result.content
+    update_body = mock_update.await_args.kwargs["body"]
+    assert update_body.status == "exported"
+    assert update_body.export_format == "html"
 
 
 @pytest.mark.asyncio

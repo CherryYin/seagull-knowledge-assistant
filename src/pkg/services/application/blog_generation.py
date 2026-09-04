@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from html import escape
 import re
+
+import markdown
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -467,6 +470,55 @@ def export_markdown(asset: Asset) -> str:
     if asset.reference_notes:
         parts.extend(["", "## References", "", asset.reference_notes])
     return "\n".join(parts).strip()
+
+
+def export_html(asset: Asset) -> str:
+    markdown_content = export_markdown(asset)
+    rendered_body = markdown.markdown(
+        escape(markdown_content, quote=False),
+        extensions=["extra", "sane_lists", "toc"],
+        output_format="html5",
+    )
+    title = escape(asset.title)
+    asset_kind = escape(_asset_kind_label(asset.asset_type))
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="generator" content="Seagull Asset Export">
+  <title>{title}</title>
+  <style>
+    :root {{ color-scheme: light; --ink: #18181b; --muted: #71717a; --line: #e4e4e7; --accent: #2563eb; --paper: #ffffff; --canvas: #f4f4f5; }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; background: var(--canvas); color: var(--ink); font: 17px/1.75 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
+    main {{ width: min(860px, calc(100% - 32px)); margin: 32px auto; padding: clamp(28px, 6vw, 72px); background: var(--paper); border: 1px solid var(--line); border-radius: 24px; box-shadow: 0 24px 70px -44px rgba(15, 23, 42, .45); }}
+    .asset-kind {{ margin: 0 0 28px; color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; }}
+    h1, h2, h3, h4 {{ line-height: 1.2; letter-spacing: -.02em; }}
+    h1 {{ margin: 0 0 32px; font-size: clamp(2.25rem, 7vw, 4.5rem); }}
+    h2 {{ margin-top: 2.5em; padding-bottom: .45em; border-bottom: 1px solid var(--line); font-size: 1.65rem; }}
+    h3 {{ margin-top: 2em; font-size: 1.25rem; }}
+    p, ul, ol, blockquote, pre, table {{ margin: 1.1em 0; }}
+    a {{ color: var(--accent); text-underline-offset: 3px; }}
+    blockquote {{ margin-left: 0; padding: .25em 0 .25em 1.25em; border-left: 3px solid var(--accent); color: #3f3f46; }}
+    code {{ padding: .15em .35em; border-radius: 5px; background: #f4f4f5; font-size: .9em; }}
+    pre {{ overflow-x: auto; padding: 20px; border-radius: 14px; background: #18181b; color: #fafafa; }}
+    pre code {{ padding: 0; background: transparent; color: inherit; }}
+    table {{ width: 100%; border-collapse: collapse; font-size: .94em; }}
+    th, td {{ padding: 10px 12px; border: 1px solid var(--line); text-align: left; vertical-align: top; }}
+    th {{ background: #f4f4f5; }}
+    img {{ max-width: 100%; height: auto; border-radius: 12px; }}
+    hr {{ margin: 2.5em 0; border: 0; border-top: 1px solid var(--line); }}
+    @media print {{ body {{ background: white; }} main {{ width: 100%; margin: 0; padding: 0; border: 0; box-shadow: none; }} }}
+  </style>
+</head>
+<body>
+  <main>
+    <p class="asset-kind">{asset_kind}</p>
+    {rendered_body}
+  </main>
+</body>
+</html>"""
 
 
 def _estimate_unsupported_claims(asset: Asset) -> int:

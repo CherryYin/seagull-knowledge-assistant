@@ -88,6 +88,23 @@ class ReadinessCheckResult(BaseModel):
     suggestion_reasons: list[str] = []
 
 
+class AssetQualityFinding(BaseModel):
+    id: str
+    severity: Literal["P0", "P1", "P2"]
+    title: str
+    detail: str
+
+
+class AssetQualityAuditResult(BaseModel):
+    asset_id: str
+    workspace_revision: int
+    verdict: Literal["pass", "warn", "block"]
+    score: float = Field(ge=0, le=5)
+    blocking_findings: list[AssetQualityFinding] = []
+    warnings: list[AssetQualityFinding] = []
+    metrics: dict[str, float] = {}
+
+
 class AssetExportResult(BaseModel):
     asset_id: str
     export_format: str
@@ -104,3 +121,43 @@ class AssetPublishFeedbackUpdate(BaseModel):
 class AssetFeedbackNoteResult(BaseModel):
     asset_id: str
     note_id: str
+
+
+class NewsletterAutomationConfig(BaseModel):
+    enabled: bool = False
+    name: str = "Technology Newsletter"
+    topics: list[str] = Field(default_factory=list)
+    frequency: Literal["manual", "daily", "weekly"] = "weekly"
+    hour_utc: int = Field(default=1, ge=0, le=23)
+    weekday_utc: int = Field(default=4, ge=0, le=6)
+    lookback_days: int = Field(default=7, ge=1, le=30)
+    max_news_items: int = Field(default=8, ge=0, le=50)
+    max_paper_items: int = Field(default=5, ge=0, le=50)
+    delivery_format: Literal["markdown", "html"] = "html"
+    audience: str = "Technology readers"
+    style_notes: str = "Concise, evidence-led, and easy to scan."
+    last_generated_at: datetime | None = None
+    last_asset_id: str | None = None
+
+
+class NewsletterAutomationUpdate(BaseModel):
+    enabled: bool
+    name: str = Field(min_length=1, max_length=160)
+    topics: list[str] = Field(default_factory=list, max_length=30)
+    frequency: Literal["manual", "daily", "weekly"]
+    hour_utc: int = Field(ge=0, le=23)
+    weekday_utc: int = Field(ge=0, le=6)
+    lookback_days: int = Field(ge=1, le=30)
+    max_news_items: int = Field(ge=0, le=50)
+    max_paper_items: int = Field(ge=0, le=50)
+    delivery_format: Literal["markdown", "html"]
+    audience: str = Field(default="", max_length=300)
+    style_notes: str = Field(default="", max_length=2000)
+
+
+class NewsletterAutomationRunResult(BaseModel):
+    status: Literal["generated", "skipped"]
+    reason: str | None = None
+    news_count: int = 0
+    paper_count: int = 0
+    asset: AssetRead | None = None
