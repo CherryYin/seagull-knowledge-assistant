@@ -2,9 +2,10 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, BookOpen, FileText, NotebookPen, Sparkles } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { notesApi, sourcesApi, wikiApi } from "@/lib/api";
+import { assetsApi, notesApi, sourcesApi, wikiApi } from "@/lib/api";
+import { reviseAssetIntent } from "@/lib/api/assets";
 import { buildAssetGenerationSeed, type AssetHandoffState } from "@/lib/asset-handoff";
-import { MANUAL_ASSET_TYPES, type AssetGenerationRequest } from "@/lib/asset-generation";
+import { MANUAL_ASSET_TYPES, type AssetGenerationRequest, type AssetIntentFormDraft, type AssetIntentProposal } from "@/lib/asset-generation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -14,50 +15,155 @@ function toggle(values: string[], id: string) {
   return values.includes(id) ? values.filter((value) => value !== id) : [...values, id];
 }
 
+function parseLines(value: string) {
+  return value.split(/\n|,/).map((item) => item.trim()).filter(Boolean);
+}
+
+function fillBlank(existing: string, proposed?: string) {
+  return existing.trim() ? existing : proposed ?? existing;
+}
+
 export function AssetGenerationPage() {
   const navigate = useNavigate();
   const location = useLocation();
+  const navigationState = location.state as {
+    assetHandoff?: AssetHandoffState;
+    assetIntentDraft?: AssetIntentFormDraft;
+    assetIntentProposal?: AssetIntentProposal;
+  } | null;
   const initialSeed = useMemo(() => buildAssetGenerationSeed(
-    (location.state as { assetHandoff?: AssetHandoffState } | null)?.assetHandoff,
+    navigationState?.assetHandoff,
   ), [location.state]);
-  const [assetType, setAssetType] = useState(initialSeed.assetType);
-  const [title, setTitle] = useState(initialSeed.title);
-  const [audience, setAudience] = useState(initialSeed.audience);
-  const [brief, setBrief] = useState(initialSeed.brief);
-  const [styleNotes, setStyleNotes] = useState(initialSeed.styleNotes);
-  const [sourceRefs, setSourceRefs] = useState<string[]>(initialSeed.sourceRefs);
-  const [noteRefs, setNoteRefs] = useState<string[]>(initialSeed.noteRefs);
-  const [wikiRefs, setWikiRefs] = useState<string[]>(initialSeed.wikiRefs);
-  const [allowWebResearch, setAllowWebResearch] = useState(true);
+  const priorDraft = navigationState?.assetIntentDraft;
+  const intentProposal = navigationState?.assetIntentProposal;
+  const [assetType, setAssetType] = useState(priorDraft?.assetType ?? initialSeed.assetType);
+  const [title, setTitle] = useState(fillBlank(priorDraft?.title ?? initialSeed.title, intentProposal?.workingTitle));
+  const [audience, setAudience] = useState(fillBlank(priorDraft?.audience ?? initialSeed.audience, intentProposal?.audience));
+  const [question, setQuestion] = useState(fillBlank(priorDraft?.question ?? initialSeed.brief, intentProposal?.question));
+  const [goal, setGoal] = useState(fillBlank(priorDraft?.goal ?? "", intentProposal?.goal));
+  const [creationMode, setCreationMode] = useState<AssetGenerationRequest["creationMode"]>(priorDraft?.creationMode ?? intentProposal?.creationMode ?? "synthesize");
+  const [scope, setScope] = useState(fillBlank(priorDraft?.scope ?? "", intentProposal?.scope.join("\n")));
+  const [constraints, setConstraints] = useState(fillBlank(priorDraft?.constraints ?? "", intentProposal?.constraints.join("\n")));
+  const [styleNotes, setStyleNotes] = useState(priorDraft?.styleNotes ?? initialSeed.styleNotes);
+  const [sourceRefs, setSourceRefs] = useState<string[]>(priorDraft?.sourceRefs ?? initialSeed.sourceRefs);
+  const [noteRefs, setNoteRefs] = useState<string[]>(priorDraft?.noteRefs ?? initialSeed.noteRefs);
+  const [wikiRefs, setWikiRefs] = useState<string[]>(priorDraft?.wikiRefs ?? initialSeed.wikiRefs);
+  const [allowWebResearch, setAllowWebResearch] = useState(priorDraft?.allowWebResearch ?? true);
+  const [deliveryFormat, setDeliveryFormat] = useState<"markdown" | "html">(priorDraft?.deliveryFormat ?? "markdown");
+  const [isStarting, setIsStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
 
   const sources = useQuery({ queryKey: ["asset-wizard-sources"], queryFn: () => sourcesApi.list({ limit: 50 }) });
   const notes = useQuery({ queryKey: ["asset-wizard-notes"], queryFn: () => notesApi.list({ status: "kept", limit: 50 }) });
   const wiki = useQuery({ queryKey: ["asset-wizard-wiki"], queryFn: () => wikiApi.list({ limit: 50 }) });
   const evidenceCount = sourceRefs.length + noteRefs.length + wikiRefs.length;
   const selectedType = useMemo(() => MANUAL_ASSET_TYPES.find((item) => item.value === assetType), [assetType]);
-  const canContinue = Boolean(brief.trim());
+  const canContinue = Boolean(question.trim() && goal.trim());
 
-  function startGeneration() {
-    if (!canContinue) return;
-    const request: AssetGenerationRequest = {
+  function discussIntentWithAgent() {
+    const assetIntentDraft: AssetIntentFormDraft = {
       assetType,
-      title: title.trim(),
-      audience: audience.trim(),
-      brief: brief.trim(),
-      styleNotes: styleNotes.trim(),
+      title,
+      audience,
+      question,
+      goal,
+      creationMode,
+      scope,
+      constraints,
+      styleNotes,
       sourceRefs,
       noteRefs,
       wikiRefs,
-      intakeMode: "agent_assisted",
-      researchMode: allowWebResearch ? "local_then_web" : "local_only",
+      allowWebResearch,
+      deliveryFormat,
     };
+    const partialIntent = [
+      `Asset type: ${selectedType?.label ?? assetType}`,
+      title.trim() ? `Working title: ${title.trim()}` : "Working title: not provided",
+      question.trim() ? `Current question: ${question.trim()}` : "Current question: not provided",
+      goal.trim() ? `Current goal: ${goal.trim()}` : "Current goal: not provided",
+      audience.trim() ? `Audience: ${audience.trim()}` : "Audience: not provided",
+      `Creation mode: ${creationMode}`,
+      `Scope: ${parseLines(scope).join(", ") || "not provided"}`,
+      `Constraints: ${parseLines(constraints).join("; ") || "not provided"}`,
+      `Selected evidence: ${evidenceCount} records`,
+      `Delivery format: ${deliveryFormat === "html" ? "HTML" : "Markdown"}`,
+    ].join("\n");
     navigate("/chat", {
       state: {
-        workflowId: "draft-asset",
-        assetDraft: request,
-        promptSeed: `Help me turn this need into a ${selectedType?.label ?? "knowledge asset"}: ${request.brief}`,
+        workflowId: "clarify-asset-intent",
+        promptSeed: `The Asset Intent is not confirmed yet. Help me clarify it without creating an Asset or treating Agent recommendations as my decisions.\n\n${partialIntent}`,
+        assetIntentDraft,
       },
     });
+  }
+
+  async function startGeneration() {
+    if (!canContinue) return;
+    setIsStarting(true);
+    setStartError(null);
+    try {
+      const confirmedQuestion = question.trim();
+      const confirmedGoal = goal.trim();
+      const workingTitle = title.trim() || confirmedQuestion.slice(0, 100);
+      const asset = await assetsApi.create({
+        title: workingTitle,
+        brief: confirmedGoal,
+        asset_type: assetType,
+        status: "draft",
+        source_refs: sourceRefs,
+        note_refs: noteRefs,
+        wiki_refs: wikiRefs,
+        style_notes: styleNotes.trim() || undefined,
+        metadata: {
+          audience: audience.trim() || null,
+          generation_mode: "agent_assisted",
+          research_mode: allowWebResearch ? "local_then_web" : "local_only",
+          delivery_format: deliveryFormat,
+        },
+        provenance: { origin_type: "user", action: "save" },
+      });
+      await reviseAssetIntent(asset.id, {
+        base_workspace_revision: 0,
+        question: confirmedQuestion,
+        goal: confirmedGoal,
+        audience: audience.trim() || null,
+        creation_mode: creationMode,
+        scope: parseLines(scope),
+        constraints: parseLines(constraints),
+      });
+      const request: AssetGenerationRequest = {
+        assetId: asset.id,
+        assetType,
+        title: workingTitle,
+        audience: audience.trim(),
+        brief: confirmedGoal,
+        question: confirmedQuestion,
+        goal: confirmedGoal,
+        creationMode,
+        scope: parseLines(scope),
+        constraints: parseLines(constraints),
+        styleNotes: styleNotes.trim(),
+        sourceRefs,
+        noteRefs,
+        wikiRefs,
+        intakeMode: "agent_assisted",
+        researchMode: allowWebResearch ? "local_then_web" : "local_only",
+        deliveryFormat,
+      };
+      navigate("/chat", {
+        state: {
+          workflowId: "draft-asset",
+          assetDraft: request,
+          objectRef: { object_type: "asset", object_id: asset.id, title: workingTitle },
+          promptSeed: `Work from the confirmed Intent and help produce a ${selectedType?.label ?? "knowledge asset"}.`,
+        },
+      });
+    } catch (error) {
+      setStartError(error instanceof Error ? error.message : "Could not initialize the Asset workspace.");
+    } finally {
+      setIsStarting(false);
+    }
   }
 
   return (
@@ -72,7 +178,7 @@ export function AssetGenerationPage() {
             <div>
               <h1 className="text-3xl font-semibold tracking-tight">Create an Asset</h1>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-                Describe what you need. The Asset Agent will clarify material ambiguity, search your PKG first, and optionally run focused web research. PKG receives an Asset only after you confirm the draft.
+                Confirm the question and goal first. The Agent can recommend changes, but only you can revise the stored Intent.
               </p>
             </div>
           </div>
@@ -90,12 +196,28 @@ export function AssetGenerationPage() {
         </Card>
 
         <Card>
-          <CardHeader><CardTitle>2. Describe the need</CardTitle><CardDescription>Only the objective is required. Title and audience can be clarified in Chat.</CardDescription></CardHeader>
+          <CardHeader><CardTitle>2. Confirm the Intent</CardTitle><CardDescription>Question and goal are required because they anchor later Evidence and Claims.</CardDescription></CardHeader>
           <CardContent className="space-y-4">
+            {intentProposal && <p className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-sm text-primary">Agent proposal applied to previously blank fields. Review every field before confirming Intent.</p>}
             <Input aria-label="Asset title" placeholder="Optional working title" value={title} onChange={(event) => setTitle(event.target.value)} />
             <Input aria-label="Target audience" placeholder="Optional target audience" value={audience} onChange={(event) => setAudience(event.target.value)} />
-            <Textarea aria-label="Asset brief" placeholder="What question should this asset answer, and what should the reader be able to do afterward?" rows={5} value={brief} onChange={(event) => setBrief(event.target.value)} />
-            <Textarea aria-label="Style guidance" placeholder="Optional style, tone, structure, or constraints" rows={3} value={styleNotes} onChange={(event) => setStyleNotes(event.target.value)} />
+            <Textarea aria-label="Research question" placeholder="What question should this Asset answer?" rows={3} value={question} onChange={(event) => setQuestion(event.target.value)} />
+            <Textarea aria-label="Asset goal" placeholder="What decision, understanding, or deliverable should this work support?" rows={3} value={goal} onChange={(event) => setGoal(event.target.value)} />
+            <select aria-label="Creation mode" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={creationMode} onChange={(event) => setCreationMode(event.target.value as AssetGenerationRequest["creationMode"])}>
+              <option value="understand">Understand</option><option value="synthesize">Synthesize</option><option value="make_decision">Make a Decision</option><option value="produce">Produce</option>
+            </select>
+            <div className="space-y-2">
+              <select aria-label="Delivery format" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={deliveryFormat} onChange={(event) => setDeliveryFormat(event.target.value as "markdown" | "html")}>
+                <option value="markdown">Markdown delivery</option>
+                <option value="html">HTML delivery</option>
+              </select>
+              <p className="text-xs text-muted-foreground">The Asset remains editable Markdown. HTML is generated safely during preview or export.</p>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <Textarea aria-label="Intent scope" placeholder="Scope, one item per line" rows={3} value={scope} onChange={(event) => setScope(event.target.value)} />
+              <Textarea aria-label="Intent constraints" placeholder="Constraints, one item per line" rows={3} value={constraints} onChange={(event) => setConstraints(event.target.value)} />
+            </div>
+            <Textarea aria-label="Style guidance" placeholder="Optional style, tone, or structure guidance" rows={3} value={styleNotes} onChange={(event) => setStyleNotes(event.target.value)} />
             <label className="flex items-start gap-3 rounded-xl border p-4 text-sm">
               <input type="checkbox" className="mt-1" checked={allowWebResearch} onChange={(event) => setAllowWebResearch(event.target.checked)} />
               <span><span className="block font-medium">Include focused web research</span><span className="mt-1 block text-muted-foreground">After searching PKG, the Agent must run at least one web search for a concrete freshness or evidence gap. Network evidence remains separate from local knowledge.</span></span>
@@ -112,9 +234,12 @@ export function AssetGenerationPage() {
           </CardContent>
         </Card>
 
-        <div className="flex items-center justify-between rounded-2xl border bg-card p-5">
-          <div><p className="font-medium">{selectedType?.label}</p><p className="text-sm text-muted-foreground">Agent-assisted intake · {evidenceCount} optional seed records · no Asset has been created yet</p></div>
-          <Button onClick={startGeneration} disabled={!canContinue}>Start Agent-Assisted Session<ArrowRight className="ml-2 h-4 w-4" /></Button>
+        <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border bg-card p-5">
+          <div><p className="font-medium">{selectedType?.label}</p><p className="text-sm text-muted-foreground">{canContinue ? `Intent ready to confirm · ${evidenceCount} optional seed records` : "Intent not confirmed · you can ask the Agent for help before filling these fields"}</p>{startError && <p className="mt-1 text-sm text-destructive">{startError}</p>}</div>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" onClick={discussIntentWithAgent} disabled={isStarting}>Discuss Intent with Agent</Button>
+            <Button onClick={() => void startGeneration()} disabled={!canContinue || isStarting}>{isStarting ? "Creating Workspace…" : "Confirm Intent & Start Agent"}<ArrowRight className="ml-2 h-4 w-4" /></Button>
+          </div>
         </div>
       </div>
     </div>

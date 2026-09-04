@@ -95,14 +95,14 @@ export function ReviewPage() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-6xl space-y-6 px-6 py-8">
-		<ModuleSectionNav parent="review" active="Inbox" />
+		<ModuleSectionNav parent="review" active="Decisions" />
         <section className="rounded-3xl border bg-card p-6 shadow-sm">
           <div className="flex items-start gap-4">
             <div className="rounded-xl bg-primary/10 p-3 text-primary"><Bell className="h-6 w-6" /></div>
             <div>
-              <h1 className="text-3xl font-semibold tracking-tight">Inbox</h1>
+              <h1 className="text-3xl font-semibold tracking-tight">Decisions</h1>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-					Inbox is the unified queue for candidates and changes that need confirmation before they affect a Knowledge Record or User Profile state.
+					Decisions is the unified queue for candidates and changes that need confirmation before they affect a Knowledge Record or User Profile state.
 				</p>
 				<p className="mt-2 max-w-2xl text-xs leading-5 text-muted-foreground">
 					{SUMMARY_LAYER_DESCRIPTION}

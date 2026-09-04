@@ -5,11 +5,12 @@ export interface AssetBlock {
   type: AssetBlockType;
   markdown: string;
   revision: number;
+  claimRefs: string[];
 }
 
 export interface AssetDocument {
   schemaVersion: 1;
-  blocks: AssetBlock[];
+  blocks: Array<Omit<AssetBlock, "claimRefs"> & { claim_refs: string[] }>;
   updatedAt: string;
 }
 
@@ -91,6 +92,7 @@ export function parseAssetBlocks(content?: string | null): AssetBlock[] {
       type: blockType(markdown),
       markdown,
       revision: 1,
+      claimRefs: [],
     };
   });
 }
@@ -105,7 +107,9 @@ function isAssetBlock(value: unknown): value is AssetBlock {
   return typeof block.id === "string"
     && typeof block.type === "string"
     && typeof block.markdown === "string"
-    && typeof block.revision === "number";
+    && typeof block.revision === "number"
+    && (block.claim_refs === undefined || Array.isArray(block.claim_refs))
+    && (block.claimRefs === undefined || Array.isArray(block.claimRefs));
 }
 
 export function loadAssetBlocks(metadata: Record<string, unknown> | null | undefined, draftContent?: string | null) {
@@ -113,7 +117,15 @@ export function loadAssetBlocks(metadata: Record<string, unknown> | null | undef
   if (document && typeof document === "object") {
     const candidate = document as Record<string, unknown>;
     if (candidate.schemaVersion === 1 && Array.isArray(candidate.blocks) && candidate.blocks.every(isAssetBlock)) {
-      const blocks = candidate.blocks as AssetBlock[];
+      const blocks = (candidate.blocks as Array<AssetBlock & { claim_refs?: unknown }>).map((block) => ({
+        id: block.id,
+        type: block.type,
+        markdown: block.markdown,
+        revision: block.revision,
+        claimRefs: Array.isArray(block.claim_refs)
+          ? block.claim_refs.filter((claimId): claimId is string => typeof claimId === "string")
+          : Array.isArray(block.claimRefs) ? block.claimRefs.filter((claimId): claimId is string => typeof claimId === "string") : [],
+      }));
       if (serializeAssetBlocks(blocks) === (draftContent ?? "").trim()) return blocks;
     }
   }
@@ -123,13 +135,13 @@ export function loadAssetBlocks(metadata: Record<string, unknown> | null | undef
 export function createAssetDocument(blocks: AssetBlock[]): AssetDocument {
   return {
     schemaVersion: 1,
-    blocks,
+    blocks: blocks.map(({ claimRefs, ...block }) => ({ ...block, claim_refs: claimRefs })),
     updatedAt: new Date().toISOString(),
   };
 }
 
 export function createAssetBlock(markdown = ""): AssetBlock {
-  return { id: newBlockId(), type: blockType(markdown), markdown, revision: 1 };
+  return { id: newBlockId(), type: blockType(markdown), markdown, revision: 1, claimRefs: [] };
 }
 
 export function updateAssetBlock(block: AssetBlock, markdown: string): AssetBlock {
@@ -137,6 +149,14 @@ export function updateAssetBlock(block: AssetBlock, markdown: string): AssetBloc
     ...block,
     type: blockType(markdown),
     markdown,
+    revision: block.revision + 1,
+  };
+}
+
+export function updateAssetBlockClaimRefs(block: AssetBlock, claimRefs: string[]): AssetBlock {
+  return {
+    ...block,
+    claimRefs: [...new Set(claimRefs)],
     revision: block.revision + 1,
   };
 }

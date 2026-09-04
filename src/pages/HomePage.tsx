@@ -192,7 +192,7 @@ export function HomePage() {
             </div>
             <div className="flex flex-wrap gap-2">
               <Button asChild><Link to="/chat"><MessageSquare className="h-4 w-4" /> Ask</Link></Button>
-              <Button asChild variant="outline"><Link to="/review"><Bell className="h-4 w-4" /> Review</Link></Button>
+              <Button asChild variant="outline"><Link to="/review"><Bell className="h-4 w-4" /> Decisions</Link></Button>
               <Button asChild variant="outline"><Link to="/discover"><Compass className="h-4 w-4" /> Discover</Link></Button>
             </div>
           </div>
@@ -201,7 +201,7 @@ export function HomePage() {
         <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <MetricCard label="Notes" value={counts?.notes ?? 0} icon={FileText} to="/notes" />
           <MetricCard label="Sources" value={counts?.sources ?? 0} icon={BookOpen} to="/sources" />
-          <MetricCard label="Needs Review" value={needsReviewCards.reduce((sum, item) => sum + (item.count ?? 1), 0)} icon={Bell} to="/review" />
+          <MetricCard label="Needs Decision" value={needsReviewCards.reduce((sum, item) => sum + (item.count ?? 1), 0)} icon={Bell} to="/review" />
           <MetricCard label="Open Todos" value={openTodos.length + overdue} icon={CalendarDays} to="/calendar" />
         </section>
 
@@ -226,7 +226,7 @@ export function HomePage() {
         <TodaySection title="Today Focus" description="Top actions selected by simple status and recency rules." cards={focusCards} empty="No urgent focus items right now." />
 
         <section className="grid gap-4 xl:grid-cols-[1fr_1fr]">
-          <TodaySection title="Needs Review" description="Confirm items before they change durable knowledge." cards={needsReviewCards} empty="No pending review items." />
+          <TodaySection title="Needs Your Decision" description="Confirm items before they change durable knowledge." cards={needsReviewCards} empty="No pending decisions." />
           <TodaySection title="System Attention" description="Failures or blocked background work that may need attention." cards={systemCards} empty="No failed or blocked jobs found." compact />
         </section>
 
@@ -292,7 +292,7 @@ function buildFocusCards({
     cards.push(card("focus-wiki-refresh", "Wiki pages may need refresh", "New materials may affect stable wiki pages.", "Pending Wiki Refresh Queue", "/review/wiki-suggestions", "Open Wiki Refresh Queue", "high", RefreshCw, pendingWikiCount));
   }
   if (digestPending || reviewSuggestionCount || reviewableSources.length) {
-    cards.push(card("focus-review", "Review queue has work", "Generated or imported knowledge needs confirmation.", "Pending review", "/review", "Open Review", "high", Bell, digestPending + reviewSuggestionCount + reviewableSources.length));
+    cards.push(card("focus-review", "Decision queue has work", "Generated or imported knowledge needs confirmation.", "Pending decisions", "/review", "Open Decisions", "high", Bell, digestPending + reviewSuggestionCount + reviewableSources.length));
   }
   if (keptDiscoveryCount) {
     cards.push(card("focus-kept-discoveries", "Kept discoveries are waiting", "Candidate materials were kept but not imported.", "Kept for later", "/discover", "Open Discover", "medium", Compass, keptDiscoveryCount));

@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect, useCallback } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Cpu, History, MessageSquarePlus, Microscope, Send, Sparkles, Square, Trash2, X } from "lucide-react";
+import { Cpu, GripHorizontal, History, MessageSquarePlus, Microscope, Send, Sparkles, Square, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { agentMemoryApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -43,16 +43,75 @@ import {
   type WorkflowResultSaveTarget,
 } from "@/lib/agent-workflows";
 import { saveWorkflowResult } from "@/lib/workflow-result-save";
+import type { AssetIntentFormDraft, AssetIntentProposal } from "@/lib/asset-generation";
 
 type ChatLocationState = {
   promptSeed?: string;
   workflowId?: string;
   objectRef?: AgentWorkflowContext["objectRef"];
   assetDraft?: AgentWorkflowContext["assetDraft"];
+  assetIntentDraft?: AssetIntentFormDraft;
 } | null;
+
+const CHAT_INPUT_HEIGHT_KEY = "seagull.chat.input-height";
+const MIN_CHAT_INPUT_HEIGHT = 44;
+
+function initialChatInputHeight() {
+  const stored = Number(window.localStorage.getItem(CHAT_INPUT_HEIGHT_KEY));
+  return Number.isFinite(stored) && stored >= MIN_CHAT_INPUT_HEIGHT ? stored : 76;
+}
+
+function parseAssetIntentProposal(value: unknown): AssetIntentProposal | null {
+  if (!value || typeof value !== "object") return null;
+  const proposal = value as Record<string, unknown>;
+  if (
+    typeof proposal.workingTitle !== "string"
+    || typeof proposal.question !== "string"
+    || typeof proposal.goal !== "string"
+    || typeof proposal.audience !== "string"
+    || !["understand", "synthesize", "make_decision", "produce"].includes(String(proposal.creationMode))
+    || !Array.isArray(proposal.scope)
+    || !Array.isArray(proposal.constraints)
+    || typeof proposal.rationale !== "string"
+  ) return null;
+  return {
+    workingTitle: proposal.workingTitle,
+    question: proposal.question,
+    goal: proposal.goal,
+    audience: proposal.audience,
+    creationMode: proposal.creationMode as AssetIntentProposal["creationMode"],
+    scope: proposal.scope.filter((item): item is string => typeof item === "string"),
+    constraints: proposal.constraints.filter((item): item is string => typeof item === "string"),
+    rationale: proposal.rationale,
+    authorship: "agent",
+    requiresUserConfirmation: true,
+  };
+}
+
+function parseAssetIntentDraft(value: unknown): AssetIntentFormDraft | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const draft = value as Record<string, unknown>;
+  if (
+    typeof draft.assetType !== "string"
+    || typeof draft.title !== "string"
+    || typeof draft.audience !== "string"
+    || typeof draft.question !== "string"
+    || typeof draft.goal !== "string"
+    || !["understand", "synthesize", "make_decision", "produce"].includes(String(draft.creationMode))
+    || typeof draft.scope !== "string"
+    || typeof draft.constraints !== "string"
+    || typeof draft.styleNotes !== "string"
+    || !Array.isArray(draft.sourceRefs)
+    || !Array.isArray(draft.noteRefs)
+    || !Array.isArray(draft.wikiRefs)
+    || typeof draft.allowWebResearch !== "boolean"
+  ) return undefined;
+  return draft as unknown as AssetIntentFormDraft;
+}
 
 export function ChatPage() {
   const location = useLocation();
+  const navigate = useNavigate();
   const [sessions, setSessions] = useState<ChatSessionRecord[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [selectedHistorySessionId, setSelectedHistorySessionId] = useState<string | null>(null);
@@ -71,6 +130,8 @@ export function ChatPage() {
   const [seedApplied, setSeedApplied] = useState(false);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
   const [workflowContext, setWorkflowContext] = useState<AgentWorkflowContext>({});
+  const [assetIntentProposal, setAssetIntentProposal] = useState<AssetIntentProposal | null>(null);
+  const [chatInputHeight, setChatInputHeight] = useState(initialChatInputHeight);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -90,7 +151,17 @@ export function ChatPage() {
       try {
         const loaded = await loadSessions();
         if (cancelled) return;
-        if (loaded.length > 0) {
+        const launchState = location.state as ChatLocationState;
+        const startsWorkflow = Boolean(launchState?.promptSeed || launchState?.workflowId);
+        if (startsWorkflow) {
+          const fresh = await createEmptySession();
+          if (cancelled) return;
+          setSessions([fresh, ...loaded.filter((session) => session.id !== fresh.id)]);
+          setActiveSessionId(fresh.id);
+          setSelectedHistorySessionId(fresh.id);
+          setTab("chat");
+          navigate(location.pathname, { replace: true, state: null });
+        } else if (loaded.length > 0) {
           setSessions(loaded);
           setActiveSessionId(loaded[0].id);
           setSelectedHistorySessionId(loaded[0].id);
@@ -108,7 +179,7 @@ export function ChatPage() {
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [location.key, location.state]);
 
   const { data: models } = useQuery({
     queryKey: ["harness-models"],
@@ -128,11 +199,12 @@ export function ChatPage() {
     if (!state?.promptSeed && !state?.workflowId) return;
     const nextWorkflowId =
       state.workflowId ?? inferAgentWorkflowId(state.objectRef?.object_type, state.promptSeed);
-    const nextContext = { objectRef: state.objectRef, promptSeed: state.promptSeed, assetDraft: state.assetDraft };
+    const nextContext = { objectRef: state.objectRef, promptSeed: state.promptSeed, assetDraft: state.assetDraft, assetIntentDraft: state.assetIntentDraft };
     const workflow = findAgentWorkflowTemplate(nextWorkflowId);
 
     setWorkflowContext(nextContext);
     setSelectedWorkflowId(workflow?.id ?? null);
+    setAssetIntentProposal(null);
     if (workflow) {
       setInput(renderAgentWorkflowPrompt(workflow, nextContext));
     } else if (state.promptSeed) {
@@ -158,6 +230,17 @@ export function ChatPage() {
   const selectedWorkflow = findAgentWorkflowTemplate(selectedWorkflowId);
   const workflowSections = groupAgentWorkflowTemplates();
 
+  useEffect(() => {
+    if (!currentSession) return;
+    const storedMessage = [...currentSession.messages].reverse().find((message) => message.metadata?.asset_intent_proposal);
+    const proposal = parseAssetIntentProposal(storedMessage?.metadata?.asset_intent_proposal);
+    if (!proposal) return;
+    const draft = parseAssetIntentDraft(storedMessage?.metadata?.asset_intent_draft);
+    setAssetIntentProposal(proposal);
+    setSelectedWorkflowId("clarify-asset-intent");
+    setWorkflowContext((current) => ({ ...current, assetIntentDraft: draft ?? current.assetIntentDraft }));
+  }, [currentSession]);
+
   const scrollToBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
@@ -174,6 +257,7 @@ export function ChatPage() {
       return;
     }
     if (state?.promptSeed || state?.workflowId) return;
+    if (seedApplied || currentSession.messages.some((message) => message.metadata?.asset_intent_proposal)) return;
 
     let cancelled = false;
     void sessionContextsApi.get(currentSession.id).then(({ context }) => {
@@ -183,7 +267,12 @@ export function ChatPage() {
         setWorkflowContext({});
         return;
       }
-      const nextContext = { assetDraft: context.assetDraft };
+      const nextContext = {
+        assetDraft: context.assetDraft,
+        objectRef: context.assetDraft.assetId
+          ? { object_type: "asset", object_id: context.assetDraft.assetId, title: context.assetDraft.title }
+          : undefined,
+      };
       setSelectedWorkflowId(context.workflowId);
       setWorkflowContext(nextContext);
       if (currentSession.messages.length === 0) {
@@ -194,7 +283,7 @@ export function ChatPage() {
       if (!cancelled) console.error("Failed to restore Asset generation context:", error);
     });
     return () => { cancelled = true; };
-  }, [currentSession?.id, location.state]);
+  }, [currentSession?.id, currentSession?.messages, location.state, seedApplied]);
 
   const updateSessionLocal = useCallback(
     (sessionId: string, updater: (s: ChatSessionRecord) => ChatSessionRecord) => {
@@ -214,6 +303,7 @@ export function ChatPage() {
       setInput("");
       setSelectedWorkflowId(null);
       setWorkflowContext({});
+      setAssetIntentProposal(null);
       setTab("chat");
       textareaRef.current?.focus();
     } catch (err) {
@@ -268,6 +358,7 @@ export function ChatPage() {
 
       let fullResponse = "";
       let stopped = false;
+      let generatedIntentProposal: AssetIntentProposal | null = null;
       const abortController = new AbortController();
       abortRef.current = abortController;
 
@@ -304,6 +395,24 @@ export function ChatPage() {
               break;
             }
             case "tool_call":
+              if (event.tool === "propose_asset_intent") {
+                const proposal = parseAssetIntentProposal(event.args);
+                if (proposal) {
+                  generatedIntentProposal = proposal;
+                  setAssetIntentProposal(proposal);
+                  updateSessionLocal(sessionId, (session) => ({
+                    ...session,
+                    messages: session.messages.map((message) => message.id === assistantMsg.id ? {
+                      ...message,
+                      metadata: {
+                        ...(message.metadata ?? {}),
+                        asset_intent_proposal: proposal as unknown as Record<string, unknown>,
+                        ...(workflowContext.assetIntentDraft ? { asset_intent_draft: workflowContext.assetIntentDraft as unknown as Record<string, unknown> } : {}),
+                      },
+                    } : message),
+                  }));
+                }
+              }
               setSteps((prev) => {
                 const tool = event.tool ?? "tool";
                 return [...prev, { tool, status: "running" }];
@@ -379,7 +488,16 @@ export function ChatPage() {
         const finalMessages = [
           ...baseMessages,
           userMsg,
-          { ...assistantMsg, content: fullResponse },
+          {
+            ...assistantMsg,
+            content: fullResponse,
+            ...(generatedIntentProposal ? {
+              metadata: {
+                asset_intent_proposal: generatedIntentProposal as unknown as Record<string, unknown>,
+                ...(workflowContext.assetIntentDraft ? { asset_intent_draft: workflowContext.assetIntentDraft as unknown as Record<string, unknown> } : {}),
+              },
+            } : {}),
+          },
         ];
         const finalSession = {
           ...currentSession,
@@ -398,7 +516,7 @@ export function ChatPage() {
         stopRequestedRef.current = false;
       }
     },
-    [currentSession, selectedWorkflowId, streaming, updateSessionLocal]
+    [currentSession, selectedWorkflowId, streaming, updateSessionLocal, workflowContext.assetIntentDraft]
   );
 
   const handleSubmit = async () => {
@@ -466,6 +584,40 @@ export function ChatPage() {
     }
   };
 
+  const clampChatInputHeight = useCallback((height: number) => {
+    const maximum = Math.max(MIN_CHAT_INPUT_HEIGHT, Math.floor(window.innerHeight * 0.5));
+    return Math.min(maximum, Math.max(MIN_CHAT_INPUT_HEIGHT, Math.round(height)));
+  }, []);
+
+  const persistChatInputHeight = useCallback((height: number) => {
+    const nextHeight = clampChatInputHeight(height);
+    setChatInputHeight(nextHeight);
+    window.localStorage.setItem(CHAT_INPUT_HEIGHT_KEY, String(nextHeight));
+  }, [clampChatInputHeight]);
+
+  const handleChatInputResizeStart = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    const startY = event.clientY;
+    const startHeight = chatInputHeight;
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      setChatInputHeight(clampChatInputHeight(startHeight + startY - moveEvent.clientY));
+    };
+    const handlePointerUp = (upEvent: PointerEvent) => {
+      const nextHeight = clampChatInputHeight(startHeight + startY - upEvent.clientY);
+      persistChatInputHeight(nextHeight);
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+  }, [chatInputHeight, clampChatInputHeight, persistChatInputHeight]);
+
+  const handleChatInputResizeKeyDown = useCallback((event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    event.preventDefault();
+    persistChatInputHeight(chatInputHeight + (event.key === "ArrowUp" ? 24 : -24));
+  }, [chatInputHeight, persistChatInputHeight]);
+
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -510,7 +662,7 @@ export function ChatPage() {
                 </p>
               </div>
 
-              <div className="flex-1 overflow-y-auto px-6">
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6">
                 {!currentSession || currentSession.messages.length === 0 ? (
                   <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
                     <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
@@ -637,6 +789,28 @@ export function ChatPage() {
                 )}
               </div>
 
+              {assetIntentProposal && selectedWorkflowId === "clarify-asset-intent" && (
+                <div className="border-t border-border bg-card/50 px-6 pt-4">
+                  <div className="mx-auto max-w-3xl space-y-3 rounded-xl border border-primary/20 bg-primary/5 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div><p className="font-medium">Agent Intent Proposal</p><p className="text-xs text-muted-foreground">Candidate only · existing form values will not be overwritten</p></div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => navigate("/assets/new", { state: { assetIntentProposal, assetIntentDraft: workflowContext.assetIntentDraft } })}
+                      >Apply to Asset Form</Button>
+                    </div>
+                    <div className="grid gap-3 text-sm md:grid-cols-2">
+                      <div><p className="text-xs font-semibold uppercase text-muted-foreground">Question</p><p>{assetIntentProposal.question}</p></div>
+                      <div><p className="text-xs font-semibold uppercase text-muted-foreground">Goal</p><p>{assetIntentProposal.goal}</p></div>
+                      <div><p className="text-xs font-semibold uppercase text-muted-foreground">Audience</p><p>{assetIntentProposal.audience || "Not specified"}</p></div>
+                      <div><p className="text-xs font-semibold uppercase text-muted-foreground">Recommended Mode</p><p>{assetIntentProposal.creationMode.replace(/_/g, " ")}</p></div>
+                    </div>
+                    <p className="text-xs text-muted-foreground">{assetIntentProposal.rationale}</p>
+                  </div>
+                </div>
+              )}
+
               {pendingQuestion ? (
                 <QuestionCard
                   questions={pendingQuestion.questions}
@@ -715,15 +889,33 @@ export function ChatPage() {
                   )}
                 </div>
                 <div className="mx-auto flex max-w-3xl items-end gap-3">
-                  <Textarea
-                    ref={textareaRef}
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder="Ask anything about your knowledge base..."
-                    className="min-h-[44px] max-h-[200px] resize-none"
-                    rows={1}
-                  />
+                  <div className="min-w-0 flex-1">
+                    <button
+                      type="button"
+                      role="separator"
+                      aria-label="Resize Chat input"
+                      aria-orientation="horizontal"
+                      aria-valuemin={MIN_CHAT_INPUT_HEIGHT}
+                      aria-valuemax={Math.max(MIN_CHAT_INPUT_HEIGHT, Math.floor(window.innerHeight * 0.5))}
+                      aria-valuenow={chatInputHeight}
+                      className="group flex h-4 w-full touch-none cursor-row-resize items-center justify-center rounded-t-md text-muted-foreground/60 hover:bg-muted hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      onPointerDown={handleChatInputResizeStart}
+                      onKeyDown={handleChatInputResizeKeyDown}
+                      title="Drag upward to enlarge the Chat input"
+                    >
+                      <GripHorizontal className="h-4 w-4 transition-transform group-hover:scale-110" />
+                    </button>
+                    <Textarea
+                      ref={textareaRef}
+                      value={input}
+                      onChange={(e) => setInput(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      placeholder="Ask anything about your knowledge base..."
+                      className="min-h-[44px] max-h-[50vh] resize-none overflow-auto rounded-t-none"
+                      style={{ height: chatInputHeight }}
+                      rows={1}
+                    />
+                  </div>
                   {streaming ? (
                     <Button size="icon" variant="destructive" onClick={handleStop} title="Stop generating">
                       <Square className="h-4 w-4 fill-current" />

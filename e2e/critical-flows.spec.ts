@@ -31,6 +31,11 @@ type MockState = {
   sessionContext: Record<string, unknown> | null;
   chatResponse?: string;
   chatPrompts?: string[];
+  chatSessions?: Array<Record<string, unknown>>;
+  harnessSessionIds?: string[];
+  htmlPreviewRequests?: number;
+  htmlExportRequests?: number;
+  newsletterAutomation?: Record<string, unknown>;
 };
 
 function json(route: Route, body: unknown, status = 200) {
@@ -64,31 +69,61 @@ async function installMockBff(page: Page, state: MockState) {
     if (path === "/api/auth/me/settings/publishing") return json(route, { primary_site_url: "https://publish.example.com", default_channel: "Blog", updated_at: now });
 
     if (path === "/api/chat-sessions" && method === "GET") {
-      return json(route, { items: [], total: 0 });
+      return json(route, { items: state.chatSessions ?? [], total: state.chatSessions?.length ?? 0 });
     }
     if (path === "/api/chat-sessions" && method === "POST") {
       const body = request.postDataJSON() as { id?: string; title?: string; messages?: unknown[] };
-      return json(route, {
+      const session = {
         id: body.id ?? "session-e2e",
         title: body.title ?? "New Chat",
         messages: body.messages ?? [],
         created_at: now,
         updated_at: now,
-      });
+      };
+      state.chatSessions = [session, ...(state.chatSessions ?? []).filter((item) => item.id !== session.id)];
+      return json(route, session);
     }
     if (path.startsWith("/api/chat-sessions/") && method === "PATCH") {
       const body = request.postDataJSON() as Record<string, unknown>;
-      return json(route, {
+      const session = {
         id: path.split("/").at(-1),
         title: body.title ?? "E2E Chat",
         messages: body.messages ?? [],
         created_at: now,
         updated_at: now,
-      });
+      };
+      state.chatSessions = [session, ...(state.chatSessions ?? []).filter((item) => item.id !== session.id)];
+      return json(route, session);
     }
     if (path === "/api/chat" && method === "POST") {
-      const body = request.postDataJSON() as { prompt?: string; preset?: string };
+      const body = request.postDataJSON() as { prompt?: string; preset?: string; session_id?: string };
       state.chatPrompts = [...(state.chatPrompts ?? []), body.prompt ?? ""];
+      state.harnessSessionIds = [...(state.harnessSessionIds ?? []), body.session_id ?? ""];
+      if (body.preset === "clarify-asset-intent") {
+        return route.fulfill({
+          status: 200,
+          contentType: "text/event-stream",
+          body: [
+            `data: ${JSON.stringify({ type: "session", session_id: body.session_id })}`,
+            "",
+            `data: ${JSON.stringify({ type: "text", content: "I prepared a structured Intent proposal." })}`,
+            "",
+            `data: ${JSON.stringify({ type: "tool_call", tool: "propose_asset_intent", args: {
+              workingTitle: "Agent proposed title",
+              question: "What decision should this Asset support?",
+              goal: "Produce a decision-ready synthesis.",
+              audience: "Architecture reviewers",
+              creationMode: "make_decision",
+              scope: ["Current architecture"],
+              constraints: ["Use accepted evidence"],
+              rationale: "The proposal turns the initial topic into a concrete decision contract.",
+            } })}`,
+            "",
+            `data: ${JSON.stringify({ type: "done", session_id: body.session_id })}`,
+            "",
+          ].join("\n"),
+        });
+      }
       if (body.preset === "revise-asset-block") {
         const blockId = body.prompt?.match(/"block_id":\s*"([^"]+)"/)?.[1] ?? "block-e2e";
         const baseRevision = Number(body.prompt?.match(/"base_revision":\s*(\d+)/)?.[1] ?? 1);
@@ -152,6 +187,48 @@ async function installMockBff(page: Page, state: MockState) {
       state.savedAssetBody = request.postDataJSON() as Record<string, unknown>;
       return json(route, { id: "asset-e2e", ...state.savedAssetBody, created_at: now, updated_at: now });
     }
+    if (path === "/api/assets/newsletter/automation" && method === "GET") {
+      return json(route, state.newsletterAutomation ?? {
+        enabled: false,
+        name: "Technology Newsletter",
+        topics: [],
+        frequency: "weekly",
+        hour_utc: 1,
+        weekday_utc: 4,
+        lookback_days: 7,
+        max_news_items: 8,
+        max_paper_items: 5,
+        delivery_format: "html",
+        audience: "Technology readers",
+        style_notes: "Concise, evidence-led, and easy to scan.",
+        last_generated_at: null,
+        last_asset_id: null,
+      });
+    }
+    if (path === "/api/assets/newsletter/automation" && method === "PUT") {
+      state.newsletterAutomation = { ...(request.postDataJSON() as Record<string, unknown>), last_generated_at: null, last_asset_id: null };
+      return json(route, state.newsletterAutomation);
+    }
+    if (path === "/api/assets/newsletter/automation/run" && method === "POST") {
+      state.savedAssetBody = {
+        title: "E2E Tech Weekly · 2026-09-03",
+        brief: "Automated technology newsletter.",
+        asset_type: "newsletter_issue",
+        status: "draft",
+        draft_content: "# E2E Tech Weekly\n\n## Featured Items\n\nA reviewable newsletter draft.",
+        source_refs: ["source-input"],
+        note_refs: [],
+        wiki_refs: [],
+        metadata_: { delivery_format: "html", generation_mode: "newsletter_automation" },
+      };
+      state.newsletterAutomation = { ...state.newsletterAutomation, last_generated_at: now, last_asset_id: "asset-e2e" };
+      return json(route, {
+        status: "generated",
+        news_count: 1,
+        paper_count: 1,
+        asset: { id: "asset-e2e", user_id: "user-e2e", ...state.savedAssetBody, created_at: now, updated_at: now },
+      });
+    }
     if (path === "/api/assets/asset-e2e" && method === "GET") {
       return json(route, { id: "asset-e2e", user_id: "user-e2e", ...state.savedAssetBody, source_refs: state.savedAssetBody?.source_refs ?? [], note_refs: state.savedAssetBody?.note_refs ?? [], wiki_refs: state.savedAssetBody?.wiki_refs ?? [], created_at: now, updated_at: now });
     }
@@ -159,8 +236,30 @@ async function installMockBff(page: Page, state: MockState) {
       state.savedAssetBody = { ...state.savedAssetBody, ...(request.postDataJSON() as Record<string, unknown>) };
       return json(route, { id: "asset-e2e", user_id: "user-e2e", ...state.savedAssetBody, source_refs: state.savedAssetBody?.source_refs ?? [], note_refs: state.savedAssetBody?.note_refs ?? [], wiki_refs: state.savedAssetBody?.wiki_refs ?? [], created_at: now, updated_at: now });
     }
+    if (path === "/api/assets/asset-e2e/workspace" && method === "GET") {
+      return json(route, {
+        asset_id: "asset-e2e",
+        workspace_revision: 0,
+        intent: null,
+        intent_history: [],
+        evidence: [],
+        claims: [],
+        contribution: null,
+        knowledge_candidates: [],
+        decision_items: [],
+      });
+    }
     if (path === "/api/assets/asset-e2e/check-readiness") {
       return json(route, { ready: false, blocking_reasons: ["Review the draft before export"], warning_reasons: [], suggestion_reasons: [] });
+    }
+    if (path === "/api/assets/asset-e2e/preview/html" && method === "GET") {
+      state.htmlPreviewRequests = (state.htmlPreviewRequests ?? 0) + 1;
+      return json(route, { asset_id: "asset-e2e", export_format: "html", content: "<!doctype html><html><body><main><h1>HTML Preview Asset</h1><p>Rendered safely.</p></main></body></html>" });
+    }
+    if (path === "/api/assets/asset-e2e/export/html" && method === "POST") {
+      state.htmlExportRequests = (state.htmlExportRequests ?? 0) + 1;
+      state.savedAssetBody = { ...state.savedAssetBody, status: "exported", export_format: "html" };
+      return json(route, { asset_id: "asset-e2e", export_format: "html", content: "<!doctype html><html><body><h1>HTML Export Asset</h1></body></html>" });
     }
 
     if (path === "/api/harness/memory-candidates" && method === "POST") {
@@ -281,10 +380,16 @@ async function signIn(page: Page) {
   await expect(page).toHaveURL(/\/$/);
 }
 
-test("critical knowledge journey: login, chat, explicit save, inbox, and Agent Memory", async ({ page }) => {
+test("critical knowledge journey: login, chat, explicit save, decisions, and Agent Memory", async ({ page }) => {
   const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null };
   await installMockBff(page, state);
   await signIn(page);
+
+  const sidebar = page.locator("aside");
+  await expect(sidebar.getByRole("link", { name: "Chat", exact: true })).toBeVisible();
+  await expect(sidebar.getByRole("link", { name: "Decisions", exact: true })).toBeVisible();
+  await expect(sidebar.getByRole("link", { name: "Agent Memory", exact: true })).toHaveCount(0);
+  await expect(sidebar.getByRole("link", { name: "Settings", exact: true })).toBeVisible();
 
   await page.goto("/chat");
   const input = page.getByPlaceholder("Ask anything about your knowledge base...");
@@ -313,17 +418,168 @@ test("critical knowledge journey: login, chat, explicit save, inbox, and Agent M
   await expect.poll(() => state.memory?.title).toBe("E2E Memory");
 
   await page.goto("/review");
+  await expect(page.getByRole("heading", { name: "Decisions", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Pending Candidates" })).toBeVisible();
+  await expect(page.locator("main").getByRole("link", { name: "Decisions", exact: true })).toHaveCount(0);
   await expect(page.getByText("E2E Paper Candidate")).toBeVisible();
   await expect(page.getByText("Paper Candidate", { exact: true }).first()).toBeVisible();
 
   await page.goto("/agent-memory");
   await expect(page.getByRole("heading", { name: "Agent Memory", exact: true })).toBeVisible();
+  await expect(page.locator("main").getByRole("link", { name: "Settings", exact: true })).toBeVisible();
   await expect(page.getByText("E2E Memory")).toBeVisible();
   await expect(page.getByText("Remember this E2E preference")).toBeVisible();
 });
 
-test("agent-assisted Asset generation creates PKG state only after the user confirms the Agent draft", async ({ page }) => {
+test("Asset Intent Agent starts a fresh session and restores its apply action", async ({ page }) => {
+  const oldSession = {
+    id: "session-old",
+    title: "Previous Chat",
+    messages: [{ id: "old-user", role: "user", content: "Old conversation", created_at: now }],
+    created_at: now,
+    updated_at: now,
+  };
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: null,
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+    chatSessions: [oldSession],
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/assets/new");
+  await page.getByLabel("Asset title").fill("User working title");
+  await page.getByLabel("Research question").fill("A rough question");
+  await page.getByRole("button", { name: "Discuss Intent with Agent" }).click();
+  await expect(page).toHaveURL(/\/chat$/);
+  await expect(page.getByRole("tab", { name: "Chat", exact: true })).toHaveAttribute("data-state", "active");
+
+  const input = page.getByPlaceholder("Ask anything about your knowledge base...");
+  await expect(input).toContainText("User working title");
+  await input.press("Enter");
+  await expect(page.getByRole("button", { name: "Apply to Asset Form" })).toBeVisible();
+  expect(state.harnessSessionIds?.at(-1)).not.toBe("session-old");
+
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Apply to Asset Form" })).toBeVisible();
+  await page.getByRole("button", { name: "Apply to Asset Form" }).click();
+  await expect(page).toHaveURL(/\/assets\/new$/);
+  await expect(page.getByLabel("Asset title")).toHaveValue("User working title");
+  await expect(page.getByLabel("Research question")).toHaveValue("A rough question");
+  await expect(page.getByLabel("Goal")).toHaveValue("Produce a decision-ready synthesis.");
+});
+
+test("Chat input resizes upward and keeps its height after reload", async ({ page }) => {
+  const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/chat");
+  const input = page.getByPlaceholder("Ask anything about your knowledge base...");
+  const resizeHandle = page.getByRole("separator", { name: "Resize Chat input" });
+  await expect(input).toBeVisible();
+  await expect(resizeHandle).toBeVisible();
+  const initialHeight = (await input.boundingBox())?.height ?? 0;
+  const handleBox = await resizeHandle.boundingBox();
+  expect(handleBox).not.toBeNull();
+
+  await page.mouse.move(handleBox!.x + handleBox!.width / 2, handleBox!.y + handleBox!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(handleBox!.x + handleBox!.width / 2, handleBox!.y - 80, { steps: 5 });
+  await page.mouse.up();
+  await expect.poll(async () => (await input.boundingBox())?.height ?? 0).toBeGreaterThan(initialHeight + 60);
+
+  await page.reload();
+  await expect(page.getByPlaceholder("Ask anything about your knowledge base...")).toBeVisible();
+  await expect.poll(async () => (await page.getByPlaceholder("Ask anything about your knowledge base...").boundingBox())?.height ?? 0).toBeGreaterThan(initialHeight + 60);
+});
+
+test("Asset creation stores HTML delivery preference while preserving Markdown authoring", async ({ page }) => {
+  const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/assets/new");
+  await page.getByLabel("Research question").fill("How should this HTML delivery work?");
+  await page.getByLabel("Asset goal").fill("Produce a reusable web document.");
+  await page.getByLabel("Delivery format").selectOption("html");
+  await page.getByRole("button", { name: "Confirm Intent & Start Agent" }).click();
+
+  await expect.poll(() => (state.savedAssetBody?.metadata as Record<string, unknown> | undefined)?.delivery_format).toBe("html");
+  const input = page.getByPlaceholder("Ask anything about your knowledge base...");
+  await expect(input).toContainText("Delivery format: HTML export generated deterministically from the Markdown Asset");
+  await expect(input).toContainText("Always author and return Markdown; never return raw HTML");
+});
+
+test("Asset Production previews and downloads the preferred HTML delivery", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: {
+      title: "HTML Preview Asset",
+      brief: "Preview and export this Asset.",
+      asset_type: "blog_post",
+      status: "ready_to_export",
+      draft_content: "## Main Argument\n\nRendered safely.",
+      reference_notes: "- Source: source-input",
+      source_refs: ["source-input"],
+      note_refs: [],
+      wiki_refs: [],
+      metadata_: { delivery_format: "html" },
+      metadata: { delivery_format: "html" },
+    },
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/assets/asset-e2e");
+  await page.getByRole("tab", { name: "Production" }).click();
+  await expect(page.getByLabel("Asset delivery format")).toHaveValue("html");
+  await page.getByRole("button", { name: "Preview HTML" }).click();
+  await expect(page.getByRole("heading", { name: "HTML Preview" })).toBeVisible();
+  await expect(page.frameLocator('iframe[title="Asset HTML Preview"]').getByRole("heading", { name: "HTML Preview Asset" })).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export HTML" }).last().click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe("HTML-Preview-Asset.html");
+  await expect.poll(() => state.htmlExportRequests).toBe(1);
+});
+
+test("Newsletter Automation saves a schedule and creates a reviewable Asset draft", async ({ page }) => {
+  const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/assets");
+  await page.getByRole("button", { name: "Newsletter Automation" }).click();
+  await expect(page.getByRole("heading", { name: "Newsletter Automation" })).toBeVisible();
+  await page.getByLabel("Newsletter name").fill("E2E Tech Weekly");
+  await page.getByLabel("Newsletter topics").fill("AI agents\nrobotics");
+  await page.getByLabel("Enable Newsletter automation").check();
+  await page.getByLabel("Newsletter frequency").selectOption("daily");
+  await page.getByLabel("Newsletter hour UTC").fill("2");
+  await page.getByRole("button", { name: "Save automation" }).click();
+
+  await expect.poll(() => state.newsletterAutomation?.name).toBe("E2E Tech Weekly");
+  expect(state.newsletterAutomation?.topics).toEqual(["AI agents", "robotics"]);
+  expect(state.newsletterAutomation?.frequency).toBe("daily");
+
+  await page.getByRole("button", { name: "Run now" }).click();
+  await expect(page).toHaveURL(/\/assets\/asset-e2e$/);
+  await expect(page.getByRole("heading", { name: "E2E Tech Weekly · 2026-09-03", exact: true }).last()).toBeVisible();
+  expect(state.savedAssetBody).toMatchObject({ asset_type: "newsletter_issue", status: "draft" });
+});
+
+test("agent-assisted Asset generation creates a Workspace after Intent confirmation and saves the Agent draft explicitly", async ({ page }) => {
   const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null };
   await installMockBff(page, state);
   await signIn(page);
@@ -336,12 +592,15 @@ test("agent-assisted Asset generation creates PKG state only after the user conf
   await page.getByRole("button", { name: "Research Brief" }).click();
   await page.getByLabel("Asset title").fill("E2E Research Brief");
   await page.getByLabel("Target audience").fill("Architecture reviewers");
-  await page.getByLabel("Asset brief").fill("Explain the evidence and recommend the next architecture decision.");
+  await page.getByLabel("Research question").fill("What architecture decision does the evidence support?");
+  await page.getByLabel("Asset goal").fill("Explain the evidence and recommend the next architecture decision.");
   await page.getByLabel("Style guidance").fill("Concise and evidence-led.");
   await page.getByText("E2E Source Evidence").click();
   await expect.poll(() => state.savedAssetBody).toBeNull();
 
-  await page.getByRole("button", { name: "Start Agent-Assisted Session" }).click();
+  await page.getByRole("button", { name: "Confirm Intent & Start Agent" }).click();
+  await expect.poll(() => state.savedAssetBody?.title).toBe("E2E Research Brief");
+  expect(state.savedAssetBody?.draft_content).toBeUndefined();
   await expect(page).toHaveURL(/\/chat$/);
   let input = page.getByPlaceholder("Ask anything about your knowledge base...");
   await expect(input).toContainText("E2E Research Brief");
@@ -357,7 +616,7 @@ test("agent-assisted Asset generation creates PKG state only after the user conf
   await expect(input).toContainText("Architecture reviewers");
   await input.press("Enter");
   await expect(page.getByText("E2E answer with a durable result.")).toBeVisible();
-  await expect.poll(() => state.savedAssetBody).toBeNull();
+  expect(state.savedAssetBody?.draft_content).toBeUndefined();
 
   await page.getByRole("button", { name: "Save as Asset Draft" }).click();
   await expect.poll(() => state.savedAssetBody?.title).toBe("E2E Research Brief");
@@ -401,7 +660,7 @@ test("agent-assisted Asset generation creates PKG state only after the user conf
   await expect(page.locator("[data-block-preview]")).toHaveCount(0);
   await page.getByRole("button", { name: "让 Agent 修改" }).nth(3).click();
   await page.getByLabel("Agent instruction for block 4").fill("Make this paragraph clearer without removing its evidence marker.");
-  await page.getByRole("button", { name: "开始修改" }).click();
+  await page.getByRole("button", { name: "按要求修改" }).click();
   await expect(page.locator("[data-agent-diff-preview]")).toBeVisible();
   await expect(page.getByLabel("Draft block 4")).not.toHaveValue(/Agent revised paragraph/);
   await page.getByRole("button", { name: "确认应用" }).click();
@@ -452,9 +711,9 @@ test("Source Asset handoff opens the generation guide with evidence preselected"
 
   await expect(page).toHaveURL(/\/assets\/new$/);
   await expect(page.getByLabel("Asset title")).toHaveValue("E2E Source Evidence");
-  await expect(page.getByLabel("Asset brief")).toHaveValue("Create a blog asset from source: E2E Source Evidence");
+  await expect(page.getByLabel("Research question")).toHaveValue("Create a blog asset from source: E2E Source Evidence");
   await expect(page.getByLabel("E2E Source Evidence")).toBeChecked();
-  await expect(page.getByText("1 optional seed records", { exact: false })).toBeVisible();
+  await expect(page.getByText("Intent not confirmed", { exact: false })).toBeVisible();
   await expect.poll(() => state.savedAssetBody).toBeNull();
 });
 
@@ -492,9 +751,10 @@ test("Asset types produce distinct agent-assisted deliverable contracts before g
     await page.getByRole("button", { name: item.type }).click();
     await page.getByLabel("Asset title").fill(`${item.type} contract smoke`);
     await page.getByLabel("Target audience").fill("Knowledge workers");
-    await page.getByLabel("Asset brief").fill("Produce a grounded, reusable deliverable.");
+    await page.getByLabel("Research question").fill("What does the selected evidence establish?");
+    await page.getByLabel("Asset goal").fill("Produce a grounded, reusable deliverable.");
     await page.getByText("E2E Source Evidence").click();
-    await page.getByRole("button", { name: "Start Agent-Assisted Session" }).click();
+    await page.getByRole("button", { name: "Confirm Intent & Start Agent" }).click();
 
     const input = page.getByPlaceholder("Ask anything about your knowledge base...");
     await expect(input).toContainText(item.section);
@@ -502,7 +762,8 @@ test("Asset types produce distinct agent-assisted deliverable contracts before g
     await expect(input).toContainText("Return the final response as the editable Markdown deliverable itself");
   }
 
-  await expect.poll(() => state.savedAssetBody).toBeNull();
+  expect(state.savedAssetBody).toMatchObject({ asset_type: "topic_report", status: "draft" });
+  expect(state.savedAssetBody?.draft_content).toBeUndefined();
 });
 
 test("Asset quality issues can be regenerated before the corrected draft is saved", async ({ page }) => {
@@ -522,16 +783,19 @@ test("Asset quality issues can be regenerated before the corrected draft is save
   await page.getByRole("button", { name: "Research Brief" }).click();
   await page.getByLabel("Asset title").fill("Incomplete brief");
   await page.getByLabel("Target audience").fill("Architecture reviewers");
-  await page.getByLabel("Asset brief").fill("Recommend an architecture decision from the selected evidence.");
+  await page.getByLabel("Research question").fill("Which architecture decision does the evidence support?");
+  await page.getByLabel("Asset goal").fill("Recommend an architecture decision from the selected evidence.");
   await page.getByText("E2E Source Evidence").click();
-  await page.getByRole("button", { name: "Start Agent-Assisted Session" }).click();
-  await page.getByPlaceholder("Ask anything about your knowledge base...").press("Enter");
+  await page.getByRole("button", { name: "Confirm Intent & Start Agent" }).click();
+  const input = page.getByPlaceholder("Ask anything about your knowledge base...");
+  await expect(input).toContainText("Incomplete brief");
+  await input.press("Enter");
 
   await expect(page.getByText("Asset draft save is blocked")).toBeVisible();
   await expect(page.getByText("Missing required section: Executive Summary.")).toBeVisible();
   await expect(page.getByText("Draft still contains unfinished placeholders or citation-needed markers.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Save as Asset Draft" })).toBeDisabled();
-  await expect.poll(() => state.savedAssetBody).toBeNull();
+  expect(state.savedAssetBody?.draft_content).toBeUndefined();
 
   state.chatResponse = validResearchBrief.replace("E2E Research Brief", "Incomplete brief");
   await page.getByRole("button", { name: "Regenerate to fix issues" }).click();

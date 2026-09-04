@@ -62,9 +62,9 @@ export interface AppModuleConfig {
 export const MODULE_GROUP_LABELS: Record<ProductModuleGroup, string> = {
   daily: "Home",
   knowledge: "Knowledge Foundation",
-  refinement: "Inbox",
+  refinement: "Attention",
   discovery: "Discover",
-  agent: "Agent",
+  agent: "Collaborate",
   production: "Assets & Consumption",
   personalization: "Personalization",
   system: "Settings",
@@ -176,7 +176,7 @@ export const APP_MODULES: AppModuleConfig[] = [
   },
   {
     id: "review",
-    label: "Inbox",
+    label: "Decisions",
     group: "refinement",
     route: "/review",
     icon: Bell,
@@ -250,7 +250,7 @@ export const APP_MODULES: AppModuleConfig[] = [
   },
   {
     id: "agent-chat",
-    label: "Agent Chat",
+    label: "Chat",
     group: "agent",
     route: "/chat",
     icon: MessageSquare,
@@ -261,11 +261,11 @@ export const APP_MODULES: AppModuleConfig[] = [
   {
     id: "agent-memory",
     label: "Agent Memory",
-    group: "agent",
+    group: "personalization",
     route: "/agent-memory",
     icon: Brain,
     description: "Review and manage user-confirmed cross-session Agent Memory.",
-    nav: { primary: true, order: 20 },
+    nav: { section: true, parent: "settings", order: 50 },
     visibility: { defaultEnabled: true, configurable: false },
   },
   {
@@ -275,7 +275,7 @@ export const APP_MODULES: AppModuleConfig[] = [
     route: "/settings",
     icon: Settings,
     description: "Application settings.",
-    nav: { primary: true, section: true, parent: "settings", order: 10 },
+    nav: { section: true, parent: "settings", order: 10 },
     visibility: { defaultEnabled: true, configurable: false },
   },
   {

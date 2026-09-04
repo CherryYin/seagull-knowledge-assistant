@@ -5,6 +5,7 @@ import {
 	ChevronLeft,
 	Palette,
 	LogOut,
+	Settings,
 	User,
 	Users,
 } from "lucide-react";
@@ -133,6 +134,23 @@ export function Layout() {
 
         {/* Bottom actions */}
         <div className="border-t border-border p-2 space-y-1">
+          <NavLink
+            to="/settings"
+            className={({ isActive }) =>
+              cn(
+                "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
+                isActive
+                  ? "bg-primary/15 text-primary font-medium"
+                  : "text-muted-foreground hover:text-foreground hover:bg-accent",
+                collapsed && "justify-center"
+              )
+            }
+            title={collapsed ? "Settings" : undefined}
+          >
+            <Settings className="h-4 w-4 shrink-0" />
+            {!collapsed && "Settings"}
+          </NavLink>
+
           {/* User menu */}
           <div className="relative" ref={userMenuRef}>
             <Button

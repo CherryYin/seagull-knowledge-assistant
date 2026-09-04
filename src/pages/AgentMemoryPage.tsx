@@ -4,6 +4,7 @@ import { agentMemoryApi, type AgentMemory } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { candidateActionLabel } from "@/lib/candidateActions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ModuleSectionNav } from "@/components/SectionNav";
 
 function sourceLabel(sessionId: string) {
   return `Source Session: ${sessionId}`;
@@ -34,6 +35,7 @@ export function AgentMemoryPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-8 p-8">
+      <ModuleSectionNav parent="settings" active="Agent Memory" />
       <div>
         <h1 className="text-2xl font-semibold">Agent Memory</h1>
         <p className="mt-1 text-sm text-muted-foreground">User-confirmed cross-session preferences and constraints. This is not PKG knowledge evidence.</p>

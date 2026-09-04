@@ -19,6 +19,8 @@ export interface MessageMetadata {
   document_content?: string;
   document_title?: string;
   writing_note_id?: string;
+  asset_intent_proposal?: Record<string, unknown>;
+  asset_intent_draft?: Record<string, unknown>;
 }
 
 export interface ChatSessionMessage {

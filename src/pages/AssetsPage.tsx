@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, BookOpen, FileText, Filter, Search, Sparkles } from "lucide-react";
+import { ArrowRight, BookOpen, CalendarClock, FileText, Filter, Newspaper, Search, Sparkles } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { assetsApi, type Asset, type AssetStatus, type AssetType } from "@/lib/api";
 import { assetTypeLabel, MANUAL_ASSET_TYPES } from "@/lib/asset-generation";
@@ -45,7 +45,7 @@ export function AssetsPage() {
             <h1 className="mt-2 text-3xl font-semibold tracking-tight">Asset Library</h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">Read, refine, and deliver knowledge Assets created from explicit user needs and traceable Sources, Notes, and Wiki pages.</p>
           </div>
-          <Button size="lg" onClick={() => navigate("/assets/new")}><Sparkles className="mr-2 h-4 w-4" />Create Asset</Button>
+          <div className="flex flex-wrap gap-2"><Button variant="outline" size="lg" onClick={() => navigate("/assets/newsletter-automation")}><Newspaper className="mr-2 h-4 w-4" />Newsletter Automation</Button><Button size="lg" onClick={() => navigate("/assets/new")}><Sparkles className="mr-2 h-4 w-4" />Create Asset</Button></div>
         </header>
 
         <Card className="border-primary/20 bg-gradient-to-r from-primary/10 via-primary/5 to-background">
@@ -55,6 +55,14 @@ export function AssetsPage() {
               <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">Choose the audience, objective, format, and evidence. A Harness Session produces the draft; PKG stores it only after you explicitly confirm.</p>
             </div>
             <Button variant="outline" onClick={() => navigate("/assets/new")}>Open generation guide<ArrowRight className="ml-2 h-4 w-4" /></Button>
+          </CardContent>
+        </Card>
+
+        <Card className="overflow-hidden border-sky-500/20">
+          <CardContent className="grid gap-5 py-6 md:grid-cols-[auto_1fr_auto] md:items-center">
+            <div className="rounded-2xl bg-sky-500/10 p-3 text-sky-700"><CalendarClock className="h-6 w-6" /></div>
+            <div><h2 className="text-lg font-semibold">Scheduled technology Newsletter</h2><p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">Use recently collected news, RSS articles, and paper discoveries to create a reviewable Newsletter Asset on a daily or weekly schedule.</p></div>
+            <Button variant="outline" onClick={() => navigate("/assets/newsletter-automation")}>Configure automation<ArrowRight className="ml-2 h-4 w-4" /></Button>
           </CardContent>
         </Card>
 

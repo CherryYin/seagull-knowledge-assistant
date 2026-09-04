@@ -1,16 +1,53 @@
 import type { AssetType } from "@/lib/api";
 
 export interface AssetGenerationRequest {
+  assetId?: string;
   assetType: AssetType;
   title: string;
   brief: string;
+  question: string;
+  goal: string;
   audience: string;
+  creationMode: "understand" | "synthesize" | "make_decision" | "produce";
+  scope: string[];
+  constraints: string[];
   styleNotes: string;
   sourceRefs: string[];
   noteRefs: string[];
   wikiRefs: string[];
   intakeMode?: "manual" | "agent_assisted";
   researchMode?: "local_only" | "local_then_web";
+  deliveryFormat?: "markdown" | "html";
+}
+
+export interface AssetIntentFormDraft {
+  assetType: AssetType;
+  title: string;
+  audience: string;
+  question: string;
+  goal: string;
+  creationMode: AssetGenerationRequest["creationMode"];
+  scope: string;
+  constraints: string;
+  styleNotes: string;
+  sourceRefs: string[];
+  noteRefs: string[];
+  wikiRefs: string[];
+  allowWebResearch: boolean;
+  deliveryFormat?: "markdown" | "html";
+}
+
+export interface AssetIntentProposal {
+  workingTitle: string;
+  question: string;
+  goal: string;
+  audience: string;
+  creationMode: AssetGenerationRequest["creationMode"];
+  scope: string[];
+  constraints: string[];
+  rationale: string;
+  authorship: "agent";
+  requiresUserConfirmation: true;
 }
 
 export const MANUAL_ASSET_TYPES: Array<{
@@ -216,11 +253,19 @@ export function renderAssetGenerationContract(request: AssetGenerationRequest) {
 
   return [
     `${assetTypeLabel(request.assetType)} delivery contract:`,
+    `Confirmed Intent revision: ${request.assetId ? `stored on Asset ${request.assetId}` : "provided by the user"}.`,
+    `Research question: ${request.question}`,
+    `Goal: ${request.goal}`,
+    `Creation mode: ${request.creationMode}.`,
+    `Scope: ${request.scope.join(", ") || "not further constrained"}.`,
+    `Constraints: ${request.constraints.join("; ") || "none stated"}.`,
     `Intake mode: ${request.intakeMode === "agent_assisted" ? "agent-assisted clarification" : "user-specified brief"}.`,
     `Research mode: ${request.researchMode === "local_then_web" ? "search PKG first, then run focused web research for at least one concrete freshness or evidence gap" : "PKG knowledge only"}.`,
+    `Delivery format: ${request.deliveryFormat === "html" ? "HTML export generated deterministically from the Markdown Asset" : "Markdown"}. Always author and return Markdown; never return raw HTML.`,
     ...(request.intakeMode === "agent_assisted" ? [
       "Before drafting, assess whether the objective, audience, scope, decision to support, or constraints are materially ambiguous.",
       "If important ambiguity remains, call ask_user_question with no more than three concise questions and wait for the answers.",
+      "The confirmed Intent is authoritative. Recommend a revision if needed, but never silently change the question, goal, scope, or constraints.",
       "Do not ask the user to manually locate knowledge records; discover relevant PKG evidence yourself.",
     ] : []),
     "Return the final response as the editable Markdown deliverable itself, not as a description of how you would write it.",
@@ -251,6 +296,8 @@ export function renderAssetGenerationContract(request: AssetGenerationRequest) {
     "- The requested style is applied without sacrificing clarity or evidence traceability.",
     "- Every selected reference was inspected or explicitly reported unavailable.",
     "- Unsupported claims, uncertainty, and remaining editorial work appear only in Review Notes.",
-    "- Do not include tool logs, planning narration, or save/publish instructions in the deliverable.",
+    "- Keep all reasoning, planning, search narration, and tool commentary internal; do not emit progress messages.",
+    "- The response starts directly with the document H1 and ends at the document's final line.",
+    "- Do not include a preface, epilogue, explanation, completion message, Markdown code fence, tool log, or save/publish instruction.",
   ].join("\n");
 }

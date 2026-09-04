@@ -42,6 +42,7 @@ export interface AgentWorkflowContext {
   promptSeed?: string;
   userInput?: string;
   assetDraft?: import("@/lib/asset-generation").AssetGenerationRequest;
+  assetIntentDraft?: import("@/lib/asset-generation").AssetIntentFormDraft;
 }
 
 export const AGENT_WORKFLOW_SAVE_TARGET_LABELS: Record<WorkflowResultSaveTarget, string> = {
@@ -289,6 +290,28 @@ Output exactly these sections:
 ## Apply Recommendation`,
   },
   {
+    id: "clarify-asset-intent",
+    group: "understand",
+    title: "澄清 Asset Intent",
+    description: "在创建 Asset 前，与 Agent 澄清问题、目标、受众、范围和约束；Agent 只能建议，不能替用户确认。",
+    requiredInput: "可以为空，也可以提供任何尚未成形的想法",
+    inputPlaceholder: "例如：我只有一个模糊主题，先帮我判断真正需要解决的问题...",
+    saveTargets: [],
+    outputSections: [
+      "Proposed Question",
+      "Proposed Goal",
+      "Audience and Use",
+      "Scope and Constraints",
+      "Decisions Still Needed",
+    ],
+    promptTemplate: `Help the user clarify an Asset Intent before any Asset is created.
+The Agent may recommend wording, scope, audience, creation mode, and research questions, but must not claim these recommendations are confirmed user decisions.
+If the current context is empty or materially ambiguous, use ask_user_question with one concise batch rather than refusing to start.
+Do not search for evidence, draft the Asset, save knowledge, or publish anything during this workflow.
+Once enough context is available, present a Proposed Intent Brief and clearly separate confirmed user statements from Agent recommendations.
+Tell the user to return to the Asset creation page and explicitly confirm the Intent before research or drafting begins.`,
+  },
+  {
     id: "draft-asset",
     group: "produce",
     title: "Agent 辅助生成 Asset",
@@ -296,14 +319,7 @@ Output exactly these sections:
     requiredInput: "一个希望解决的问题、表达目标或交付需求",
     inputPlaceholder: "例如：帮我整理一份说明不同文档解析方案取舍的材料，受众和结构可以先和我确认...",
     saveTargets: ["asset", "review_note"],
-    outputSections: [
-      "Audience and Objective",
-      "Editorial Approach",
-      "Outline",
-      "Draft",
-      "Evidence Used",
-      "Review Notes",
-    ],
+    outputSections: ["Editable Markdown Document"],
     promptTemplate: `Help the user turn the supplied need into an editable Asset draft.
 Do not assume the first request fully specifies the audience, scope, decision use, freshness requirement, or constraints.
 If important ambiguity remains, use ask_user_question and wait for the user's answer before drafting.
@@ -311,7 +327,10 @@ Search PKG yourself instead of requiring the user to manually choose every knowl
 When the delivery contract allows it, use web_search/web_fetch only to fill material evidence gaps after local search.
 Keep PKG evidence and network evidence visibly separate. Keep claims traceable and flag unsupported claims instead of inventing support.
 Produce a polished but reviewable draft. Do not save, export, publish, or mutate PKG automatically.
-The final answer must be the deliverable itself rather than a process report.`,
+Keep all analysis, planning, research narration, and tool commentary internal.
+Do not send progress updates while producing the document.
+The final answer must contain only the editable Markdown document, starting directly with its H1 and ending at the document's final line.
+Do not add a preface, explanation, completion message, save instruction, or Markdown code fence.`,
   },
   {
     id: "draft-blog-asset",
@@ -322,27 +341,29 @@ The final answer must be the deliverable itself rather than a process report.`,
     inputPlaceholder: "例如：把这个 wiki 主题整理成一篇面向工程师的博客草稿...",
     saveTargets: ["asset", "review_note"],
     outputSections: [
-      "Audience",
-      "Angle",
-      "Outline",
-      "Draft",
-      "Evidence To Keep",
-      "Publish Risks",
+      "Introduction",
+      "Main Argument",
+      "Practical Implications",
+      "Conclusion",
+      "Evidence Notes",
+      "Review Notes",
     ],
     promptTemplate: `Create an editable blog asset draft from the current knowledge context.
 Treat wiki content as stable background context, and treat sources/notes as evidence.
 Make the draft useful for later editing instead of pretending it is publication-ready.
 Flag weak evidence, missing references, and claims that still need review.
 Do not publish or save anything automatically.
+Keep all analysis, outlining, research narration, and tool commentary internal. Do not send progress updates.
 
-Output exactly these sections:
+Return only the Markdown document. Start directly with one H1 title, output exactly these H2 sections, and stop at the document's final line.
+Do not add a preface, explanation, completion message, save instruction, or Markdown code fence.
 
-## Audience
-## Angle
-## Outline
-## Draft
-## Evidence To Keep
-## Publish Risks`,
+## Introduction
+## Main Argument
+## Practical Implications
+## Conclusion
+## Evidence Notes
+## Review Notes`,
   },
 ];
 
@@ -410,7 +431,11 @@ export function renderAgentWorkflowPrompt(
       `- Type: ${request.assetType}`,
       `- Working title: ${request.title}`,
       `- Audience: ${request.audience}`,
-      `- Objective and brief: ${request.brief}`,
+      `- Confirmed question: ${request.question}`,
+      `- Confirmed goal: ${request.goal}`,
+      `- Creation mode: ${request.creationMode}`,
+      `- Scope: ${request.scope.join(", ") || "not further constrained"}`,
+      `- Constraints: ${request.constraints.join("; ") || "none stated"}`,
       request.styleNotes ? `- Style: ${request.styleNotes}` : null,
       `- Source IDs: ${request.sourceRefs.join(", ") || "none selected"}`,
       `- Note IDs: ${request.noteRefs.join(", ") || "none selected"}`,
@@ -419,7 +444,9 @@ export function renderAgentWorkflowPrompt(
     parts.push(renderAssetGenerationContract(request));
   }
 
-  parts.push("Before answering, use available knowledge context when helpful. Do not expose internal tool names unless necessary for traceability.");
+  parts.push(workflow.group === "produce"
+    ? "Perform reasoning and tool use silently. Return only the requested document body with no process narration or surrounding commentary."
+    : "Before answering, use available knowledge context when helpful. Do not expose internal tool names unless necessary for traceability.");
 
   return parts.join("\n\n");
 }

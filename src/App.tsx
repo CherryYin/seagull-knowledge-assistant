@@ -21,6 +21,7 @@ const WritingPage = lazy(() => import("./pages/WritingPage").then((m) => ({ defa
 const AssetsPage = lazy(() => import("./pages/AssetsPage").then((m) => ({ default: m.AssetsPage })));
 const AssetGenerationPage = lazy(() => import("./pages/AssetGenerationPage").then((m) => ({ default: m.AssetGenerationPage })));
 const AssetDetailPage = lazy(() => import("./pages/AssetDetailPage").then((m) => ({ default: m.AssetDetailPage })));
+const NewsletterAutomationPage = lazy(() => import("./pages/NewsletterAutomationPage").then((m) => ({ default: m.NewsletterAutomationPage })));
 const DigestPage = lazy(() => import("./pages/DigestPage").then((m) => ({ default: m.DigestPage })));
 const WikiPage = lazy(() => import("./pages/WikiPage").then((m) => ({ default: m.WikiPage })));
 const WikiDetailPage = lazy(() => import("./pages/WikiDetailPage").then((m) => ({ default: m.WikiDetailPage })));
@@ -125,6 +126,7 @@ export default function App() {
             <Route path="/documents" element={<LazyPage><WritingPage /></LazyPage>} />
             <Route path="/assets" element={<LazyPage><AssetsPage /></LazyPage>} />
             <Route path="/assets/new" element={<LazyPage><AssetGenerationPage /></LazyPage>} />
+            <Route path="/assets/newsletter-automation" element={<LazyPage><NewsletterAutomationPage /></LazyPage>} />
             <Route path="/assets/:id" element={<LazyPage><AssetDetailPage /></LazyPage>} />
             <Route path="/review/wiki-suggestions" element={<LazyPage><WikiSuggestionsPage /></LazyPage>} />
             <Route path="/wiki/discovery" element={<LazyPage><WikiDiscoveryPage /></LazyPage>} />

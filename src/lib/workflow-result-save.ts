@@ -91,8 +91,9 @@ export async function saveWorkflowResult({
         throw new Error(`Asset draft quality check failed: ${quality.blockingIssues.join(" ")}`);
       }
     }
-    if (objectRef?.object_type === "asset" && objectRef.object_id) {
-      return assetsApi.update(objectRef.object_id, { draft_content: content });
+    const existingAssetId = objectRef?.object_type === "asset" ? objectRef.object_id : assetDraft?.assetId;
+    if (existingAssetId) {
+      return assetsApi.update(existingAssetId, { draft_content: content });
     }
     return assetsApi.create({
       title,

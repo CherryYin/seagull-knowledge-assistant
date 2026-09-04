@@ -10,10 +10,11 @@ export interface SectionNavItem {
 }
 
 export function SectionNav({ items, active }: { items: SectionNavItem[]; active: string }) {
-	const visibleItems = items.some((item) => item.label === active) ? items : [...items, { label: active, to: "#" }];
+	if (items.length < 2) return null;
+
 	return (
 		<div className="grid gap-2 rounded-xl border bg-card p-3 text-xs text-muted-foreground sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-6">
-      {visibleItems.map((item) => (
+      {items.map((item) => (
         <Link
           key={item.to}
           to={item.to}
