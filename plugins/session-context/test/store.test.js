@@ -19,8 +19,14 @@ const context = {
   kind: 'asset_generation',
   assetDraft: {
     assetType: 'research_brief',
+    assetId: 'asset-1',
     title: 'Session-bound brief',
     brief: 'Synthesize the selected evidence.',
+    question: 'Should Agents receive database access?',
+    goal: 'Define a safe capability model.',
+    creationMode: 'make_decision',
+    scope: ['PostgreSQL', 'Harness'],
+    constraints: ['Do not expose credentials'],
     audience: 'Architecture reviewers',
     styleNotes: 'Concise.',
     sourceRefs: ['source-1'],
@@ -35,6 +41,8 @@ test('stores and restores one Asset generation context by owner and session', as
   assert.equal(saved.workflowId, 'draft-asset')
   assert.equal(saved.updatedAt, '2026-08-23T08:00:00.000Z')
   assert.deepEqual((await store.get('user-1', 'session-1')).assetDraft.sourceRefs, ['source-1'])
+  assert.equal((await store.get('user-1', 'session-1')).assetDraft.assetId, 'asset-1')
+  assert.equal((await store.get('user-1', 'session-1')).assetDraft.question, 'Should Agents receive database access?')
   assert.equal(await store.get('user-2', 'session-1'), null)
 })
 
@@ -83,4 +91,7 @@ test('accepts an agent-assisted request with unresolved title, audience, and evi
   assert.equal(saved.assetDraft.audience, '')
   assert.equal(saved.assetDraft.intakeMode, 'agent_assisted')
   assert.equal(saved.assetDraft.researchMode, 'local_then_web')
+  assert.equal(saved.assetDraft.question, saved.assetDraft.brief)
+  assert.equal(saved.assetDraft.goal, saved.assetDraft.brief)
+  assert.equal(saved.assetDraft.creationMode, 'synthesize')
 })

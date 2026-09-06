@@ -1,0 +1,3 @@
+name: Agent 收集 Asset Evidence
+description: 围绕已确认 Intent 检索证据、识别支持与矛盾，并提交必须由用户确认的 Evidence 候选。
+order: 55

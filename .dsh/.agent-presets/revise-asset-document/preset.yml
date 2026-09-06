@@ -1,0 +1,3 @@
+name: Agent 整篇优化 Asset
+description: 基于已确认的 Intent、Evidence、Claim 和 Knowledge，对完整 Asset 生成必须由用户确认的候选补丁。
+order: 57

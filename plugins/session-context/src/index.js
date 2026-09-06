@@ -6,6 +6,7 @@ import { Pool } from 'pg'
 const ASSET_TYPES = new Set(['blog_post', 'research_brief', 'knowledge_pack', 'topic_report'])
 const INTAKE_MODES = new Set(['manual', 'agent_assisted'])
 const RESEARCH_MODES = new Set(['local_only', 'local_then_web'])
+const CREATION_MODES = new Set(['understand', 'synthesize', 'make_decision', 'produce'])
 
 function requiredText(value, field) {
   if (typeof value !== 'string' || !value.trim()) throw new TypeError(`${field} is required`)
@@ -33,14 +34,20 @@ function normalizeAssetDraft(value) {
   if (!ASSET_TYPES.has(value.assetType)) throw new TypeError('assetDraft.assetType is invalid')
   const intakeMode = value.intakeMode === undefined ? 'manual' : value.intakeMode
   const researchMode = value.researchMode === undefined ? 'local_only' : value.researchMode
+  const creationMode = value.creationMode === undefined ? 'synthesize' : value.creationMode
   if (!INTAKE_MODES.has(intakeMode)) throw new TypeError('assetDraft.intakeMode is invalid')
   if (!RESEARCH_MODES.has(researchMode)) throw new TypeError('assetDraft.researchMode is invalid')
+  if (!CREATION_MODES.has(creationMode)) throw new TypeError('assetDraft.creationMode is invalid')
+  const brief = requiredText(value.brief, 'assetDraft.brief')
   return {
+    assetId: optionalText(value.assetId, 'assetDraft.assetId') || undefined,
     assetType: value.assetType,
     title: intakeMode === 'agent_assisted'
       ? optionalText(value.title, 'assetDraft.title')
       : requiredText(value.title, 'assetDraft.title'),
-    brief: requiredText(value.brief, 'assetDraft.brief'),
+    brief,
+    question: optionalText(value.question, 'assetDraft.question') || brief,
+    goal: optionalText(value.goal, 'assetDraft.goal') || brief,
     audience: intakeMode === 'agent_assisted'
       ? optionalText(value.audience, 'assetDraft.audience')
       : requiredText(value.audience, 'assetDraft.audience'),
@@ -48,6 +55,9 @@ function normalizeAssetDraft(value) {
     sourceRefs: stringList(value.sourceRefs, 'assetDraft.sourceRefs'),
     noteRefs: stringList(value.noteRefs, 'assetDraft.noteRefs'),
     wikiRefs: stringList(value.wikiRefs, 'assetDraft.wikiRefs'),
+    creationMode,
+    scope: stringList(value.scope, 'assetDraft.scope'),
+    constraints: stringList(value.constraints, 'assetDraft.constraints'),
     intakeMode,
     researchMode,
   }

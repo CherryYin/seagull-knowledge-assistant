@@ -35,6 +35,8 @@ The current Harness Session is the production workspace. PKG remains the durable
 2. Return the complete editable Markdown deliverable, not an intake summary, plan, tool log, or save instruction.
 3. Put unsupported claims, uncertainty, source conflicts, and remaining editorial work in `Review Notes`.
 4. Never invent a citation, fact, or completed user confirmation.
+5. Keep analysis, planning, search narration, and tool-use commentary internal. Do not emit progress messages before the deliverable.
+6. Start the final response directly with the document H1 and stop at the document's final line. Do not add a preface, epilogue, explanation, completion message, or Markdown code fence.
 
 ## Interaction Rule
 Use questions only for decisions the user must make. Search for facts; ask for intent.
