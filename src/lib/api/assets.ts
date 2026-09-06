@@ -75,6 +75,23 @@ export interface ReadinessCheckResult {
   suggestion_reasons: string[];
 }
 
+export interface AssetQualityFinding {
+  id: string;
+  severity: "P0" | "P1" | "P2";
+  title: string;
+  detail: string;
+}
+
+export interface AssetQualityAuditResult {
+  asset_id: string;
+  workspace_revision: number;
+  verdict: "pass" | "warn" | "block";
+  score: number;
+  blocking_findings: AssetQualityFinding[];
+  warnings: AssetQualityFinding[];
+  metrics: Record<string, number>;
+}
+
 export interface AssetExportResult {
   asset_id: string;
   export_format: string;
@@ -280,6 +297,7 @@ export const assetsApi = {
   },
   get: (id: string) => request<Asset>(`/assets/${encodeURIComponent(id)}`),
   getWorkspace: (id: string) => request<AssetWorkspace>(`/assets/${encodeURIComponent(id)}/workspace`),
+  getQualityAudit: (id: string) => request<AssetQualityAuditResult>(`/assets/${encodeURIComponent(id)}/quality-audit`),
   create: (body: AssetCreate) => request<Asset>("/assets", { method: "POST", body: JSON.stringify(body) }),
   getNewsletterAutomation: () => request<NewsletterAutomationConfig>("/assets/newsletter/automation"),
   updateNewsletterAutomation: (body: NewsletterAutomationUpdate) => request<NewsletterAutomationConfig>("/assets/newsletter/automation", { method: "PUT", body: JSON.stringify(body) }),

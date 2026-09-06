@@ -36,6 +36,9 @@ type MockState = {
   htmlPreviewRequests?: number;
   htmlExportRequests?: number;
   newsletterAutomation?: Record<string, unknown>;
+  assetWorkspace?: Record<string, unknown>;
+  qualityAudit?: Record<string, unknown>;
+  documentOptimizationCalls?: number;
 };
 
 function json(route: Route, body: unknown, status = 200) {
@@ -146,6 +149,41 @@ async function installMockBff(page: Page, state: MockState) {
           ].join("\n"),
         });
       }
+      if (body.preset === "revise-asset-document") {
+        const contractText = body.prompt?.match(/\{[\s\S]*\}$/)?.[0] ?? "{}";
+        const contract = JSON.parse(contractText) as {
+          optimizationRound?: number;
+          baseWorkspaceRevision?: number;
+          asset?: { title?: string; brief?: string; blocks?: Array<{ blockId: string; baseRevision: number; markdown: string; claimRefs?: string[] }> };
+        };
+        const round = contract.optimizationRound ?? 1;
+        const targetBlock = contract.asset?.blocks?.find((block) => !block.markdown.startsWith("#")) ?? contract.asset?.blocks?.[0];
+        state.documentOptimizationCalls = (state.documentOptimizationCalls ?? 0) + 1;
+        return route.fulfill({
+          status: 200,
+          contentType: "text/event-stream",
+          body: [
+            `data: ${JSON.stringify({ type: "session", session_id: `document-session-round-${round}` })}`,
+            "",
+            `data: ${JSON.stringify({ type: "tool_call", tool: "propose_asset_document_patch", args: {
+              assetId: "asset-e2e",
+              baseWorkspaceRevision: contract.baseWorkspaceRevision ?? 0,
+              replacementTitle: `E2E Optimized Asset Round ${round}`,
+              replacementBrief: `A reviewable Asset refined in optimization round ${round}.`,
+              explanation: `Completed optimization round ${round}.`,
+              blocks: targetBlock ? [{
+                blockId: targetBlock.blockId,
+                baseRevision: targetBlock.baseRevision,
+                replacementMarkdown: `Round ${round} polished evidence-backed paragraph.`,
+                claimRefs: ["claim-1"],
+              }] : [],
+            } })}`,
+            "",
+            `data: ${JSON.stringify({ type: "done", session_id: `document-session-round-${round}` })}`,
+            "",
+          ].join("\n"),
+        });
+      }
       const content = state.chatResponse ?? validResearchBrief;
       return route.fulfill({
         status: 200,
@@ -230,14 +268,14 @@ async function installMockBff(page: Page, state: MockState) {
       });
     }
     if (path === "/api/assets/asset-e2e" && method === "GET") {
-      return json(route, { id: "asset-e2e", user_id: "user-e2e", ...state.savedAssetBody, source_refs: state.savedAssetBody?.source_refs ?? [], note_refs: state.savedAssetBody?.note_refs ?? [], wiki_refs: state.savedAssetBody?.wiki_refs ?? [], created_at: now, updated_at: now });
+      return json(route, { id: "asset-e2e", user_id: "user-e2e", ...state.savedAssetBody, metadata_: state.savedAssetBody?.metadata ?? state.savedAssetBody?.metadata_ ?? null, source_refs: state.savedAssetBody?.source_refs ?? [], note_refs: state.savedAssetBody?.note_refs ?? [], wiki_refs: state.savedAssetBody?.wiki_refs ?? [], created_at: now, updated_at: now });
     }
     if (path === "/api/assets/asset-e2e" && method === "PATCH") {
       state.savedAssetBody = { ...state.savedAssetBody, ...(request.postDataJSON() as Record<string, unknown>) };
-      return json(route, { id: "asset-e2e", user_id: "user-e2e", ...state.savedAssetBody, source_refs: state.savedAssetBody?.source_refs ?? [], note_refs: state.savedAssetBody?.note_refs ?? [], wiki_refs: state.savedAssetBody?.wiki_refs ?? [], created_at: now, updated_at: now });
+      return json(route, { id: "asset-e2e", user_id: "user-e2e", ...state.savedAssetBody, metadata_: state.savedAssetBody?.metadata ?? state.savedAssetBody?.metadata_ ?? null, source_refs: state.savedAssetBody?.source_refs ?? [], note_refs: state.savedAssetBody?.note_refs ?? [], wiki_refs: state.savedAssetBody?.wiki_refs ?? [], created_at: now, updated_at: now });
     }
     if (path === "/api/assets/asset-e2e/workspace" && method === "GET") {
-      return json(route, {
+      return json(route, state.assetWorkspace ?? {
         asset_id: "asset-e2e",
         workspace_revision: 0,
         intent: null,
@@ -247,6 +285,17 @@ async function installMockBff(page: Page, state: MockState) {
         contribution: null,
         knowledge_candidates: [],
         decision_items: [],
+      });
+    }
+    if (path === "/api/assets/asset-e2e/quality-audit" && method === "GET") {
+      return json(route, state.qualityAudit ?? {
+        asset_id: "asset-e2e",
+        workspace_revision: 0,
+        verdict: "warn",
+        score: 4.5,
+        blocking_findings: [],
+        warnings: [{ id: "PKG-CANDIDATE-001", severity: "P1", title: "Draft is not linked to a Knowledge Candidate", detail: "Create a candidate so claims and evidence remain traceable." }],
+        metrics: { intent: 0, candidate_count: 0, claim_count: 0, evidence_count: 0 },
       });
     }
     if (path === "/api/assets/asset-e2e/check-readiness") {
@@ -552,6 +601,78 @@ test("Asset Production previews and downloads the preferred HTML delivery", asyn
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe("HTML-Preview-Asset.html");
   await expect.poll(() => state.htmlExportRequests).toBe(1);
+});
+
+test("Asset complete optimization records a saved first round before running the audit-guided second round", async ({ page }) => {
+  const initialBlocks = [
+    { id: "block-title", type: "heading", markdown: "# Original Asset", revision: 1, claim_refs: [] },
+    { id: "block-body", type: "paragraph", markdown: "Original evidence-backed paragraph.", revision: 1, claim_refs: ["claim-1"] },
+  ];
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: {
+      title: "Original Asset",
+      brief: "An Asset ready for iterative optimization.",
+      asset_type: "research_brief",
+      status: "draft",
+      draft_content: "# Original Asset\n\nOriginal evidence-backed paragraph.",
+      source_refs: ["source-input"],
+      note_refs: [],
+      wiki_refs: [],
+      metadata_: { asset_document: { schemaVersion: 1, blocks: initialBlocks, updatedAt: now } },
+      metadata: { asset_document: { schemaVersion: 1, blocks: initialBlocks, updatedAt: now } },
+    },
+    assetWorkspace: {
+      asset_id: "asset-e2e",
+      workspace_revision: 7,
+      intent: { revision: 1, question: "What should this Asset recommend?", goal: "Produce an evidence-grounded recommendation.", audience: "Architecture reviewers", creation_mode: "make_decision", scope: ["Current architecture"], constraints: ["Use accepted evidence"], status: "confirmed", confirmed_by: "user-e2e", confirmed_at: now },
+      intent_history: [],
+      evidence: [{ id: "evidence-1", target_type: "source", target_id: "source-input", relation: "supports", summary: "Supports the recommendation.", status: "accepted", authorship: "agent", intent_revision: 1, created_at: now }],
+      claims: [{ id: "claim-1", content: "The recommendation is supported.", kind: "finding", supporting_evidence: ["evidence-1"], contradicting_evidence: [], agent_confidence: "medium", status: "accepted", authorship: "agent", intent_revision: 1, created_at: now }],
+      contribution: { id: "contribution-1", kind: "synthesis", summary: "A traceable synthesis.", claim_refs: ["claim-1"], status: "accepted", authorship: "agent", attribution: "agent_synthesis", created_at: now },
+      knowledge_candidates: [{ id: "candidate-1", candidate_type: "note", action: "create", title: "Reusable recommendation", content: "A reusable evidence-grounded recommendation.", claim_refs: ["claim-1"], status: "kept", authorship: "agent", created_at: now }],
+      decision_items: [],
+    },
+    qualityAudit: {
+      asset_id: "asset-e2e",
+      workspace_revision: 7,
+      verdict: "warn",
+      score: 4.5,
+      blocking_findings: [],
+      warnings: [{ id: "PKG-EVIDENCE-004", severity: "P1", title: "Clarify the remaining evidence tension", detail: "Make the limitation explicit in the conclusion." }],
+      metrics: { intent: 1, candidate_count: 1, claim_count: 1, evidence_count: 1 },
+    },
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/assets/asset-e2e");
+  await page.getByRole("tab", { name: "Edit" }).click();
+  await expect(page.locator("[data-asset-quality-audit]")).toContainText("PKG-EVIDENCE-004");
+  await page.getByRole("button", { name: "Optimize Entire Draft" }).click();
+  await expect(page.locator("[data-document-agent-diff-preview]")).toBeVisible();
+  await page.getByRole("button", { name: "Apply to Editor" }).click();
+  await page.getByRole("button", { name: "Save Round 1 Changes" }).click();
+
+  await expect.poll(() => ((state.savedAssetBody?.metadata as Record<string, unknown>)?.asset_optimization_v1 as Record<string, unknown>)?.completed_rounds).toBe(1);
+  await expect(page.getByRole("button", { name: "Run Second-Round Polish" })).toBeVisible();
+  await page.getByRole("button", { name: "Run Second-Round Polish" }).click();
+  await expect.poll(() => state.chatPrompts?.at(-1)).toContain('"optimizationRound": 2');
+  expect(state.chatPrompts?.at(-1)).toContain("PKG-EVIDENCE-004");
+  expect(state.chatPrompts?.at(-1)).toContain('"previousOptimization"');
+  await expect(page.locator("[data-document-agent-diff-preview]")).toBeVisible();
+  await page.getByRole("button", { name: "Apply to Editor" }).click();
+  await page.getByRole("button", { name: "Save Round 2 Changes" }).click();
+
+  await expect.poll(() => ((state.savedAssetBody?.metadata as Record<string, unknown>)?.asset_optimization_v1 as Record<string, unknown>)?.completed_rounds).toBe(2);
+  const optimization = (state.savedAssetBody?.metadata as Record<string, unknown>)?.asset_optimization_v1 as { history?: Array<Record<string, unknown>> };
+  expect(optimization.history).toHaveLength(2);
+  expect(optimization.history?.[1]).toMatchObject({ round: 2, workspace_revision: 7, audit_verdict: "warn", finding_ids: ["PKG-EVIDENCE-004"] });
+  expect(state.documentOptimizationCalls).toBe(2);
 });
 
 test("Newsletter Automation saves a schedule and creates a reviewable Asset draft", async ({ page }) => {

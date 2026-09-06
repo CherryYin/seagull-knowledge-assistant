@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, Link, useNavigate, useLocation } from "react-router-dom";
 import { BookOpen, CalendarDays, ChartNoAxesCombined, CheckCircle2, CircleAlert, Clock3, Copy, Download, Eye, FileSearch, LibraryBig, MailOpen, PenLine, Quote, Sparkles, WandSparkles } from "lucide-react";
-import { assetsApi, authApi, notesApi, sourcesApi, wikiApi, type Asset, type AssetClaimProposalInput, type AssetContributionKind, type AssetEvidenceProposalInput, type AssetKnowledgeProposalInput, type AssetStatus, type AssetType, type ReadinessCheckResult } from "@/lib/api";
+import { assetsApi, authApi, notesApi, sourcesApi, wikiApi, type Asset, type AssetClaimProposalInput, type AssetContributionKind, type AssetEvidenceProposalInput, type AssetKnowledgeProposalInput, type AssetQualityAuditResult, type AssetStatus, type AssetType, type ReadinessCheckResult } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -157,10 +157,38 @@ interface DocumentRevisionState {
   instruction: string;
   streaming: boolean;
   status: string;
+  round?: number;
+  requestedInstruction?: string;
   sessionId?: string;
   pendingQuestion?: PendingBlockQuestion;
   proposal?: AssetDocumentPatch;
   error?: string;
+}
+
+interface AssetOptimizationRoundRecord {
+  round: number;
+  completed_at: string;
+  workspace_revision: number;
+  instruction: string;
+  audit_verdict?: AssetQualityAuditResult["verdict"];
+  audit_score?: number;
+  finding_ids: string[];
+}
+
+interface AssetOptimizationMetadata {
+  schema_version: 1;
+  completed_rounds: number;
+  last_completed_at?: string;
+  history: AssetOptimizationRoundRecord[];
+}
+
+interface PendingOptimizationRound {
+  round: number;
+  workspaceRevision: number;
+  instruction: string;
+  auditVerdict?: AssetQualityAuditResult["verdict"];
+  auditScore?: number;
+  findingIds: string[];
 }
 
 interface DiffLine {
@@ -263,6 +291,35 @@ function documentPatchRevisionIssue(
 function mergeDocumentPatchBlocks(blocks: AssetBlock[], proposal: AssetDocumentPatch) {
   const proposedBlocks = new Map(proposal.blocks.map((block) => [block.blockId, block]));
   return blocks.map((block) => proposedBlocks.get(block.id)?.replacementMarkdown ?? block.markdown);
+}
+
+function readAssetOptimizationMetadata(metadata: Record<string, unknown> | null | undefined): AssetOptimizationMetadata {
+  const candidate = metadata?.asset_optimization_v1;
+  if (!candidate || typeof candidate !== "object") {
+    return { schema_version: 1, completed_rounds: 0, history: [] };
+  }
+  const raw = candidate as Record<string, unknown>;
+  const history = Array.isArray(raw.history)
+    ? raw.history.filter((item): item is AssetOptimizationRoundRecord => {
+        if (!item || typeof item !== "object") return false;
+        const record = item as Record<string, unknown>;
+        return typeof record.round === "number"
+          && typeof record.completed_at === "string"
+          && typeof record.workspace_revision === "number"
+          && typeof record.instruction === "string"
+          && Array.isArray(record.finding_ids)
+          && record.finding_ids.every((findingId) => typeof findingId === "string");
+      })
+    : [];
+  const completedRounds = typeof raw.completed_rounds === "number"
+    ? Math.max(raw.completed_rounds, ...history.map((item) => item.round), 0)
+    : Math.max(...history.map((item) => item.round), 0);
+  return {
+    schema_version: 1,
+    completed_rounds: completedRounds,
+    last_completed_at: typeof raw.last_completed_at === "string" ? raw.last_completed_at : undefined,
+    history,
+  };
 }
 
 function parseAgentEvidenceProposal(value: unknown): AgentEvidenceProposal | null {
@@ -645,6 +702,11 @@ export function AssetDetailPage() {
     queryFn: () => assetsApi.getWorkspace(id),
     enabled: Boolean(id),
   });
+  const qualityAuditQuery = useQuery({
+    queryKey: ["asset-quality-audit", id],
+    queryFn: () => assetsApi.getQualityAudit(id),
+    enabled: Boolean(id),
+  });
 
   const sourceOptionsQuery = useQuery({
     queryKey: ["asset-detail-sources"],
@@ -657,6 +719,8 @@ export function AssetDetailPage() {
   });
 
   const asset = assetQuery.data;
+  const optimizationMetadata = useMemo(() => readAssetOptimizationMetadata(asset?.metadata_), [asset?.metadata_]);
+  const nextOptimizationRound = optimizationMetadata.completed_rounds + 1;
   const publishingSettingsQuery = useQuery({ queryKey: ["publishing-settings"], queryFn: () => authApi.getMyPublishingSettings() });
   const publishingSettings = publishingSettingsQuery.data ?? { primary_site_url: "", default_channel: "" };
   const readerPresentation = assetReaderPresentation(asset?.asset_type);
@@ -678,6 +742,7 @@ export function AssetDetailPage() {
   const [blockRevision, setBlockRevision] = useState<BlockRevisionState | null>(null);
   const blockRevisionAbortRef = useRef<AbortController | null>(null);
   const [documentRevision, setDocumentRevision] = useState<DocumentRevisionState>({ instruction: "", streaming: false, status: "" });
+  const [pendingOptimizationRound, setPendingOptimizationRound] = useState<PendingOptimizationRound | null>(null);
   const documentRevisionAbortRef = useRef<AbortController | null>(null);
   const [evidenceAgent, setEvidenceAgent] = useState<EvidenceAgentState>({ instruction: "", streaming: false, status: "" });
   const evidenceAgentAbortRef = useRef<AbortController | null>(null);
@@ -716,6 +781,7 @@ export function AssetDetailPage() {
     documentRevisionAbortRef.current?.abort();
     documentRevisionAbortRef.current = null;
     setDocumentRevision({ instruction: "", streaming: false, status: "" });
+    setPendingOptimizationRound(null);
   }, [asset]);
 
   useEffect(() => {
@@ -768,6 +834,7 @@ export function AssetDetailPage() {
     await queryClient.invalidateQueries({ queryKey: ["asset-production-memory", id] });
     await queryClient.invalidateQueries({ queryKey: ["asset-readiness", id] });
     await queryClient.invalidateQueries({ queryKey: ["asset-workspace", id] });
+    await queryClient.invalidateQueries({ queryKey: ["asset-quality-audit", id] });
   };
 
   const statusMutation = useMutation({
@@ -906,18 +973,44 @@ export function AssetDetailPage() {
   });
 
   const editMutation = useMutation({
-    mutationFn: () => assetsApi.update(id, {
-      title: editTitle.trim(),
-      brief: editBrief,
-      outline: editOutline,
-      draft_content: serializeAssetBlocks(editBlocks),
-      style_notes: editStyle,
-      metadata: {
-        ...(asset?.metadata_ ?? {}),
-        asset_document: createAssetDocument(editBlocks),
-      },
-    }),
-    onSuccess: refreshAsset,
+    mutationFn: () => {
+      const completedAt = new Date().toISOString();
+      const optimization = pendingOptimizationRound
+        ? {
+            schema_version: 1 as const,
+            completed_rounds: Math.max(optimizationMetadata.completed_rounds, pendingOptimizationRound.round),
+            last_completed_at: completedAt,
+            history: [
+              ...optimizationMetadata.history.filter((item) => item.round !== pendingOptimizationRound.round),
+              {
+                round: pendingOptimizationRound.round,
+                completed_at: completedAt,
+                workspace_revision: pendingOptimizationRound.workspaceRevision,
+                instruction: pendingOptimizationRound.instruction,
+                audit_verdict: pendingOptimizationRound.auditVerdict,
+                audit_score: pendingOptimizationRound.auditScore,
+                finding_ids: pendingOptimizationRound.findingIds,
+              },
+            ].sort((left, right) => left.round - right.round).slice(-10),
+          }
+        : null;
+      return assetsApi.update(id, {
+        title: editTitle.trim(),
+        brief: editBrief,
+        outline: editOutline,
+        draft_content: serializeAssetBlocks(editBlocks),
+        style_notes: editStyle,
+        metadata: {
+          ...(asset?.metadata_ ?? {}),
+          asset_document: createAssetDocument(editBlocks),
+          ...(optimization ? { asset_optimization_v1: optimization } : {}),
+        },
+      });
+    },
+    onSuccess: async () => {
+      setPendingOptimizationRound(null);
+      await refreshAsset();
+    },
   });
 
   const changeBlock = (blockId: string, markdown: string) => {
@@ -1132,6 +1225,10 @@ export function AssetDetailPage() {
   const startDocumentRevision = async () => {
     const workspace = workspaceQuery.data;
     if (!asset || !workspace || documentRevision.streaming) return;
+    if (pendingOptimizationRound) {
+      setDocumentRevision((current) => ({ ...current, error: `Save optimization round ${pendingOptimizationRound.round} before starting another round.` }));
+      return;
+    }
     if (!documentOptimizationGate.ready) {
       setDocumentRevision((current) => ({ ...current, error: `Complete the workflow first: ${documentOptimizationGate.reasons.join("; ")}.` }));
       return;
@@ -1140,10 +1237,24 @@ export function AssetDetailPage() {
       setDocumentRevision((current) => ({ ...current, error: "Add draft content before optimizing the complete Asset." }));
       return;
     }
+    const requestedInstruction = documentRevision.instruction.trim() || (nextOptimizationRound === 1
+      ? "Optimize the complete Asset for clarity, coherence, evidence-grounded claims, transitions, and a stronger conclusion."
+      : `Perform optimization round ${nextOptimizationRound}. Preserve accepted improvements from prior rounds, address the current quality-audit findings, tighten the complete argument, and make only evidence-grounded changes.`);
+    const audit = qualityAuditQuery.data;
+    const auditFindings = audit ? [...audit.blocking_findings, ...audit.warnings] : [];
     const request = {
       assetId: asset.id,
       baseWorkspaceRevision: workspace.workspace_revision,
-      instruction: documentRevision.instruction.trim() || "Optimize the complete Asset for clarity, coherence, evidence-grounded claims, transitions, and a stronger conclusion.",
+      optimizationRound: nextOptimizationRound,
+      instruction: requestedInstruction,
+      qualityAudit: audit ? {
+        workspaceRevision: audit.workspace_revision,
+        verdict: audit.verdict,
+        score: audit.score,
+        findings: auditFindings.map((finding) => ({ id: finding.id, severity: finding.severity, title: finding.title, detail: finding.detail })),
+        metrics: audit.metrics,
+      } : null,
+      previousOptimization: optimizationMetadata.history[optimizationMetadata.history.length - 1] ?? null,
       asset: {
         type: asset.asset_type,
         title: editTitle,
@@ -1175,6 +1286,8 @@ export function AssetDetailPage() {
     setDocumentRevision((current) => ({
       ...current,
       streaming: true,
+      round: nextOptimizationRound,
+      requestedInstruction,
       status: "Agent is reviewing the complete argument and knowledge trace…",
       pendingQuestion: undefined,
       proposal: undefined,
@@ -1250,7 +1363,16 @@ export function AssetDetailPage() {
       if (!proposedBlock) return block;
       return { ...updateAssetBlock(block, proposedBlock.replacementMarkdown), claimRefs: proposedBlock.claimRefs };
     }));
-    setDocumentRevision((current) => ({ ...current, proposal: undefined, status: "Optimization applied to the editor. Review the Blocks, then save explicitly." }));
+    const audit = qualityAuditQuery.data;
+    setPendingOptimizationRound({
+      round: documentRevision.round ?? nextOptimizationRound,
+      workspaceRevision: proposal.baseWorkspaceRevision,
+      instruction: documentRevision.requestedInstruction || documentRevision.instruction.trim() || "Optimize the complete Asset.",
+      auditVerdict: audit?.verdict,
+      auditScore: audit?.score,
+      findingIds: audit ? [...audit.blocking_findings, ...audit.warnings].map((finding) => finding.id) : [],
+    });
+    setDocumentRevision((current) => ({ ...current, proposal: undefined, status: `Optimization round ${current.round ?? nextOptimizationRound} applied to the editor. Review the Blocks, then save explicitly.` }));
   };
 
   const startEvidenceResearch = async () => {
@@ -1897,21 +2019,64 @@ export function AssetDetailPage() {
                           <div className="flex flex-wrap items-center gap-2">
                             <h3 className="font-semibold">Optimize Complete Asset</h3>
                             <Badge variant={documentOptimizationGate.ready ? "default" : "outline"}>{documentOptimizationGate.ready ? "Workflow complete" : "Workflow incomplete"}</Badge>
+                            <Badge variant="outline">{optimizationMetadata.completed_rounds} rounds completed</Badge>
                           </div>
-                          <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">Use confirmed Intent, accepted Evidence and Claims, plus kept Knowledge Candidates to improve the whole narrative. The Agent only creates a proposal; applying it still does not save the Asset.</p>
+                          <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">Use confirmed Intent, accepted Evidence and Claims, kept Knowledge Candidates, and the latest deterministic audit to improve the whole narrative. Each round is complete only after you apply and explicitly save it.</p>
                           {!documentOptimizationGate.ready && <p className="mt-2 text-xs text-amber-700">Remaining: {documentOptimizationGate.reasons.join(" · ")}</p>}
                         </div>
                       </div>
-                      <Button type="button" onClick={() => void startDocumentRevision()} disabled={!documentOptimizationGate.ready || documentRevision.streaming || editBlocks.length === 0}>
-                        <WandSparkles className="mr-2 h-4 w-4" />{documentRevision.streaming ? "Optimizing…" : documentRevision.proposal ? "Regenerate" : "Optimize Entire Draft"}
+                      <Button type="button" onClick={() => void startDocumentRevision()} disabled={!documentOptimizationGate.ready || documentRevision.streaming || editBlocks.length === 0 || Boolean(pendingOptimizationRound)}>
+                        <WandSparkles className="mr-2 h-4 w-4" />{documentRevision.streaming
+                          ? `Optimizing Round ${documentRevision.round ?? nextOptimizationRound}…`
+                          : pendingOptimizationRound
+                            ? `Save Round ${pendingOptimizationRound.round}`
+                            : documentRevision.proposal
+                              ? "Regenerate"
+                              : nextOptimizationRound === 1
+                                ? "Optimize Entire Draft"
+                                : nextOptimizationRound === 2
+                                  ? "Run Second-Round Polish"
+                                  : `Run Optimization Round ${nextOptimizationRound}`}
                       </Button>
                     </div>
 
                     {documentOptimizationGate.ready && (
                       <div className="space-y-4 border-t bg-background/70 p-5">
+                        <div className="rounded-xl border bg-background p-4" data-asset-quality-audit>
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="text-sm font-semibold">Deterministic Quality Audit</p>
+                                {qualityAuditQuery.data && <Badge variant={qualityAuditQuery.data.verdict === "block" ? "default" : qualityAuditQuery.data.verdict === "warn" ? "secondary" : "outline"}>{qualityAuditQuery.data.verdict}</Badge>}
+                                {qualityAuditQuery.data && <Badge variant="outline">{qualityAuditQuery.data.score.toFixed(1)} / 5</Badge>}
+                              </div>
+                              <p className="mt-1 text-xs leading-5 text-muted-foreground">The audit checks the Intent → Evidence → Claim → Knowledge trace. Its findings are included in optimization round {nextOptimizationRound}.</p>
+                            </div>
+                            <Button type="button" variant="outline" size="sm" onClick={() => void qualityAuditQuery.refetch()} disabled={qualityAuditQuery.isFetching}>{qualityAuditQuery.isFetching ? "Checking…" : "Refresh Audit"}</Button>
+                          </div>
+                          {qualityAuditQuery.isError && <p className="mt-3 text-sm text-destructive">Could not load the quality audit. Optimization can continue, but this round will not include deterministic findings.</p>}
+                          {qualityAuditQuery.data && [...qualityAuditQuery.data.blocking_findings, ...qualityAuditQuery.data.warnings].length === 0 && <p className="mt-3 text-sm text-emerald-700">No workflow-quality findings remain. The next round can focus on editorial polish.</p>}
+                          {qualityAuditQuery.data && [...qualityAuditQuery.data.blocking_findings, ...qualityAuditQuery.data.warnings].length > 0 && (
+                            <div className="mt-3 space-y-2">
+                              {[...qualityAuditQuery.data.blocking_findings, ...qualityAuditQuery.data.warnings].map((finding) => (
+                                <div key={finding.id} className="rounded-lg border bg-muted/20 px-3 py-2">
+                                  <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{finding.id}</Badge><span className="text-sm font-medium">{finding.title}</span></div>
+                                  <p className="mt-1 text-xs leading-5 text-muted-foreground">{finding.detail}</p>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {pendingOptimizationRound && (
+                          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                            Round {pendingOptimizationRound.round} is applied locally but not saved. Review the editor, then save before starting the next round.
+                          </div>
+                        )}
+
                         <div className="space-y-2">
                           <label className="text-sm font-medium" htmlFor="asset-document-agent-instruction">Optimization focus <span className="font-normal text-muted-foreground">(optional)</span></label>
-                          <Textarea id="asset-document-agent-instruction" rows={3} value={documentRevision.instruction} onChange={(event) => setDocumentRevision((current) => ({ ...current, instruction: event.target.value }))} placeholder="For example: make the argument more concise, strengthen transitions, and keep a professional research tone." disabled={documentRevision.streaming} />
+                          <Textarea id="asset-document-agent-instruction" rows={3} value={documentRevision.instruction} onChange={(event) => setDocumentRevision((current) => ({ ...current, instruction: event.target.value }))} placeholder={nextOptimizationRound === 1 ? "For example: make the argument more concise, strengthen transitions, and keep a professional research tone." : "Optional second-round focus. Audit findings and prior-round context are included automatically."} disabled={documentRevision.streaming || Boolean(pendingOptimizationRound)} />
                         </div>
 
                         {documentRevision.status && <p className="text-sm text-muted-foreground">{documentRevision.status}</p>}
@@ -2086,7 +2251,7 @@ export function AssetDetailPage() {
                       );
                     })}
                   </div>
-                  <div className="flex items-center gap-3"><Button onClick={() => editMutation.mutate()} disabled={!editTitle.trim() || editMutation.isPending}>{editMutation.isPending ? "Saving…" : "Save Changes"}</Button>{editMutation.isSuccess && <span className="text-sm text-emerald-700">Saved. Open Read to inspect the rendered document.</span>}{editMutation.isError && <span className="text-sm text-destructive">Could not save Asset changes.</span>}</div>
+                  <div className="flex items-center gap-3"><Button onClick={() => editMutation.mutate()} disabled={!editTitle.trim() || editMutation.isPending}>{editMutation.isPending ? "Saving…" : pendingOptimizationRound ? `Save Round ${pendingOptimizationRound.round} Changes` : "Save Changes"}</Button>{editMutation.isSuccess && <span className="text-sm text-emerald-700">Saved. Open Read to inspect the rendered document.</span>}{editMutation.isError && <span className="text-sm text-destructive">Could not save Asset changes.</span>}</div>
                 </CardContent>
               </Card>
             </TabsContent>
