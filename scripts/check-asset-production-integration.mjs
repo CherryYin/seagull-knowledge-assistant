@@ -100,6 +100,9 @@ export async function checkAssetProductionIntegration() {
   includesAll(values.documentSkill, files.documentSkill, [
     'accepted Claims',
     'every `blockId`',
+    '`optimizationRound` is greater than 1',
+    '`qualityAudit.findings`',
+    '`previousOptimization`',
     'Call `propose_asset_document_patch` exactly once',
     'Do not silently apply or save changes',
   ])
@@ -246,6 +249,11 @@ export async function checkAssetProductionIntegration() {
     'Promotion writes a formal Knowledge Record',
     'propose_asset_document_patch',
     'Optimize Complete Asset',
+    'getQualityAudit',
+    'optimizationRound',
+    'previousOptimization',
+    'Run Second-Round Polish',
+    'asset_optimization_v1',
     'data-document-agent-diff-preview',
     'You must still use Save Changes below.',
   ])

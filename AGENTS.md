@@ -33,7 +33,7 @@ deepseek-knowledge-lab/
 7. **Asset Block 修订**：`revise-asset-block` preset 可针对单个 Block 澄清修改意图并检索证据，最终只能通过 `propose_asset_block_patch` 返回结构化候选补丁；候选 `claimRefs` 只能引用 Accepted Claim 或保留 Hypothesis。Seagull 展示 Diff，用户确认后只更新本地编辑态，仍需显式保存才写入 PKG。
 8. **Asset Evidence**：`collect-asset-evidence` preset 围绕已确认 Intent 检索并通过 `propose_asset_evidence` 返回候选；工具本身不写 PKG，用户在 Seagull Evidence Board 确认后才保存或接受证据。
 9. **Asset Claims**：`analyze-asset-claims` preset 只引用 Workspace Evidence，通过 `propose_asset_claims` 返回 Agent 署名的 Candidate Claim；接受、编辑、拒绝或保留为假设必须在 Seagull Claim Gate 完成。
-10. **Asset 整篇优化**：`revise-asset-document` preset 只在 Intent、Evidence、Claim、Contribution 与 Knowledge Candidate 已完成用户决策后使用；它通过 `propose_asset_document_patch` 返回标题、摘要和完整 Block 候选补丁。Seagull 校验 Workspace/Block revision 与 Claim 引用，用户确认后仅应用到本地编辑态，仍需显式保存才写入 PKG。
+10. **Asset 整篇优化**：`revise-asset-document` preset 只在 Intent、Evidence、Claim、Contribution 与 Knowledge Candidate 已完成用户决策后使用；它通过 `propose_asset_document_patch` 返回标题、摘要和完整 Block 候选补丁。Seagull 校验 Workspace/Block revision 与 Claim 引用，用户确认后仅应用到本地编辑态，仍需显式保存才写入 PKG。后续优化轮次会携带最新确定性质量审计和上一轮记录，只有应用并保存后才计为完成一轮。
 
 ## PKG API 对接要点
 
