@@ -5,3 +5,13 @@ knowledge products.
 
 Existing models may remain in `pkg.models` during transition.
 """
+
+from pkg.models.application.asset import Asset
+from pkg.models.application.mind_map import (
+    MindMap,
+    MindMapNode,
+    MindMapNodeReference,
+    MindMapRevision,
+)
+
+__all__ = ["Asset", "MindMap", "MindMapNode", "MindMapNodeReference", "MindMapRevision"]

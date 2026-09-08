@@ -25,6 +25,12 @@ from pkg.models.review import ReviewSuggestion  # noqa: F401
 from pkg.models.discovery import DiscoveryItem  # noqa: F401
 from pkg.models.system_job import SystemJob  # noqa: F401
 from pkg.models.user_api_credential import UserApiCredential  # noqa: F401
+from pkg.models.application.mind_map import (  # noqa: F401
+    MindMap,
+    MindMapNode,
+    MindMapNodeReference,
+    MindMapRevision,
+)
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL_SYNC)
