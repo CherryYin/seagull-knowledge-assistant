@@ -39,6 +39,9 @@ const ReviewSuggestionsPage = lazy(() => import("./pages/ReviewSuggestionsPage")
 const SettingsPage = lazy(() => import("./pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
 const SystemJobsPage = lazy(() => import("./pages/SystemJobsPage").then((m) => ({ default: m.SystemJobsPage })));
 const OnboardingPage = lazy(() => import("./pages/OnboardingPage").then((m) => ({ default: m.OnboardingPage })));
+const MindMapSpikePage = import.meta.env.DEV
+  ? lazy(() => import("./pages/MindMapSpikePage").then((m) => ({ default: m.MindMapSpikePage })))
+  : null;
 
 function PageLoader() {
   return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Loading...</div>;
@@ -99,6 +102,7 @@ export default function App() {
           >
             <Route path="/" element={<LazyPage><HomePage /></LazyPage>} />
             <Route path="/lab" element={<LazyPage><LabPage /></LazyPage>} />
+            {MindMapSpikePage && <Route path="/lab/mind-map-spike" element={<LazyPage><MindMapSpikePage /></LazyPage>} />}
             <Route path="/chat" element={<LazyPage><ChatPage /></LazyPage>} />
             <Route path="/agent-memory" element={<LazyPage><AgentMemoryPage /></LazyPage>} />
             <Route path="/search" element={<LazyPage><SearchPage /></LazyPage>} />
