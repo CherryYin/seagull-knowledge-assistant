@@ -1,17 +1,24 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Focus, RotateCcw } from "lucide-react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { ArrowLeft, Focus, Move, Pencil, Plus, RotateCcw, Trash2, X } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   MindMapCanvas,
+  MindMapNodeMutationDialog,
   type MindMapCanvasMetrics,
   type MindMapCanvasNode,
+  type MindMapNodeMutationCommand,
+  type MindMapNodeMutationMode,
 } from "@/components/mind-map";
 import { StateMessage } from "@/components/StateMessage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { mindMapsApi, type MindMapReferenceRead } from "@/lib/api/mind-maps";
+import {
+  getMindMapVersionConflict,
+  mindMapsApi,
+  type MindMapReferenceRead,
+} from "@/lib/api/mind-maps";
 import type { MindMapLayoutMode } from "@/lib/mind-map-layout";
 
 export function MindMapPage() {
@@ -26,6 +33,9 @@ export function MindMapPage() {
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
   const [focusId, setFocusId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [initializedMapId, setInitializedMapId] = useState<string | null>(null);
+  const [mutationMode, setMutationMode] = useState<MindMapNodeMutationMode | null>(null);
+  const [versionConflictMessage, setVersionConflictMessage] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<MindMapCanvasMetrics>({
     visibleCount: 0,
     maxDepth: 0,
@@ -33,12 +43,13 @@ export function MindMapPage() {
   });
 
   useEffect(() => {
-    if (!treeQuery.data) return;
+    if (!treeQuery.data || treeQuery.data.map.id === initializedMapId) return;
     setLayoutMode(treeQuery.data.map.layout_mode);
     setCollapsedIds(new Set(treeQuery.data.nodes.filter((node) => node.collapsed).map((node) => node.id)));
     setFocusId(null);
     setSelectedId(null);
-  }, [treeQuery.data]);
+    setInitializedMapId(treeQuery.data.map.id);
+  }, [initializedMapId, treeQuery.data]);
 
   const referencesByNode = useMemo(() => {
     const result = new Map<string, MindMapReferenceRead[]>();
@@ -66,6 +77,33 @@ export function MindMapPage() {
   const selectedHasChildren = selectedId
     ? (treeQuery.data?.nodes ?? []).some((node) => node.parent_id === selectedId)
     : false;
+  const subtreeIds = useMemo(() => {
+    if (!selectedId) return new Set<string>();
+    const children = new Map<string, string[]>();
+    for (const node of treeQuery.data?.nodes ?? []) {
+      if (!node.parent_id) continue;
+      const items = children.get(node.parent_id) ?? [];
+      items.push(node.id);
+      children.set(node.parent_id, items);
+    }
+    const result = new Set<string>();
+    const pending = [selectedId];
+    while (pending.length > 0) {
+      const current = pending.pop()!;
+      if (result.has(current)) continue;
+      result.add(current);
+      pending.push(...(children.get(current) ?? []));
+    }
+    return result;
+  }, [selectedId, treeQuery.data?.nodes]);
+  const parentCandidates = useMemo(
+    () => (treeQuery.data?.nodes ?? []).filter((node) => !subtreeIds.has(node.id)),
+    [subtreeIds, treeQuery.data?.nodes],
+  );
+  const subtreeReferenceCount = useMemo(
+    () => (treeQuery.data?.references ?? []).filter((reference) => subtreeIds.has(reference.node_id)).length,
+    [subtreeIds, treeQuery.data?.references],
+  );
   const breadcrumbNode = (focusId && nodeById.get(focusId)) || selectedNode;
   const breadcrumbs = useMemo(() => {
     if (!breadcrumbNode) return [];
@@ -79,6 +117,69 @@ export function MindMapPage() {
     }
     return items;
   }, [breadcrumbNode, nodeById]);
+  const nodeMutation = useMutation({
+    mutationFn: async (command: MindMapNodeMutationCommand) => {
+      if (!mapId || !treeQuery.data) throw new Error("Mind Map is not loaded");
+      const baseVersion = treeQuery.data.map.version;
+      if (command.type === "add") {
+        return mindMapsApi.addNode(mapId, {
+          base_version: baseVersion,
+          parent_id: command.parentId,
+          content: command.content,
+          note: command.note,
+          node_kind: command.nodeKind,
+          updated_by: "human",
+        });
+      }
+      if (command.type === "edit") {
+        return mindMapsApi.updateNode(mapId, command.nodeId, {
+          base_version: baseVersion,
+          content: command.content,
+          note: command.note,
+          node_kind: command.nodeKind,
+          updated_by: "human",
+        });
+      }
+      if (command.type === "move") {
+        return mindMapsApi.moveNode(mapId, command.nodeId, {
+          base_version: baseVersion,
+          parent_id: command.parentId,
+          position: command.position,
+          updated_by: "human",
+        });
+      }
+      return mindMapsApi.deleteNode(mapId, command.nodeId, {
+        base_version: baseVersion,
+        delete_subtree: true,
+        updated_by: "human",
+      });
+    },
+    onSuccess: async (result, command) => {
+      setMutationMode(null);
+      setVersionConflictMessage(null);
+      if (command.type === "delete") {
+        setSelectedId(null);
+        if (focusId && result.deleted_node_ids.includes(focusId)) setFocusId(null);
+        setCollapsedIds((current) => new Set([...current].filter((nodeId) => !result.deleted_node_ids.includes(nodeId))));
+      } else if (result.node?.id) {
+        setSelectedId(result.node.id);
+      }
+      await treeQuery.refetch();
+    },
+    onError: async (error) => {
+      const conflict = getMindMapVersionConflict(error);
+      if (!conflict) return;
+      setMutationMode(null);
+      setVersionConflictMessage(
+        `This Mind Map changed from version ${conflict.expected_version} to ${conflict.current_version}. The latest tree was loaded; review it before trying the operation again.`,
+      );
+      await treeQuery.refetch();
+    },
+  });
+  const openMutation = (mode: MindMapNodeMutationMode) => {
+    nodeMutation.reset();
+    setMutationMode(mode);
+  };
 
   if (!mapId) return <StateMessage tone="error" title="Mind Map ID is missing" />;
   if (treeQuery.isLoading) return <StateMessage title="Loading Mind Map" description="Reading the current tree and references…" />;
@@ -130,6 +231,13 @@ export function MindMapPage() {
           <Button type="button" variant="outline" size="sm" onClick={resetView}><RotateCcw className="h-4 w-4" />Reset view</Button>
         </div>
       </div>
+
+      {versionConflictMessage && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm" data-testid="mind-map-version-conflict">
+          <div className="flex-1"><p className="font-medium">Mind Map refreshed after a version conflict</p><p className="mt-1 text-muted-foreground">{versionConflictMessage}</p></div>
+          <Button type="button" variant="ghost" size="icon" aria-label="Dismiss version conflict" onClick={() => setVersionConflictMessage(null)}><X className="h-4 w-4" /></Button>
+        </div>
+      )}
 
       <Card>
         <CardContent className="flex flex-wrap items-center gap-2 p-3">
@@ -192,6 +300,12 @@ export function MindMapPage() {
                   <div className="flex flex-wrap gap-2"><Badge>#{selectedNode.display_id}</Badge><Badge variant="outline">{selectedNode.node_kind}</Badge><Badge variant="outline">{selectedNode.updated_by}</Badge></div>
                   <h2 className="mt-3 font-medium">{selectedNode.content}</h2>
                   {selectedNode.note && <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{selectedNode.note}</p>}
+                  <div className="mt-4 grid grid-cols-2 gap-2">
+                    <Button type="button" variant="outline" size="sm" onClick={() => openMutation("add")}><Plus className="h-4 w-4" />Add child</Button>
+                    <Button type="button" variant="outline" size="sm" onClick={() => openMutation("edit")}><Pencil className="h-4 w-4" />Edit</Button>
+                    <Button type="button" variant="outline" size="sm" disabled={selectedNode.id === treeQuery.data.root_id || parentCandidates.length === 0} onClick={() => openMutation("move")}><Move className="h-4 w-4" />Move</Button>
+                    <Button type="button" variant="destructive" size="sm" disabled={selectedNode.id === treeQuery.data.root_id} onClick={() => openMutation("delete")}><Trash2 className="h-4 w-4" />Delete</Button>
+                  </div>
                 </div>
                 <div>
                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">References</p>
@@ -213,6 +327,17 @@ export function MindMapPage() {
           </CardContent>
         </Card>
       </div>
+      <MindMapNodeMutationDialog
+        mode={mutationMode}
+        selectedNode={selectedNode}
+        parentCandidates={parentCandidates}
+        subtreeNodeCount={subtreeIds.size}
+        subtreeReferenceCount={subtreeReferenceCount}
+        pending={nodeMutation.isPending}
+        error={nodeMutation.isError && !getMindMapVersionConflict(nodeMutation.error) ? nodeMutation.error.message : null}
+        onClose={() => { if (!nodeMutation.isPending) setMutationMode(null); }}
+        onSubmit={(command) => nodeMutation.mutate(command)}
+      />
     </div>
   );
 }
