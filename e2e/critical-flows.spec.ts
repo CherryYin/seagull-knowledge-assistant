@@ -31,6 +31,7 @@ type MockState = {
   sessionContext: Record<string, unknown> | null;
   chatResponse?: string;
   chatPrompts?: string[];
+  chatRequests?: Array<Record<string, unknown>>;
   chatSessions?: Array<Record<string, unknown>>;
   harnessSessionIds?: string[];
   htmlPreviewRequests?: number;
@@ -39,6 +40,19 @@ type MockState = {
   assetWorkspace?: Record<string, unknown>;
   qualityAudit?: Record<string, unknown>;
   documentOptimizationCalls?: number;
+  intentResponseModes?: Array<"tool-call" | "tool-result" | "text-only">;
+  evidenceProposalConflictOnce?: boolean;
+};
+
+const intentProposal = {
+  workingTitle: "Agent proposed title",
+  question: "What decision should this Asset support?",
+  goal: "Produce a decision-ready synthesis.",
+  audience: "Architecture reviewers",
+  creationMode: "make_decision",
+  scope: ["Current architecture"],
+  constraints: ["Use accepted evidence"],
+  rationale: "The proposal turns the initial topic into a concrete decision contract.",
 };
 
 function json(route: Route, body: unknown, status = 200) {
@@ -101,8 +115,13 @@ async function installMockBff(page: Page, state: MockState) {
     if (path === "/api/chat" && method === "POST") {
       const body = request.postDataJSON() as { prompt?: string; preset?: string; session_id?: string };
       state.chatPrompts = [...(state.chatPrompts ?? []), body.prompt ?? ""];
+      state.chatRequests = [...(state.chatRequests ?? []), body as Record<string, unknown>];
       state.harnessSessionIds = [...(state.harnessSessionIds ?? []), body.session_id ?? ""];
       if (body.preset === "clarify-asset-intent") {
+        const responseMode = state.intentResponseModes?.shift() ?? "tool-call";
+        const proposalEvent = responseMode === "tool-result"
+          ? { type: "tool_result", tool: "propose_asset_intent", result: JSON.stringify(intentProposal) }
+          : { type: "tool_call", tool: "propose_asset_intent", args: intentProposal };
         return route.fulfill({
           status: 200,
           contentType: "text/event-stream",
@@ -111,17 +130,7 @@ async function installMockBff(page: Page, state: MockState) {
             "",
             `data: ${JSON.stringify({ type: "text", content: "I prepared a structured Intent proposal." })}`,
             "",
-            `data: ${JSON.stringify({ type: "tool_call", tool: "propose_asset_intent", args: {
-              workingTitle: "Agent proposed title",
-              question: "What decision should this Asset support?",
-              goal: "Produce a decision-ready synthesis.",
-              audience: "Architecture reviewers",
-              creationMode: "make_decision",
-              scope: ["Current architecture"],
-              constraints: ["Use accepted evidence"],
-              rationale: "The proposal turns the initial topic into a concrete decision contract.",
-            } })}`,
-            "",
+            ...(responseMode === "text-only" ? [] : [`data: ${JSON.stringify(proposalEvent)}`, ""]),
             `data: ${JSON.stringify({ type: "done", session_id: body.session_id })}`,
             "",
           ].join("\n"),
@@ -149,15 +158,83 @@ async function installMockBff(page: Page, state: MockState) {
           ].join("\n"),
         });
       }
+      if (body.preset === "analyze-asset-claims") {
+        const contractText = body.prompt?.match(/\{[\s\S]*\}$/)?.[0] ?? "{}";
+        const contract = JSON.parse(contractText) as { assetId?: string; baseWorkspaceRevision?: number; intentRevision?: number; evidence?: Array<{ id: string }> };
+        return route.fulfill({
+          status: 200,
+          contentType: "text/event-stream",
+          body: [
+            'data: {"type":"session","session_id":"claim-session-e2e"}',
+            "",
+            `data: ${JSON.stringify({ type: "tool_call", tool: "propose_asset_claims", args: {
+              assetId: contract.assetId,
+              baseWorkspaceRevision: contract.baseWorkspaceRevision,
+              intentRevision: contract.intentRevision,
+              proposals: [{
+                content: "The selected evidence supports a focused architecture decision.",
+                kind: "recommendation",
+                supportingEvidence: [contract.evidence?.[0]?.id],
+                contradictingEvidence: [],
+                agentConfidence: "medium",
+              }],
+            } })}`,
+            "",
+            'data: {"type":"done","session_id":"claim-session-e2e"}',
+            "",
+          ].join("\n"),
+        });
+      }
+      if (body.preset === "collect-asset-evidence") {
+        const contractText = body.prompt?.match(/\{[\s\S]*\}$/)?.[0] ?? "{}";
+        const contract = JSON.parse(contractText) as { assetId?: string; baseWorkspaceRevision?: number; intentRevision?: number };
+        return route.fulfill({
+          status: 200,
+          contentType: "text/event-stream",
+          body: [
+            'data: {"type":"session","session_id":"evidence-session-e2e"}',
+            "",
+            `data: ${JSON.stringify({ type: "tool_call", tool: "propose_asset_evidence", args: {
+              assetId: contract.assetId,
+              baseWorkspaceRevision: contract.baseWorkspaceRevision,
+              intentRevision: contract.intentRevision,
+              proposals: [{
+                targetType: "note",
+                targetId: "note-input",
+                relation: "supports",
+                summary: "A second collection adds a relevant supporting note.",
+              }],
+            } })}`,
+            "",
+            'data: {"type":"done","session_id":"evidence-session-e2e"}',
+            "",
+          ].join("\n"),
+        });
+      }
       if (body.preset === "revise-asset-document") {
         const contractText = body.prompt?.match(/\{[\s\S]*\}$/)?.[0] ?? "{}";
         const contract = JSON.parse(contractText) as {
           optimizationRound?: number;
           baseWorkspaceRevision?: number;
+          baseDocumentSignature?: string;
           asset?: { title?: string; brief?: string; blocks?: Array<{ blockId: string; baseRevision: number; markdown: string; claimRefs?: string[] }> };
         };
         const round = contract.optimizationRound ?? 1;
-        const targetBlock = contract.asset?.blocks?.find((block) => !block.markdown.startsWith("#")) ?? contract.asset?.blocks?.[0];
+        const replacementBlocks = [
+          { markdown: `# E2E Optimized Asset Round ${round}`, claimRefs: [] },
+          { markdown: `Round ${round} fully rewritten evidence-backed paragraph.`, claimRefs: ["claim-1"] },
+        ];
+        const normalizedPatch = {
+          assetId: "asset-e2e",
+          baseWorkspaceRevision: contract.baseWorkspaceRevision ?? 0,
+          rewriteMode: "replace_document",
+          baseDocumentSignature: contract.baseDocumentSignature,
+          replacementTitle: `E2E Optimized Asset Round ${round}`,
+          replacementBrief: `A reviewable Asset refined in optimization round ${round}.`,
+          explanation: `Completed optimization round ${round}.`,
+          blocks: [],
+          replacementBlocks,
+        };
         state.documentOptimizationCalls = (state.documentOptimizationCalls ?? 0) + 1;
         return route.fulfill({
           status: 200,
@@ -166,18 +243,11 @@ async function installMockBff(page: Page, state: MockState) {
             `data: ${JSON.stringify({ type: "session", session_id: `document-session-round-${round}` })}`,
             "",
             `data: ${JSON.stringify({ type: "tool_call", tool: "propose_asset_document_patch", args: {
-              assetId: "asset-e2e",
-              baseWorkspaceRevision: contract.baseWorkspaceRevision ?? 0,
-              replacementTitle: `E2E Optimized Asset Round ${round}`,
-              replacementBrief: `A reviewable Asset refined in optimization round ${round}.`,
-              explanation: `Completed optimization round ${round}.`,
-              blocks: targetBlock ? [{
-                blockId: targetBlock.blockId,
-                baseRevision: targetBlock.baseRevision,
-                replacementMarkdown: `Round ${round} polished evidence-backed paragraph.`,
-                claimRefs: ["claim-1"],
-              }] : [],
+              ...normalizedPatch,
+              replacementBlocks: JSON.stringify(replacementBlocks),
             } })}`,
+            "",
+            `data: ${JSON.stringify({ type: "tool_result", tool: "propose_asset_document_patch", result: JSON.stringify(normalizedPatch) })}`,
             "",
             `data: ${JSON.stringify({ type: "done", session_id: `document-session-round-${round}` })}`,
             "",
@@ -214,6 +284,7 @@ async function installMockBff(page: Page, state: MockState) {
     }
 
     if (path === "/api/harness/models") return json(route, { models: [], failures: [] });
+    if (path === "/api/knowledge/models") return json(route, []);
     if (path === "/api/categories") {
       return json(route, { items: [{ id: 1, name: "Inbox", color: "#64748b", created_at: now }], total: 1 });
     }
@@ -224,6 +295,27 @@ async function installMockBff(page: Page, state: MockState) {
     if (path === "/api/assets" && method === "POST") {
       state.savedAssetBody = request.postDataJSON() as Record<string, unknown>;
       return json(route, { id: "asset-e2e", ...state.savedAssetBody, created_at: now, updated_at: now });
+    }
+    if (path === "/api/assets/knowledge-lineage" && method === "GET") {
+      const targetType = url.searchParams.get("target_type") as "note" | "wiki";
+      const targetId = url.searchParams.get("target_id") ?? "";
+      return json(route, {
+        target_type: targetType,
+        target_id: targetId,
+        items: [{
+          asset_id: "asset-e2e",
+          asset_title: "E2E Distillation Asset",
+          asset_type: "research_brief",
+          asset_status: "draft",
+          relation: "distilled",
+          candidate_id: `candidate-${targetType}`,
+          candidate_type: targetType,
+          candidate_action: "create",
+          claim_refs: ["claim-1"],
+          contribution_summary: "Reusable knowledge distilled from reviewed claims.",
+          promoted_at: now,
+        }],
+      });
     }
     if (path === "/api/assets/newsletter/automation" && method === "GET") {
       return json(route, state.newsletterAutomation ?? {
@@ -273,6 +365,90 @@ async function installMockBff(page: Page, state: MockState) {
     if (path === "/api/assets/asset-e2e" && method === "PATCH") {
       state.savedAssetBody = { ...state.savedAssetBody, ...(request.postDataJSON() as Record<string, unknown>) };
       return json(route, { id: "asset-e2e", user_id: "user-e2e", ...state.savedAssetBody, metadata_: state.savedAssetBody?.metadata ?? state.savedAssetBody?.metadata_ ?? null, source_refs: state.savedAssetBody?.source_refs ?? [], note_refs: state.savedAssetBody?.note_refs ?? [], wiki_refs: state.savedAssetBody?.wiki_refs ?? [], created_at: now, updated_at: now });
+    }
+    if (path === "/api/assets/asset-e2e/workspace/intent" && method === "POST") {
+      const body = request.postDataJSON() as Record<string, unknown>;
+      state.assetWorkspace = {
+        asset_id: "asset-e2e",
+        workspace_revision: 1,
+        intent: {
+          revision: 1,
+          question: body.question,
+          goal: body.goal,
+          audience: body.audience,
+          creation_mode: body.creation_mode,
+          scope: body.scope,
+          constraints: body.constraints,
+          status: "confirmed",
+          confirmed_by: "user-e2e",
+          confirmed_at: now,
+        },
+        intent_history: [],
+        evidence: [],
+        claims: [],
+        contribution: null,
+        knowledge_candidates: [],
+        decision_items: [],
+      };
+      return json(route, state.assetWorkspace);
+    }
+    if (path === "/api/assets/asset-e2e/workspace/evidence/proposals" && method === "POST") {
+      const body = request.postDataJSON() as { base_workspace_revision?: number; proposals?: Array<Record<string, unknown>> };
+      const workspace = state.assetWorkspace as Record<string, unknown>;
+      if (state.evidenceProposalConflictOnce) {
+        state.evidenceProposalConflictOnce = false;
+        state.assetWorkspace = { ...workspace, workspace_revision: Number(workspace.workspace_revision ?? 0) + 1 };
+        return json(route, { detail: "Asset workspace revision changed" }, 409);
+      }
+      if (body.base_workspace_revision !== workspace.workspace_revision) {
+        return json(route, { detail: `Asset workspace revision changed: expected ${body.base_workspace_revision}, current ${workspace.workspace_revision}` }, 409);
+      }
+      const evidence = (body.proposals ?? []).map((item, index) => ({
+        id: `evidence-${(((workspace.evidence as unknown[]) ?? []).length) + index + 1}`,
+        ...item,
+        status: "proposed",
+        authorship: "agent",
+        intent_revision: 1,
+        created_at: now,
+      }));
+      state.assetWorkspace = { ...workspace, workspace_revision: Number(workspace.workspace_revision ?? 0) + 1, evidence: [...((workspace.evidence as unknown[]) ?? []), ...evidence] };
+      return json(route, state.assetWorkspace);
+    }
+    const evidenceDecisionMatch = path.match(/^\/api\/assets\/asset-e2e\/workspace\/evidence\/([^/]+)\/decision$/);
+    if (evidenceDecisionMatch && method === "POST") {
+      const body = request.postDataJSON() as { decision?: "accepted" | "rejected" };
+      const workspace = state.assetWorkspace as Record<string, unknown>;
+      const evidence = ((workspace.evidence as Array<Record<string, unknown>>) ?? []).map((item) => item.id === evidenceDecisionMatch[1]
+        ? { ...item, status: body.decision, decided_by: "user-e2e", decided_at: now }
+        : item);
+      state.assetWorkspace = { ...workspace, workspace_revision: Number(workspace.workspace_revision ?? 0) + 1, evidence };
+      return json(route, state.assetWorkspace);
+    }
+    if (path === "/api/assets/asset-e2e/workspace/claims/proposals" && method === "POST") {
+      const body = request.postDataJSON() as { proposals?: Array<Record<string, unknown>> };
+      const workspace = state.assetWorkspace as Record<string, unknown>;
+      const claims = (body.proposals ?? []).map((item, index) => ({
+        id: `claim-${index + 1}`,
+        ...item,
+        status: "proposed",
+        authorship: "agent",
+        intent_revision: 1,
+        created_at: now,
+        user_edited: false,
+      }));
+      state.assetWorkspace = { ...workspace, workspace_revision: Number(workspace.workspace_revision ?? 0) + 1, claims };
+      return json(route, state.assetWorkspace);
+    }
+    const claimDecisionMatch = path.match(/^\/api\/assets\/asset-e2e\/workspace\/claims\/([^/]+)\/decision$/);
+    if (claimDecisionMatch && method === "POST") {
+      const body = request.postDataJSON() as { decision?: string };
+      const workspace = state.assetWorkspace as Record<string, unknown>;
+      const statuses: Record<string, string> = { accept: "accepted", edit_and_accept: "accepted", reject: "rejected", keep_as_hypothesis: "hypothesis", need_more_evidence: "needs_more_evidence" };
+      const claims = ((workspace.claims as Array<Record<string, unknown>>) ?? []).map((item) => item.id === claimDecisionMatch[1]
+        ? { ...item, status: statuses[body.decision ?? ""] ?? item.status, decided_by: "user-e2e", decided_at: now }
+        : item);
+      state.assetWorkspace = { ...workspace, workspace_revision: Number(workspace.workspace_revision ?? 0) + 1, claims };
+      return json(route, state.assetWorkspace);
     }
     if (path === "/api/assets/asset-e2e/workspace" && method === "GET") {
       return json(route, state.assetWorkspace ?? {
@@ -366,6 +542,9 @@ async function installMockBff(page: Page, state: MockState) {
       if (url.searchParams.get("note_type") === "digest") return json(route, { items: [], total: 0 });
       return json(route, { items: [{ id: "note-input", title: "E2E Knowledge Note", note_type: "inbox", status: "kept", category_id: 1, domains: [], tags: [], confidence: "medium", source_ids: [], created_at: now, updated_at: now }], total: 1 });
     }
+    if (path === "/api/notes/note-input" && method === "GET") {
+      return json(route, { id: "note-input", title: "E2E Knowledge Note", note_type: "concept", status: "seed", category_id: 1, category_name: "Inbox", abstract: "A distilled note.", content: "# Distilled Note\n\nReusable knowledge.", project: null, domains: [], tags: ["asset-promotion"], confidence: "medium", source_ids: [], file_path: null, word_count: 4, is_pinned: false, created_at: now, updated_at: now });
+    }
     if (path === "/api/wiki/suggestions") return json(route, { items: [], total: 0 });
     if (path === "/api/wiki/mining/runs") return json(route, { items: [], total: 0 });
     if (path === "/api/sources") return json(route, { items: [{ id: "source-input", title: "E2E Source Evidence", source_type: "web", category_id: 1, url: "https://example.com/articles", ingested_at: now, metadata_: { web_directory_enabled: true } }], total: 1 });
@@ -414,6 +593,24 @@ async function installMockBff(page: Page, state: MockState) {
     }
     if (path === "/api/sources/source-web-article/chunk-count") return json(route, { count: 1 });
     if (path === "/api/sources/source-web-article/articles") return json(route, { items: [], total: 0 });
+    if (path === "/api/wiki/references/resolve" && method === "POST") {
+      const body = request.postDataJSON() as { refs?: Array<{ ref_type?: string; ref_id?: string }> };
+      const known = new Set(["source:source-input", "note:note-input", "wiki:wiki-input"]);
+      return json(route, {
+        items: (body.refs ?? [])
+          .filter((item) => known.has(`${item.ref_type}:${item.ref_id}`))
+          .map((item) => ({
+            ref_type: item.ref_type,
+            ref_id: item.ref_id,
+            title: item.ref_id,
+          })),
+      });
+    }
+    if (path === "/api/wiki/wiki-input" && method === "GET") {
+      return json(route, { id: "wiki-input", title: "E2E Stable Wiki", page_type: "topic", summary: "A distilled wiki.", content: "# Stable Wiki\n\nCanonical knowledge.", domains: [], tags: ["asset-promotion"], derived_from_notes: [], derived_from_sources: [], open_questions: [], confidence_score: null, needs_recompile: false, stale_reason: null, stale_triggered_at: null, last_compiled_at: now, created_at: now, updated_at: now });
+    }
+    if (path === "/api/wiki/wiki-input/sources" && method === "GET") return json(route, []);
+    if (path === "/api/wiki/update-drafts" && method === "GET") return json(route, []);
     if (path === "/api/wiki") return json(route, { items: [{ id: "wiki-input", title: "E2E Stable Wiki", page_type: "topic", content: "Stable knowledge", domains: [], tags: [], derived_from_notes: [], derived_from_sources: [], open_questions: [], needs_recompile: false, created_at: now, updated_at: now }], total: 1 });
     if (path === "/api/review/suggestions") return json(route, { items: [], total: 0 });
 
@@ -427,6 +624,18 @@ async function signIn(page: Page) {
   await page.getByLabel("Password").fill("not-a-real-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page).toHaveURL(/\/$/);
+}
+
+async function advanceAssetToInitialDraftGeneration(page: Page) {
+  await expect(page.getByRole("tab", { name: "Evidence" })).toHaveAttribute("data-state", "active");
+  await page.getByRole("button", { name: "Accept", exact: true }).click();
+  await page.getByRole("button", { name: "Continue to Claims" }).click();
+  await page.getByRole("button", { name: "Ask Agent to Propose Claims" }).click();
+  await expect(page.getByText("Candidate Claim Proposal")).toBeVisible();
+  await page.getByRole("button", { name: "Save to Claim Board" }).click();
+  await page.getByRole("button", { name: "Accept", exact: true }).click();
+  await page.getByRole("button", { name: "Generate Initial Draft" }).click();
+  await expect(page).toHaveURL(/\/chat$/);
 }
 
 test("critical knowledge journey: login, chat, explicit save, decisions, and Agent Memory", async ({ page }) => {
@@ -522,6 +731,88 @@ test("Asset Intent Agent starts a fresh session and restores its apply action", 
   await expect(page.getByLabel("Goal")).toHaveValue("Produce a decision-ready synthesis.");
 });
 
+test("Asset Intent Agent restores Apply from a tool-result-only response", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: null,
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+    intentResponseModes: ["tool-result"],
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/assets/new");
+  await page.getByLabel("Research question").fill("What should this Asset decide?");
+  await page.getByRole("button", { name: "Discuss Intent with Agent" }).click();
+  const input = page.getByPlaceholder("Ask anything about your knowledge base...");
+  await expect(input).toContainText("What should this Asset decide?");
+  await input.press("Enter");
+
+  await expect(page.getByRole("button", { name: "Apply to Asset Form" })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Apply to Asset Form" })).toBeVisible();
+});
+
+test("Asset Intent Agent offers a retry when prose has no proposal", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: null,
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+    intentResponseModes: ["text-only", "tool-result"],
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/assets/new");
+  await page.getByLabel("Research question").fill("What should this Asset decide?");
+  await page.getByRole("button", { name: "Discuss Intent with Agent" }).click();
+  const input = page.getByPlaceholder("Ask anything about your knowledge base...");
+  await expect(input).toContainText("What should this Asset decide?");
+  await input.press("Enter");
+
+  await expect(page.getByText("Intent Proposal was not generated")).toBeVisible();
+  await page.getByRole("button", { name: "Generate Applyable Proposal" }).click();
+  await expect(page.getByRole("button", { name: "Apply to Asset Form" })).toBeVisible();
+  expect(state.chatPrompts?.at(-1)).toContain("call propose_asset_intent exactly once");
+});
+
+test("Asset Intent Proposal survives a later prose-only turn", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: null,
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+    intentResponseModes: ["tool-call", "text-only"],
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/assets/new");
+  await page.getByLabel("Research question").fill("What should this Asset decide?");
+  await page.getByRole("button", { name: "Discuss Intent with Agent" }).click();
+  const input = page.getByPlaceholder("Ask anything about your knowledge base...");
+  await expect(input).toContainText("What should this Asset decide?");
+  await input.press("Enter");
+  await expect(page.getByRole("button", { name: "Apply to Asset Form" })).toBeVisible();
+
+  await input.fill("Explain the rationale in one sentence.");
+  await input.press("Enter");
+  await expect(page.getByText("Intent Proposal was not generated")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Apply to Asset Form" })).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Apply to Asset Form" })).toBeVisible();
+  await expect(page.getByText("4 messages", { exact: true })).toBeVisible();
+});
+
 test("Chat input resizes upward and keeps its height after reload", async ({ page }) => {
   const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null };
   await installMockBff(page, state);
@@ -547,6 +838,34 @@ test("Chat input resizes upward and keeps its height after reload", async ({ pag
   await expect.poll(async () => (await page.getByPlaceholder("Ask anything about your knowledge base...").boundingBox())?.height ?? 0).toBeGreaterThan(initialHeight + 60);
 });
 
+test("Chat ignores legacy empty workflow sessions before starting a general conversation", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: null,
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+    chatSessions: [{
+      id: "session-distill-legacy",
+      title: "New Session",
+      messages: [],
+      created_at: now,
+      updated_at: now,
+    }],
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/chat");
+  const input = page.getByPlaceholder("Ask anything about your knowledge base...");
+  await input.fill("Start a clean general conversation");
+  await input.press("Enter");
+
+  await expect.poll(() => state.harnessSessionIds?.at(-1)).not.toBe("session-distill-legacy");
+  expect(state.chatRequests?.at(-1)).toMatchObject({ preset: "knowledge-lab", create_session: true });
+});
+
 test("Asset creation stores HTML delivery preference while preserving Markdown authoring", async ({ page }) => {
   const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null };
   await installMockBff(page, state);
@@ -556,7 +875,9 @@ test("Asset creation stores HTML delivery preference while preserving Markdown a
   await page.getByLabel("Research question").fill("How should this HTML delivery work?");
   await page.getByLabel("Asset goal").fill("Produce a reusable web document.");
   await page.getByLabel("Delivery format").selectOption("html");
-  await page.getByRole("button", { name: "Confirm Intent & Start Agent" }).click();
+  await page.getByText("E2E Source Evidence").click();
+  await page.getByRole("button", { name: "Confirm Intent & Review Evidence" }).click();
+  await advanceAssetToInitialDraftGeneration(page);
 
   await expect.poll(() => (state.savedAssetBody?.metadata as Record<string, unknown> | undefined)?.delivery_format).toBe("html");
   const input = page.getByPlaceholder("Ask anything about your knowledge base...");
@@ -659,6 +980,9 @@ test("Asset complete optimization records a saved first round before running the
   await page.getByRole("button", { name: "Save Round 1 Changes" }).click();
 
   await expect.poll(() => ((state.savedAssetBody?.metadata as Record<string, unknown>)?.asset_optimization_v1 as Record<string, unknown>)?.completed_rounds).toBe(1);
+  expect(state.savedAssetBody?.draft_content).toContain("Round 1 fully rewritten evidence-backed paragraph.");
+  expect(state.savedAssetBody?.draft_content).not.toContain("Original evidence-backed paragraph.");
+  expect((((state.savedAssetBody?.metadata as Record<string, unknown>)?.asset_document as Record<string, unknown>)?.blocks as unknown[]) ?? []).toHaveLength(2);
   await expect(page.getByRole("button", { name: "Run Second-Round Polish" })).toBeVisible();
   await page.getByRole("button", { name: "Run Second-Round Polish" }).click();
   await expect.poll(() => state.chatPrompts?.at(-1)).toContain('"optimizationRound": 2');
@@ -701,7 +1025,18 @@ test("Newsletter Automation saves a schedule and creates a reviewable Asset draf
 });
 
 test("agent-assisted Asset generation creates a Workspace after Intent confirmation and saves the Agent draft explicitly", async ({ page }) => {
-  const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null };
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: null,
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+    chatResponse: validResearchBrief.replace(
+      "[Source: source-input]",
+      "[Source: source-input] [Source: web-linuxfoundation-2026]",
+    ),
+  };
   await installMockBff(page, state);
   await signIn(page);
 
@@ -719,15 +1054,31 @@ test("agent-assisted Asset generation creates a Workspace after Intent confirmat
   await page.getByText("E2E Source Evidence").click();
   await expect.poll(() => state.savedAssetBody).toBeNull();
 
-  await page.getByRole("button", { name: "Confirm Intent & Start Agent" }).click();
+  await page.getByRole("button", { name: "Confirm Intent & Review Evidence" }).click();
   await expect.poll(() => state.savedAssetBody?.title).toBe("E2E Research Brief");
   expect(state.savedAssetBody?.draft_content).toBeUndefined();
+  await expect(page).toHaveURL(/\/assets\/asset-e2e$/);
+  await expect(page.getByRole("tab", { name: "Evidence" })).toHaveAttribute("data-state", "active");
+  await expect(page.getByText("The selected records are now Evidence candidates.")).toBeVisible();
+  await expect(page.getByText("Evidence review required")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Continue to Claims" })).toBeDisabled();
+  await expect.poll(() => ((state.assetWorkspace?.evidence as unknown[]) ?? []).length).toBe(1);
+  await page.getByRole("button", { name: "Accept", exact: true }).click();
+  await expect(page.getByText("Evidence ready")).toBeVisible();
+  await page.getByRole("button", { name: "Continue to Claims" }).click();
+  await expect(page.getByRole("tab", { name: "Claims" })).toHaveAttribute("data-state", "active");
+  await expect(page.getByRole("button", { name: "Generate Initial Draft" })).toBeDisabled();
+  await page.getByRole("button", { name: "Ask Agent to Propose Claims" }).click();
+  await expect(page.getByText("Candidate Claim Proposal")).toBeVisible();
+  await page.getByRole("button", { name: "Save to Claim Board" }).click();
+  await page.getByRole("button", { name: "Accept", exact: true }).click();
+  await expect(page.getByText("Claims ready")).toBeVisible();
+  await page.getByRole("button", { name: "Generate Initial Draft" }).click();
   await expect(page).toHaveURL(/\/chat$/);
   let input = page.getByPlaceholder("Ask anything about your knowledge base...");
-  await expect(input).toContainText("E2E Research Brief");
+  await expect(input).toContainText("The Intent, Evidence Gate, and Claim Gate are complete");
+  await expect(input).toContainText("The selected evidence supports a focused architecture decision.");
   await expect(input).toContainText("## Executive Summary");
-  await expect(input).toContainText("## Evidence and Confidence");
-  await expect(input).toContainText("[Source: source-input]");
   await expect(input).toContainText("Completion checklist");
   await expect.poll(() => (state.sessionContext?.assetDraft as Record<string, unknown> | undefined)?.title).toBe("E2E Research Brief");
 
@@ -739,7 +1090,8 @@ test("agent-assisted Asset generation creates a Workspace after Intent confirmat
   await expect(page.getByText("E2E answer with a durable result.")).toBeVisible();
   expect(state.savedAssetBody?.draft_content).toBeUndefined();
 
-  await page.getByRole("button", { name: "Save as Asset Draft" }).click();
+  await page.getByRole("button", { name: "Apply Draft to Asset" }).click();
+  await expect(page.getByRole("button", { name: "Applied to Asset" })).toBeDisabled();
   await expect.poll(() => state.savedAssetBody?.title).toBe("E2E Research Brief");
   expect(state.savedAssetBody).toMatchObject({
     asset_type: "research_brief",
@@ -748,6 +1100,7 @@ test("agent-assisted Asset generation creates a Workspace after Intent confirmat
     source_refs: ["source-input"],
     status: "draft",
   });
+  expect(state.savedAssetBody?.draft_content).toContain("[Source: web-linuxfoundation-2026]");
   expect(state.savedAssetBody?.metadata).toMatchObject({
     audience: "Architecture reviewers",
     generation_mode: "agent_assisted",
@@ -809,6 +1162,55 @@ test("agent-assisted Asset generation creates a Workspace after Intent confirmat
   await expect(page.getByRole("heading", { name: "Draft", exact: true })).toHaveCount(0);
 });
 
+test("saving a later Evidence collection retries a benign Workspace revision conflict", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: {
+      title: "Evidence retry Asset",
+      brief: "Collect evidence in multiple passes.",
+      asset_type: "research_brief",
+      status: "draft",
+      source_refs: ["source-input"],
+      note_refs: [],
+      wiki_refs: [],
+      metadata: { audience: "Architecture reviewers", research_mode: "local_then_web" },
+    },
+    assetWorkspace: {
+      asset_id: "asset-e2e",
+      workspace_revision: 5,
+      intent: { revision: 1, question: "What does the evidence support?", goal: "Build a grounded recommendation.", audience: "Architecture reviewers", creation_mode: "make_decision", scope: [], constraints: [], status: "confirmed", confirmed_by: "user-e2e", confirmed_at: now },
+      intent_history: [],
+      evidence: [{ id: "evidence-1", target_type: "source", target_id: "source-input", relation: "supports", summary: "The first collection supports the Intent.", status: "accepted", authorship: "agent", intent_revision: 1, created_at: now }],
+      claims: [],
+      contribution: null,
+      knowledge_candidates: [],
+      decision_items: [],
+    },
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+    evidenceProposalConflictOnce: true,
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/assets/asset-e2e");
+  await page.getByRole("tab", { name: "Evidence" }).click();
+  await page.getByRole("button", { name: "Ask Agent to Collect Evidence" }).click();
+  expect(state.chatRequests?.at(-1)).toMatchObject({
+    preset: "collect-asset-evidence",
+    create_session: true,
+    ephemeral_session: true,
+  });
+  await expect(page.getByText("Evidence Proposal")).toBeVisible();
+  await page.getByRole("button", { name: "Save to Evidence Board" }).click();
+
+  await expect(page.getByText("1 Evidence candidates saved for review.")).toBeVisible();
+  await expect.poll(() => ((state.assetWorkspace?.evidence as unknown[]) ?? []).length).toBe(2);
+  expect(state.assetWorkspace?.workspace_revision).toBe(7);
+});
+
 test("Source Asset handoff opens the generation guide with evidence preselected", async ({ page }) => {
   const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null };
   await installMockBff(page, state);
@@ -836,6 +1238,22 @@ test("Source Asset handoff opens the generation guide with evidence preselected"
   await expect(page.getByLabel("E2E Source Evidence")).toBeChecked();
   await expect(page.getByText("Intent not confirmed", { exact: false })).toBeVisible();
   await expect.poll(() => state.savedAssetBody).toBeNull();
+});
+
+test("distilled Notes and Wiki pages link back to their originating Asset", async ({ page }) => {
+  const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/notes/note-input");
+  await expect(page.getByText("Related Assets")).toBeVisible();
+  await expect(page.getByText("Distilled from Asset")).toBeVisible();
+  await expect(page.getByRole("link", { name: "E2E Distillation Asset" })).toHaveAttribute("href", "/assets/asset-e2e");
+
+  await page.goto("/wiki/wiki-input");
+  await expect(page.getByText("Related Assets")).toBeVisible();
+  await expect(page.getByText("Reusable knowledge distilled from reviewed claims.")).toBeVisible();
+  await expect(page.getByRole("link", { name: "E2E Distillation Asset" })).toHaveAttribute("href", "/assets/asset-e2e");
 });
 
 test("Web Source presentation distinguishes RSS Feed from Web Directory", async ({ page }) => {
@@ -875,7 +1293,8 @@ test("Asset types produce distinct agent-assisted deliverable contracts before g
     await page.getByLabel("Research question").fill("What does the selected evidence establish?");
     await page.getByLabel("Asset goal").fill("Produce a grounded, reusable deliverable.");
     await page.getByText("E2E Source Evidence").click();
-    await page.getByRole("button", { name: "Confirm Intent & Start Agent" }).click();
+    await page.getByRole("button", { name: "Confirm Intent & Review Evidence" }).click();
+    await advanceAssetToInitialDraftGeneration(page);
 
     const input = page.getByPlaceholder("Ask anything about your knowledge base...");
     await expect(input).toContainText(item.section);
@@ -907,7 +1326,8 @@ test("Asset quality issues can be regenerated before the corrected draft is save
   await page.getByLabel("Research question").fill("Which architecture decision does the evidence support?");
   await page.getByLabel("Asset goal").fill("Recommend an architecture decision from the selected evidence.");
   await page.getByText("E2E Source Evidence").click();
-  await page.getByRole("button", { name: "Confirm Intent & Start Agent" }).click();
+  await page.getByRole("button", { name: "Confirm Intent & Review Evidence" }).click();
+  await advanceAssetToInitialDraftGeneration(page);
   const input = page.getByPlaceholder("Ask anything about your knowledge base...");
   await expect(input).toContainText("Incomplete brief");
   await input.press("Enter");
@@ -915,7 +1335,7 @@ test("Asset quality issues can be regenerated before the corrected draft is save
   await expect(page.getByText("Asset draft save is blocked")).toBeVisible();
   await expect(page.getByText("Missing required section: Executive Summary.")).toBeVisible();
   await expect(page.getByText("Draft still contains unfinished placeholders or citation-needed markers.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Save as Asset Draft" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Apply Draft to Asset" })).toBeDisabled();
   expect(state.savedAssetBody?.draft_content).toBeUndefined();
 
   state.chatResponse = validResearchBrief.replace("E2E Research Brief", "Incomplete brief");
@@ -924,7 +1344,7 @@ test("Asset quality issues can be regenerated before the corrected draft is save
   expect(state.chatPrompts?.at(-1)).toContain("Missing required section: Executive Summary.");
   expect(state.chatPrompts?.at(-1)).toContain("Return the full corrected Markdown document");
   await expect(page.getByText("Asset draft quality check passed")).toBeVisible();
-  const saveButton = page.getByRole("button", { name: "Save as Asset Draft" }).last();
+  const saveButton = page.getByRole("button", { name: "Apply Draft to Asset" }).last();
   await expect(saveButton).toBeEnabled();
   await saveButton.click();
   await expect.poll(() => state.savedAssetBody?.title).toBe("Incomplete brief");

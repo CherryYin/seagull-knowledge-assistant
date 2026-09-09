@@ -42,6 +42,7 @@ export interface HarnessChatOptions {
   model?: string | null;
   sessionId?: string;
   createSession?: boolean;
+  ephemeralSession?: boolean;
   clientTimeZone?: string;
   signal?: AbortSignal;
 }
@@ -60,6 +61,7 @@ export async function* harnessChat(prompt: string, options: HarnessChatOptions =
       model: options.model,
       session_id: options.sessionId,
       create_session: options.createSession,
+      ephemeral_session: options.ephemeralSession,
       client_time_zone: options.clientTimeZone,
     }),
     credentials: "include",

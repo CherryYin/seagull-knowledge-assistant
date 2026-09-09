@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, Link, useNavigate, useLocation } from "react-router-dom";
-import { BookOpen, CalendarDays, ChartNoAxesCombined, CheckCircle2, CircleAlert, Clock3, Copy, Download, Eye, FileSearch, LibraryBig, MailOpen, PenLine, Quote, Sparkles, WandSparkles } from "lucide-react";
+import { BookOpen, CalendarDays, ChartNoAxesCombined, CheckCircle2, CircleAlert, Clock3, Copy, Download, Eye, FileSearch, LibraryBig, MailOpen, PenLine, Quote, Sparkles, Square, WandSparkles } from "lucide-react";
 import { assetsApi, authApi, notesApi, sourcesApi, wikiApi, type Asset, type AssetClaimProposalInput, type AssetContributionKind, type AssetEvidenceProposalInput, type AssetKnowledgeProposalInput, type AssetQualityAuditResult, type AssetStatus, type AssetType, type ReadinessCheckResult } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,6 +26,8 @@ type ProductionEvent = {
   timestamp?: string;
   detail?: Record<string, unknown>;
 };
+
+type AssetDetailTab = "intent" | "evidence" | "claims" | "read" | "edit" | "knowledge" | "production";
 
 interface AssetBlockPatch {
   assetId: string;
@@ -144,13 +146,21 @@ interface AssetDocumentPatchBlock {
   claimRefs: string[];
 }
 
+interface AssetDocumentReplacementBlock {
+  markdown: string;
+  claimRefs: string[];
+}
+
 interface AssetDocumentPatch {
   assetId: string;
   baseWorkspaceRevision: number;
+  rewriteMode: "patch_blocks" | "replace_document";
+  baseDocumentSignature?: string;
   replacementTitle: string;
   replacementBrief: string;
   explanation?: string;
   blocks: AssetDocumentPatchBlock[];
+  replacementBlocks?: AssetDocumentReplacementBlock[];
 }
 
 interface DocumentRevisionState {
@@ -194,6 +204,23 @@ interface PendingOptimizationRound {
 interface DiffLine {
   kind: "same" | "removed" | "added";
   text: string;
+}
+
+const DOCUMENT_OPTIMIZATION_TIMEOUT_MS = 5 * 60 * 1000;
+
+function assetDocumentSignature(blocks: AssetBlock[]) {
+  const value = JSON.stringify(blocks.map((block) => ({
+    id: block.id,
+    revision: block.revision,
+    markdown: block.markdown,
+    claimRefs: block.claimRefs,
+  })));
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `document-${(hash >>> 0).toString(36)}`;
 }
 
 function buildLineDiff(original: string, proposed: string): DiffLine[] {
@@ -242,26 +269,89 @@ function parseAssetBlockPatch(value: unknown): AssetBlockPatch | null {
 }
 
 function parseAssetDocumentPatch(value: unknown): AssetDocumentPatch | null {
-  if (!value || typeof value !== "object") return null;
-  const candidate = value as Record<string, unknown>;
+  let candidateValue = value;
+  if (typeof candidateValue === "string") {
+    try {
+      candidateValue = JSON.parse(candidateValue);
+    } catch {
+      return null;
+    }
+  }
+  if (!candidateValue || typeof candidateValue !== "object") return null;
+  const candidate = candidateValue as Record<string, unknown>;
+  const assetId = candidate.assetId ?? candidate.asset_id;
+  const baseWorkspaceRevision = candidate.baseWorkspaceRevision ?? candidate.base_workspace_revision;
+  const replacementTitle = candidate.replacementTitle ?? candidate.replacement_title;
+  const replacementBrief = candidate.replacementBrief ?? candidate.replacement_brief;
+  const rewriteMode = (candidate.rewriteMode ?? candidate.rewrite_mode) === "replace_document" ? "replace_document" : "patch_blocks";
+  const baseDocumentSignature = candidate.baseDocumentSignature ?? candidate.base_document_signature;
+  let blocksValue = candidate.blocks;
+  if (typeof blocksValue === "string") {
+    try {
+      blocksValue = JSON.parse(blocksValue);
+    } catch {
+      return null;
+    }
+  }
   if (
-    typeof candidate.assetId !== "string"
-    || typeof candidate.baseWorkspaceRevision !== "number"
-    || typeof candidate.replacementTitle !== "string"
-    || typeof candidate.replacementBrief !== "string"
-    || !Array.isArray(candidate.blocks)
+    typeof assetId !== "string"
+    || typeof baseWorkspaceRevision !== "number"
+    || typeof replacementTitle !== "string"
+    || typeof replacementBrief !== "string"
+    || !Array.isArray(blocksValue)
   ) return null;
-  const blocks = candidate.blocks.filter((item): item is AssetDocumentPatchBlock => {
-    if (!item || typeof item !== "object") return false;
+  const blocks = blocksValue.flatMap((item): AssetDocumentPatchBlock[] => {
+    if (!item || typeof item !== "object") return [];
     const block = item as Record<string, unknown>;
-    return typeof block.blockId === "string"
-      && typeof block.baseRevision === "number"
-      && typeof block.replacementMarkdown === "string"
-      && Array.isArray(block.claimRefs)
-      && block.claimRefs.every((claimId) => typeof claimId === "string");
+    const blockId = block.blockId ?? block.block_id;
+    const baseRevision = block.baseRevision ?? block.base_revision;
+    const replacementMarkdown = block.replacementMarkdown ?? block.replacement_markdown;
+    const claimRefs = block.claimRefs ?? block.claim_refs ?? [];
+    if (
+      typeof blockId !== "string"
+      || typeof baseRevision !== "number"
+      || typeof replacementMarkdown !== "string"
+      || !Array.isArray(claimRefs)
+      || !claimRefs.every((claimId) => typeof claimId === "string")
+    ) return [];
+    return [{ blockId, baseRevision, replacementMarkdown, claimRefs }];
   });
-  if (blocks.length !== candidate.blocks.length) return null;
-  return { ...candidate, blocks } as AssetDocumentPatch;
+  if (blocks.length !== blocksValue.length) return null;
+  let replacementBlocksValue = candidate.replacementBlocks ?? candidate.replacement_blocks;
+  if (typeof replacementBlocksValue === "string") {
+    try {
+      replacementBlocksValue = JSON.parse(replacementBlocksValue);
+    } catch {
+      return null;
+    }
+  }
+  const replacementBlocks = Array.isArray(replacementBlocksValue)
+    ? replacementBlocksValue.flatMap((item): AssetDocumentReplacementBlock[] => {
+        if (!item || typeof item !== "object") return [];
+        const block = item as Record<string, unknown>;
+        const markdown = block.markdown ?? block.replacementMarkdown ?? block.replacement_markdown;
+        const claimRefs = block.claimRefs ?? block.claim_refs ?? [];
+        if (typeof markdown !== "string" || !Array.isArray(claimRefs) || !claimRefs.every((claimId) => typeof claimId === "string")) return [];
+        return [{ markdown, claimRefs }];
+      })
+    : [];
+  if (rewriteMode === "replace_document" && (
+    typeof baseDocumentSignature !== "string"
+    || !Array.isArray(replacementBlocksValue)
+    || replacementBlocks.length !== replacementBlocksValue.length
+    || replacementBlocks.length === 0
+  )) return null;
+  return {
+    assetId,
+    baseWorkspaceRevision,
+    rewriteMode,
+    ...(typeof baseDocumentSignature === "string" ? { baseDocumentSignature } : {}),
+    replacementTitle,
+    replacementBrief,
+    ...(typeof candidate.explanation === "string" ? { explanation: candidate.explanation } : {}),
+    blocks,
+    ...(rewriteMode === "replace_document" ? { replacementBlocks } : {}),
+  };
 }
 
 function documentPatchRevisionIssue(
@@ -273,7 +363,22 @@ function documentPatchRevisionIssue(
   if (proposal.assetId !== assetId) return "Agent returned a proposal for a different Asset.";
   if (proposal.baseWorkspaceRevision !== workspaceRevision) return `Workspace revision changed from ${proposal.baseWorkspaceRevision} to ${workspaceRevision}.`;
   if (!proposal.replacementTitle.trim()) return "Agent returned an empty title.";
+  if (proposal.rewriteMode === "replace_document") {
+    if (proposal.baseDocumentSignature !== assetDocumentSignature(blocks)) return "The draft changed while the Agent was rewriting it.";
+    if (!proposal.replacementBlocks?.length) return "Agent returned an empty replacement document.";
+    const replacementIsUnchanged = proposal.replacementBlocks.length === blocks.length
+      && proposal.replacementBlocks.every((block, index) => {
+        const currentBlock = blocks[index];
+        return currentBlock
+          && block.markdown === currentBlock.markdown
+          && block.claimRefs.length === currentBlock.claimRefs.length
+          && block.claimRefs.every((claimId, claimIndex) => claimId === currentBlock.claimRefs[claimIndex]);
+      });
+    if (replacementIsUnchanged) return "Agent returned an unchanged replacement document.";
+    return null;
+  }
 
+  if (proposal.blocks.length === 0) return "Agent returned an empty Block patch.";
   const currentBlocks = new Map(blocks.map((block) => [block.id, block]));
   const seenBlockIds = new Set<string>();
   for (const proposedBlock of proposal.blocks) {
@@ -289,6 +394,9 @@ function documentPatchRevisionIssue(
 }
 
 function mergeDocumentPatchBlocks(blocks: AssetBlock[], proposal: AssetDocumentPatch) {
+  if (proposal.rewriteMode === "replace_document") {
+    return proposal.replacementBlocks?.map((block) => block.markdown) ?? [];
+  }
   const proposedBlocks = new Map(proposal.blocks.map((block) => [block.blockId, block]));
   return blocks.map((block) => proposedBlocks.get(block.id)?.replacementMarkdown ?? block.markdown);
 }
@@ -688,7 +796,7 @@ export function AssetDetailPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
-  const locationState = location.state as { backTo?: string; backLabel?: string } | null;
+  const locationState = location.state as { backTo?: string; backLabel?: string; initialTab?: AssetDetailTab; stageNotice?: string } | null;
   const backTo = locationState?.backTo || "/assets";
   const backLabel = locationState?.backLabel || "Back to Assets";
 
@@ -733,6 +841,7 @@ export function AssetDetailPage() {
   const [htmlPreview, setHtmlPreview] = useState("");
   const [htmlPreviewOpen, setHtmlPreviewOpen] = useState(false);
   const [htmlCopied, setHtmlCopied] = useState(false);
+  const [activeTab, setActiveTab] = useState<AssetDetailTab | null>(() => locationState?.initialTab ?? null);
   const [editTitle, setEditTitle] = useState("");
   const [editBrief, setEditBrief] = useState("");
   const [editOutline, setEditOutline] = useState("");
@@ -788,17 +897,38 @@ export function AssetDetailPage() {
     setContributionEdit(workspaceQuery.data?.contribution?.summary ?? "");
   }, [workspaceQuery.data?.contribution?.id, workspaceQuery.data?.contribution?.summary]);
 
+  const workflowStage = useMemo(() => {
+    const workspace = workspaceQuery.data;
+    const intentRevision = workspace?.intent?.revision;
+    const currentEvidence = workspace?.evidence.filter((item) => item.intent_revision === intentRevision) ?? [];
+    const currentClaims = workspace?.claims.filter((item) => item.intent_revision === intentRevision) ?? [];
+    const acceptedEvidence = currentEvidence.filter((item) => item.status === "accepted");
+    const pendingEvidence = currentEvidence.filter((item) => item.status === "proposed");
+    const acceptedClaims = currentClaims.filter((item) => item.status === "accepted" || item.status === "hypothesis");
+    const pendingClaims = currentClaims.filter((item) => item.status === "proposed");
+    return {
+      currentEvidence,
+      currentClaims,
+      acceptedEvidence,
+      pendingEvidence,
+      acceptedClaims,
+      pendingClaims,
+      evidenceReady: acceptedEvidence.length > 0 && pendingEvidence.length === 0,
+      claimsReady: acceptedClaims.length > 0 && pendingClaims.length === 0,
+    };
+  }, [workspaceQuery.data]);
+
   const documentOptimizationGate = useMemo(() => {
     const workspace = workspaceQuery.data;
     const reasons: string[] = [];
     if (!workspace?.intent) reasons.push("Confirm Intent");
-    if (!workspace?.evidence.some((item) => item.status === "accepted")) reasons.push("Accept Evidence");
-    if (workspace?.evidence.some((item) => item.status === "proposed")) reasons.push("Resolve proposed Evidence");
-    if (!workspace?.claims.some((item) => item.status === "accepted" || item.status === "hypothesis")) reasons.push("Accept a Claim or Hypothesis");
-    if (workspace?.claims.some((item) => item.status === "proposed")) reasons.push("Resolve proposed Claims");
-    if (workspace?.contribution?.status !== "accepted") reasons.push("Accept the Contribution");
-    if (!workspace?.knowledge_candidates.some((item) => item.status === "kept" || item.status === "promoted")) reasons.push("Keep or promote a Knowledge Candidate");
-    if (workspace?.knowledge_candidates.some((item) => item.status === "proposed")) reasons.push("Resolve proposed Knowledge Candidates");
+    const intentRevision = workspace?.intent?.revision;
+    const currentEvidence = workspace?.evidence.filter((item) => item.intent_revision === intentRevision) ?? [];
+    const currentClaims = workspace?.claims.filter((item) => item.intent_revision === intentRevision) ?? [];
+    if (!currentEvidence.some((item) => item.status === "accepted")) reasons.push("Accept current Evidence");
+    if (currentEvidence.some((item) => item.status === "proposed")) reasons.push("Resolve proposed Evidence");
+    if (!currentClaims.some((item) => item.status === "accepted" || item.status === "hypothesis")) reasons.push("Accept a current Claim or Hypothesis");
+    if (currentClaims.some((item) => item.status === "proposed")) reasons.push("Resolve proposed Claims");
     return { ready: reasons.length === 0, reasons };
   }, [workspaceQuery.data]);
 
@@ -842,26 +972,69 @@ export function AssetDetailPage() {
     onSuccess: refreshAsset,
   });
 
+  const attachReferencesMutation = useMutation({
+    mutationFn: () => assetsApi.attachReferences(id),
+    onSuccess: refreshAsset,
+  });
+
   const saveEvidenceProposalMutation = useMutation({
     mutationFn: async () => {
       const proposal = evidenceAgent.proposal;
       if (!proposal) throw new Error("No Evidence proposal is ready.");
+      let workspace = await assetsApi.getWorkspace(id);
+      if (workspace.intent?.revision !== proposal.intentRevision) {
+        throw new Error("The Intent changed while Evidence was being collected. Investigate again using the current Intent.");
+      }
+      const existingKeys = new Set(workspace.evidence.map((item) => JSON.stringify([
+        item.intent_revision,
+        item.target_type,
+        item.target_id,
+        item.relation,
+        item.summary.trim(),
+      ])));
       const proposals: AssetEvidenceProposalInput[] = proposal.proposals.map((item) => ({
         target_type: item.targetType,
         target_id: item.targetId,
         relation: item.relation,
         summary: item.summary,
         fragment_selector: item.fragmentSelector,
-      }));
-      return assetsApi.proposeEvidence(id, {
-        base_workspace_revision: proposal.baseWorkspaceRevision,
+      })).filter((item) => !existingKeys.has(JSON.stringify([
+        proposal.intentRevision,
+        item.target_type,
+        item.target_id,
+        item.relation,
+        item.summary.trim(),
+      ])));
+      if (proposals.length === 0) return { workspace, savedCount: 0 };
+
+      const saveAtRevision = (baseWorkspaceRevision: number) => assetsApi.proposeEvidence(id, {
+        base_workspace_revision: baseWorkspaceRevision,
         session_id: evidenceAgent.sessionId,
         proposals,
       });
+      try {
+        workspace = await saveAtRevision(workspace.workspace_revision);
+      } catch (error) {
+        if (!(error instanceof Error) || !error.message.startsWith("409:")) throw error;
+        const latestWorkspace = await assetsApi.getWorkspace(id);
+        if (latestWorkspace.intent?.revision !== proposal.intentRevision) {
+          throw new Error("The Intent changed while Evidence was being saved. Investigate again using the current Intent.");
+        }
+        workspace = await saveAtRevision(latestWorkspace.workspace_revision);
+      }
+      return { workspace, savedCount: proposals.length };
     },
-    onSuccess: async () => {
-      setEvidenceAgent((current) => ({ ...current, proposal: undefined, status: "Evidence candidates saved for review." }));
+    onSuccess: async ({ savedCount }) => {
+      setEvidenceAgent((current) => ({
+        ...current,
+        proposal: undefined,
+        error: undefined,
+        status: savedCount > 0 ? `${savedCount} Evidence candidates saved for review.` : "No new Evidence candidates were found; matching candidates already exist in this Workspace.",
+      }));
       await refreshAsset();
+    },
+    onError: (error) => {
+      setEvidenceAgent((current) => ({ ...current, error: error instanceof Error ? error.message : "Could not save Evidence candidates." }));
     },
   });
 
@@ -1136,6 +1309,7 @@ export function AssetDetailPage() {
         {
           preset: "revise-asset-block",
           createSession: true,
+          ephemeralSession: true,
           clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           signal: abortController.signal,
         },
@@ -1255,6 +1429,8 @@ export function AssetDetailPage() {
         metrics: audit.metrics,
       } : null,
       previousOptimization: optimizationMetadata.history[optimizationMetadata.history.length - 1] ?? null,
+      rewriteMode: "replace_document",
+      baseDocumentSignature: assetDocumentSignature(editBlocks),
       asset: {
         type: asset.asset_type,
         title: editTitle,
@@ -1281,6 +1457,35 @@ export function AssetDetailPage() {
         .map((candidate) => ({ id: candidate.id, title: candidate.title, content: candidate.content, claimRefs: candidate.claim_refs, status: candidate.status })),
     };
     const abortController = new AbortController();
+    const startedAt = Date.now();
+    let timedOut = false;
+    let documentPatchSeen = false;
+    let documentPatchAccepted = false;
+    let completedDocumentProposal: AssetDocumentPatch | undefined;
+    let documentRunFailed = false;
+    let documentPatchIssue = "Agent returned an invalid document patch contract.";
+    const captureDocumentPatch = (value: unknown) => {
+      documentPatchSeen = true;
+      const proposal = parseAssetDocumentPatch(value);
+      const revisionIssue = !proposal
+        ? "Agent returned an invalid document patch contract."
+        : proposal.rewriteMode !== "replace_document"
+          ? "Agent returned a partial Block patch instead of a complete rewritten document."
+          : documentPatchRevisionIssue(proposal, asset.id, workspace.workspace_revision, editBlocks);
+      if (proposal && !revisionIssue) {
+        documentPatchAccepted = true;
+        completedDocumentProposal = proposal;
+        setDocumentRevision((current) => ({
+          ...current,
+          proposal: undefined,
+          error: undefined,
+          status: "Agent returned the rewritten document. Waiting for the run to finish…",
+        }));
+        return;
+      }
+      documentPatchIssue = revisionIssue || "The complete Asset proposal is invalid.";
+      setDocumentRevision((current) => ({ ...current, proposal: undefined, error: documentPatchIssue }));
+    };
     documentRevisionAbortRef.current?.abort();
     documentRevisionAbortRef.current = abortController;
     setDocumentRevision((current) => ({
@@ -1293,12 +1498,31 @@ export function AssetDetailPage() {
       proposal: undefined,
       error: undefined,
     }));
+    const progressInterval = window.setInterval(() => {
+      const elapsedSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+      setDocumentRevision((current) => {
+        if (!current.streaming || current.pendingQuestion || current.proposal || current.error) return current;
+        return {
+          ...current,
+          status: `Agent is rewriting the complete document from ${editBlocks.length} source blocks · ${elapsedSeconds}s elapsed.`,
+        };
+      });
+    }, 10_000);
+    const timeout = window.setTimeout(() => {
+      timedOut = true;
+      abortController.abort();
+      setDocumentRevision((current) => ({
+        ...current,
+        error: `Full-document rewrite stopped after 5 minutes while reviewing ${editBlocks.length} source blocks. Retry with a more specific focus or a shorter source draft.`,
+      }));
+    }, DOCUMENT_OPTIMIZATION_TIMEOUT_MS);
     try {
       for await (const event of harnessChat(
         `请按 revise-asset-document 工作流处理以下 JSON 合同：\n\n${JSON.stringify(request, null, 2)}`,
         {
           preset: "revise-asset-document",
           createSession: true,
+          ephemeralSession: true,
           clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           signal: abortController.signal,
         },
@@ -1309,15 +1533,16 @@ export function AssetDetailPage() {
           setDocumentRevision((current) => ({ ...current, status: `${current.status}${event.content}`.slice(-1200) }));
         } else if (event.type === "tool_call") {
           if (event.tool === "propose_asset_document_patch") {
-            const proposal = parseAssetDocumentPatch(event.args);
-            const revisionIssue = proposal ? documentPatchRevisionIssue(proposal, asset.id, workspace.workspace_revision, editBlocks) : "Agent returned an invalid document patch contract.";
-            if (proposal && !revisionIssue) {
-              setDocumentRevision((current) => ({ ...current, proposal, status: proposal.explanation || "Agent produced a complete Asset proposal. Review the Diff before applying it." }));
-            } else {
-              setDocumentRevision((current) => ({ ...current, error: revisionIssue || "The complete Asset proposal is invalid." }));
-            }
+            documentPatchSeen = true;
+            setDocumentRevision((current) => ({ ...current, proposal: undefined, status: "Agent is submitting the rewritten document for validation…" }));
           } else {
             setDocumentRevision((current) => ({ ...current, status: `Agent is using ${event.tool || "a tool"}…` }));
+          }
+        } else if (event.type === "tool_result") {
+          if (event.tool === "propose_asset_document_patch") {
+            captureDocumentPatch(event.result);
+          } else if (event.tool === "skill") {
+            setDocumentRevision((current) => ({ ...current, status: `Optimization instructions loaded. Agent is rewriting the complete document from ${editBlocks.length} source blocks…` }));
           }
         } else if (event.type === "question" && event.rpc_id && event.session_id && event.questions?.length) {
           setDocumentRevision((current) => ({
@@ -1326,17 +1551,44 @@ export function AssetDetailPage() {
             status: "Agent needs clarification before optimizing the complete Asset.",
           }));
         } else if (event.type === "error") {
+          documentRunFailed = true;
+          completedDocumentProposal = undefined;
           setDocumentRevision((current) => ({ ...current, error: event.content || "Complete Asset optimization failed." }));
+        } else if (event.type === "done") {
+          if (!documentRunFailed && documentPatchAccepted && completedDocumentProposal) {
+            const proposal = completedDocumentProposal;
+            setDocumentRevision((current) => ({
+              ...current,
+              proposal,
+              error: undefined,
+              status: proposal.explanation || "Agent produced a complete Asset proposal. Review the Diff before applying it.",
+            }));
+          } else if (!documentRunFailed) {
+            setDocumentRevision((current) => ({
+              ...current,
+              proposal: undefined,
+              error: documentPatchSeen ? documentPatchIssue : "Agent finished without returning a complete rewritten document.",
+            }));
+          }
         }
       }
     } catch (error) {
-      if (!abortController.signal.aborted) {
+      if (!abortController.signal.aborted && !timedOut) {
         setDocumentRevision((current) => ({ ...current, error: error instanceof Error ? error.message : "Complete Asset optimization failed." }));
       }
     } finally {
+      window.clearInterval(progressInterval);
+      window.clearTimeout(timeout);
       if (documentRevisionAbortRef.current === abortController) documentRevisionAbortRef.current = null;
       setDocumentRevision((current) => ({ ...current, streaming: false }));
     }
+  };
+
+  const stopDocumentRevision = () => {
+    const controller = documentRevisionAbortRef.current;
+    if (!controller) return;
+    controller.abort();
+    setDocumentRevision((current) => ({ ...current, streaming: false, error: "Optimization stopped. You can retry with a narrower focus." }));
   };
 
   const applyDocumentRevision = () => {
@@ -1351,18 +1603,25 @@ export function AssetDetailPage() {
     const allowedClaims = new Set(workspace.claims
       .filter((claim) => claim.status === "accepted" || claim.status === "hypothesis")
       .map((claim) => claim.id));
-    if (proposal.blocks.some((block) => block.claimRefs.some((claimId) => !allowedClaims.has(claimId)))) {
+    const proposedClaimRefs = proposal.rewriteMode === "replace_document"
+      ? (proposal.replacementBlocks ?? []).flatMap((block) => block.claimRefs)
+      : proposal.blocks.flatMap((block) => block.claimRefs);
+    if (proposedClaimRefs.some((claimId) => !allowedClaims.has(claimId))) {
       setDocumentRevision((current) => ({ ...current, error: "The proposal references a Claim that is not accepted or retained as a Hypothesis." }));
       return;
     }
     setEditTitle(proposal.replacementTitle);
     setEditBrief(proposal.replacementBrief);
+    if (proposal.rewriteMode === "replace_document") {
+      setEditBlocks((proposal.replacementBlocks ?? []).map((block) => ({ ...createAssetBlock(block.markdown), claimRefs: block.claimRefs })));
+    } else {
     const proposedBlocks = new Map(proposal.blocks.map((block) => [block.blockId, block]));
     setEditBlocks((blocks) => blocks.map((block) => {
       const proposedBlock = proposedBlocks.get(block.id);
       if (!proposedBlock) return block;
       return { ...updateAssetBlock(block, proposedBlock.replacementMarkdown), claimRefs: proposedBlock.claimRefs };
     }));
+    }
     const audit = qualityAuditQuery.data;
     setPendingOptimizationRound({
       round: documentRevision.round ?? nextOptimizationRound,
@@ -1378,7 +1637,7 @@ export function AssetDetailPage() {
   const startEvidenceResearch = async () => {
     const workspace = workspaceQuery.data;
     const intent = workspace?.intent;
-    if (!asset || !workspace || !intent || evidenceAgent.streaming) return;
+    if (!asset || !workspace || !intent || evidenceAgent.streaming || evidenceDecisionMutation.isPending || saveEvidenceProposalMutation.isPending) return;
     const request = {
       assetId: asset.id,
       baseWorkspaceRevision: workspace.workspace_revision,
@@ -1421,6 +1680,7 @@ export function AssetDetailPage() {
         {
           preset: "collect-asset-evidence",
           createSession: true,
+          ephemeralSession: true,
           clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           signal: abortController.signal,
         },
@@ -1501,6 +1761,7 @@ export function AssetDetailPage() {
         {
           preset: "analyze-asset-claims",
           createSession: true,
+          ephemeralSession: true,
           clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           signal: abortController.signal,
         },
@@ -1539,6 +1800,71 @@ export function AssetDetailPage() {
     }
   };
 
+  const startInitialDraftGeneration = () => {
+    const workspace = workspaceQuery.data;
+    const intent = workspace?.intent;
+    if (!asset || !workspace || !intent) return;
+    if (!workflowStage.evidenceReady) {
+      setActiveTab("evidence");
+      return;
+    }
+    if (!workflowStage.claimsReady) {
+      setActiveTab("claims");
+      return;
+    }
+    const creationMode = ["understand", "synthesize", "make_decision", "produce"].includes(intent.creation_mode)
+      ? intent.creation_mode as "understand" | "synthesize" | "make_decision" | "produce"
+      : "synthesize";
+    const researchMode = asset.metadata_?.research_mode === "local_only" ? "local_only" : "local_then_web";
+    const deliveryFormat = asset.metadata_?.delivery_format === "html" ? "html" : "markdown";
+    const acceptedEvidence = workflowStage.acceptedEvidence.map((item) => ({
+      id: item.id,
+      targetType: item.target_type,
+      targetId: item.target_id,
+      relation: item.relation,
+      summary: item.summary,
+    }));
+    const acceptedClaims = workflowStage.acceptedClaims.map((item) => ({
+      id: item.id,
+      content: item.content,
+      kind: item.kind,
+      status: item.status,
+      supportingEvidence: item.supporting_evidence,
+      contradictingEvidence: item.contradicting_evidence,
+    }));
+    navigate("/chat", {
+      state: {
+        workflowId: "draft-asset",
+        assetDraft: {
+          assetId: asset.id,
+          assetType: asset.asset_type,
+          title: asset.title,
+          brief: asset.brief || intent.goal,
+          question: intent.question,
+          goal: intent.goal,
+          audience: intent.audience || "",
+          creationMode,
+          scope: intent.scope,
+          constraints: intent.constraints,
+          styleNotes: asset.style_notes || "",
+          sourceRefs: asset.source_refs,
+          noteRefs: asset.note_refs,
+          wikiRefs: asset.wiki_refs,
+          intakeMode: "agent_assisted",
+          researchMode,
+          deliveryFormat,
+          draftBasis: JSON.stringify({ acceptedEvidence, acceptedClaims }, null, 2),
+        },
+        objectRef: { object_type: "asset", object_id: asset.id, title: asset.title },
+        promptSeed: [
+          "The Intent, Evidence Gate, and Claim Gate are complete. Generate the initial Asset draft now.",
+          "Treat only the following accepted Evidence and accepted Claims/retained Hypotheses as the structured drafting contract.",
+          "Build the document around these Claims, preserve uncertainty, and do not introduce unsupported conclusions.",
+        ].join("\n\n"),
+      },
+    });
+  };
+
   const startKnowledgeDistillation = async () => {
     const workspace = workspaceQuery.data;
     if (!asset || !workspace || knowledgeAgent.streaming) return;
@@ -1571,6 +1897,7 @@ export function AssetDetailPage() {
         {
           preset: "distill-asset-knowledge",
           createSession: true,
+          ephemeralSession: true,
           clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           signal: abortController.signal,
         },
@@ -1741,8 +2068,9 @@ export function AssetDetailPage() {
   }, [assetsListQuery.data, fallbackTitleCandidates]);
 
   const isExporting = exportMutation.isPending || exportHtmlMutation.isPending;
-  const isBusy = statusMutation.isPending || isExporting || publishMutation.isPending || savePublishFeedbackMutation.isPending;
+  const isBusy = statusMutation.isPending || isExporting || publishMutation.isPending || savePublishFeedbackMutation.isPending || attachReferencesMutation.isPending;
   const primaryAction = useMemo(() => (asset ? buildPrimaryAction(asset, readinessQuery.data) : null), [asset, readinessQuery.data]);
+  const resolvedActiveTab = activeTab ?? (asset?.draft_content?.trim() ? "read" : workspaceQuery.data?.intent ? "intent" : "read");
   const contentPresentation = useMemo(() => splitAssetContent(asset?.draft_content), [asset?.draft_content]);
   const headings = useMemo(() => markdownHeadings(contentPresentation.readerMarkdown), [contentPresentation.readerMarkdown]);
   const audience = typeof asset?.metadata_?.audience === "string" ? asset.metadata_.audience : null;
@@ -1812,18 +2140,24 @@ export function AssetDetailPage() {
         {!asset && !assetQuery.isError && <p className="text-sm text-muted-foreground">Loading...</p>}
 
         {asset && !assetQuery.isError && (
-          <Tabs defaultValue={workspaceQuery.data?.intent ? "intent" : "read"} className="space-y-6">
+          <Tabs value={resolvedActiveTab} onValueChange={(value) => setActiveTab(value as AssetDetailTab)} className="space-y-6">
             <div className="sticky top-0 z-10 -mx-2 border-b bg-background/95 px-2 py-2 backdrop-blur">
               <TabsList>
                 <TabsTrigger value="intent">Intent</TabsTrigger>
                 <TabsTrigger value="evidence">Evidence</TabsTrigger>
                 <TabsTrigger value="claims">Claims</TabsTrigger>
-                <TabsTrigger value="knowledge">Knowledge</TabsTrigger>
                 <TabsTrigger value="read">Read</TabsTrigger>
                 <TabsTrigger value="edit">Edit</TabsTrigger>
+                <TabsTrigger value="knowledge">Knowledge</TabsTrigger>
                 <TabsTrigger value="production">Production</TabsTrigger>
               </TabsList>
             </div>
+
+            {locationState?.stageNotice && (
+              <div className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-primary">
+                {locationState.stageNotice}
+              </div>
+            )}
 
             <TabsContent value="intent" className="mt-0">
               <Card>
@@ -1850,6 +2184,7 @@ export function AssetDetailPage() {
                         <div><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Constraints</p><div className="mt-2 flex flex-wrap gap-2">{workspaceQuery.data.intent.constraints.length ? workspaceQuery.data.intent.constraints.map((item) => <Badge key={item} variant="outline">{item}</Badge>) : <span className="text-sm text-muted-foreground">None stated</span>}</div></div>
                       </div>
                       <p className="text-xs text-muted-foreground">Confirmed {new Date(workspaceQuery.data.intent.confirmed_at).toLocaleString()} · Workspace revision {workspaceQuery.data.workspace_revision}</p>
+                      <div><Button type="button" onClick={() => setActiveTab("evidence")}>Continue to Evidence</Button></div>
                     </>
                   )}
                 </CardContent>
@@ -2018,26 +2353,33 @@ export function AssetDetailPage() {
                         <div>
                           <div className="flex flex-wrap items-center gap-2">
                             <h3 className="font-semibold">Optimize Complete Asset</h3>
-                            <Badge variant={documentOptimizationGate.ready ? "default" : "outline"}>{documentOptimizationGate.ready ? "Workflow complete" : "Workflow incomplete"}</Badge>
+                            <Badge variant={documentOptimizationGate.ready ? "default" : "outline"}>{documentOptimizationGate.ready ? "Ready to polish" : "Research incomplete"}</Badge>
                             <Badge variant="outline">{optimizationMetadata.completed_rounds} rounds completed</Badge>
                           </div>
-                          <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">Use confirmed Intent, accepted Evidence and Claims, kept Knowledge Candidates, and the latest deterministic audit to improve the whole narrative. Each round is complete only after you apply and explicitly save it.</p>
+                          <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">Use the confirmed Intent plus current accepted Evidence and Claims to rewrite the complete narrative. Existing Knowledge Candidates may inform the rewrite, but knowledge extraction no longer blocks editorial improvement.</p>
                           {!documentOptimizationGate.ready && <p className="mt-2 text-xs text-amber-700">Remaining: {documentOptimizationGate.reasons.join(" · ")}</p>}
                         </div>
                       </div>
-                      <Button type="button" onClick={() => void startDocumentRevision()} disabled={!documentOptimizationGate.ready || documentRevision.streaming || editBlocks.length === 0 || Boolean(pendingOptimizationRound)}>
-                        <WandSparkles className="mr-2 h-4 w-4" />{documentRevision.streaming
-                          ? `Optimizing Round ${documentRevision.round ?? nextOptimizationRound}…`
-                          : pendingOptimizationRound
-                            ? `Save Round ${pendingOptimizationRound.round}`
-                            : documentRevision.proposal
-                              ? "Regenerate"
-                              : nextOptimizationRound === 1
-                                ? "Optimize Entire Draft"
-                                : nextOptimizationRound === 2
-                                  ? "Run Second-Round Polish"
-                                  : `Run Optimization Round ${nextOptimizationRound}`}
-                      </Button>
+                      <div className="flex flex-wrap gap-2">
+                        <Button type="button" onClick={() => void startDocumentRevision()} disabled={!documentOptimizationGate.ready || documentRevision.streaming || editBlocks.length === 0 || Boolean(pendingOptimizationRound)}>
+                          <WandSparkles className="mr-2 h-4 w-4" />{documentRevision.streaming
+                            ? `Optimizing Round ${documentRevision.round ?? nextOptimizationRound}…`
+                            : pendingOptimizationRound
+                              ? `Save Round ${pendingOptimizationRound.round}`
+                              : documentRevision.proposal
+                                ? "Regenerate"
+                                : nextOptimizationRound === 1
+                                  ? "Optimize Entire Draft"
+                                  : nextOptimizationRound === 2
+                                    ? "Run Second-Round Polish"
+                                    : `Run Optimization Round ${nextOptimizationRound}`}
+                        </Button>
+                        {documentRevision.streaming && (
+                          <Button type="button" variant="outline" onClick={stopDocumentRevision}>
+                            <Square className="mr-2 h-4 w-4" />Stop
+                          </Button>
+                        )}
+                      </div>
                     </div>
 
                     {documentOptimizationGate.ready && (
@@ -2258,6 +2600,16 @@ export function AssetDetailPage() {
 
             <TabsContent value="evidence" className="mt-0">
               <div className="space-y-6">
+                <Card className={workflowStage.evidenceReady ? "border-emerald-200 bg-emerald-50/30" : "border-primary/20 bg-primary/5"}>
+                  <CardContent className="flex flex-wrap items-center justify-between gap-4 pt-6">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">Stage 2 of 4</Badge><Badge variant={workflowStage.evidenceReady ? "secondary" : "outline"}>{workflowStage.evidenceReady ? "Evidence ready" : "Evidence review required"}</Badge></div>
+                      <p className="mt-2 text-sm font-medium">Fix the evidence base before generating conclusions.</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{workflowStage.acceptedEvidence.length} accepted · {workflowStage.pendingEvidence.length} awaiting review. Accept at least one current Evidence item and resolve every proposal.</p>
+                    </div>
+                    <Button type="button" onClick={() => setActiveTab("claims")} disabled={!workflowStage.evidenceReady}>Continue to Claims</Button>
+                  </CardContent>
+                </Card>
                 <Card>
                   <CardHeader>
                     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -2278,7 +2630,7 @@ export function AssetDetailPage() {
                           placeholder="Optional focus, for example: find a primary source that contradicts the current recommendation."
                         />
                         <div className="flex flex-wrap items-center gap-3">
-                          <Button type="button" onClick={() => void startEvidenceResearch()} disabled={evidenceAgent.streaming || workspaceQuery.isLoading}>
+                          <Button type="button" onClick={() => void startEvidenceResearch()} disabled={evidenceAgent.streaming || workspaceQuery.isLoading || evidenceDecisionMutation.isPending || saveEvidenceProposalMutation.isPending}>
                             {evidenceAgent.streaming ? "Collecting…" : "Ask Agent to Collect Evidence"}
                           </Button>
                           {evidenceAgent.streaming && <Button type="button" variant="outline" onClick={() => evidenceAgentAbortRef.current?.abort()}>Stop</Button>}
@@ -2316,8 +2668,8 @@ export function AssetDetailPage() {
                           ))}
                         </div>
                         <div className="flex flex-wrap gap-2">
-                          <Button type="button" size="sm" onClick={() => saveEvidenceProposalMutation.mutate()} disabled={saveEvidenceProposalMutation.isPending}>{saveEvidenceProposalMutation.isPending ? "Saving…" : "Save to Evidence Board"}</Button>
-                          <Button type="button" variant="outline" size="sm" onClick={() => void startEvidenceResearch()} disabled={evidenceAgent.streaming}>Investigate Again</Button>
+                          <Button type="button" size="sm" onClick={() => saveEvidenceProposalMutation.mutate()} disabled={saveEvidenceProposalMutation.isPending || evidenceDecisionMutation.isPending}>{saveEvidenceProposalMutation.isPending ? "Saving…" : "Save to Evidence Board"}</Button>
+                          <Button type="button" variant="outline" size="sm" onClick={() => void startEvidenceResearch()} disabled={evidenceAgent.streaming || evidenceDecisionMutation.isPending || saveEvidenceProposalMutation.isPending}>Investigate Again</Button>
                           <Button type="button" variant="ghost" size="sm" onClick={() => setEvidenceAgent((current) => ({ ...current, proposal: undefined, status: "Proposal discarded." }))}>Discard</Button>
                         </div>
                       </div>
@@ -2378,6 +2730,23 @@ export function AssetDetailPage() {
 
             <TabsContent value="claims" className="mt-0">
               <div className="space-y-6">
+                <Card className={workflowStage.claimsReady ? "border-emerald-200 bg-emerald-50/30" : "border-primary/20 bg-primary/5"}>
+                  <CardContent className="flex flex-wrap items-center justify-between gap-4 pt-6">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">Stage 3 of 4</Badge><Badge variant={workflowStage.claimsReady ? "secondary" : "outline"}>{workflowStage.claimsReady ? "Claims ready" : "Claim review required"}</Badge></div>
+                      <p className="mt-2 text-sm font-medium">Confirm the conclusions that the initial document may use.</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{workflowStage.acceptedClaims.length} accepted or retained · {workflowStage.pendingClaims.length} awaiting review. The document generator stays locked until the Claim Gate is complete.</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" variant="outline" onClick={() => setActiveTab("evidence")}>Back to Evidence</Button>
+                      {asset.draft_content?.trim() ? (
+                        <Button type="button" onClick={() => setActiveTab("read")}>Open Draft</Button>
+                      ) : (
+                        <Button type="button" onClick={startInitialDraftGeneration} disabled={!workflowStage.claimsReady}>Generate Initial Draft</Button>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
                 <Card>
                   <CardHeader>
                     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -2388,8 +2757,8 @@ export function AssetDetailPage() {
                   <CardContent className="space-y-4">
                     {!workspaceQuery.data?.intent ? (
                       <p className="text-sm text-muted-foreground">Confirm an Intent before extracting Candidate Claims.</p>
-                    ) : (workspaceQuery.data.evidence.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">Add structured Evidence before asking the Agent to extract Claims.</p>
+                    ) : (!workflowStage.evidenceReady ? (
+                      <p className="text-sm text-muted-foreground">Accept at least one current Evidence item and resolve all Evidence proposals before asking the Agent to extract Claims.</p>
                     ) : (
                       <>
                         <Textarea
@@ -2400,7 +2769,7 @@ export function AssetDetailPage() {
                           placeholder="Optional focus, for example: identify the strongest recommendation and its main counter-evidence."
                         />
                         <div className="flex flex-wrap items-center gap-3">
-                          <Button type="button" onClick={() => void startClaimAnalysis()} disabled={claimAgent.streaming}>
+                          <Button type="button" onClick={() => void startClaimAnalysis()} disabled={claimAgent.streaming || !workflowStage.evidenceReady}>
                             {claimAgent.streaming ? "Analyzing…" : "Ask Agent to Propose Claims"}
                           </Button>
                           {claimAgent.streaming && <Button type="button" variant="outline" onClick={() => claimAgentAbortRef.current?.abort()}>Stop</Button>}
@@ -2566,7 +2935,7 @@ export function AssetDetailPage() {
                 </Card>
 
                 <Card>
-                  <CardHeader><CardTitle>Knowledge Candidates</CardTitle><CardDescription>Keeping a Candidate preserves the proposal only. Promotion into a formal Note or Wiki remains a separate user-confirmed action.</CardDescription></CardHeader>
+                  <CardHeader><CardTitle>Knowledge Candidates</CardTitle><CardDescription>Extract reusable knowledge after the draft is stable. Keeping a Candidate preserves the proposal only; promotion into a formal Note or Wiki remains a separate user-confirmed action.</CardDescription></CardHeader>
                   <CardContent className="space-y-3">
                     {(workspaceQuery.data?.knowledge_candidates ?? []).length === 0 ? (
                       <p className="text-sm text-muted-foreground">No Note or Wiki Candidates yet.</p>
@@ -2654,6 +3023,23 @@ export function AssetDetailPage() {
                   {saveDeliveryFormatMutation.isSuccess && <p className="mt-3 text-xs text-emerald-700">Delivery preference saved.</p>}
                   {(saveDeliveryFormatMutation.isError || previewHtmlMutation.isError) && <p className="mt-3 text-xs text-destructive">Could not save or render the HTML delivery format.</p>}
                 </div>
+
+                <div className="flex flex-col gap-3 rounded-2xl border bg-muted/10 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm font-semibold">Reference Notes</p>
+                    <p className="mt-1 text-sm text-muted-foreground">Generate the exportable references section from the Asset's attached Sources, Notes, and Wiki pages.</p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => attachReferencesMutation.mutate()}
+                    disabled={isBusy || !((asset.source_refs?.length ?? 0) + (asset.note_refs?.length ?? 0) + (asset.wiki_refs?.length ?? 0))}
+                  >
+                    {attachReferencesMutation.isPending ? "Generating…" : asset.reference_notes?.trim() ? "Refresh Reference Notes" : "Generate Reference Notes"}
+                  </Button>
+                </div>
+                {attachReferencesMutation.isSuccess && <p className="text-sm text-emerald-700">Reference Notes generated and readiness refreshed.</p>}
+                {attachReferencesMutation.isError && <p className="text-sm text-destructive">Could not generate Reference Notes from the attached records.</p>}
 
                 <div className="flex flex-wrap gap-2">
                   {primaryAction?.nextStatus && (

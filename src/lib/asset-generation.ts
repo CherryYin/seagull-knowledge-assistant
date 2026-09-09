@@ -18,6 +18,7 @@ export interface AssetGenerationRequest {
   intakeMode?: "manual" | "agent_assisted";
   researchMode?: "local_only" | "local_then_web";
   deliveryFormat?: "markdown" | "html";
+  draftBasis?: string;
 }
 
 export interface AssetIntentFormDraft {
@@ -245,6 +246,7 @@ const ASSET_QUALITY_CRITERIA: Record<AssetType, string[]> = {
 export function renderAssetGenerationContract(request: AssetGenerationRequest) {
   const requiredSections = ASSET_REQUIRED_SECTIONS[request.assetType];
   const qualityCriteria = ASSET_QUALITY_CRITERIA[request.assetType];
+  const draftBasis = request.draftBasis?.trim();
   const selectedReferences = [
     ...request.sourceRefs.map((id) => `[Source: ${id}]`),
     ...request.noteRefs.map((id) => `[Note: ${id}]`),
@@ -260,7 +262,7 @@ export function renderAssetGenerationContract(request: AssetGenerationRequest) {
     `Scope: ${request.scope.join(", ") || "not further constrained"}.`,
     `Constraints: ${request.constraints.join("; ") || "none stated"}.`,
     `Intake mode: ${request.intakeMode === "agent_assisted" ? "agent-assisted clarification" : "user-specified brief"}.`,
-    `Research mode: ${request.researchMode === "local_then_web" ? "search PKG first, then run focused web research for at least one concrete freshness or evidence gap" : "PKG knowledge only"}.`,
+    `Research mode: ${draftBasis ? "accepted Evidence and Claims only; the research gates are already complete" : request.researchMode === "local_then_web" ? "search PKG first, then run focused web research for at least one concrete freshness or evidence gap" : "PKG knowledge only"}.`,
     `Delivery format: ${request.deliveryFormat === "html" ? "HTML export generated deterministically from the Markdown Asset" : "Markdown"}. Always author and return Markdown; never return raw HTML.`,
     ...(request.intakeMode === "agent_assisted" ? [
       "Before drafting, assess whether the objective, audience, scope, decision to support, or constraints are materially ambiguous.",
@@ -276,13 +278,21 @@ export function renderAssetGenerationContract(request: AssetGenerationRequest) {
     ...requiredSections.map((section) => `- ## ${section}`),
     "",
     "Evidence rules:",
-    "- Search PKG before drafting. Read the full relevant Source or Note when a read tool is available.",
-    "- Read the explicitly selected knowledge records before relying on them.",
-    ...(request.researchMode === "local_then_web" ? [
+    ...(draftBasis ? [
+      "- Use only the accepted Evidence and accepted Claims or retained Hypotheses in the structured drafting basis below.",
+      "- Do not run a new PKG or Web search during drafting. New evidence must return through the Evidence and Claim Gates first.",
+      "- If the accepted basis is insufficient, preserve the gap in Review Notes instead of inventing or silently adding a conclusion.",
+      `- Structured drafting basis:\n${draftBasis}`,
+    ] : [
+      "- Search PKG before drafting. Read the full relevant Source or Note when a read tool is available.",
+      "- Read the explicitly selected knowledge records before relying on them.",
+    ]),
+    ...(!draftBasis && request.researchMode === "local_then_web" ? [
       "- After the PKG pass, identify a concrete freshness or evidence gap and call web_search at least once for that gap.",
       "- Keep web evidence visibly separate from PKG evidence and include its URL in the evidence section.",
+      "- Cite web findings with their real URL. Never invent a [Source: id] marker for a web_search result unless that result was explicitly imported into PKG as a Source.",
       "- If web_search fails or returns no citeable URL, state that failure in Review Notes instead of claiming network research completed.",
-    ] : ["- Do not use external web evidence for this request."]),
+    ] : !draftBasis ? ["- Do not use external web evidence for this request."] : []),
     "- Mark grounded claims inline with [Source: id], [Note: id], or [Wiki: id].",
     "- Never invent a citation. If a selected record is unavailable or does not support the claim, say so in Review Notes.",
     `- Selected reference markers: ${selectedReferences.join(", ") || "none"}`,

@@ -123,7 +123,7 @@ export function AssetGenerationPage() {
         },
         provenance: { origin_type: "user", action: "save" },
       });
-      await reviseAssetIntent(asset.id, {
+      const workspace = await reviseAssetIntent(asset.id, {
         base_workspace_revision: 0,
         question: confirmedQuestion,
         goal: confirmedGoal,
@@ -132,31 +132,38 @@ export function AssetGenerationPage() {
         scope: parseLines(scope),
         constraints: parseLines(constraints),
       });
-      const request: AssetGenerationRequest = {
-        assetId: asset.id,
-        assetType,
-        title: workingTitle,
-        audience: audience.trim(),
-        brief: confirmedGoal,
-        question: confirmedQuestion,
-        goal: confirmedGoal,
-        creationMode,
-        scope: parseLines(scope),
-        constraints: parseLines(constraints),
-        styleNotes: styleNotes.trim(),
-        sourceRefs,
-        noteRefs,
-        wikiRefs,
-        intakeMode: "agent_assisted",
-        researchMode: allowWebResearch ? "local_then_web" : "local_only",
-        deliveryFormat,
-      };
-      navigate("/chat", {
+      const evidenceSeeds = [
+        ...sourceRefs.map((targetId) => ({
+          target_type: "source" as const,
+          target_id: targetId,
+          relation: "context" as const,
+          summary: `Selected during Asset intake: ${sources.data?.items.find((item) => item.id === targetId)?.title ?? targetId}. Review its relevance to the confirmed Intent.`,
+        })),
+        ...noteRefs.map((targetId) => ({
+          target_type: "note" as const,
+          target_id: targetId,
+          relation: "context" as const,
+          summary: `Selected during Asset intake: ${notes.data?.items.find((item) => item.id === targetId)?.title ?? targetId}. Review its relevance to the confirmed Intent.`,
+        })),
+        ...wikiRefs.map((targetId) => ({
+          target_type: "wiki" as const,
+          target_id: targetId,
+          relation: "context" as const,
+          summary: `Selected during Asset intake: ${wiki.data?.items.find((item) => item.id === targetId)?.title ?? targetId}. Review its relevance to the confirmed Intent.`,
+        })),
+      ];
+      if (evidenceSeeds.length > 0) {
+        await assetsApi.proposeEvidence(asset.id, {
+          base_workspace_revision: workspace.workspace_revision,
+          proposals: evidenceSeeds,
+        });
+      }
+      navigate(`/assets/${encodeURIComponent(asset.id)}`, {
         state: {
-          workflowId: "draft-asset",
-          assetDraft: request,
-          objectRef: { object_type: "asset", object_id: asset.id, title: workingTitle },
-          promptSeed: `Work from the confirmed Intent and help produce a ${selectedType?.label ?? "knowledge asset"}.`,
+          initialTab: "evidence",
+          stageNotice: evidenceSeeds.length > 0
+            ? "The selected records are now Evidence candidates. Review them before generating Claims."
+            : "Intent confirmed. Collect and accept Evidence before generating Claims.",
         },
       });
     } catch (error) {
@@ -238,7 +245,7 @@ export function AssetGenerationPage() {
           <div><p className="font-medium">{selectedType?.label}</p><p className="text-sm text-muted-foreground">{canContinue ? `Intent ready to confirm · ${evidenceCount} optional seed records` : "Intent not confirmed · you can ask the Agent for help before filling these fields"}</p>{startError && <p className="mt-1 text-sm text-destructive">{startError}</p>}</div>
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="outline" onClick={discussIntentWithAgent} disabled={isStarting}>Discuss Intent with Agent</Button>
-            <Button onClick={() => void startGeneration()} disabled={!canContinue || isStarting}>{isStarting ? "Creating Workspace…" : "Confirm Intent & Start Agent"}<ArrowRight className="ml-2 h-4 w-4" /></Button>
+            <Button onClick={() => void startGeneration()} disabled={!canContinue || isStarting}>{isStarting ? "Creating Workspace…" : "Confirm Intent & Review Evidence"}<ArrowRight className="ml-2 h-4 w-4" /></Button>
           </div>
         </div>
       </div>

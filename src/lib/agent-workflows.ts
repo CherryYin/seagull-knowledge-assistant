@@ -309,6 +309,8 @@ The Agent may recommend wording, scope, audience, creation mode, and research qu
 If the current context is empty or materially ambiguous, use ask_user_question with one concise batch rather than refusing to start.
 Do not search for evidence, draft the Asset, save knowledge, or publish anything during this workflow.
 Once enough context is available, present a Proposed Intent Brief and clearly separate confirmed user statements from Agent recommendations.
+After sufficient context is available, you must call propose_asset_intent exactly once with the complete structured candidate. A prose brief alone does not complete this workflow.
+Do not finish the turn until propose_asset_intent has succeeded; never claim the proposal is applyable unless that tool call completed.
 Tell the user to return to the Asset creation page and explicitly confirm the Intent before research or drafting begins.`,
   },
   {

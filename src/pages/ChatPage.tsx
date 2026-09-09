@@ -62,24 +62,34 @@ function initialChatInputHeight() {
 }
 
 function parseAssetIntentProposal(value: unknown): AssetIntentProposal | null {
-  if (!value || typeof value !== "object") return null;
-  const proposal = value as Record<string, unknown>;
+  let candidate = value;
+  if (typeof candidate === "string") {
+    try {
+      candidate = JSON.parse(candidate);
+    } catch {
+      return null;
+    }
+  }
+  if (!candidate || typeof candidate !== "object") return null;
+  const proposal = candidate as Record<string, unknown>;
+  const workingTitle = proposal.workingTitle ?? proposal.working_title ?? "";
+  const creationMode = proposal.creationMode ?? proposal.creation_mode;
   if (
-    typeof proposal.workingTitle !== "string"
+    typeof workingTitle !== "string"
     || typeof proposal.question !== "string"
     || typeof proposal.goal !== "string"
-    || typeof proposal.audience !== "string"
-    || !["understand", "synthesize", "make_decision", "produce"].includes(String(proposal.creationMode))
+    || (proposal.audience !== undefined && proposal.audience !== null && typeof proposal.audience !== "string")
+    || !["understand", "synthesize", "make_decision", "produce"].includes(String(creationMode))
     || !Array.isArray(proposal.scope)
     || !Array.isArray(proposal.constraints)
     || typeof proposal.rationale !== "string"
   ) return null;
   return {
-    workingTitle: proposal.workingTitle,
+    workingTitle,
     question: proposal.question,
     goal: proposal.goal,
-    audience: proposal.audience,
-    creationMode: proposal.creationMode as AssetIntentProposal["creationMode"],
+    audience: typeof proposal.audience === "string" ? proposal.audience : "",
+    creationMode: creationMode as AssetIntentProposal["creationMode"],
     scope: proposal.scope.filter((item): item is string => typeof item === "string"),
     constraints: proposal.constraints.filter((item): item is string => typeof item === "string"),
     rationale: proposal.rationale,
@@ -131,11 +141,17 @@ export function ChatPage() {
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
   const [workflowContext, setWorkflowContext] = useState<AgentWorkflowContext>({});
   const [assetIntentProposal, setAssetIntentProposal] = useState<AssetIntentProposal | null>(null);
+  const [assetIntentProposalIssue, setAssetIntentProposalIssue] = useState<string | null>(null);
   const [chatInputHeight, setChatInputHeight] = useState(initialChatInputHeight);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const stopRequestedRef = useRef(false);
+  const sessionsRef = useRef<ChatSessionRecord[]>([]);
+  const restoredIntentSessionIdRef = useRef<string | null>(null);
+  const sessionSaveQueuesRef = useRef(new Map<string, Promise<void>>());
+  const launchStateRef = useRef<ChatLocationState>(location.state as ChatLocationState);
+  const launchContextPersistedRef = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -151,23 +167,27 @@ export function ChatPage() {
       try {
         const loaded = await loadSessions();
         if (cancelled) return;
-        const launchState = location.state as ChatLocationState;
+        const resumableSessions = loaded.filter((session) => session.messages.length > 0);
+        const launchState = launchStateRef.current;
         const startsWorkflow = Boolean(launchState?.promptSeed || launchState?.workflowId);
         if (startsWorkflow) {
           const fresh = await createEmptySession();
           if (cancelled) return;
-          setSessions([fresh, ...loaded.filter((session) => session.id !== fresh.id)]);
+          const nextSessions = [fresh, ...resumableSessions.filter((session) => session.id !== fresh.id)];
+          sessionsRef.current = nextSessions;
+          setSessions(nextSessions);
           setActiveSessionId(fresh.id);
           setSelectedHistorySessionId(fresh.id);
           setTab("chat");
-          navigate(location.pathname, { replace: true, state: null });
-        } else if (loaded.length > 0) {
-          setSessions(loaded);
-          setActiveSessionId(loaded[0].id);
-          setSelectedHistorySessionId(loaded[0].id);
+        } else if (resumableSessions.length > 0) {
+          sessionsRef.current = resumableSessions;
+          setSessions(resumableSessions);
+          setActiveSessionId(resumableSessions[0].id);
+          setSelectedHistorySessionId(resumableSessions[0].id);
         } else {
           const fresh = await createEmptySession();
           if (cancelled) return;
+          sessionsRef.current = [fresh];
           setSessions([fresh]);
           setActiveSessionId(fresh.id);
           setSelectedHistorySessionId(fresh.id);
@@ -179,7 +199,7 @@ export function ChatPage() {
       }
     })();
     return () => { cancelled = true; };
-  }, [location.key, location.state]);
+  }, []);
 
   const { data: models } = useQuery({
     queryKey: ["harness-models"],
@@ -195,7 +215,7 @@ export function ChatPage() {
 
   useEffect(() => {
     if (seedApplied) return;
-    const state = location.state as ChatLocationState;
+    const state = launchStateRef.current;
     if (!state?.promptSeed && !state?.workflowId) return;
     const nextWorkflowId =
       state.workflowId ?? inferAgentWorkflowId(state.objectRef?.object_type, state.promptSeed);
@@ -215,8 +235,9 @@ export function ChatPage() {
     }
     setTab("chat");
     setSeedApplied(true);
+    navigate(location.pathname, { replace: true, state: null });
     setTimeout(() => textareaRef.current?.focus(), 0);
-  }, [location.state, seedApplied]);
+  }, [location.pathname, navigate, seedApplied]);
 
   const currentSession =
     sessions.find((s) => s.id === activeSessionId) ?? sessions[0] ?? null;
@@ -232,13 +253,22 @@ export function ChatPage() {
 
   useEffect(() => {
     if (!currentSession) return;
+    const sessionChanged = restoredIntentSessionIdRef.current !== currentSession.id;
+    restoredIntentSessionIdRef.current = currentSession.id;
     const storedMessage = [...currentSession.messages].reverse().find((message) => message.metadata?.asset_intent_proposal);
     const proposal = parseAssetIntentProposal(storedMessage?.metadata?.asset_intent_proposal);
-    if (!proposal) return;
+    if (!proposal) {
+      if (sessionChanged) {
+        setAssetIntentProposal(null);
+        setAssetIntentProposalIssue(null);
+      }
+      return;
+    }
     const draft = parseAssetIntentDraft(storedMessage?.metadata?.asset_intent_draft);
     setAssetIntentProposal(proposal);
     setSelectedWorkflowId("clarify-asset-intent");
     setWorkflowContext((current) => ({ ...current, assetIntentDraft: draft ?? current.assetIntentDraft }));
+    setAssetIntentProposalIssue(null);
   }, [currentSession]);
 
   const scrollToBottom = useCallback(() => {
@@ -248,10 +278,12 @@ export function ChatPage() {
   useEffect(scrollToBottom, [currentSession?.messages, scrollToBottom]);
 
   useEffect(() => {
-    if (!currentSession) return;
-    const state = location.state as ChatLocationState;
-    if (state?.assetDraft) {
+    if (loading || !currentSession) return;
+    const state = launchStateRef.current;
+    if (state?.assetDraft && !launchContextPersistedRef.current) {
+      launchContextPersistedRef.current = true;
       void sessionContextsApi.putAssetGeneration(currentSession.id, state.assetDraft).catch((error) => {
+        launchContextPersistedRef.current = false;
         console.error("Failed to persist Asset generation context:", error);
       });
       return;
@@ -283,27 +315,45 @@ export function ChatPage() {
       if (!cancelled) console.error("Failed to restore Asset generation context:", error);
     });
     return () => { cancelled = true; };
-  }, [currentSession?.id, currentSession?.messages, location.state, seedApplied]);
+  }, [currentSession?.id, currentSession?.messages, loading, seedApplied]);
 
   const updateSessionLocal = useCallback(
     (sessionId: string, updater: (s: ChatSessionRecord) => ChatSessionRecord) => {
-      setSessions((prev) =>
-        prev.map((s) => (s.id === sessionId ? updater(s) : s))
-      );
+      const nextSessions = sessionsRef.current.map((session) => (session.id === sessionId ? updater(session) : session));
+      sessionsRef.current = nextSessions;
+      setSessions(nextSessions);
     },
     []
   );
 
+  const persistSessionInOrder = useCallback(async (session: ChatSessionRecord) => {
+    const previousSave = sessionSaveQueuesRef.current.get(session.id) ?? Promise.resolve();
+    const nextSave = previousSave.catch(() => undefined).then(async () => {
+      await saveSession(session);
+    });
+    sessionSaveQueuesRef.current.set(session.id, nextSave);
+    try {
+      await nextSave;
+    } finally {
+      if (sessionSaveQueuesRef.current.get(session.id) === nextSave) {
+        sessionSaveQueuesRef.current.delete(session.id);
+      }
+    }
+  }, []);
+
   const handleCreateNewSession = useCallback(async () => {
     try {
       const next = await createEmptySession();
-      setSessions((prev) => [next, ...prev]);
+      const nextSessions = [next, ...sessionsRef.current.filter((session) => session.id !== next.id)];
+      sessionsRef.current = nextSessions;
+      setSessions(nextSessions);
       setActiveSessionId(next.id);
       setSelectedHistorySessionId(next.id);
       setInput("");
       setSelectedWorkflowId(null);
       setWorkflowContext({});
       setAssetIntentProposal(null);
+      setAssetIntentProposalIssue(null);
       setTab("chat");
       textareaRef.current?.focus();
     } catch (err) {
@@ -314,7 +364,9 @@ export function ChatPage() {
   const handleDeleteSession = useCallback(async (sessionId: string) => {
     try {
       await deleteSession(sessionId);
-      setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+      const nextSessions = sessionsRef.current.filter((session) => session.id !== sessionId);
+      sessionsRef.current = nextSessions;
+      setSessions(nextSessions);
     } catch (err) {
       console.error("Failed to delete session:", err);
     }
@@ -322,15 +374,18 @@ export function ChatPage() {
 
   const sendMessage = useCallback(
     async (task: string, truncateAfterIndex?: number) => {
-      if (!currentSession || streaming) return;
+      const sessionAtStart = sessionsRef.current.find((session) => session.id === activeSessionId) ?? currentSession;
+      if (!sessionAtStart || streaming) return;
       setPendingQuestion(null);
       stopRequestedRef.current = false;
-      const sessionId = currentSession.id;
-      const createHarnessSession = currentSession.messages.length === 0;
+      const sessionId = sessionAtStart.id;
+      const createHarnessSession = sessionAtStart.messages.length === 0;
       const harnessPreset = selectedWorkflowId ?? "knowledge-lab";
+      const expectsIntentProposal = harnessPreset === "clarify-asset-intent";
+      if (expectsIntentProposal) setAssetIntentProposalIssue(null);
       const baseMessages = truncateAfterIndex !== undefined
-        ? currentSession.messages.slice(0, truncateAfterIndex)
-        : currentSession.messages;
+        ? sessionAtStart.messages.slice(0, truncateAfterIndex)
+        : sessionAtStart.messages;
 
       // If retrying, truncate messages first
       if (truncateAfterIndex !== undefined) {
@@ -361,6 +416,26 @@ export function ChatPage() {
       let generatedIntentProposal: AssetIntentProposal | null = null;
       const abortController = new AbortController();
       abortRef.current = abortController;
+
+      const captureIntentProposal = (value: unknown) => {
+        const proposal = parseAssetIntentProposal(value);
+        if (!proposal) return false;
+        generatedIntentProposal = proposal;
+        setAssetIntentProposal(proposal);
+        setAssetIntentProposalIssue(null);
+        updateSessionLocal(sessionId, (session) => ({
+          ...session,
+          messages: session.messages.map((message) => message.id === assistantMsg.id ? {
+            ...message,
+            metadata: {
+              ...(message.metadata ?? {}),
+              asset_intent_proposal: proposal as unknown as Record<string, unknown>,
+              ...(workflowContext.assetIntentDraft ? { asset_intent_draft: workflowContext.assetIntentDraft as unknown as Record<string, unknown> } : {}),
+            },
+          } : message),
+        }));
+        return true;
+      };
 
       try {
         const stream = harnessChat(task, {
@@ -396,22 +471,7 @@ export function ChatPage() {
             }
             case "tool_call":
               if (event.tool === "propose_asset_intent") {
-                const proposal = parseAssetIntentProposal(event.args);
-                if (proposal) {
-                  generatedIntentProposal = proposal;
-                  setAssetIntentProposal(proposal);
-                  updateSessionLocal(sessionId, (session) => ({
-                    ...session,
-                    messages: session.messages.map((message) => message.id === assistantMsg.id ? {
-                      ...message,
-                      metadata: {
-                        ...(message.metadata ?? {}),
-                        asset_intent_proposal: proposal as unknown as Record<string, unknown>,
-                        ...(workflowContext.assetIntentDraft ? { asset_intent_draft: workflowContext.assetIntentDraft as unknown as Record<string, unknown> } : {}),
-                      },
-                    } : message),
-                  }));
-                }
+                captureIntentProposal(event.args);
               }
               setSteps((prev) => {
                 const tool = event.tool ?? "tool";
@@ -419,6 +479,7 @@ export function ChatPage() {
               });
               break;
             case "tool_result":
+              if (event.tool === "propose_asset_intent") captureIntentProposal(event.result);
               setSteps((prev) => {
                 const tool = event.tool;
                 return prev.map((s) =>
@@ -485,38 +546,39 @@ export function ChatPage() {
         abortRef.current = null;
         setStreaming(false);
         setSteps([]);
-        const finalMessages = [
-          ...baseMessages,
-          userMsg,
-          {
-            ...assistantMsg,
-            content: fullResponse,
-            ...(generatedIntentProposal ? {
-              metadata: {
-                asset_intent_proposal: generatedIntentProposal as unknown as Record<string, unknown>,
-                ...(workflowContext.assetIntentDraft ? { asset_intent_draft: workflowContext.assetIntentDraft as unknown as Record<string, unknown> } : {}),
-              },
-            } : {}),
-          },
-        ];
+        const latestSession = sessionsRef.current.find((session) => session.id === sessionId) ?? sessionAtStart;
+        const finalMessages = latestSession.messages.map((message) => message.id === assistantMsg.id ? {
+          ...message,
+          content: fullResponse,
+          ...(generatedIntentProposal ? {
+            metadata: {
+              ...(message.metadata ?? {}),
+              asset_intent_proposal: generatedIntentProposal as unknown as Record<string, unknown>,
+              ...(workflowContext.assetIntentDraft ? { asset_intent_draft: workflowContext.assetIntentDraft as unknown as Record<string, unknown> } : {}),
+            },
+          } : {}),
+        } : message);
         const finalSession = {
-          ...currentSession,
+          ...latestSession,
           messages: finalMessages,
           title: deriveSessionTitle(finalMessages),
           updated_at: new Date().toISOString(),
         };
-        setSessions((prev) =>
-          prev.map((session) => (session.id === sessionId ? finalSession : session))
-        );
+        const nextSessions = sessionsRef.current.map((session) => (session.id === sessionId ? finalSession : session));
+        sessionsRef.current = nextSessions;
+        setSessions(nextSessions);
         try {
-          await saveSession(finalSession);
+          await persistSessionInOrder(finalSession);
         } catch (err) {
           console.error("Failed to save session:", err);
+        }
+        if (expectsIntentProposal && !generatedIntentProposal && !stopped) {
+          setAssetIntentProposalIssue("The Agent returned text but did not create an applyable Intent Proposal.");
         }
         stopRequestedRef.current = false;
       }
     },
-    [currentSession, selectedWorkflowId, streaming, updateSessionLocal, workflowContext.assetIntentDraft]
+    [activeSessionId, currentSession, persistSessionInOrder, selectedWorkflowId, streaming, updateSessionLocal, workflowContext.assetIntentDraft]
   );
 
   const handleSubmit = async () => {
@@ -526,6 +588,12 @@ export function ChatPage() {
     const task = deepResearch ? `/deep-research ${raw}` : raw;
     sendMessage(task);
   };
+
+  const handleRetryIntentProposal = useCallback(() => {
+    void sendMessage(
+      "Create the applyable Intent Proposal now. Use the conversation context already available, call propose_asset_intent exactly once, and do not treat a prose brief as completion."
+    );
+  }, [sendMessage]);
 
   const handleSelectWorkflow = useCallback(
     (workflow: AgentWorkflowTemplate) => {
@@ -789,24 +857,40 @@ export function ChatPage() {
                 )}
               </div>
 
-              {assetIntentProposal && selectedWorkflowId === "clarify-asset-intent" && (
+              {(assetIntentProposal || assetIntentProposalIssue) && (
                 <div className="border-t border-border bg-card/50 px-6 pt-4">
-                  <div className="mx-auto max-w-3xl space-y-3 rounded-xl border border-primary/20 bg-primary/5 p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div><p className="font-medium">Agent Intent Proposal</p><p className="text-xs text-muted-foreground">Candidate only · existing form values will not be overwritten</p></div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={() => navigate("/assets/new", { state: { assetIntentProposal, assetIntentDraft: workflowContext.assetIntentDraft } })}
-                      >Apply to Asset Form</Button>
-                    </div>
-                    <div className="grid gap-3 text-sm md:grid-cols-2">
-                      <div><p className="text-xs font-semibold uppercase text-muted-foreground">Question</p><p>{assetIntentProposal.question}</p></div>
-                      <div><p className="text-xs font-semibold uppercase text-muted-foreground">Goal</p><p>{assetIntentProposal.goal}</p></div>
-                      <div><p className="text-xs font-semibold uppercase text-muted-foreground">Audience</p><p>{assetIntentProposal.audience || "Not specified"}</p></div>
-                      <div><p className="text-xs font-semibold uppercase text-muted-foreground">Recommended Mode</p><p>{assetIntentProposal.creationMode.replace(/_/g, " ")}</p></div>
-                    </div>
-                    <p className="text-xs text-muted-foreground">{assetIntentProposal.rationale}</p>
+                  <div className="mx-auto max-w-3xl space-y-3">
+                    {assetIntentProposalIssue && (
+                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm">
+                        <div>
+                          <p className="font-medium">Intent Proposal was not generated</p>
+                          <p className="text-xs text-muted-foreground">{assetIntentProposalIssue}</p>
+                        </div>
+                        <Button type="button" size="sm" variant="outline" disabled={streaming} onClick={handleRetryIntentProposal}>
+                          <Sparkles className="mr-2 h-4 w-4" />
+                          Generate Applyable Proposal
+                        </Button>
+                      </div>
+                    )}
+                    {assetIntentProposal && (
+                      <div className="space-y-3 rounded-xl border border-primary/20 bg-primary/5 p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div><p className="font-medium">Agent Intent Proposal</p><p className="text-xs text-muted-foreground">Candidate only · existing form values will not be overwritten</p></div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => navigate("/assets/new", { state: { assetIntentProposal, assetIntentDraft: workflowContext.assetIntentDraft } })}
+                          >Apply to Asset Form</Button>
+                        </div>
+                        <div className="grid gap-3 text-sm md:grid-cols-2">
+                          <div><p className="text-xs font-semibold uppercase text-muted-foreground">Question</p><p>{assetIntentProposal.question}</p></div>
+                          <div><p className="text-xs font-semibold uppercase text-muted-foreground">Goal</p><p>{assetIntentProposal.goal}</p></div>
+                          <div><p className="text-xs font-semibold uppercase text-muted-foreground">Audience</p><p>{assetIntentProposal.audience || "Not specified"}</p></div>
+                          <div><p className="text-xs font-semibold uppercase text-muted-foreground">Recommended Mode</p><p>{assetIntentProposal.creationMode.replace(/_/g, " ")}</p></div>
+                        </div>
+                        <p className="text-xs text-muted-foreground">{assetIntentProposal.rationale}</p>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

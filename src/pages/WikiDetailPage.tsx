@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { MarkdownRenderer } from "@/components/markdown";
-import { wikiApi, type ReferenceRead, type WikiArticleDraft, type WikiPage, type WikiPageSourceCreate, type WikiPageUpdate } from "@/lib/api";
+import { assetsApi, wikiApi, type ReferenceRead, type WikiArticleDraft, type WikiPage, type WikiPageSourceCreate, type WikiPageUpdate } from "@/lib/api";
 import { getWikiOrigin, getWikiRole } from "@/lib/wikiLifecycle";
 import { buildAssetHandoffState } from "@/lib/asset-handoff";
 
@@ -129,6 +129,12 @@ export function WikiDetailPage() {
   const { data: page, isLoading, error } = useQuery({
     queryKey: ["wiki-page", id],
     queryFn: () => wikiApi.get(id!),
+    enabled: !!id,
+  });
+
+  const { data: assetLineage } = useQuery({
+    queryKey: ["asset-knowledge-lineage", "wiki", id],
+    queryFn: () => assetsApi.knowledgeLineage("wiki", id!),
     enabled: !!id,
   });
 
@@ -718,6 +724,28 @@ export function WikiDetailPage() {
                   <InfoRow label="Sources" value={page.derived_from_sources.join(", ")} />
                 </div>
               </div>
+
+              {(assetLineage?.items.length ?? 0) > 0 && (
+                <div className="border border-border/70 bg-background p-4 shadow-sm">
+                  <p className="mb-3 text-sm font-semibold">Related Assets</p>
+                  <div className="space-y-3">
+                    {assetLineage?.items.map((item) => (
+                      <div key={`${item.asset_id}:${item.candidate_id ?? item.relation}`} className="rounded-md border border-border/70 p-3">
+                        <Link className="text-sm font-medium text-primary hover:underline" to={`/assets/${encodeURIComponent(item.asset_id)}`}>
+                          {item.asset_title}
+                        </Link>
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          <Badge variant={item.relation === "distilled" ? "default" : "outline"}>
+                            {item.relation === "distilled" ? "Distilled from Asset" : "Referenced by Asset"}
+                          </Badge>
+                          {item.claim_refs.length > 0 && <Badge variant="secondary">{item.claim_refs.length} Claims</Badge>}
+                        </div>
+                        {item.contribution_summary && <p className="mt-2 text-xs leading-5 text-muted-foreground">{item.contribution_summary}</p>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="border border-border/70 bg-background p-4 shadow-sm">
                 <div className="mb-3 flex items-center justify-between gap-2">

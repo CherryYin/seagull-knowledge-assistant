@@ -24,6 +24,13 @@ function deriveTitle(content: string, explicitTitle?: string | null) {
     || "Agent output";
 }
 
+function deriveOutline(content: string) {
+  return content
+    .split("\n")
+    .filter((line) => /^#{1,3}\s+\S/.test(line.trim()))
+    .join("\n");
+}
+
 function collectReferences(
   references: ReferenceInfo[] = [],
   objectRef?: AgentWorkflowContext["objectRef"]
@@ -62,6 +69,30 @@ function collectInlineKnowledgeReferences(content: string) {
   };
 }
 
+async function resolvePersistableReferences({
+  sourceRefs,
+  noteRefs,
+  wikiRefs,
+}: {
+  sourceRefs: string[];
+  noteRefs: string[];
+  wikiRefs: string[];
+}) {
+  const requested = [
+    ...unique(sourceRefs).map((id) => ({ ref_type: "source", ref_id: id })),
+    ...unique(noteRefs).map((id) => ({ ref_type: "note", ref_id: id })),
+    ...unique(wikiRefs).map((id) => ({ ref_type: "wiki", ref_id: id })),
+  ];
+  if (requested.length === 0) return { sourceRefs: [], noteRefs: [], wikiRefs: [] };
+
+  const resolved = await wikiApi.resolveReferences(requested);
+  return {
+    sourceRefs: unique(resolved.items.filter((item) => item.ref_type === "source").map((item) => item.ref_id)),
+    noteRefs: unique(resolved.items.filter((item) => item.ref_type === "note").map((item) => item.ref_id)),
+    wikiRefs: unique(resolved.items.filter((item) => item.ref_type === "wiki").map((item) => item.ref_id)),
+  };
+}
+
 export async function saveWorkflowResult({
   target,
   sessionId,
@@ -82,6 +113,7 @@ export async function saveWorkflowResult({
   sourceRefs.push(...(assetDraft?.sourceRefs ?? []));
   noteRefs.push(...(assetDraft?.noteRefs ?? []));
   wikiRefs.push(...(assetDraft?.wikiRefs ?? []));
+  const persistableReferences = await resolvePersistableReferences({ sourceRefs, noteRefs, wikiRefs });
   const workflowTag = workflowId ? `workflow:${workflowId}` : "workflow:general-chat";
 
   if (target === "asset") {
@@ -93,7 +125,14 @@ export async function saveWorkflowResult({
     }
     const existingAssetId = objectRef?.object_type === "asset" ? objectRef.object_id : assetDraft?.assetId;
     if (existingAssetId) {
-      return assetsApi.update(existingAssetId, { draft_content: content });
+      const existing = await assetsApi.get(existingAssetId);
+      return assetsApi.update(existingAssetId, {
+        draft_content: content,
+        outline: existing.outline?.trim() || deriveOutline(content),
+        source_refs: unique([...(existing.source_refs ?? []), ...persistableReferences.sourceRefs]),
+        note_refs: unique([...(existing.note_refs ?? []), ...persistableReferences.noteRefs]),
+        wiki_refs: unique([...(existing.wiki_refs ?? []), ...persistableReferences.wikiRefs]),
+      });
     }
     return assetsApi.create({
       title,
@@ -101,9 +140,10 @@ export async function saveWorkflowResult({
       asset_type: assetDraft?.assetType ?? (workflowId === "draft-blog-asset" ? "blog_post" : "topic_report"),
       status: "draft",
       draft_content: content,
-      source_refs: unique(sourceRefs),
-      note_refs: unique(noteRefs),
-      wiki_refs: unique(wikiRefs),
+      outline: deriveOutline(content),
+      source_refs: persistableReferences.sourceRefs,
+      note_refs: persistableReferences.noteRefs,
+      wiki_refs: persistableReferences.wikiRefs,
       style_notes: assetDraft?.styleNotes,
       metadata: {
         workflow_id: workflowId || null,
@@ -125,8 +165,8 @@ export async function saveWorkflowResult({
       page_type: "topic",
       content,
       tags: ["wiki-draft", "from-agent", "explicit-save", workflowTag, `harness-session:${sessionId}`],
-      derived_from_notes: noteRefs,
-      derived_from_sources: sourceRefs,
+      derived_from_notes: persistableReferences.noteRefs,
+      derived_from_sources: persistableReferences.sourceRefs,
     });
   }
 
@@ -148,7 +188,7 @@ export async function saveWorkflowResult({
       `harness-session:${sessionId}`,
     ],
     domains: [target === "review_note" ? "review" : "agent-output"],
-    source_ids: sourceRefs,
+    source_ids: persistableReferences.sourceRefs,
     content,
   });
 }

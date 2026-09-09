@@ -1,4 +1,4 @@
-import { useLocation, useParams, useNavigate } from "react-router-dom";
+import { Link, useLocation, useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, useMemo, useRef, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { ArrowLeft, Download, Pencil, Save, X, Trash2, List, FileText, FileDown, Bot, RefreshCw, LinkIcon, BookOpen, Bold, Italic, Heading1, Heading2, Heading3, ListChecks, ListOrdered, Quote, Code, SquareCode, Table, Check, Loader2, Sparkles, Wand2, PanelRight, Square, Cpu, Pin, History, ImagePlus } from "lucide-react";
@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { NoteContentRenderer, inferNoteRenderModeFromTags, type NoteRenderMode } from "@/components/NoteContentRenderer";
-import { notesApi, categoriesApi, wikiApi, knowledgeApi, downloadFile, type NoteUpdate, type Note } from "@/lib/api";
+import { assetsApi, notesApi, categoriesApi, wikiApi, knowledgeApi, downloadFile, type NoteUpdate, type Note } from "@/lib/api";
 import { CategorySelect } from "@/components/CategorySelect";
 import { buildAssetHandoffState } from "@/lib/asset-handoff";
 import { NoteAIPanel } from "@/components/NoteAIPanel";
@@ -151,6 +151,12 @@ export function NoteDetailPage() {
   const { data: note, isLoading, error } = useQuery({
     queryKey: ["note", id],
     queryFn: () => notesApi.get(id!),
+    enabled: !!id,
+  });
+
+  const { data: assetLineage } = useQuery({
+    queryKey: ["asset-knowledge-lineage", "note", id],
+    queryFn: () => assetsApi.knowledgeLineage("note", id!),
     enabled: !!id,
   });
 
@@ -1244,6 +1250,26 @@ export function NoteDetailPage() {
                         >
                           {sid}
                         </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {(assetLineage?.items.length ?? 0) > 0 && (
+                  <div>
+                    <span className="text-muted-foreground text-xs">Related Assets</span>
+                    <div className="mt-2 space-y-2">
+                      {assetLineage?.items.map((item) => (
+                        <div key={`${item.asset_id}:${item.candidate_id ?? item.relation}`} className="rounded-md border border-border/70 p-2">
+                          <Link className="block text-xs font-medium text-primary hover:underline" to={`/assets/${encodeURIComponent(item.asset_id)}`}>
+                            {item.asset_title}
+                          </Link>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            <Badge variant={item.relation === "distilled" ? "default" : "outline"} className="text-[10px]">
+                              {item.relation === "distilled" ? "Distilled from Asset" : "Referenced by Asset"}
+                            </Badge>
+                            {item.claim_refs.length > 0 && <Badge variant="secondary" className="text-[10px]">{item.claim_refs.length} Claims</Badge>}
+                          </div>
+                        </div>
                       ))}
                     </div>
                   </div>

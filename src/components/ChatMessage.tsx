@@ -107,13 +107,6 @@ export function ChatMessage({
     try {
       await onSaveTarget(target);
       setSaveState((current) => ({ ...current, [target]: "done" }));
-      setTimeout(() => {
-        setSaveState((current) => {
-          const next = { ...current };
-          delete next[target];
-          return next;
-        });
-      }, 2000);
     } catch (err) {
       setSaveState((current) => {
         const next = { ...current };
@@ -269,6 +262,8 @@ export function ChatMessage({
 
             {!isUser && onSaveTarget && saveTargets.map((target) => {
               const state = saveState[target];
+              const appliesToExistingAsset = target === "asset" && Boolean(assetDraft?.assetId);
+              const label = appliesToExistingAsset ? "Apply Draft to Asset" : AGENT_WORKFLOW_SAVE_TARGET_LABELS[target];
               return (
                 <Button
                   key={target}
@@ -279,7 +274,7 @@ export function ChatMessage({
                   disabled={Boolean(state) || (target === "asset" && assetQuality !== null && !assetQuality.ready)}
                 >
                   {saveIcon(target, state)}
-                  {state === "done" ? "Saved" : AGENT_WORKFLOW_SAVE_TARGET_LABELS[target]}
+                  {state === "done" ? (appliesToExistingAsset ? "Applied to Asset" : "Saved") : label}
                 </Button>
               );
             })}

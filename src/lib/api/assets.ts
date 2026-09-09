@@ -32,9 +32,30 @@ export interface AssetList {
   total: number;
 }
 
+export interface AssetKnowledgeLineageItem {
+  asset_id: string;
+  asset_title: string;
+  asset_type: AssetType;
+  asset_status: AssetStatus;
+  relation: "distilled" | "referenced";
+  candidate_id?: string | null;
+  candidate_type?: "note" | "wiki" | null;
+  candidate_action?: "create" | "update" | null;
+  claim_refs: string[];
+  contribution_summary?: string | null;
+  promoted_at?: string | null;
+}
+
+export interface AssetKnowledgeLineageList {
+  target_type: "note" | "wiki";
+  target_id: string;
+  items: AssetKnowledgeLineageItem[];
+}
+
 export interface AssetCreate {
   title: string;
   brief?: string;
+  outline?: string;
   draft_content?: string;
   asset_type?: AssetType;
   status?: AssetStatus;
@@ -151,7 +172,7 @@ export interface AssetIntent {
 }
 
 export type AssetEvidenceRelation = "supports" | "contradicts" | "context" | "unverified";
-export type AssetEvidenceStatus = "proposed" | "accepted" | "rejected";
+export type AssetEvidenceStatus = "proposed" | "accepted" | "rejected" | "stale";
 
 export interface AssetEvidence {
   id: string;
@@ -295,6 +316,9 @@ export const assetsApi = {
     if (params?.offset) q.set("offset", String(params.offset));
     return request<AssetList>(`/assets?${q}`);
   },
+  knowledgeLineage: (targetType: "note" | "wiki", targetId: string) => request<AssetKnowledgeLineageList>(
+    `/assets/knowledge-lineage?target_type=${encodeURIComponent(targetType)}&target_id=${encodeURIComponent(targetId)}`,
+  ),
   get: (id: string) => request<Asset>(`/assets/${encodeURIComponent(id)}`),
   getWorkspace: (id: string) => request<AssetWorkspace>(`/assets/${encodeURIComponent(id)}/workspace`),
   getQualityAudit: (id: string) => request<AssetQualityAuditResult>(`/assets/${encodeURIComponent(id)}/quality-audit`),
