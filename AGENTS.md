@@ -20,6 +20,8 @@ The core product goal is a durable personal knowledge graph with deterministic r
 - Discover article links from a `web` directory source such as a blog index and import each article as a child web source.
 - Manage review suggestions, discovery items, wiki pages, summaries, and temporary/permanent knowledge artifacts while delegating interactive Wiki/Asset drafting to Harness workflows.
 - Preserve terminal discovery decisions (`saved`, `kept`, and `dismissed`) as durable deduplication history so reviewed connector items are not recommended again.
+- Create Assets through an Intent → Evidence → Claims → Draft workflow: selected records begin as reviewable Evidence candidates, and initial drafting stays locked until the current Evidence and Claim gates are complete.
+- Trace promoted or referenced Notes and Wiki pages back to their related Assets, including the originating Knowledge Candidate and Claim references when the record was distilled from an Asset.
 - Create and edit newsletter assets through PKG CRUD, then develop their content in Harness Agent Chat and explicitly save the reviewed result back to the Asset.
 - Pin notes for quick access, keep content version history (snapshots captured on content/title edits, restorable), and attach inline images to notes via drag-and-drop upload.
 - Mine recent knowledge materials for reusable concept/entity candidates and recommend concept wiki drafts with evidence.
