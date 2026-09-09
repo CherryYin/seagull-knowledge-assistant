@@ -75,6 +75,23 @@ export interface ReadinessCheckResult {
   suggestion_reasons: string[];
 }
 
+export interface AssetQualityFinding {
+  id: string;
+  severity: "P0" | "P1" | "P2";
+  title: string;
+  detail: string;
+}
+
+export interface AssetQualityAuditResult {
+  asset_id: string;
+  workspace_revision: number;
+  verdict: "pass" | "warn" | "block";
+  score: number;
+  blocking_findings: AssetQualityFinding[];
+  warnings: AssetQualityFinding[];
+  metrics: Record<string, number>;
+}
+
 export interface AssetExportResult {
   asset_id: string;
   export_format: string;
@@ -108,6 +125,7 @@ export const assetsApi = {
   delete: (id: string) => request<void>(`/assets/${encodeURIComponent(id)}`, { method: "DELETE" }),
   attachReferences: (id: string, include_reference_notes = true) => request<Asset>(`/assets/${encodeURIComponent(id)}/attach-references`, { method: "POST", body: JSON.stringify({ include_reference_notes }) }),
   checkReadiness: (id: string) => request<ReadinessCheckResult>(`/assets/${encodeURIComponent(id)}/check-readiness`, { method: "POST" }),
+  qualityAudit: (id: string) => request<AssetQualityAuditResult>(`/assets/${encodeURIComponent(id)}/quality-audit`),
   exportMarkdown: (id: string) => request<AssetExportResult>(`/assets/${encodeURIComponent(id)}/export/markdown`, { method: "POST" }),
   updatePublishFeedback: (id: string, body: AssetPublishFeedbackUpdate) => request<Asset>(`/assets/${encodeURIComponent(id)}/publish-feedback`, { method: "POST", body: JSON.stringify(body) }),
   feedbackToNote: (id: string) => request<AssetFeedbackNoteResult>(`/assets/${encodeURIComponent(id)}/feedback-to-note`, { method: "POST" }),

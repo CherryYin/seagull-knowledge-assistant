@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "react-router-dom";
-import { FileText, Sparkles, Download, CheckCircle2, Plus, ScrollText, Trash2 } from "lucide-react";
+import { FileText, Sparkles, Download, CheckCircle2, Plus, ScrollText, Trash2, ShieldCheck } from "lucide-react";
 import { assetsApi, notesApi, sourcesApi, type Asset, type AssetStatus, type AssetType } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -200,6 +200,7 @@ export function AssetsPage() {
   const [publishUrl, setPublishUrl] = useState("");
   const [publishChannel, setPublishChannel] = useState("");
   const [publishFeedback, setPublishFeedback] = useState("");
+  const [qualityAuditResult, setQualityAuditResult] = useState<Awaited<ReturnType<typeof assetsApi.qualityAudit>> | null>(null);
 
   const assetsQuery = useQuery({
     queryKey: ["assets"],
@@ -321,6 +322,11 @@ export function AssetsPage() {
 
   const readinessMutation = useMutation({
     mutationFn: (assetId: string) => assetsApi.checkReadiness(assetId),
+  });
+
+  const qualityAuditMutation = useMutation({
+    mutationFn: (assetId: string) => assetsApi.qualityAudit(assetId),
+    onSuccess: (result) => setQualityAuditResult(result),
   });
 
   const exportMutation = useMutation({
@@ -587,6 +593,14 @@ export function AssetsPage() {
                     <Button variant="outline" onClick={() => readinessMutation.mutate(selectedAsset.id)}>
                       Check Readiness
                     </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => qualityAuditMutation.mutate(selectedAsset.id)}
+                      disabled={qualityAuditMutation.isPending}
+                    >
+                      <ShieldCheck className="h-4 w-4" />
+                      {qualityAuditMutation.isPending ? "Auditing…" : "Quality Audit"}
+                    </Button>
                     <Button variant="outline" onClick={() => exportMutation.mutate(selectedAsset.id)}>
                       <Download className="mr-2 h-4 w-4" />
                       Export Markdown
@@ -809,6 +823,53 @@ export function AssetsPage() {
                       <div className="rounded-md border bg-background/80 p-3 text-sm text-muted-foreground">
                         {assetTypeReadinessGuidance(selectedAsset.asset_type)}
                       </div>
+                    </div>
+                  )}
+
+                  {qualityAuditMutation.error && (
+                    <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+                      Quality audit failed: {qualityAuditMutation.error instanceof Error ? qualityAuditMutation.error.message : "Unknown error"}
+                    </div>
+                  )}
+
+                  {qualityAuditResult && qualityAuditResult.asset_id === selectedAsset.id && (
+                    <div className={`space-y-4 rounded-lg border p-4 ${
+                      qualityAuditResult.verdict === "pass"
+                        ? "border-emerald-200 bg-emerald-50/80"
+                        : qualityAuditResult.verdict === "warn"
+                          ? "border-amber-200 bg-amber-50/70"
+                          : "border-red-200 bg-red-50/70"
+                    }`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold">Document Quality Audit</p>
+                          <p className="mt-1 text-sm text-muted-foreground">
+                            Workspace revision {qualityAuditResult.workspace_revision} · Score {qualityAuditResult.score.toFixed(1)} / 5
+                          </p>
+                        </div>
+                        <Badge variant={qualityAuditResult.verdict === "pass" ? "default" : "secondary"}>
+                          {qualityAuditResult.verdict.toUpperCase()}
+                        </Badge>
+                      </div>
+                      {qualityAuditResult.blocking_findings.length > 0 && (
+                        <ReadinessList
+                          title="Blocking findings"
+                          items={qualityAuditResult.blocking_findings.map((finding) => `${finding.id}: ${finding.detail}`)}
+                          tone="text-destructive"
+                          empty="No blocking findings."
+                        />
+                      )}
+                      {qualityAuditResult.warnings.length > 0 && (
+                        <ReadinessList
+                          title="Warnings"
+                          items={qualityAuditResult.warnings.map((finding) => `${finding.id}: ${finding.detail}`)}
+                          tone="text-amber-700"
+                          empty="No warnings."
+                        />
+                      )}
+                      {qualityAuditResult.blocking_findings.length === 0 && qualityAuditResult.warnings.length === 0 && (
+                        <p className="text-sm text-emerald-700">No quality findings. The current workspace passed the deterministic audit.</p>
+                      )}
                     </div>
                   )}
 
