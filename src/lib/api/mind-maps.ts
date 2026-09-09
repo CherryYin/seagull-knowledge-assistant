@@ -53,21 +53,45 @@ export interface MindMapTreeRead {
   references: MindMapReferenceRead[];
 }
 
+export interface MindMapSnapshotRead {
+  map: MindMapRead;
+  nodes: MindMapNodeRead[];
+  references: MindMapReferenceRead[];
+}
+
+export interface MindMapRevisionRead {
+  id: string;
+  map_id: string;
+  version: number;
+  actor_type: "human" | "agent" | "system";
+  actor_ref?: string | null;
+  action: string;
+  summary: string;
+  snapshot: MindMapSnapshotRead;
+  created_at: string;
+}
+
+export interface MindMapRevisionList {
+  items: MindMapRevisionRead[];
+  total: number;
+}
+
 export interface MindMapMutationResult {
   map_id: string;
   previous_version: number;
   current_version: number;
-  revision: {
-    id: string;
-    map_id: string;
-    version: number;
-    action: string;
-    summary: string;
-    created_at: string;
-  };
+  revision: MindMapRevisionRead;
   node?: MindMapNodeRead | null;
   reference?: MindMapReferenceRead | null;
   deleted_node_ids: string[];
+}
+
+export interface MindMapOutlineApplyResult extends MindMapMutationResult {
+  mode: "merge" | "replace";
+  created_count: number;
+  updated_count: number;
+  moved_count: number;
+  deleted_count: number;
 }
 
 export interface MindMapVersionConflict {
@@ -109,6 +133,19 @@ interface MindMapNodeDelete {
   updated_by: "human";
 }
 
+interface MindMapRevisionRestore {
+  base_version: number;
+  confirm: true;
+}
+
+interface MindMapOutlineApply {
+  base_version: number;
+  mode: "merge" | "replace";
+  outline: string;
+  confirm_replace: boolean;
+  updated_by: "human";
+}
+
 export function getMindMapVersionConflict(error: unknown): MindMapVersionConflict | null {
   if (!(error instanceof Error) || !error.message.startsWith("409:")) return null;
   const jsonStart = error.message.indexOf("{");
@@ -131,6 +168,21 @@ export function getMindMapVersionConflict(error: unknown): MindMapVersionConflic
 
 export const mindMapsApi = {
   getTree: (mapId: string) => request<MindMapTreeRead>(`/mind-maps/${encodeURIComponent(mapId)}/tree`),
+  listRevisions: (mapId: string, limit = 20, offset = 0) => {
+    const query = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    return request<MindMapRevisionList>(`/mind-maps/${encodeURIComponent(mapId)}/revisions?${query}`);
+  },
+  getRevision: (mapId: string, version: number) => request<MindMapRevisionRead>(
+    `/mind-maps/${encodeURIComponent(mapId)}/revisions/${version}`,
+  ),
+  restoreRevision: (mapId: string, version: number, body: MindMapRevisionRestore) => request<MindMapMutationResult>(
+    `/mind-maps/${encodeURIComponent(mapId)}/revisions/${version}/restore`,
+    { method: "POST", body: JSON.stringify(body) },
+  ),
+  applyOutline: (mapId: string, body: MindMapOutlineApply) => request<MindMapOutlineApplyResult>(
+    `/mind-maps/${encodeURIComponent(mapId)}/outline/apply`,
+    { method: "POST", body: JSON.stringify(body) },
+  ),
   addNode: (mapId: string, body: MindMapNodeCreate) => request<MindMapMutationResult>(
     `/mind-maps/${encodeURIComponent(mapId)}/nodes`,
     { method: "POST", body: JSON.stringify(body) },

@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Focus, Move, Pencil, Plus, RotateCcw, Trash2, X } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   MindMapCanvas,
   MindMapNodeMutationDialog,
+  MindMapOutlinePanel,
+  MindMapRevisionPanel,
   type MindMapCanvasMetrics,
   type MindMapCanvasNode,
   type MindMapNodeMutationCommand,
@@ -24,6 +26,7 @@ import type { MindMapLayoutMode } from "@/lib/mind-map-layout";
 export function MindMapPage() {
   const { mapId } = useParams();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const treeQuery = useQuery({
     queryKey: ["mind-map-tree", mapId],
     queryFn: () => mindMapsApi.getTree(mapId!),
@@ -117,6 +120,18 @@ export function MindMapPage() {
     }
     return items;
   }, [breadcrumbNode, nodeById]);
+  const refreshMindMap = async () => {
+    await Promise.all([
+      treeQuery.refetch(),
+      queryClient.invalidateQueries({ queryKey: ["mind-map-revisions", mapId] }),
+    ]);
+  };
+  const handleVersionConflict = async (conflict: ReturnType<typeof getMindMapVersionConflict> & {}) => {
+    setVersionConflictMessage(
+      `This Mind Map changed from version ${conflict.expected_version} to ${conflict.current_version}. The latest tree was loaded; review it before trying the operation again.`,
+    );
+    await refreshMindMap();
+  };
   const nodeMutation = useMutation({
     mutationFn: async (command: MindMapNodeMutationCommand) => {
       if (!mapId || !treeQuery.data) throw new Error("Mind Map is not loaded");
@@ -164,16 +179,13 @@ export function MindMapPage() {
       } else if (result.node?.id) {
         setSelectedId(result.node.id);
       }
-      await treeQuery.refetch();
+      await refreshMindMap();
     },
     onError: async (error) => {
       const conflict = getMindMapVersionConflict(error);
       if (!conflict) return;
       setMutationMode(null);
-      setVersionConflictMessage(
-        `This Mind Map changed from version ${conflict.expected_version} to ${conflict.current_version}. The latest tree was loaded; review it before trying the operation again.`,
-      );
-      await treeQuery.refetch();
+      await handleVersionConflict(conflict);
     },
   });
   const openMutation = (mode: MindMapNodeMutationMode) => {
@@ -214,7 +226,7 @@ export function MindMapPage() {
           </Button>
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-2xl font-semibold tracking-tight">{map.title}</h1>
-            <Badge variant="secondary">v{map.version}</Badge>
+            <Badge variant="secondary" data-testid="mind-map-current-version">v{map.version}</Badge>
             <Badge variant="outline">{map.generation_status}</Badge>
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
@@ -326,6 +338,21 @@ export function MindMapPage() {
             )}
           </CardContent>
         </Card>
+      </div>
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
+        <MindMapOutlinePanel
+          mapId={mapId}
+          currentVersion={map.version}
+          nodes={treeQuery.data.nodes}
+          onChanged={refreshMindMap}
+          onConflict={handleVersionConflict}
+        />
+        <MindMapRevisionPanel
+          mapId={mapId}
+          currentVersion={map.version}
+          onChanged={refreshMindMap}
+          onConflict={handleVersionConflict}
+        />
       </div>
       <MindMapNodeMutationDialog
         mode={mutationMode}

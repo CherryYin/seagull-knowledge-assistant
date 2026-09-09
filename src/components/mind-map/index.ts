@@ -5,3 +5,5 @@ export type {
   MindMapNodeMutationCommand,
   MindMapNodeMutationMode,
 } from "./MindMapNodeMutationDialog";
+export { MindMapOutlinePanel } from "./MindMapOutlinePanel";
+export { MindMapRevisionPanel } from "./MindMapRevisionPanel";
