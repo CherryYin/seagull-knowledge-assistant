@@ -4,8 +4,9 @@ import pytest
 from fastapi import HTTPException
 
 from pkg.models.application.asset import Asset
+from pkg.models.foundation.wiki import WikiPage
 from pkg.schemas.application.asset import AssetCreate, AssetProvenance, AssetUpdate
-from pkg.services.application.assets import create_asset, update_asset
+from pkg.services.application.assets import create_asset, list_asset_knowledge_lineage, update_asset
 
 
 class _ScalarResult:
@@ -14,6 +15,63 @@ class _ScalarResult:
 
     def scalars(self):
         return iter(self._items)
+
+
+@pytest.mark.asyncio
+async def test_list_asset_knowledge_lineage_distinguishes_promotions_from_references():
+    session = AsyncMock()
+    distilled = Asset(
+        id="asset-distilled",
+        user_id="user-1",
+        asset_type="research_brief",
+        status="draft",
+        title="Distilled Asset",
+        source_refs=[],
+        note_refs=["note-target"],
+        wiki_refs=[],
+        metadata_={
+            "asset_workspace_v1": {
+                "contribution": {"summary": "A reusable architecture decision."},
+                "knowledge_candidates": [{
+                    "id": "knowledge-1",
+                    "candidate_type": "note",
+                    "action": "create",
+                    "status": "promoted",
+                    "claim_refs": ["claim-1", "claim-2"],
+                    "promoted_target_type": "note",
+                    "promoted_target_id": "note-target",
+                    "promoted_at": "2026-09-08T08:00:00+00:00",
+                }],
+            }
+        },
+    )
+    referenced = Asset(
+        id="asset-referenced",
+        user_id="user-1",
+        asset_type="blog_post",
+        status="published",
+        title="Referencing Asset",
+        source_refs=[],
+        note_refs=["note-target"],
+        wiki_refs=[],
+        metadata_={},
+    )
+    session.execute.return_value = _ScalarResult([distilled, referenced])
+
+    result = await list_asset_knowledge_lineage(
+        session,
+        user_id="user-1",
+        target_type="note",
+        target_id="note-target",
+    )
+
+    assert result.target_type == "note"
+    assert result.target_id == "note-target"
+    assert [item.relation for item in result.items] == ["distilled", "referenced"]
+    assert result.items[0].candidate_id == "knowledge-1"
+    assert result.items[0].claim_refs == ["claim-1", "claim-2"]
+    assert result.items[0].contribution_summary == "A reusable architecture decision."
+    assert result.items[1].candidate_id is None
 
 
 @pytest.mark.asyncio
@@ -48,6 +106,7 @@ async def test_create_asset_persists_asset_when_refs_exist():
             user_id="user-1",
             body=AssetCreate(
                 title="Draft post",
+                outline="# Draft post\n\n## Evidence",
                 draft_content="# Draft",
                 source_refs=["src-1"],
                 note_refs=["note-1"],
@@ -65,6 +124,7 @@ async def test_create_asset_persists_asset_when_refs_exist():
     assert asset.title == "Draft post"
     assert asset.asset_type == "blog_post"
     assert asset.status == "draft"
+    assert asset.outline == "# Draft post\n\n## Evidence"
     assert asset.draft_content == "# Draft"
     assert asset.metadata_["opinion_notes"] == "Take a strong stance"
     assert asset.metadata_["style_notes"] == "Write analytically"
@@ -153,6 +213,59 @@ async def test_update_asset_persists_opinion_and_style_notes():
 
     assert updated.metadata_["opinion_notes"] == "Take a stance"
     assert updated.metadata_["style_notes"] == "Write crisply"
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_update_asset_with_wiki_ref_does_not_require_legacy_wiki_metadata():
+    session = AsyncMock()
+    asset = Asset(
+        id="asset-1",
+        user_id="user-1",
+        asset_type="blog_post",
+        status="draft",
+        title="Draft post",
+        brief="brief",
+        outline=None,
+        draft_content="# Draft",
+        reference_notes=None,
+        editor_feedback=None,
+        source_refs=[],
+        note_refs=[],
+        wiki_refs=["wiki-1"],
+        export_format=None,
+        exported_at=None,
+        published_at=None,
+        metadata_={},
+    )
+    wiki = WikiPage(
+        id="wiki-1",
+        user_id="user-1",
+        title="Wiki One",
+        page_type="topic",
+        content="# Wiki",
+        domains=[],
+        tags=[],
+        derived_from_notes=[],
+        derived_from_sources=[],
+        open_questions=[],
+        needs_recompile=False,
+    )
+    asset_result = MagicMock()
+    asset_result.scalar_one_or_none.return_value = asset
+    wiki_result = MagicMock()
+    wiki_result.scalars.return_value = iter([wiki])
+    session.execute.side_effect = [asset_result, _ScalarResult(["wiki-1"]), wiki_result]
+
+    updated = await update_asset(
+        session,
+        user_id="user-1",
+        asset_id="asset-1",
+        body=AssetUpdate(title="Updated title"),
+    )
+
+    assert updated.title == "Updated title"
+    assert "wiki_claims" not in (updated.metadata_ or {})
     session.commit.assert_awaited_once()
 
 

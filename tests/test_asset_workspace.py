@@ -136,6 +136,66 @@ async def test_revise_asset_intent_appends_previous_intent_to_history():
 
 
 @pytest.mark.asyncio
+async def test_revise_asset_intent_invalidates_downstream_decisions():
+    from pkg.services.application.asset_workspace import revise_asset_intent
+
+    metadata = _workspace_metadata(
+        revision=7,
+        evidence=[{
+            "id": "evidence-1",
+            "target_type": "source",
+            "target_id": "source-1",
+            "relation": "supports",
+            "summary": "Old evidence.",
+            "status": "accepted",
+            "authorship": "agent",
+            "intent_revision": 1,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }],
+        claims=[{
+            "id": "claim-1",
+            "content": "Old claim.",
+            "kind": "synthesis",
+            "status": "accepted",
+            "supporting_evidence": ["evidence-1"],
+            "contradicting_evidence": [],
+            "agent_confidence": "high",
+            "authorship": "agent",
+            "intent_revision": 1,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "user_edited": False,
+        }],
+    )
+    metadata["asset_workspace_v1"]["contribution"] = {
+        "id": "contribution-1",
+        "kind": "synthesis",
+        "summary": "Old contribution.",
+        "claim_refs": ["claim-1"],
+        "status": "accepted",
+        "authorship": "agent",
+        "attribution": "agent_synthesis",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "user_edited": False,
+    }
+    metadata["asset_workspace_v1"]["knowledge_candidates"] = [_kept_candidate()]
+    session = AsyncMock()
+    asset = _make_asset(metadata=metadata)
+
+    with patch("pkg.services.application.asset_workspace._get_asset_for_update", new=AsyncMock(return_value=asset)):
+        workspace = await revise_asset_intent(
+            session,
+            user_id="user-1",
+            asset_id="asset-1",
+            body=_intent_request(base_workspace_revision=7, question="A new question"),
+        )
+
+    assert workspace.evidence[0].status == "stale"
+    assert workspace.claims[0].status == "superseded"
+    assert workspace.contribution.status == "rejected"
+    assert workspace.knowledge_candidates[0].status == "rejected"
+
+
+@pytest.mark.asyncio
 async def test_revise_asset_intent_rejects_stale_workspace_revision():
     from pkg.services.application.asset_workspace import revise_asset_intent
 

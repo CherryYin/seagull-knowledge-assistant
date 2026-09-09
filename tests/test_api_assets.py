@@ -71,6 +71,32 @@ async def test_list_assets_route_returns_items_and_total():
 
 
 @pytest.mark.asyncio
+async def test_asset_knowledge_lineage_route_delegates_to_service():
+    from pkg.api.assets import get_asset_knowledge_lineage_route
+    from pkg.schemas.application.asset import AssetKnowledgeLineageList
+
+    fake_user = MagicMock(id="user-1")
+    session = AsyncMock()
+    lineage = AssetKnowledgeLineageList(target_type="wiki", target_id="wiki-1", items=[])
+
+    with patch("pkg.api.assets.list_asset_knowledge_lineage", new=AsyncMock(return_value=lineage)) as mock_list:
+        result = await get_asset_knowledge_lineage_route(
+            target_type="wiki",
+            target_id="wiki-1",
+            user=fake_user,
+            session=session,
+        )
+
+    assert result.target_id == "wiki-1"
+    mock_list.assert_awaited_once_with(
+        session,
+        user_id="user-1",
+        target_type="wiki",
+        target_id="wiki-1",
+    )
+
+
+@pytest.mark.asyncio
 async def test_newsletter_automation_routes_delegate_to_services():
     from pkg.api.assets import (
         get_newsletter_automation_route,

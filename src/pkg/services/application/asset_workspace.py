@@ -36,9 +36,19 @@ def audit_asset_workspace(asset: Asset, workspace: dict):
     blocking: list[AssetQualityFinding] = []
     warnings: list[AssetQualityFinding] = []
     intent = workspace.get("intent")
-    evidence = {item.get("id"): item for item in workspace.get("evidence", []) if item.get("id")}
-    claims = {item.get("id"): item for item in workspace.get("claims", []) if item.get("id")}
-    candidates = [item for item in workspace.get("knowledge_candidates", []) if item.get("status") not in {"rejected", "promoted"}]
+    intent_revision = intent.get("revision") if isinstance(intent, dict) else None
+    evidence = {
+        item.get("id"): item
+        for item in workspace.get("evidence", [])
+        if item.get("id") and item.get("intent_revision") == intent_revision
+    }
+    claims = {
+        item.get("id"): item
+        for item in workspace.get("claims", [])
+        if item.get("id") and item.get("intent_revision") == intent_revision
+    }
+    linked_candidates = [item for item in workspace.get("knowledge_candidates", []) if item.get("status") != "rejected"]
+    candidates = [item for item in linked_candidates if item.get("status") != "promoted"]
 
     def block(identifier: str, title: str, detail: str):
         blocking.append(AssetQualityFinding(id=identifier, severity="P0", title=title, detail=detail))
@@ -48,9 +58,9 @@ def audit_asset_workspace(asset: Asset, workspace: dict):
 
     if not intent:
         block("PKG-INTENT-001", "Confirmed intent is missing", "Define and confirm the asset question, goal, and audience before promotion.")
-    if not candidates and not (asset.draft_content or "").strip():
+    if not linked_candidates and not (asset.draft_content or "").strip():
         block("PKG-CONTENT-001", "Generated content is missing", "Create a Knowledge Candidate or add draft content before quality review.")
-    if not candidates and (asset.draft_content or "").strip():
+    if not linked_candidates and (asset.draft_content or "").strip():
         warn("PKG-CANDIDATE-001", "Draft is not linked to a Knowledge Candidate", "Create a candidate so claims, evidence, and promotion decisions remain traceable.")
 
     for candidate in candidates:
@@ -197,6 +207,19 @@ async def revise_asset_intent(
 
     next_workspace_revision = current_workspace_revision + 1
     next_intent_revision = int(current_intent.get("revision", 0)) + 1 if isinstance(current_intent, dict) else 1
+    if isinstance(current_intent, dict):
+        for item in workspace.get("evidence") or []:
+            if item.get("status") in {"proposed", "accepted"}:
+                item["status"] = "stale"
+        for item in workspace.get("claims") or []:
+            if item.get("status") not in {"rejected", "superseded"}:
+                item["status"] = "superseded"
+        contribution = workspace.get("contribution")
+        if isinstance(contribution, dict) and contribution.get("status") != "rejected":
+            contribution["status"] = "rejected"
+        for item in workspace.get("knowledge_candidates") or []:
+            if item.get("status") in {"proposed", "kept"}:
+                item["status"] = "rejected"
     intent = {
         "revision": next_intent_revision,
         "question": body.question.strip(),

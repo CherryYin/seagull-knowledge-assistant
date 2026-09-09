@@ -17,6 +17,7 @@ class AssetProvenance(BaseModel):
 class AssetCreate(BaseModel):
     title: str
     brief: str | None = None
+    outline: str | None = None
     draft_content: str | None = None
     asset_type: str = Field(default="blog_post", pattern=ASSET_TYPE_PATTERN)
     status: str = Field(default="draft", pattern=ASSET_STATUS_PATTERN)
@@ -75,6 +76,26 @@ class AssetRead(BaseModel):
 class AssetList(BaseModel):
     items: list[AssetRead]
     total: int
+
+
+class AssetKnowledgeLineageItem(BaseModel):
+    asset_id: str
+    asset_title: str
+    asset_type: str
+    asset_status: str
+    relation: Literal["distilled", "referenced"]
+    candidate_id: str | None = None
+    candidate_type: Literal["note", "wiki"] | None = None
+    candidate_action: Literal["create", "update"] | None = None
+    claim_refs: list[str] = Field(default_factory=list)
+    contribution_summary: str | None = None
+    promoted_at: datetime | None = None
+
+
+class AssetKnowledgeLineageList(BaseModel):
+    target_type: Literal["note", "wiki"]
+    target_id: str
+    items: list[AssetKnowledgeLineageItem] = Field(default_factory=list)
 
 
 class AttachReferencesRequest(BaseModel):

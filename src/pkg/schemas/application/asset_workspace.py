@@ -81,7 +81,7 @@ class AssetEvidenceRead(BaseModel):
     relation: Literal["supports", "contradicts", "context", "unverified"]
     summary: str
     fragment_selector: dict | None = None
-    status: Literal["proposed", "accepted", "rejected"]
+    status: Literal["proposed", "accepted", "rejected", "stale"]
     authorship: Literal["agent"] = "agent"
     intent_revision: int = Field(ge=1)
     source_session_id: str | None = None

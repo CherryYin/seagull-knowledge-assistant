@@ -11,7 +11,12 @@ from pkg.models.application.asset import Asset
 from pkg.models.foundation.note import Note
 from pkg.models.foundation.source import Source
 from pkg.models.foundation.wiki import WikiPage
-from pkg.schemas.application.asset import AssetCreate, AssetUpdate
+from pkg.schemas.application.asset import (
+    AssetCreate,
+    AssetKnowledgeLineageItem,
+    AssetKnowledgeLineageList,
+    AssetUpdate,
+)
 from pkg.services.application.blog_generation import check_readiness
 from pkg.services.application.production_memory import record_asset_production_event
 
@@ -117,6 +122,7 @@ async def create_asset(session: AsyncSession, *, user_id: str, body: AssetCreate
         status=body.status,
         title=body.title,
         brief=body.brief,
+        outline=body.outline,
         draft_content=body.draft_content,
         source_refs=body.source_refs,
         note_refs=body.note_refs,
@@ -146,6 +152,58 @@ async def list_assets(session: AsyncSession, *, user_id: str, asset_type: str | 
     total = (await session.execute(select(func.count()).select_from(Asset).where(*filters))).scalar() or 0
     rows = await session.execute(select(Asset).where(*filters).order_by(Asset.updated_at.desc()).offset(offset).limit(limit))
     return list(rows.scalars()), total
+
+
+async def list_asset_knowledge_lineage(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    target_type: str,
+    target_id: str,
+) -> AssetKnowledgeLineageList:
+    reference_column = Asset.note_refs if target_type == "note" else Asset.wiki_refs
+    rows = await session.execute(
+        select(Asset)
+        .where(Asset.user_id == user_id, reference_column.contains([target_id]))
+        .order_by(Asset.updated_at.desc())
+    )
+    items: list[AssetKnowledgeLineageItem] = []
+    for asset in rows.scalars():
+        workspace = (asset.metadata_ or {}).get(WORKSPACE_METADATA_KEY)
+        candidates = workspace.get("knowledge_candidates", []) if isinstance(workspace, dict) else []
+        contribution = workspace.get("contribution") if isinstance(workspace, dict) else None
+        matching_candidates = [
+            candidate
+            for candidate in candidates
+            if isinstance(candidate, dict)
+            and candidate.get("status") == "promoted"
+            and candidate.get("promoted_target_type") == target_type
+            and candidate.get("promoted_target_id") == target_id
+        ]
+        if not matching_candidates:
+            items.append(AssetKnowledgeLineageItem(
+                asset_id=asset.id,
+                asset_title=asset.title,
+                asset_type=asset.asset_type,
+                asset_status=asset.status,
+                relation="referenced",
+            ))
+            continue
+        for candidate in matching_candidates:
+            items.append(AssetKnowledgeLineageItem(
+                asset_id=asset.id,
+                asset_title=asset.title,
+                asset_type=asset.asset_type,
+                asset_status=asset.status,
+                relation="distilled",
+                candidate_id=candidate.get("id"),
+                candidate_type=candidate.get("candidate_type"),
+                candidate_action=candidate.get("action"),
+                claim_refs=candidate.get("claim_refs") or [],
+                contribution_summary=contribution.get("summary") if isinstance(contribution, dict) else None,
+                promoted_at=candidate.get("promoted_at"),
+            ))
+    return AssetKnowledgeLineageList(target_type=target_type, target_id=target_id, items=items)
 
 
 async def get_asset(session: AsyncSession, *, user_id: str, asset_id: str) -> Asset:
@@ -289,7 +347,8 @@ async def _inject_wiki_claims_metadata(
     wiki_rows = list(rows.scalars())
     claims: list[dict] = []
     for wiki in wiki_rows:
-        for claim in (wiki.metadata_ or {}).get("claims", []) if isinstance(wiki.metadata_, dict) else []:
+        wiki_metadata = getattr(wiki, "metadata_", None)
+        for claim in (wiki_metadata or {}).get("claims", []) if isinstance(wiki_metadata, dict) else []:
             if not isinstance(claim, dict):
                 continue
             enriched = dict(claim)

@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Query
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +12,7 @@ from pkg.schemas.application.asset import (
     AssetExportResult,
     AssetQualityAuditResult,
     AssetFeedbackNoteResult,
+    AssetKnowledgeLineageList,
     AssetList,
     AssetPublishFeedbackUpdate,
     AssetRead,
@@ -33,7 +36,7 @@ from pkg.schemas.application.asset_workspace import (
     AssetWorkspaceRead,
 )
 from pkg.schemas.note import NoteCreate
-from pkg.services.application.assets import create_asset, delete_asset, get_asset, list_assets, update_asset
+from pkg.services.application.assets import create_asset, delete_asset, get_asset, list_asset_knowledge_lineage, list_assets, update_asset
 from pkg.services.application.asset_workspace import (
     decide_asset_claim,
     decide_asset_contribution,
@@ -108,6 +111,21 @@ async def run_newsletter_automation_route(
     session: AsyncSession = Depends(get_session),
 ):
     return await generate_newsletter(session, user_id=user.id, force=True)
+
+
+@router.get("/knowledge-lineage", response_model=AssetKnowledgeLineageList)
+async def get_asset_knowledge_lineage_route(
+    target_type: Literal["note", "wiki"],
+    target_id: str = Query(min_length=1),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await list_asset_knowledge_lineage(
+        session,
+        user_id=user.id,
+        target_type=target_type,
+        target_id=target_id,
+    )
 
 
 @router.get("/{asset_id}", response_model=AssetRead)
