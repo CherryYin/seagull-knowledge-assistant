@@ -6,13 +6,13 @@ export interface MindMapTreeNode {
   label: string;
 }
 
-export interface MindMapPositionedNode extends MindMapTreeNode {
+export type MindMapPositionedNode<TNode extends MindMapTreeNode = MindMapTreeNode> = TNode & {
   depth: number;
   side: -1 | 0 | 1;
   position: { x: number; y: number };
   width: number;
   height: number;
-}
+};
 
 export interface MindMapLayoutEdge {
   id: string;
@@ -20,22 +20,22 @@ export interface MindMapLayoutEdge {
   target: string;
 }
 
-export interface MindMapLayoutResult {
-  nodes: MindMapPositionedNode[];
+export interface MindMapLayoutResult<TNode extends MindMapTreeNode = MindMapTreeNode> {
+  nodes: MindMapPositionedNode<TNode>[];
   edges: MindMapLayoutEdge[];
   bounds: { minX: number; minY: number; maxX: number; maxY: number };
   maxDepth: number;
 }
 
 const NODE_WIDTH = 196;
-const NODE_HEIGHT = 56;
+const NODE_HEIGHT = 88;
 const ROOT_WIDTH = 220;
-const ROOT_HEIGHT = 64;
+const ROOT_HEIGHT = 96;
 const LEVEL_GAP = 92;
 const ROW_GAP = 28;
 
-function buildChildren(nodes: MindMapTreeNode[]) {
-  const children = new Map<string, MindMapTreeNode[]>();
+function buildChildren<TNode extends MindMapTreeNode>(nodes: TNode[]) {
+  const children = new Map<string, TNode[]>();
   for (const node of nodes) {
     if (!node.parentId) continue;
     const siblings = children.get(node.parentId) ?? [];
@@ -60,20 +60,20 @@ export function createMindMapFixture(count: number): MindMapTreeNode[] {
   });
 }
 
-export function filterMindMapTree(
-  nodes: MindMapTreeNode[],
+export function filterMindMapTree<TNode extends MindMapTreeNode>(
+  nodes: TNode[],
   collapsedIds: ReadonlySet<string>,
   focusId: string | null,
-): MindMapTreeNode[] {
+): TNode[] {
   if (nodes.length === 0) return [];
   const byId = new Map(nodes.map((node) => [node.id, node]));
   const children = buildChildren(nodes);
   const root = focusId ? byId.get(focusId) : nodes.find((node) => node.parentId === null);
   if (!root) return [];
 
-  const visible: MindMapTreeNode[] = [];
-  const visit = (node: MindMapTreeNode, parentId: string | null) => {
-    visible.push({ ...node, parentId });
+  const visible: TNode[] = [];
+  const visit = (node: TNode, parentId: string | null) => {
+    visible.push({ ...node, parentId } as TNode);
     if (collapsedIds.has(node.id)) return;
     for (const child of children.get(node.id) ?? []) visit(child, node.id);
   };
@@ -81,15 +81,15 @@ export function filterMindMapTree(
   return visible;
 }
 
-export function layoutMindMapTree(
-  nodes: MindMapTreeNode[],
+export function layoutMindMapTree<TNode extends MindMapTreeNode>(
+  nodes: TNode[],
   mode: MindMapLayoutMode,
-): MindMapLayoutResult {
+): MindMapLayoutResult<TNode> {
   if (nodes.length === 0) {
     return { nodes: [], edges: [], bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0 }, maxDepth: 0 };
   }
 
-  const byId = new Map<string, MindMapTreeNode>();
+  const byId = new Map<string, TNode>();
   for (const node of nodes) {
     if (byId.has(node.id)) throw new Error(`Duplicate Mind Map node ID: ${node.id}`);
     byId.set(node.id, node);
@@ -140,7 +140,7 @@ export function layoutMindMapTree(
   for (const side of [-1, 1] as const) {
     let cursor = 0;
     const sideNodeIds: string[] = [];
-    const place = (node: MindMapTreeNode, depth: number): number => {
+    const place = (node: TNode, depth: number): number => {
       maxDepth = Math.max(maxDepth, depth);
       sideNodeIds.push(node.id);
       const descendants = children.get(node.id) ?? [];
@@ -167,7 +167,7 @@ export function layoutMindMapTree(
     }
   }
 
-  const positioned = nodes.map<MindMapPositionedNode>((node) => {
+  const positioned = nodes.map<MindMapPositionedNode<TNode>>((node) => {
     const center = centers.get(node.id);
     if (!center) throw new Error(`Mind Map node ${node.id} is disconnected from the root`);
     const width = node.id === root.id ? ROOT_WIDTH : NODE_WIDTH;

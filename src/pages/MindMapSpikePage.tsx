@@ -1,20 +1,13 @@
 import { useMemo, useState } from "react";
 import {
-  Background,
-  Controls,
-  MiniMap,
-  ReactFlow,
-  type Edge,
-  type Node,
-} from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
+  MindMapCanvas,
+  type MindMapCanvasMetrics,
+} from "@/components/mind-map";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   createMindMapFixture,
-  filterMindMapTree,
-  layoutMindMapTree,
   type MindMapLayoutMode,
 } from "@/lib/mind-map-layout";
 
@@ -26,6 +19,11 @@ export function MindMapSpikePage() {
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
   const [focusId, setFocusId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [metrics, setMetrics] = useState<MindMapCanvasMetrics>({
+    visibleCount: 0,
+    maxDepth: 0,
+    layoutDurationMs: 0,
+  });
 
   const fixture = useMemo(() => createMindMapFixture(nodeCount), [nodeCount]);
   const childrenByParent = useMemo(() => {
@@ -35,40 +33,8 @@ export function MindMapSpikePage() {
     }
     return result;
   }, [fixture]);
-  const measurement = useMemo(() => {
-    const visibleTree = filterMindMapTree(fixture, collapsedIds, focusId);
-    const startedAt = performance.now();
-    const layout = layoutMindMapTree(visibleTree, layoutMode);
-    return { layout, durationMs: performance.now() - startedAt };
-  }, [collapsedIds, fixture, focusId, layoutMode]);
-  const flowNodes = useMemo<Node[]>(() => measurement.layout.nodes.map((node) => ({
-    id: node.id,
-    position: node.position,
-    data: { label: node.label },
-    draggable: false,
-    selectable: true,
-    style: {
-      width: node.width,
-      minHeight: node.height,
-      borderRadius: node.depth === 0 ? 18 : 12,
-      border: node.id === selectedId ? "2px solid hsl(var(--primary))" : "1px solid hsl(var(--border))",
-      background: node.depth === 0 ? "hsl(var(--primary))" : "hsl(var(--background))",
-      color: node.depth === 0 ? "hsl(var(--primary-foreground))" : "hsl(var(--foreground))",
-      boxShadow: "0 8px 24px rgb(15 23 42 / 0.08)",
-      fontSize: 12,
-      lineHeight: 1.4,
-      padding: "10px 12px",
-      textAlign: "center",
-    },
-  })), [measurement.layout.nodes, selectedId]);
-  const flowEdges = useMemo<Edge[]>(() => measurement.layout.edges.map((edge) => ({
-    ...edge,
-    type: "smoothstep",
-    style: { stroke: "hsl(var(--muted-foreground))", strokeWidth: 1.3 },
-  })), [measurement.layout.edges]);
   const selectedNode = fixture.find((node) => node.id === selectedId) ?? null;
   const selectedHasChildren = selectedId ? (childrenByParent.get(selectedId) ?? 0) > 0 : false;
-  const viewKey = `${nodeCount}:${layoutMode}:${focusId ?? "root"}:${[...collapsedIds].sort().join(",")}`;
 
   const resetFixture = (count: (typeof NODE_COUNTS)[number]) => {
     setNodeCount(count);
@@ -109,9 +75,9 @@ export function MindMapSpikePage() {
 
           <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-5">
             <Metric label="Fixture nodes" value={String(nodeCount)} />
-            <Metric label="Visible nodes" value={String(measurement.layout.nodes.length)} testId="mind-map-visible-count" />
-            <Metric label="Max depth" value={String(measurement.layout.maxDepth)} />
-            <Metric label="Layout time" value={`${measurement.durationMs.toFixed(2)} ms`} testId="mind-map-layout-duration" />
+            <Metric label="Visible nodes" value={String(metrics.visibleCount)} testId="mind-map-visible-count" />
+            <Metric label="Max depth" value={String(metrics.maxDepth)} />
+            <Metric label="Layout time" value={`${metrics.layoutDurationMs.toFixed(2)} ms`} testId="mind-map-layout-duration" />
             <Metric label="Mode" value={layoutMode} />
           </div>
 
@@ -155,26 +121,16 @@ export function MindMapSpikePage() {
 
       <Card className="overflow-hidden">
         <CardContent className="p-0">
-          <div className="h-[680px] bg-muted/20" data-testid="mind-map-canvas">
-            <ReactFlow
-              key={viewKey}
-              nodes={flowNodes}
-              edges={flowEdges}
-              fitView
-              fitViewOptions={{ padding: 0.18, maxZoom: 1.1 }}
-              minZoom={0.08}
-              maxZoom={1.8}
-              nodesDraggable={false}
-              nodesConnectable={false}
-              elementsSelectable
-              onNodeClick={(_, node) => setSelectedId(node.id)}
-              proOptions={{ hideAttribution: true }}
-            >
-              <Background gap={24} size={1} />
-              <MiniMap pannable zoomable />
-              <Controls showInteractive={false} />
-            </ReactFlow>
-          </div>
+          <MindMapCanvas
+            nodes={fixture}
+            layoutMode={layoutMode}
+            collapsedIds={collapsedIds}
+            focusId={focusId}
+            selectedId={selectedId}
+            onSelectedIdChange={setSelectedId}
+            onCollapsedIdsChange={setCollapsedIds}
+            onMetricsChange={setMetrics}
+          />
         </CardContent>
       </Card>
     </div>

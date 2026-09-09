@@ -13,6 +13,7 @@ const NotesPage = lazy(() => import("./pages/NotesPage").then((m) => ({ default:
 const NoteDetailPage = lazy(() => import("./pages/NoteDetailPage").then((m) => ({ default: m.NoteDetailPage })));
 const SourcesPage = lazy(() => import("./pages/SourcesPage").then((m) => ({ default: m.SourcesPage })));
 const SourceDetailPage = lazy(() => import("./pages/SourceDetailPage").then((m) => ({ default: m.SourceDetailPage })));
+const MindMapPage = lazy(() => import("./pages/MindMapPage").then((m) => ({ default: m.MindMapPage })));
 const SkillsPage = lazy(() => import("./pages/SkillsPage").then((m) => ({ default: m.SkillsPage })));
 const StatsPage = lazy(() => import("./pages/StatsPage").then((m) => ({ default: m.StatsPage })));
 const CalendarPage = lazy(() => import("./pages/CalendarPage").then((m) => ({ default: m.CalendarPage })));
@@ -110,6 +111,7 @@ export default function App() {
             <Route path="/notes/:id" element={<LazyPage><NoteDetailPage /></LazyPage>} />
             <Route path="/sources" element={<LazyPage><SourcesPage /></LazyPage>} />
             <Route path="/sources/:id" element={<LazyPage><SourceDetailPage /></LazyPage>} />
+            <Route path="/mind-maps/:mapId" element={<LazyPage><MindMapPage /></LazyPage>} />
             <Route path="/calendar" element={<LazyPage><CalendarPage /></LazyPage>} />
             <Route path="/completed" element={<LazyPage><CompletedTodosPage /></LazyPage>} />
             <Route path="/completed-todos" element={<Navigate to="/completed" replace />} />
