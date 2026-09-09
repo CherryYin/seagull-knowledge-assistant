@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from pkg.schemas.application.mind_map import (
     MindMapCreate,
+    MindMapDelete,
     MindMapNodeRead,
     MindMapNodeUpdate,
     MindMapOutlineApply,
@@ -80,6 +81,9 @@ def test_versioned_updates_require_an_explicit_change() -> None:
     note_clear = MindMapNodeUpdate(base_version=3, note=None)
     assert "note" in note_clear.model_fields_set
     assert note_clear.note is None
+
+    with pytest.raises(ValidationError):
+        MindMapDelete(base_version=3, confirm=False)
 
 
 def test_replace_outline_requires_explicit_confirmation() -> None:

@@ -44,6 +44,7 @@ from pkg.api.discovery import router as discovery_router
 from pkg.api.paper_discovery import router as paper_discovery_router
 from pkg.api.system import router as system_router
 from pkg.api.system_jobs import router as system_jobs_router
+from pkg.api.mind_maps import router as mind_maps_router
 
 # Configure root logger so all app loggers (pkg.*) output to console.
 # This is a no-op if logging is already configured (e.g. by pytest).
@@ -148,6 +149,7 @@ app.include_router(discovery_router, prefix="/discovery", tags=["discovery"])
 app.include_router(paper_discovery_router, prefix="/paper-discovery", tags=["paper-discovery"])
 app.include_router(system_router, prefix="/system", tags=["system"])
 app.include_router(system_jobs_router, prefix="/system/jobs", tags=["system-jobs"])
+app.include_router(mind_maps_router, prefix="/mind-maps", tags=["mind-maps"])
 
 
 @app.get("/health")

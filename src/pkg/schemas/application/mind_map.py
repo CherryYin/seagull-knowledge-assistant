@@ -83,6 +83,10 @@ class MindMapVersionedRequest(BaseModel):
     base_version: int = Field(ge=1)
 
 
+class MindMapDelete(MindMapVersionedRequest):
+    confirm: Literal[True]
+
+
 class MindMapNodeCreate(MindMapVersionedRequest):
     parent_id: str = Field(min_length=1, max_length=200)
     content: str = Field(min_length=1, max_length=2000)
@@ -259,6 +263,11 @@ class MindMapReferenceRead(BaseModel):
     relation: MindMapReferenceRelation
     fragment_selector: dict[str, Any] | None = None
     created_at: datetime
+
+
+class MindMapReferenceList(BaseModel):
+    items: list[MindMapReferenceRead] = Field(default_factory=list)
+    total: int = Field(ge=0)
 
 
 class MindMapTreeRead(BaseModel):

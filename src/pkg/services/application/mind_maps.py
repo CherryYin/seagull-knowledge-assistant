@@ -1,0 +1,1724 @@
+import re
+import uuid
+from copy import deepcopy
+from dataclasses import dataclass
+from datetime import UTC, datetime
+
+from fastapi import HTTPException
+from pydantic import ValidationError
+from sqlalchemy import delete, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from pkg.models.application.asset import Asset
+from pkg.models.application.mind_map import (
+    MindMap,
+    MindMapNode,
+    MindMapNodeReference,
+    MindMapRevision,
+)
+from pkg.models.foundation.note import Note
+from pkg.models.foundation.source import Source, SourceChunk
+from pkg.models.foundation.wiki import WikiPage
+from pkg.schemas.application.mind_map import (
+    MindMapCreate,
+    MindMapDelete,
+    MindMapNodeCreate,
+    MindMapNodeDelete,
+    MindMapNodeMove,
+    MindMapNodeUpdate,
+    MindMapOutlineApply,
+    MindMapReferenceCreate,
+    MindMapReferenceDelete,
+    MindMapReferenceUpdate,
+    MindMapRevisionRestore,
+    MindMapSnapshotRead,
+    MindMapTreeRead,
+    MindMapUpdate,
+)
+
+
+@dataclass(frozen=True)
+class MindMapSummaryState:
+    map: MindMap
+    root_id: str
+
+
+@dataclass(frozen=True)
+class MindMapTreeState:
+    map: MindMap
+    root_id: str
+    nodes: list[MindMapNode]
+    references: list[MindMapNodeReference]
+
+
+@dataclass(frozen=True)
+class MindMapMutationState:
+    map: MindMap
+    root_id: str
+    previous_version: int
+    current_version: int
+    revision: MindMapRevision
+    node: MindMapNode | None = None
+    reference: MindMapNodeReference | None = None
+    deleted_node_ids: tuple[str, ...] = ()
+    outline_mode: str | None = None
+    created_count: int = 0
+    updated_count: int = 0
+    moved_count: int = 0
+    deleted_count: int = 0
+
+
+@dataclass(frozen=True)
+class ParsedMindMapOutlineNode:
+    content: str
+    display_id: int | None
+    parent_index: int | None
+    depth: int
+
+
+MAX_OUTLINE_NODES = 500
+OUTLINE_LINE_PATTERN = re.compile(r"^(?P<indent> *)(?:- )(?P<content>.+)$")
+OUTLINE_ID_PATTERN = re.compile(r"^\[id:(?P<display_id>\d+)\]\s+(?P<content>.+)$")
+
+
+def make_mind_map_id() -> str:
+    return f"mind-map-{uuid.uuid4().hex[:12]}"
+
+
+def make_mind_map_node_id() -> str:
+    return f"mind-map-node-{uuid.uuid4().hex[:12]}"
+
+
+def make_mind_map_revision_id() -> str:
+    return f"mind-map-revision-{uuid.uuid4().hex[:12]}"
+
+
+def make_mind_map_reference_id() -> str:
+    return f"mind-map-reference-{uuid.uuid4().hex[:12]}"
+
+
+def parse_mind_map_outline(outline: str) -> list[ParsedMindMapOutlineNode]:
+    parsed: list[ParsedMindMapOutlineNode] = []
+    parent_by_depth: dict[int, int] = {}
+    seen_display_ids: set[int] = set()
+    previous_depth = 0
+    for line_number, raw_line in enumerate(outline.splitlines(), start=1):
+        if not raw_line.strip():
+            continue
+        if "\t" in raw_line:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Outline line {line_number} must use spaces, not tabs",
+            )
+        match = OUTLINE_LINE_PATTERN.fullmatch(raw_line)
+        if match is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Outline line {line_number} must be a '- ' list item",
+            )
+        indent = len(match.group("indent"))
+        if indent % 2:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Outline line {line_number} indentation must use two-space levels",
+            )
+        depth = indent // 2
+        if parsed and depth > previous_depth + 1:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Outline line {line_number} skips a parent level",
+            )
+        if not parsed and depth != 0:
+            raise HTTPException(status_code=422, detail="Outline root must start at depth zero")
+        if parsed and depth == 0:
+            raise HTTPException(status_code=422, detail="Outline must contain exactly one root")
+
+        raw_content = match.group("content").strip()
+        id_match = OUTLINE_ID_PATTERN.fullmatch(raw_content)
+        display_id = int(id_match.group("display_id")) if id_match else None
+        content = (id_match.group("content") if id_match else raw_content).strip()
+        if not content:
+            raise HTTPException(status_code=422, detail=f"Outline line {line_number} is blank")
+        if len(content) > 2000:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Outline line {line_number} exceeds the node content limit",
+            )
+        if display_id is not None:
+            if display_id < 1:
+                raise HTTPException(status_code=422, detail="Outline display IDs must be positive")
+            if display_id in seen_display_ids:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Outline repeats display ID {display_id}",
+                )
+            seen_display_ids.add(display_id)
+
+        parent_index = parent_by_depth.get(depth - 1) if depth else None
+        if depth and parent_index is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Outline line {line_number} has no parent",
+            )
+        parsed.append(
+            ParsedMindMapOutlineNode(
+                content=content,
+                display_id=display_id,
+                parent_index=parent_index,
+                depth=depth,
+            )
+        )
+        if len(parsed) > MAX_OUTLINE_NODES:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Outline exceeds the {MAX_OUTLINE_NODES}-node limit",
+            )
+        parent_by_depth[depth] = len(parsed) - 1
+        for stale_depth in [value for value in parent_by_depth if value > depth]:
+            parent_by_depth.pop(stale_depth)
+        previous_depth = depth
+    if not parsed:
+        raise HTTPException(status_code=422, detail="Outline must contain at least one node")
+    return parsed
+
+
+def _not_found() -> HTTPException:
+    return HTTPException(status_code=404, detail="Mind Map not found")
+
+
+def _invalid_tree(map_id: str, message: str) -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={"code": "mind_map_invalid_tree", "map_id": map_id, "message": message},
+    )
+
+
+def _validate_version(mind_map: MindMap, expected_version: int) -> None:
+    if mind_map.version == expected_version:
+        return
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "mind_map_version_conflict",
+            "message": (
+                f"Mind Map version changed: expected {expected_version}, "
+                f"current {mind_map.version}"
+            ),
+            "map_id": mind_map.id,
+            "expected_version": expected_version,
+            "current_version": mind_map.version,
+        },
+    )
+
+
+def _root_node(map_id: str, nodes: list[MindMapNode]) -> MindMapNode:
+    node_by_id = {node.id: node for node in nodes}
+    if len(node_by_id) != len(nodes):
+        raise _invalid_tree(map_id, "Node IDs are not unique")
+    if len({node.display_id for node in nodes}) != len(nodes):
+        raise _invalid_tree(map_id, "Display IDs are not unique")
+    roots = [node for node in nodes if node.parent_id is None]
+    if len(roots) != 1:
+        raise _invalid_tree(map_id, f"Expected exactly one root node, found {len(roots)}")
+    for node in nodes:
+        if node.map_id != map_id:
+            raise _invalid_tree(map_id, f"Node {node.id} belongs to another Map")
+        visited: set[str] = set()
+        current = node
+        while current.parent_id is not None:
+            if current.id in visited:
+                raise _invalid_tree(map_id, f"Cycle detected at node {current.id}")
+            visited.add(current.id)
+            parent = node_by_id.get(current.parent_id)
+            if parent is None:
+                raise _invalid_tree(map_id, f"Node {current.id} references a missing parent")
+            current = parent
+    return roots[0]
+
+
+def _node_by_id(map_id: str, nodes: list[MindMapNode], node_id: str) -> MindMapNode:
+    node = next((candidate for candidate in nodes if candidate.id == node_id), None)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Mind Map node not found")
+    if node.map_id != map_id:
+        raise HTTPException(status_code=404, detail="Mind Map node not found")
+    return node
+
+
+def _subtree_ids(nodes: list[MindMapNode], node_id: str) -> set[str]:
+    children: dict[str, list[str]] = {}
+    for node in nodes:
+        if node.parent_id is not None:
+            children.setdefault(node.parent_id, []).append(node.id)
+    descendants: set[str] = set()
+    pending = [node_id]
+    while pending:
+        current = pending.pop()
+        if current in descendants:
+            continue
+        descendants.add(current)
+        pending.extend(children.get(current, []))
+    return descendants
+
+
+def _ordered_siblings(
+    nodes: list[MindMapNode],
+    parent_id: str | None,
+    *,
+    exclude_id: str | None = None,
+) -> list[MindMapNode]:
+    return sorted(
+        (
+            node
+            for node in nodes
+            if node.parent_id == parent_id and node.id != exclude_id
+        ),
+        key=lambda node: (node.position, node.display_id, node.id),
+    )
+
+
+def _set_sibling_positions(nodes: list[MindMapNode], now: datetime) -> None:
+    for position, node in enumerate(nodes):
+        if node.position != position:
+            node.position = position
+            node.updated_at = now
+
+
+def _insert_at_position(
+    nodes: list[MindMapNode],
+    node: MindMapNode,
+    *,
+    parent_id: str,
+    position: int | None,
+    now: datetime,
+) -> None:
+    old_parent_id = node.parent_id
+    target_siblings = _ordered_siblings(nodes, parent_id, exclude_id=node.id)
+    target_position = len(target_siblings) if position is None else position
+    if target_position > len(target_siblings):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Node position {target_position} exceeds sibling count {len(target_siblings)}",
+        )
+
+    if old_parent_id is not None and old_parent_id != parent_id:
+        _set_sibling_positions(
+            _ordered_siblings(nodes, old_parent_id, exclude_id=node.id),
+            now,
+        )
+    node.parent_id = parent_id
+    target_siblings.insert(target_position, node)
+    _set_sibling_positions(target_siblings, now)
+
+
+def _serialize_datetime(value: datetime | None) -> str | None:
+    return value.isoformat() if value is not None else None
+
+
+def _snapshot(
+    mind_map: MindMap,
+    root_id: str,
+    nodes: list[MindMapNode],
+    references: list[MindMapNodeReference],
+) -> dict:
+    return {
+        "map": {
+            "id": mind_map.id,
+            "user_id": mind_map.user_id,
+            "owner_type": mind_map.owner_type,
+            "owner_id": mind_map.owner_id,
+            "purpose": mind_map.purpose,
+            "title": mind_map.title,
+            "root_node_id": root_id,
+            "layout_mode": mind_map.layout_mode,
+            "version": mind_map.version,
+            "basis_revision": deepcopy(mind_map.basis_revision or {}),
+            "generation_status": mind_map.generation_status,
+            "created_at": _serialize_datetime(mind_map.created_at),
+            "updated_at": _serialize_datetime(mind_map.updated_at),
+        },
+        "nodes": [
+            {
+                "id": node.id,
+                "map_id": node.map_id,
+                "display_id": node.display_id,
+                "parent_id": node.parent_id,
+                "content": node.content,
+                "note": node.note,
+                "position": node.position,
+                "collapsed": node.collapsed,
+                "node_kind": node.node_kind,
+                "updated_by": node.updated_by,
+                "created_at": _serialize_datetime(node.created_at),
+                "updated_at": _serialize_datetime(node.updated_at),
+            }
+            for node in sorted(nodes, key=lambda item: item.display_id)
+        ],
+        "references": [
+            {
+                "id": reference.id,
+                "map_id": reference.map_id,
+                "node_id": reference.node_id,
+                "ref_type": reference.ref_type,
+                "ref_id": reference.ref_id,
+                "relation": reference.relation,
+                "fragment_selector": deepcopy(reference.fragment_selector),
+                "created_at": _serialize_datetime(reference.created_at),
+            }
+            for reference in sorted(references, key=lambda item: item.id)
+        ],
+    }
+
+
+async def _validate_owner(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    owner_type: str,
+    owner_id: str,
+) -> None:
+    model = Source if owner_type == "source" else Asset
+    row = await session.execute(
+        select(model.id).where(model.id == owner_id, model.user_id == user_id)
+    )
+    if row.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail=f"{owner_type.title()} owner not found")
+
+
+async def _get_map_for_update(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    map_id: str,
+) -> MindMap:
+    row = await session.execute(
+        select(MindMap)
+        .where(MindMap.id == map_id, MindMap.user_id == user_id)
+        .with_for_update()
+    )
+    mind_map = row.scalar_one_or_none()
+    if mind_map is None:
+        raise _not_found()
+    return mind_map
+
+
+async def _get_map(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    map_id: str,
+) -> MindMap:
+    row = await session.execute(
+        select(MindMap).where(MindMap.id == map_id, MindMap.user_id == user_id)
+    )
+    mind_map = row.scalar_one_or_none()
+    if mind_map is None:
+        raise _not_found()
+    return mind_map
+
+
+async def _load_nodes(
+    session: AsyncSession,
+    *,
+    map_id: str,
+    for_update: bool = False,
+) -> list[MindMapNode]:
+    statement = (
+        select(MindMapNode)
+        .where(MindMapNode.map_id == map_id)
+        .order_by(MindMapNode.display_id)
+    )
+    if for_update:
+        statement = statement.with_for_update()
+    rows = await session.execute(statement)
+    return list(rows.scalars().all())
+
+
+async def _load_references(
+    session: AsyncSession,
+    *,
+    map_id: str,
+) -> list[MindMapNodeReference]:
+    rows = await session.execute(
+        select(MindMapNodeReference)
+        .where(MindMapNodeReference.map_id == map_id)
+        .order_by(MindMapNodeReference.id)
+    )
+    return list(rows.scalars().all())
+
+
+async def _validate_reference_target(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    mind_map: MindMap,
+    ref_type: str,
+    ref_id: str,
+) -> None:
+    found = False
+    if ref_type in {"source", "note", "wiki"}:
+        model = {"source": Source, "note": Note, "wiki": WikiPage}[ref_type]
+        row = await session.execute(
+            select(model.id).where(model.id == ref_id, model.user_id == user_id)
+        )
+        found = row.scalar_one_or_none() is not None
+    elif ref_type == "source_chunk":
+        try:
+            chunk_id = int(ref_id)
+        except ValueError:
+            chunk_id = None
+        if chunk_id is not None and str(chunk_id) == ref_id:
+            row = await session.execute(
+                select(SourceChunk.id)
+                .join(Source, Source.id == SourceChunk.source_id)
+                .where(SourceChunk.id == chunk_id, Source.user_id == user_id)
+            )
+            found = row.scalar_one_or_none() is not None
+    else:
+        if mind_map.owner_type == "asset":
+            row = await session.execute(
+                select(Asset).where(
+                    Asset.id == mind_map.owner_id,
+                    Asset.user_id == user_id,
+                )
+            )
+            asset = row.scalar_one_or_none()
+            if asset is not None:
+                metadata = asset.metadata_ or {}
+                workspace = metadata.get("asset_workspace_v1")
+                workspace = workspace if isinstance(workspace, dict) else {}
+                if ref_type == "evidence":
+                    candidates = workspace.get("evidence")
+                elif ref_type == "claim":
+                    candidates = workspace.get("claims")
+                else:
+                    document = metadata.get("asset_document")
+                    document = document if isinstance(document, dict) else {}
+                    candidates = document.get("blocks")
+                found = any(
+                    isinstance(candidate, dict) and candidate.get("id") == ref_id
+                    for candidate in candidates or []
+                )
+    if not found:
+        raise HTTPException(status_code=404, detail="Mind Map reference target not found")
+
+
+async def _get_reference_for_update(
+    session: AsyncSession,
+    *,
+    map_id: str,
+    node_id: str,
+    reference_id: str,
+) -> MindMapNodeReference:
+    row = await session.execute(
+        select(MindMapNodeReference)
+        .where(
+            MindMapNodeReference.id == reference_id,
+            MindMapNodeReference.map_id == map_id,
+            MindMapNodeReference.node_id == node_id,
+        )
+        .with_for_update()
+    )
+    reference = row.scalar_one_or_none()
+    if reference is None:
+        raise HTTPException(status_code=404, detail="Mind Map reference not found")
+    return reference
+
+
+async def _ensure_reference_unique(
+    session: AsyncSession,
+    *,
+    node_id: str,
+    ref_type: str,
+    ref_id: str,
+    relation: str,
+    exclude_id: str | None = None,
+) -> None:
+    statement = select(MindMapNodeReference.id).where(
+        MindMapNodeReference.node_id == node_id,
+        MindMapNodeReference.ref_type == ref_type,
+        MindMapNodeReference.ref_id == ref_id,
+        MindMapNodeReference.relation == relation,
+    )
+    if exclude_id is not None:
+        statement = statement.where(MindMapNodeReference.id != exclude_id)
+    row = await session.execute(statement)
+    if row.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail="Mind Map reference already exists")
+
+
+async def _record_revision(
+    session: AsyncSession,
+    *,
+    mind_map: MindMap,
+    root_id: str,
+    nodes: list[MindMapNode],
+    references: list[MindMapNodeReference],
+    actor_type: str,
+    actor_ref: str | None,
+    action: str,
+    summary: str,
+    now: datetime,
+) -> MindMapRevision:
+    revision = MindMapRevision(
+        id=make_mind_map_revision_id(),
+        map_id=mind_map.id,
+        version=mind_map.version,
+        actor_type=actor_type,
+        actor_ref=actor_ref,
+        action=action,
+        summary=summary,
+        snapshot=_snapshot(mind_map, root_id, nodes, references),
+        created_at=now,
+    )
+    session.add(revision)
+    return revision
+
+
+async def create_mind_map(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    body: MindMapCreate,
+    actor_type: str = "human",
+    actor_ref: str | None = None,
+) -> MindMapTreeState:
+    await _validate_owner(
+        session,
+        user_id=user_id,
+        owner_type=body.owner_type,
+        owner_id=body.owner_id,
+    )
+    existing_row = await session.execute(
+        select(MindMap.id).where(
+            MindMap.user_id == user_id,
+            MindMap.owner_type == body.owner_type,
+            MindMap.owner_id == body.owner_id,
+            MindMap.purpose == body.purpose,
+        )
+    )
+    if existing_row.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail="Mind Map already exists for this owner and purpose")
+
+    now = datetime.now(UTC)
+    mind_map = MindMap(
+        id=make_mind_map_id(),
+        user_id=user_id,
+        title=body.title,
+        owner_type=body.owner_type,
+        owner_id=body.owner_id,
+        purpose=body.purpose,
+        layout_mode=body.layout_mode,
+        version=1,
+        basis_revision=deepcopy(body.basis_revision),
+        generation_status="manual",
+        created_at=now,
+        updated_at=now,
+    )
+    root = MindMapNode(
+        id=make_mind_map_node_id(),
+        map_id=mind_map.id,
+        display_id=1,
+        parent_id=None,
+        content=body.root_content or body.title,
+        note=None,
+        position=0,
+        collapsed=False,
+        node_kind=body.root_kind,
+        updated_by=actor_type,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(mind_map)
+    session.add(root)
+    revision = await _record_revision(
+        session,
+        mind_map=mind_map,
+        root_id=root.id,
+        nodes=[root],
+        references=[],
+        actor_type=actor_type,
+        actor_ref=actor_ref,
+        action="map_created",
+        summary="Created Mind Map and root node",
+        now=now,
+    )
+    await session.commit()
+    await session.refresh(mind_map)
+    await session.refresh(root)
+    await session.refresh(revision)
+    return MindMapTreeState(map=mind_map, root_id=root.id, nodes=[root], references=[])
+
+
+async def list_mind_maps(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    owner_type: str | None = None,
+    owner_id: str | None = None,
+    purpose: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[MindMapSummaryState], int]:
+    filters = [MindMap.user_id == user_id]
+    if owner_type is not None:
+        filters.append(MindMap.owner_type == owner_type)
+    if owner_id is not None:
+        filters.append(MindMap.owner_id == owner_id)
+    if purpose is not None:
+        filters.append(MindMap.purpose == purpose)
+
+    rows = await session.execute(
+        select(MindMap)
+        .where(*filters)
+        .order_by(MindMap.updated_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    maps = list(rows.scalars().all())
+    count_row = await session.execute(select(func.count(MindMap.id)).where(*filters))
+    total = count_row.scalar_one()
+    if not maps:
+        return [], total
+
+    root_rows = await session.execute(
+        select(MindMapNode.map_id, MindMapNode.id).where(
+            MindMapNode.map_id.in_([mind_map.id for mind_map in maps]),
+            MindMapNode.parent_id.is_(None),
+        )
+    )
+    root_by_map = dict(root_rows.all())
+    summaries = []
+    for mind_map in maps:
+        root_id = root_by_map.get(mind_map.id)
+        if root_id is None:
+            raise _invalid_tree(mind_map.id, "Root node is missing")
+        summaries.append(MindMapSummaryState(map=mind_map, root_id=root_id))
+    return summaries, total
+
+
+async def get_mind_map_summary(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    map_id: str,
+) -> MindMapSummaryState:
+    mind_map = await _get_map(session, user_id=user_id, map_id=map_id)
+    root_rows = await session.execute(
+        select(MindMapNode.id).where(
+            MindMapNode.map_id == map_id,
+            MindMapNode.parent_id.is_(None),
+        )
+    )
+    root_ids = list(root_rows.scalars().all())
+    if len(root_ids) != 1:
+        raise _invalid_tree(map_id, f"Expected exactly one root node, found {len(root_ids)}")
+    return MindMapSummaryState(map=mind_map, root_id=root_ids[0])
+
+
+async def update_mind_map(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    map_id: str,
+    body: MindMapUpdate,
+    actor_type: str = "human",
+    actor_ref: str | None = None,
+) -> MindMapMutationState:
+    mind_map = await _get_map_for_update(session, user_id=user_id, map_id=map_id)
+    _validate_version(mind_map, body.base_version)
+    nodes = await _load_nodes(session, map_id=map_id, for_update=True)
+    root = _root_node(map_id, nodes)
+    data = body.model_dump(exclude_unset=True, exclude={"base_version"})
+    for key, value in data.items():
+        setattr(mind_map, key, value)
+    previous_version = mind_map.version
+    now = datetime.now(UTC)
+    mind_map.version += 1
+    mind_map.updated_at = now
+    references = await _load_references(session, map_id=map_id)
+    revision = await _record_revision(
+        session,
+        mind_map=mind_map,
+        root_id=root.id,
+        nodes=nodes,
+        references=references,
+        actor_type=actor_type,
+        actor_ref=actor_ref,
+        action="map_updated",
+        summary="Updated Mind Map settings",
+        now=now,
+    )
+    await session.commit()
+    await session.refresh(mind_map)
+    await session.refresh(revision)
+    return MindMapMutationState(
+        map=mind_map,
+        root_id=root.id,
+        previous_version=previous_version,
+        current_version=mind_map.version,
+        revision=revision,
+    )
+
+
+async def delete_mind_map(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    map_id: str,
+    body: MindMapDelete,
+) -> None:
+    mind_map = await _get_map_for_update(session, user_id=user_id, map_id=map_id)
+    _validate_version(mind_map, body.base_version)
+    await session.delete(mind_map)
+    await session.commit()
+
+
+async def get_mind_map_tree(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    map_id: str,
+) -> MindMapTreeState:
+    mind_map = await _get_map(session, user_id=user_id, map_id=map_id)
+    nodes = await _load_nodes(session, map_id=map_id)
+    root = _root_node(map_id, nodes)
+    references = await _load_references(session, map_id=map_id)
+    return MindMapTreeState(
+        map=mind_map,
+        root_id=root.id,
+        nodes=nodes,
+        references=references,
+    )
+
+
+async def add_mind_map_node(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    map_id: str,
+    body: MindMapNodeCreate,
+    actor_ref: str | None = None,
+) -> MindMapMutationState:
+    mind_map = await _get_map_for_update(session, user_id=user_id, map_id=map_id)
+    _validate_version(mind_map, body.base_version)
+    nodes = await _load_nodes(session, map_id=map_id, for_update=True)
+    root = _root_node(map_id, nodes)
+    _node_by_id(map_id, nodes, body.parent_id)
+
+    now = datetime.now(UTC)
+    node = MindMapNode(
+        id=make_mind_map_node_id(),
+        map_id=map_id,
+        display_id=max((item.display_id for item in nodes), default=0) + 1,
+        parent_id=body.parent_id,
+        content=body.content,
+        note=body.note,
+        position=0,
+        collapsed=False,
+        node_kind=body.node_kind,
+        updated_by=body.updated_by,
+        created_at=now,
+        updated_at=now,
+    )
+    _insert_at_position(
+        nodes,
+        node,
+        parent_id=body.parent_id,
+        position=body.position,
+        now=now,
+    )
+    nodes.append(node)
+    session.add(node)
+    previous_version = mind_map.version
+    mind_map.version += 1
+    mind_map.updated_at = now
+    references = await _load_references(session, map_id=map_id)
+    revision = await _record_revision(
+        session,
+        mind_map=mind_map,
+        root_id=root.id,
+        nodes=nodes,
+        references=references,
+        actor_type=body.updated_by,
+        actor_ref=actor_ref,
+        action="node_added",
+        summary=f"Added node {node.display_id}",
+        now=now,
+    )
+    await session.commit()
+    await session.refresh(mind_map)
+    await session.refresh(node)
+    await session.refresh(revision)
+    return MindMapMutationState(
+        map=mind_map,
+        root_id=root.id,
+        previous_version=previous_version,
+        current_version=mind_map.version,
+        revision=revision,
+        node=node,
+    )
+
+
+async def update_mind_map_node(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    map_id: str,
+    node_id: str,
+    body: MindMapNodeUpdate,
+    actor_ref: str | None = None,
+) -> MindMapMutationState:
+    mind_map = await _get_map_for_update(session, user_id=user_id, map_id=map_id)
+    _validate_version(mind_map, body.base_version)
+    nodes = await _load_nodes(session, map_id=map_id, for_update=True)
+    root = _root_node(map_id, nodes)
+    node = _node_by_id(map_id, nodes, node_id)
+    data = body.model_dump(exclude_unset=True, exclude={"base_version", "updated_by"})
+    for key, value in data.items():
+        setattr(node, key, value)
+    now = datetime.now(UTC)
+    node.updated_by = body.updated_by
+    node.updated_at = now
+    previous_version = mind_map.version
+    mind_map.version += 1
+    mind_map.updated_at = now
+    references = await _load_references(session, map_id=map_id)
+    revision = await _record_revision(
+        session,
+        mind_map=mind_map,
+        root_id=root.id,
+        nodes=nodes,
+        references=references,
+        actor_type=body.updated_by,
+        actor_ref=actor_ref,
+        action="node_updated",
+        summary=f"Updated node {node.display_id}",
+        now=now,
+    )
+    await session.commit()
+    await session.refresh(mind_map)
+    await session.refresh(node)
+    await session.refresh(revision)
+    return MindMapMutationState(
+        map=mind_map,
+        root_id=root.id,
+        previous_version=previous_version,
+        current_version=mind_map.version,
+        revision=revision,
+        node=node,
+    )
+
+
+async def move_mind_map_node(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    map_id: str,
+    node_id: str,
+    body: MindMapNodeMove,
+    actor_ref: str | None = None,
+) -> MindMapMutationState:
+    mind_map = await _get_map_for_update(session, user_id=user_id, map_id=map_id)
+    _validate_version(mind_map, body.base_version)
+    nodes = await _load_nodes(session, map_id=map_id, for_update=True)
+    root = _root_node(map_id, nodes)
+    node = _node_by_id(map_id, nodes, node_id)
+    _node_by_id(map_id, nodes, body.parent_id)
+    if node.id == root.id:
+        raise HTTPException(status_code=409, detail="Root node cannot be moved")
+    if body.parent_id in _subtree_ids(nodes, node.id):
+        raise HTTPException(status_code=409, detail="Node cannot be moved into its own subtree")
+
+    now = datetime.now(UTC)
+    _insert_at_position(
+        nodes,
+        node,
+        parent_id=body.parent_id,
+        position=body.position,
+        now=now,
+    )
+    node.updated_by = body.updated_by
+    node.updated_at = now
+    previous_version = mind_map.version
+    mind_map.version += 1
+    mind_map.updated_at = now
+    references = await _load_references(session, map_id=map_id)
+    revision = await _record_revision(
+        session,
+        mind_map=mind_map,
+        root_id=root.id,
+        nodes=nodes,
+        references=references,
+        actor_type=body.updated_by,
+        actor_ref=actor_ref,
+        action="node_moved",
+        summary=f"Moved node {node.display_id}",
+        now=now,
+    )
+    await session.commit()
+    await session.refresh(mind_map)
+    await session.refresh(node)
+    await session.refresh(revision)
+    return MindMapMutationState(
+        map=mind_map,
+        root_id=root.id,
+        previous_version=previous_version,
+        current_version=mind_map.version,
+        revision=revision,
+        node=node,
+    )
+
+
+async def delete_mind_map_node(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    map_id: str,
+    node_id: str,
+    body: MindMapNodeDelete,
+    actor_ref: str | None = None,
+) -> MindMapMutationState:
+    mind_map = await _get_map_for_update(session, user_id=user_id, map_id=map_id)
+    _validate_version(mind_map, body.base_version)
+    nodes = await _load_nodes(session, map_id=map_id, for_update=True)
+    root = _root_node(map_id, nodes)
+    node = _node_by_id(map_id, nodes, node_id)
+    if node.id == root.id:
+        raise HTTPException(status_code=409, detail="Root node cannot be deleted; delete the Map")
+
+    deleted_ids = _subtree_ids(nodes, node.id)
+    remaining_nodes = [item for item in nodes if item.id not in deleted_ids]
+    now = datetime.now(UTC)
+    _set_sibling_positions(
+        _ordered_siblings(remaining_nodes, node.parent_id),
+        now,
+    )
+    await session.execute(
+        delete(MindMapNode)
+        .where(MindMapNode.map_id == map_id, MindMapNode.id.in_(deleted_ids))
+        .execution_options(synchronize_session=False)
+    )
+    previous_version = mind_map.version
+    mind_map.version += 1
+    mind_map.updated_at = now
+    references = [
+        reference
+        for reference in await _load_references(session, map_id=map_id)
+        if reference.node_id not in deleted_ids
+    ]
+    revision = await _record_revision(
+        session,
+        mind_map=mind_map,
+        root_id=root.id,
+        nodes=remaining_nodes,
+        references=references,
+        actor_type=body.updated_by,
+        actor_ref=actor_ref,
+        action="node_deleted",
+        summary=f"Deleted node {node.display_id} and {len(deleted_ids) - 1} descendants",
+        now=now,
+    )
+    await session.commit()
+    await session.refresh(mind_map)
+    await session.refresh(revision)
+    return MindMapMutationState(
+        map=mind_map,
+        root_id=root.id,
+        previous_version=previous_version,
+        current_version=mind_map.version,
+        revision=revision,
+        deleted_node_ids=tuple(sorted(deleted_ids)),
+    )
+
+
+def _validate_outline_root(
+    root: MindMapNode,
+    parsed: list[ParsedMindMapOutlineNode],
+) -> None:
+    outline_root_id = parsed[0].display_id
+    if outline_root_id is not None and outline_root_id != root.display_id:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Outline root ID {outline_root_id} does not match "
+                f"Mind Map root ID {root.display_id}"
+            ),
+        )
+
+
+async def _merge_mind_map_outline(
+    session: AsyncSession,
+    *,
+    nodes: list[MindMapNode],
+    root: MindMapNode,
+    parsed: list[ParsedMindMapOutlineNode],
+    updated_by: str,
+    now: datetime,
+) -> tuple[list[MindMapNode], int, int, int]:
+    _validate_outline_root(root, parsed)
+    existing_by_display_id = {node.display_id: node for node in nodes}
+    original_state = {
+        node.id: (node.parent_id, node.position, node.content)
+        for node in nodes
+    }
+    parsed_nodes: dict[int, MindMapNode] = {0: root}
+    specified_children: dict[str, list[MindMapNode]] = {}
+    affected_parent_ids: set[str] = set()
+    next_display_id = max(existing_by_display_id) + 1
+    created_count = 0
+    updated_count = 0
+
+    if root.content != parsed[0].content:
+        root.content = parsed[0].content
+        root.updated_by = updated_by
+        root.updated_at = now
+        updated_count += 1
+
+    for index, item in enumerate(parsed[1:], start=1):
+        parent = parsed_nodes[item.parent_index]
+        if item.display_id is None:
+            node = MindMapNode(
+                id=make_mind_map_node_id(),
+                map_id=root.map_id,
+                display_id=next_display_id,
+                parent_id=parent.id,
+                content=item.content,
+                note=None,
+                position=0,
+                collapsed=False,
+                node_kind="topic",
+                updated_by=updated_by,
+                created_at=now,
+                updated_at=now,
+            )
+            next_display_id += 1
+            session.add(node)
+            await session.flush()
+            nodes.append(node)
+            created_count += 1
+        else:
+            node = existing_by_display_id.get(item.display_id)
+            if node is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Outline references unknown display ID {item.display_id}",
+                )
+            if node.id == root.id:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Mind Map root can only appear as the Outline root",
+                )
+            if node.content != item.content:
+                node.content = item.content
+                node.updated_by = updated_by
+                node.updated_at = now
+                updated_count += 1
+            if node.parent_id is not None:
+                affected_parent_ids.add(node.parent_id)
+            if node.parent_id != parent.id:
+                node.updated_by = updated_by
+                node.updated_at = now
+            node.parent_id = parent.id
+        parsed_nodes[index] = node
+        specified_children.setdefault(parent.id, []).append(node)
+        affected_parent_ids.add(parent.id)
+
+    for parent_id in affected_parent_ids:
+        specified = specified_children.get(parent_id, [])
+        specified_ids = {node.id for node in specified}
+        remaining = sorted(
+            (
+                node
+                for node in nodes
+                if node.parent_id == parent_id and node.id not in specified_ids
+            ),
+            key=lambda node: (
+                original_state.get(node.id, (None, node.position, ""))[1],
+                node.display_id,
+            ),
+        )
+        _set_sibling_positions([*specified, *remaining], now)
+
+    _root_node(root.map_id, nodes)
+    await session.flush()
+    moved_count = sum(
+        1
+        for node in nodes
+        if node.id in original_state
+        and (node.parent_id, node.position) != original_state[node.id][:2]
+    )
+    return nodes, created_count, updated_count, moved_count
+
+
+async def _replace_mind_map_outline(
+    session: AsyncSession,
+    *,
+    nodes: list[MindMapNode],
+    root: MindMapNode,
+    parsed: list[ParsedMindMapOutlineNode],
+    updated_by: str,
+    now: datetime,
+) -> tuple[list[MindMapNode], int, int, tuple[str, ...]]:
+    _validate_outline_root(root, parsed)
+    old_nodes = [node for node in nodes if node.id != root.id]
+    deleted_node_ids = tuple(sorted(node.id for node in old_nodes))
+    updated_count = 0
+    if root.content != parsed[0].content:
+        root.content = parsed[0].content
+        root.updated_by = updated_by
+        root.updated_at = now
+        updated_count = 1
+
+    explicit_ids = {
+        item.display_id
+        for item in parsed[1:]
+        if item.display_id is not None
+    }
+    if root.display_id in explicit_ids:
+        raise HTTPException(
+            status_code=422,
+            detail="Mind Map root can only appear as the Outline root",
+        )
+
+    await session.execute(
+        delete(MindMapNode)
+        .where(MindMapNode.map_id == root.map_id, MindMapNode.id != root.id)
+        .execution_options(synchronize_session=False)
+    )
+    await session.flush()
+
+    used_display_ids = {root.display_id, *explicit_ids}
+    next_display_id = max(
+        [node.display_id for node in nodes] + list(used_display_ids)
+    ) + 1
+    parsed_nodes: dict[int, MindMapNode] = {0: root}
+    sibling_counts: dict[str, int] = {}
+    replacement_nodes = [root]
+    for index, item in enumerate(parsed[1:], start=1):
+        parent = parsed_nodes[item.parent_index]
+        display_id = item.display_id
+        if display_id is None:
+            while next_display_id in used_display_ids:
+                next_display_id += 1
+            display_id = next_display_id
+            used_display_ids.add(display_id)
+            next_display_id += 1
+        position = sibling_counts.get(parent.id, 0)
+        sibling_counts[parent.id] = position + 1
+        node = MindMapNode(
+            id=make_mind_map_node_id(),
+            map_id=root.map_id,
+            display_id=display_id,
+            parent_id=parent.id,
+            content=item.content,
+            note=None,
+            position=position,
+            collapsed=False,
+            node_kind="topic",
+            updated_by=updated_by,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(node)
+        await session.flush()
+        parsed_nodes[index] = node
+        replacement_nodes.append(node)
+
+    _root_node(root.map_id, replacement_nodes)
+    return replacement_nodes, len(replacement_nodes) - 1, updated_count, deleted_node_ids
+
+
+async def apply_mind_map_outline(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    map_id: str,
+    body: MindMapOutlineApply,
+    actor_ref: str | None = None,
+) -> MindMapMutationState:
+    mind_map = await _get_map_for_update(session, user_id=user_id, map_id=map_id)
+    _validate_version(mind_map, body.base_version)
+    parsed = parse_mind_map_outline(body.outline)
+    nodes = await _load_nodes(session, map_id=map_id, for_update=True)
+    root = _root_node(map_id, nodes)
+    now = datetime.now(UTC)
+    deleted_node_ids: tuple[str, ...] = ()
+    deleted_count = 0
+    moved_count = 0
+    if body.mode == "merge":
+        nodes, created_count, updated_count, moved_count = await _merge_mind_map_outline(
+            session,
+            nodes=nodes,
+            root=root,
+            parsed=parsed,
+            updated_by=body.updated_by,
+            now=now,
+        )
+    else:
+        nodes, created_count, updated_count, deleted_node_ids = await _replace_mind_map_outline(
+            session,
+            nodes=nodes,
+            root=root,
+            parsed=parsed,
+            updated_by=body.updated_by,
+            now=now,
+        )
+        deleted_count = len(deleted_node_ids)
+
+    previous_version = mind_map.version
+    mind_map.version += 1
+    mind_map.updated_at = now
+    references = await _load_references(session, map_id=map_id)
+    revision = await _record_revision(
+        session,
+        mind_map=mind_map,
+        root_id=root.id,
+        nodes=nodes,
+        references=references,
+        actor_type=body.updated_by,
+        actor_ref=actor_ref,
+        action="outline_applied",
+        summary=(
+            f"Applied {body.mode} Outline: {created_count} created, "
+            f"{updated_count} updated, {moved_count} moved, {deleted_count} deleted"
+        ),
+        now=now,
+    )
+    await session.commit()
+    await session.refresh(mind_map)
+    await session.refresh(revision)
+    return MindMapMutationState(
+        map=mind_map,
+        root_id=root.id,
+        previous_version=previous_version,
+        current_version=mind_map.version,
+        revision=revision,
+        deleted_node_ids=deleted_node_ids,
+        outline_mode=body.mode,
+        created_count=created_count,
+        updated_count=updated_count,
+        moved_count=moved_count,
+        deleted_count=deleted_count,
+    )
+
+
+async def create_mind_map_reference(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    map_id: str,
+    node_id: str,
+    body: MindMapReferenceCreate,
+    actor_ref: str | None = None,
+) -> MindMapMutationState:
+    mind_map = await _get_map_for_update(session, user_id=user_id, map_id=map_id)
+    _validate_version(mind_map, body.base_version)
+    nodes = await _load_nodes(session, map_id=map_id, for_update=True)
+    root = _root_node(map_id, nodes)
+    _node_by_id(map_id, nodes, node_id)
+    await _validate_reference_target(
+        session,
+        user_id=user_id,
+        mind_map=mind_map,
+        ref_type=body.ref_type,
+        ref_id=body.ref_id,
+    )
+    await _ensure_reference_unique(
+        session,
+        node_id=node_id,
+        ref_type=body.ref_type,
+        ref_id=body.ref_id,
+        relation=body.relation,
+    )
+
+    now = datetime.now(UTC)
+    reference = MindMapNodeReference(
+        id=make_mind_map_reference_id(),
+        map_id=map_id,
+        node_id=node_id,
+        ref_type=body.ref_type,
+        ref_id=body.ref_id,
+        relation=body.relation,
+        fragment_selector=deepcopy(body.fragment_selector),
+        created_at=now,
+    )
+    session.add(reference)
+    await session.flush()
+    previous_version = mind_map.version
+    mind_map.version += 1
+    mind_map.updated_at = now
+    references = await _load_references(session, map_id=map_id)
+    revision = await _record_revision(
+        session,
+        mind_map=mind_map,
+        root_id=root.id,
+        nodes=nodes,
+        references=references,
+        actor_type=body.updated_by,
+        actor_ref=actor_ref,
+        action="reference_added",
+        summary=f"Added {body.ref_type} reference to node {node_id}",
+        now=now,
+    )
+    await session.commit()
+    await session.refresh(mind_map)
+    await session.refresh(reference)
+    await session.refresh(revision)
+    return MindMapMutationState(
+        map=mind_map,
+        root_id=root.id,
+        previous_version=previous_version,
+        current_version=mind_map.version,
+        revision=revision,
+        reference=reference,
+    )
+
+
+async def update_mind_map_reference(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    map_id: str,
+    node_id: str,
+    reference_id: str,
+    body: MindMapReferenceUpdate,
+    actor_ref: str | None = None,
+) -> MindMapMutationState:
+    mind_map = await _get_map_for_update(session, user_id=user_id, map_id=map_id)
+    _validate_version(mind_map, body.base_version)
+    nodes = await _load_nodes(session, map_id=map_id, for_update=True)
+    root = _root_node(map_id, nodes)
+    _node_by_id(map_id, nodes, node_id)
+    reference = await _get_reference_for_update(
+        session,
+        map_id=map_id,
+        node_id=node_id,
+        reference_id=reference_id,
+    )
+    next_relation = body.relation or reference.relation
+    if next_relation != reference.relation:
+        await _ensure_reference_unique(
+            session,
+            node_id=node_id,
+            ref_type=reference.ref_type,
+            ref_id=reference.ref_id,
+            relation=next_relation,
+            exclude_id=reference.id,
+        )
+
+    now = datetime.now(UTC)
+    reference.relation = next_relation
+    if "fragment_selector" in body.model_fields_set:
+        reference.fragment_selector = deepcopy(body.fragment_selector)
+    previous_version = mind_map.version
+    mind_map.version += 1
+    mind_map.updated_at = now
+    references = await _load_references(session, map_id=map_id)
+    revision = await _record_revision(
+        session,
+        mind_map=mind_map,
+        root_id=root.id,
+        nodes=nodes,
+        references=references,
+        actor_type=body.updated_by,
+        actor_ref=actor_ref,
+        action="reference_updated",
+        summary=f"Updated reference {reference.id}",
+        now=now,
+    )
+    await session.commit()
+    await session.refresh(mind_map)
+    await session.refresh(reference)
+    await session.refresh(revision)
+    return MindMapMutationState(
+        map=mind_map,
+        root_id=root.id,
+        previous_version=previous_version,
+        current_version=mind_map.version,
+        revision=revision,
+        reference=reference,
+    )
+
+
+async def delete_mind_map_reference(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    map_id: str,
+    node_id: str,
+    reference_id: str,
+    body: MindMapReferenceDelete,
+    actor_ref: str | None = None,
+) -> MindMapMutationState:
+    mind_map = await _get_map_for_update(session, user_id=user_id, map_id=map_id)
+    _validate_version(mind_map, body.base_version)
+    nodes = await _load_nodes(session, map_id=map_id, for_update=True)
+    root = _root_node(map_id, nodes)
+    _node_by_id(map_id, nodes, node_id)
+    reference = await _get_reference_for_update(
+        session,
+        map_id=map_id,
+        node_id=node_id,
+        reference_id=reference_id,
+    )
+
+    now = datetime.now(UTC)
+    await session.delete(reference)
+    await session.flush()
+    previous_version = mind_map.version
+    mind_map.version += 1
+    mind_map.updated_at = now
+    references = await _load_references(session, map_id=map_id)
+    revision = await _record_revision(
+        session,
+        mind_map=mind_map,
+        root_id=root.id,
+        nodes=nodes,
+        references=references,
+        actor_type=body.updated_by,
+        actor_ref=actor_ref,
+        action="reference_deleted",
+        summary=f"Deleted reference {reference.id}",
+        now=now,
+    )
+    await session.commit()
+    await session.refresh(mind_map)
+    await session.refresh(revision)
+    return MindMapMutationState(
+        map=mind_map,
+        root_id=root.id,
+        previous_version=previous_version,
+        current_version=mind_map.version,
+        revision=revision,
+        reference=reference,
+    )
+
+
+async def list_mind_map_references_by_target(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    ref_type: str,
+    ref_id: str,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[MindMapNodeReference], int]:
+    filters = (
+        MindMap.user_id == user_id,
+        MindMapNodeReference.ref_type == ref_type,
+        MindMapNodeReference.ref_id == ref_id,
+    )
+    rows = await session.execute(
+        select(MindMapNodeReference)
+        .join(MindMap, MindMap.id == MindMapNodeReference.map_id)
+        .where(*filters)
+        .order_by(MindMapNodeReference.created_at.desc(), MindMapNodeReference.id)
+        .limit(limit)
+        .offset(offset)
+    )
+    total_row = await session.execute(
+        select(func.count())
+        .select_from(MindMapNodeReference)
+        .join(MindMap, MindMap.id == MindMapNodeReference.map_id)
+        .where(*filters)
+    )
+    return list(rows.scalars().all()), total_row.scalar_one()
+
+
+async def list_mind_map_revisions(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    map_id: str,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[MindMapRevision], int]:
+    await _get_map(session, user_id=user_id, map_id=map_id)
+    rows = await session.execute(
+        select(MindMapRevision)
+        .where(MindMapRevision.map_id == map_id)
+        .order_by(MindMapRevision.version.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    count_row = await session.execute(
+        select(func.count(MindMapRevision.id)).where(MindMapRevision.map_id == map_id)
+    )
+    return list(rows.scalars().all()), count_row.scalar_one()
+
+
+async def get_mind_map_revision(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    map_id: str,
+    version: int,
+) -> MindMapRevision:
+    await _get_map(session, user_id=user_id, map_id=map_id)
+    row = await session.execute(
+        select(MindMapRevision).where(
+            MindMapRevision.map_id == map_id,
+            MindMapRevision.version == version,
+        )
+    )
+    revision = row.scalar_one_or_none()
+    if revision is None:
+        raise HTTPException(status_code=404, detail="Mind Map revision not found")
+    return revision
+
+
+def _validated_restore_snapshot(
+    mind_map: MindMap,
+    revision: MindMapRevision,
+) -> tuple[MindMapSnapshotRead, MindMapTreeRead]:
+    try:
+        snapshot = MindMapSnapshotRead.model_validate(revision.snapshot)
+        tree = MindMapTreeRead(
+            map=snapshot.map,
+            root_id=snapshot.map.root_node_id,
+            nodes=snapshot.nodes,
+            references=snapshot.references,
+        )
+    except ValidationError as exc:
+        raise _invalid_tree(mind_map.id, "Revision snapshot is not a valid Mind Map tree") from exc
+
+    snapshot_map = snapshot.map
+    identity_fields = ("id", "user_id", "owner_type", "owner_id", "purpose")
+    mismatches = [
+        field
+        for field in identity_fields
+        if getattr(snapshot_map, field) != getattr(mind_map, field)
+    ]
+    if mismatches:
+        raise _invalid_tree(
+            mind_map.id,
+            f"Revision snapshot changes immutable Map identity: {', '.join(mismatches)}",
+        )
+    if snapshot_map.version != revision.version:
+        raise _invalid_tree(mind_map.id, "Revision snapshot version does not match Revision")
+    return snapshot, tree
+
+
+async def _restore_nodes(
+    session: AsyncSession,
+    *,
+    map_id: str,
+    snapshot: MindMapSnapshotRead,
+) -> list[MindMapNode]:
+    pending = {node.id: node for node in snapshot.nodes}
+    restored: list[MindMapNode] = []
+    restored_ids: set[str] = set()
+    while pending:
+        ready = [
+            node
+            for node in pending.values()
+            if node.parent_id is None or node.parent_id in restored_ids
+        ]
+        if not ready:
+            raise _invalid_tree(map_id, "Revision snapshot nodes cannot be restored in parent order")
+        ready.sort(key=lambda node: (node.parent_id or "", node.position, node.display_id))
+        for node in ready:
+            restored_node = MindMapNode(
+                id=node.id,
+                map_id=map_id,
+                display_id=node.display_id,
+                parent_id=node.parent_id,
+                content=node.content,
+                note=node.note,
+                position=node.position,
+                collapsed=node.collapsed,
+                node_kind=node.node_kind,
+                updated_by=node.updated_by,
+                created_at=node.created_at,
+                updated_at=node.updated_at,
+            )
+            session.add(restored_node)
+            restored.append(restored_node)
+            restored_ids.add(node.id)
+            pending.pop(node.id)
+        await session.flush()
+    return restored
+
+
+async def restore_mind_map_revision(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    map_id: str,
+    version: int,
+    body: MindMapRevisionRestore,
+    actor_type: str = "human",
+    actor_ref: str | None = None,
+) -> MindMapMutationState:
+    mind_map = await _get_map_for_update(session, user_id=user_id, map_id=map_id)
+    _validate_version(mind_map, body.base_version)
+    target_row = await session.execute(
+        select(MindMapRevision).where(
+            MindMapRevision.map_id == map_id,
+            MindMapRevision.version == version,
+        )
+    )
+    target_revision = target_row.scalar_one_or_none()
+    if target_revision is None:
+        raise HTTPException(status_code=404, detail="Mind Map revision not found")
+    if target_revision.version >= mind_map.version:
+        raise HTTPException(status_code=409, detail="Only a historical Mind Map revision can be restored")
+
+    snapshot, tree = _validated_restore_snapshot(mind_map, target_revision)
+    current_nodes = await _load_nodes(session, map_id=map_id, for_update=True)
+    await session.execute(
+        delete(MindMapNode)
+        .where(MindMapNode.map_id == map_id)
+        .execution_options(synchronize_session=False)
+    )
+    await session.flush()
+
+    restored_nodes = await _restore_nodes(session, map_id=map_id, snapshot=snapshot)
+    restored_references = []
+    for reference in snapshot.references:
+        restored_reference = MindMapNodeReference(
+            id=reference.id,
+            map_id=map_id,
+            node_id=reference.node_id,
+            ref_type=reference.ref_type,
+            ref_id=reference.ref_id,
+            relation=reference.relation,
+            fragment_selector=deepcopy(reference.fragment_selector),
+            created_at=reference.created_at,
+        )
+        session.add(restored_reference)
+        restored_references.append(restored_reference)
+    await session.flush()
+
+    previous_version = mind_map.version
+    now = datetime.now(UTC)
+    mind_map.title = snapshot.map.title
+    mind_map.layout_mode = snapshot.map.layout_mode
+    mind_map.basis_revision = deepcopy(snapshot.map.basis_revision)
+    mind_map.generation_status = snapshot.map.generation_status
+    mind_map.version = previous_version + 1
+    mind_map.updated_at = now
+    revision = await _record_revision(
+        session,
+        mind_map=mind_map,
+        root_id=tree.root_id,
+        nodes=restored_nodes,
+        references=restored_references,
+        actor_type=actor_type,
+        actor_ref=actor_ref,
+        action="restored",
+        summary=f"Restored Mind Map from version {target_revision.version}",
+        now=now,
+    )
+    await session.commit()
+    await session.refresh(mind_map)
+    await session.refresh(revision)
+    return MindMapMutationState(
+        map=mind_map,
+        root_id=tree.root_id,
+        previous_version=previous_version,
+        current_version=mind_map.version,
+        revision=revision,
+        deleted_node_ids=tuple(sorted(node.id for node in current_nodes)),
+    )
