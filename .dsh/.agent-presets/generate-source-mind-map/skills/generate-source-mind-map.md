@@ -13,7 +13,7 @@ Do not request, emit, or reconstruct the complete PDF. The request must contain 
 - `source_id` and Source metadata.
 - `basis_revision` with `source_content_hash`, `chunk_count`, and `chunk_revision`.
 - At most 40 `section_summaries`.
-- Between 1 and 120 `chunk_summaries`.
+- Between 1 and 80 `chunk_summaries`; large PDFs are evenly sampled and accompanied by section summaries.
 - No raw PDF body, base64 data, file bytes, or unrestricted Source text.
 
 ## Workflow
@@ -24,10 +24,14 @@ Do not request, emit, or reconstruct the complete PDF. The request must contain 
 5. Use `claim`, `evidence`, or `knowledge` only when at least one supplied Chunk supports the node.
 6. Use `question` for ambiguity, missing evidence, limitations, or follow-up investigation.
 7. Keep sibling `position` values unique and contiguous from zero.
-8. Keep the complete proposal at or below 80 nodes.
-9. Reference only Chunk IDs present in `input_summary.chunk_summaries`.
+8. Target 18–28 nodes and never exceed 32 nodes. For large PDFs, keep only 2–3 high-value children per section.
+9. Reference only Chunk IDs present in the supplied generation context.
 10. Include a short exact `quote` only when the supplied Chunk summary contains it; otherwise use page-only navigation or omit the selector.
-11. Call `propose_source_mind_map` exactly once with the bounded input summary and complete proposal.
+11. After a short internal plan, call `propose_source_mind_map` exactly once with the complete proposal. Do not echo `input_summary`; PKG validates Chunk ownership and quote authenticity against the Source.
+12. Do not emit analysis, Markdown, a JSON draft, or a textual Proposal before the tool call. Omit `note` unless it materially improves interpretation.
+
+## Selected Branch Expansion
+When the request includes `expansion_target`, preserve its `map_id`, `base_version`, and `target_node_id` exactly in the Tool call. Build a compact 5–12 node Proposal whose single root is a `topic` with content exactly equal to `expansion_target.content`; that root is an existing anchor and must have no new reference. Add only relevant descendants for that branch. Do not rewrite unrelated branches, the Map title, or layout.
 
 ## Exact Tool Shape
 Do not invent alternative node keys such as `id`, `title`, `text`, `type`, `children`, `branches`, or `items`. Use this exact flat-tree shape:
@@ -39,14 +43,6 @@ Do not invent alternative node keys such as `id`, `title`, `text`, `type`, `chil
     "source_content_hash": "hash-or-null",
     "chunk_count": 3,
     "chunk_revision": null
-  },
-  "input_summary": {
-    "section_summaries": [
-      {"title": "Section", "summary": "Bounded summary", "chunk_ids": [11]}
-    ],
-    "chunk_summaries": [
-      {"chunk_id": 11, "chunk_index": 0, "summary": "Bounded Chunk summary"}
-    ]
   },
   "proposal": {
     "title": "Document Map",

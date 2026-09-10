@@ -1,9 +1,9 @@
 export const name = "source-mind-map-proposal";
 
 export const SOURCE_MIND_MAP_INPUT_LIMITS = Object.freeze({
-  maxNodes: 80,
+  maxNodes: 32,
   maxSectionSummaries: 40,
-  maxChunkSummaries: 120,
+  maxChunkSummaries: 80,
   maxSummaryCharacters: 60_000,
 });
 
@@ -220,8 +220,8 @@ function normalizeReference(value, index, availableChunks) {
   const reference = objectValue(value, `proposal.references[${index}]`);
   rejectUnknownKeys(reference, new Set(["node_temp_id", "chunk_id", "relation", "fragment_selector"]), `proposal.references[${index}]`);
   const chunkId = integer(reference.chunk_id, `proposal.references[${index}].chunk_id`, 1);
-  const availableChunk = availableChunks.get(chunkId);
-  if (!availableChunk) throw new TypeError(`proposal.references[${index}].chunk_id is not present in input_summary`);
+  const availableChunk = availableChunks?.get(chunkId);
+  if (availableChunks && !availableChunk) throw new TypeError(`proposal.references[${index}].chunk_id is not present in input_summary`);
   if (!RELATIONS.has(reference.relation)) throw new TypeError(`proposal.references[${index}].relation is invalid`);
   let fragmentSelector;
   if (reference.fragment_selector !== undefined && reference.fragment_selector !== null) {
@@ -232,10 +232,10 @@ function normalizeReference(value, index, availableChunks) {
       : integer(selector.page, `proposal.references[${index}].fragment_selector.page`, 1);
     const quote = optionalText(selector.quote, `proposal.references[${index}].fragment_selector.quote`, 500);
     if (page === null && quote === null) throw new TypeError(`proposal.references[${index}].fragment_selector requires page or quote`);
-    if (page !== null && availableChunk.page !== undefined && page !== availableChunk.page) {
+    if (page !== null && availableChunk?.page !== undefined && page !== availableChunk.page) {
       throw new TypeError(`proposal.references[${index}].fragment_selector.page does not match the supplied Chunk summary`);
     }
-    if (quote !== null && !availableChunk.summary.includes(quote)) {
+    if (quote !== null && availableChunk && !availableChunk.summary.includes(quote)) {
       throw new TypeError(`proposal.references[${index}].fragment_selector.quote is not present in the supplied Chunk summary`);
     }
     fragmentSelector = { ...(page === null ? {} : { page }), ...(quote === null ? {} : { quote }) };
@@ -309,24 +309,40 @@ function normalizeProposal(value, availableChunks) {
 
 export function normalizeSourceMindMapProposal(args) {
   const value = objectValue(args, "arguments");
-  rejectUnknownKeys(value, new Set(["source_id", "basis_revision", "input_summary", "proposal"]), "arguments");
-  const inputSummary = normalizeInputSummary(value.input_summary);
+  rejectUnknownKeys(value, new Set(["source_id", "basis_revision", "input_summary", "proposal", "map_id", "base_version", "target_node_id"]), "arguments");
+  const inputSummary = value.input_summary === undefined
+    ? null
+    : normalizeInputSummary(value.input_summary);
+  const mapId = optionalText(value.map_id, "map_id", 200);
+  const baseVersion = value.base_version === undefined || value.base_version === null
+    ? null
+    : integer(value.base_version, "base_version", 1);
+  const targetNodeId = optionalText(value.target_node_id, "target_node_id", 200);
+  if (targetNodeId !== null && (mapId === null || baseVersion === null)) {
+    throw new TypeError("branch proposals require map_id, base_version, and target_node_id");
+  }
   return {
     source_id: requiredText(value.source_id, "source_id", 200),
     basis_revision: normalizeBasis(value.basis_revision),
-    proposal: normalizeProposal(value.proposal, inputSummary.availableChunks),
+    proposal: normalizeProposal(value.proposal, inputSummary?.availableChunks),
+    ...(mapId === null ? {} : { map_id: mapId }),
+    ...(baseVersion === null ? {} : { base_version: baseVersion }),
+    ...(targetNodeId === null ? {} : { target_node_id: targetNodeId }),
   };
 }
 
 export function apply(ctx) {
   ctx.tools.register({
     name: "propose_source_mind_map",
-    description: "提交 PDF Source Mind Map 候选。输入只允许受限章节/Chunk 摘要；工具只返回待验证、待用户确认的 Proposal，不写入 PKG。",
+    description: "提交 PDF Source Mind Map 候选。无需回显生成上下文；工具只返回待 PKG 验证、待用户确认的 Proposal，不写入 PKG。",
     parameters: {
       type: "object",
       additionalProperties: false,
       properties: {
         source_id: { type: "string", description: "当前 PDF Source ID" },
+        map_id: { type: "string", description: "分支扩展时的正式 Mind Map ID" },
+        base_version: { type: "integer", minimum: 1, description: "分支扩展时的正式 Mind Map 版本" },
+        target_node_id: { type: "string", description: "分支扩展锚点节点 ID" },
         basis_revision: {
           type: "object",
           additionalProperties: false,
@@ -342,7 +358,7 @@ export function apply(ctx) {
           additionalProperties: false,
           properties: {
             section_summaries: { type: "array", maxItems: 40, items: sectionSummarySchema },
-            chunk_summaries: { type: "array", minItems: 1, maxItems: 120, items: chunkSummarySchema },
+            chunk_summaries: { type: "array", minItems: 1, maxItems: 80, items: chunkSummarySchema },
           },
           required: ["section_summaries", "chunk_summaries"],
         },
@@ -352,13 +368,13 @@ export function apply(ctx) {
           properties: {
             title: { type: "string" },
             layout_mode: { type: "string", enum: ["balanced", "right"] },
-            nodes: { type: "array", minItems: 1, maxItems: 80, items: proposalNodeSchema },
+            nodes: { type: "array", minItems: 1, maxItems: 32, items: proposalNodeSchema },
             references: { type: "array", items: proposalReferenceSchema },
           },
           required: ["title", "layout_mode", "nodes", "references"],
         },
       },
-      required: ["source_id", "basis_revision", "input_summary", "proposal"],
+      required: ["source_id", "basis_revision", "proposal"],
     },
     output: textOutput("Structured PDF Source Mind Map proposal awaiting PKG validation and explicit user confirmation"),
     execute: async (args) => JSON.stringify({

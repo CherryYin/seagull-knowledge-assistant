@@ -23,6 +23,7 @@
     "test:asset-intent-proposal": "node --test plugins/asset-intent-proposal/test/plugin.test.js",
     "test:source-mind-map-proposal": "node --test plugins/source-mind-map-proposal/test/plugin.test.js",
     "test:source-mind-map-integration": "node scripts/check-source-mind-map-integration.mjs",
+    "smoke:large-pdf-mind-map": "node scripts/smoke-large-pdf-mind-map.mjs",
     "test:sessions:verify-shadow": "node --test scripts/verify-session-shadow.test.mjs",
     "test:sessions:stage-e": "node --test scripts/check-stage-e-readiness.test.mjs",
     "test:agent-memory": "node --test plugins/agent-memory/test/store.test.js",

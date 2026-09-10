@@ -34,23 +34,25 @@ const values = Object.fromEntries(await Promise.all(
 
 includesAll(values.plugin, files.plugin, [
   'name: "propose_source_mind_map"',
-  "maxNodes: 80",
+  "maxNodes: 32",
   "maxSectionSummaries: 40",
-  "maxChunkSummaries: 120",
+  "maxChunkSummaries: 80",
   "raw_content",
+  'required: ["source_id", "basis_revision", "proposal"]',
   "requiresUserConfirmation: true",
 ]);
 includesAll(values.preset, files.preset, [
   "generate-source-mind-map",
   "propose_source_mind_map",
   "不得要求或复述整篇 PDF 原文",
-  "最多 80 个节点",
+  "硬上限 32 个",
 ]);
 includesAll(values.skill, files.skill, [
   "At most 40 `section_summaries`",
-  "Between 1 and 120 `chunk_summaries`",
+  "Between 1 and 80 `chunk_summaries`",
   "Reference only Chunk IDs present",
-  "Call `propose_source_mind_map` exactly once",
+  "Do not echo `input_summary`",
+  "call `propose_source_mind_map` exactly once",
   "No direct PKG write and no automatic Apply",
 ]);
 for (const key of ["webProfile", "headlessProfile"]) {
@@ -73,7 +75,7 @@ includesAll(values.pkgApi, files.pkgApi, [
   "validate_source_mind_map_proposal",
 ]);
 includesAll(values.pkgService, files.pkgService, [
-  "SOURCE_CONTEXT_MAX_CHUNKS = 120",
+  "SOURCE_CONTEXT_MAX_CHUNKS = 80",
   "build_source_mind_map_generation_context",
   "SourceMindMapGenerationContextRead",
 ]);

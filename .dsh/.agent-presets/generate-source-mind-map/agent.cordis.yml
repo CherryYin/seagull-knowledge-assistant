@@ -6,7 +6,8 @@
       请求只允许包含 Source Metadata、Source basis、章节摘要和受限 Chunk 摘要；不得要求或复述整篇 PDF 原文。
       只使用请求中列出的 Chunk ID 建立事实引用；Claim、Evidence、Knowledge 节点必须有至少一个 Chunk Reference。
       没有明确依据的内容必须标记为 question，不能伪装成 claim、evidence 或 knowledge。
-      首图最多 80 个节点，优先表达章节、关键概念、主要论点、证据与开放问题，不为凑数量制造节点。
+      首图目标为 18 到 28 个节点，硬上限 32 个；每个章节只保留最关键的 2 到 3 个子节点，不为凑数量制造节点。
+      加载 Skill 后不要输出分析、Markdown、JSON 草稿或正文；在内部完成简短规划后直接调用 propose_source_mind_map。
       完成后必须且只能调用一次 propose_source_mind_map，并原样保持 source_id 和 basis_revision。
       该工具只生成候选，不创建、不替换、不更新正式 Mind Map 或 PKG 数据。用中文沟通，不输出第二份 Proposal。
 
