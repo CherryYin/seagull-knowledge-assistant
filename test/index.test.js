@@ -150,6 +150,16 @@ test("login cookie authenticates direct API requests and preserves query params"
       res.end("event: content\ndata: {\"text\":\"hello\"}\n\n");
       return;
     }
+    if (req.url === "/notes/note-1/export/pdf") {
+      const pdf = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37, 0x0a, 0xff, 0x00, 0xfe, 0x0a, 0x25, 0x25, 0x45, 0x4f, 0x46]);
+      res.writeHead(200, {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": "attachment; filename=\"note.pdf\"",
+        "Content-Length": String(pdf.length),
+      });
+      res.end(pdf);
+      return;
+    }
     if (req.url === "/notes/smoke-note" && req.method === "DELETE") {
       res.writeHead(204);
       res.end();
@@ -324,7 +334,12 @@ test("login cookie authenticates direct API requests and preserves query params"
           });
           return;
         }
-        reply({ accepted: true });
+        const promptText = envelope.payload.content?.[0]?.text || "";
+        if (promptText.endsWith("delayed receipt")) {
+          setTimeout(() => reply({ accepted: true }), 250);
+        } else {
+          reply({ accepted: true });
+        }
         const stream = MockWebSocket.sockets.shift();
         setTimeout(() => {
           const push = (payload) => stream.push({
@@ -333,7 +348,6 @@ test("login cookie authenticates direct API requests and preserves query params"
             method: payload.type,
             payload,
           });
-          const promptText = envelope.payload.content?.[0]?.text || "";
           if (promptText.endsWith("clarify")) {
             push({
               type: "question/requested",
@@ -486,6 +500,15 @@ test("login cookie authenticates direct API requests and preserves query params"
   assert.match(uploadBody, /%PDF-1\.7/);
   assert.match(uploadBody, /name="pdf_type"/);
   assert.match(uploadBody, /\r\ntext\r\n/);
+
+  const exportedPdf = await fetch(`${base}/api/notes/note-1/export/pdf`, { headers: { Cookie: cookie } });
+  assert.equal(exportedPdf.status, 200);
+  assert.equal(exportedPdf.headers.get("content-type"), "application/pdf");
+  assert.equal(exportedPdf.headers.get("content-disposition"), "attachment; filename=\"note.pdf\"");
+  assert.deepEqual(
+    Buffer.from(await exportedPdf.arrayBuffer()),
+    Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37, 0x0a, 0xff, 0x00, 0xfe, 0x0a, 0x25, 0x25, 0x45, 0x4f, 0x46]),
+  );
 
   const deletedNote = await fetch(`${base}/api/notes/smoke-note`, {
     method: "DELETE",
@@ -814,6 +837,24 @@ test("login cookie authenticates direct API requests and preserves query params"
     },
   });
   assert.equal(afterDelete.status, 401);
+
+  const delayedReceiptChat = await fetch(`${base}/api/chat`, {
+    method: "POST",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt: "delayed receipt",
+      preset: "generate-source-mind-map",
+      ephemeral_session: true,
+    }),
+  });
+  assert.equal(delayedReceiptChat.status, 200);
+  const delayedReader = delayedReceiptChat.body.getReader();
+  const firstFrame = await Promise.race([
+    delayedReader.read(),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("session event waited for prompt receipt")), 100)),
+  ]);
+  assert.match(new TextDecoder().decode(firstFrame.value), /"type":"session"/);
+  await delayedReader.cancel();
 
   const ephemeralChat = await fetch(`${base}/api/chat`, {
     method: "POST",

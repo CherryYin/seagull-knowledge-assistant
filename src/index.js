@@ -281,9 +281,19 @@ async function pkgForward(req, res, pkgPath, { captureLogin = false, requestId }
       return res.end();
     }
     const ct = pkgRes.headers.get("content-type") || "";
-    const data = ct.includes("application/json") ? await pkgRes.json() : await pkgRes.text();
-    if (captureLogin && pkgRes.ok && data?.access_token) setAuthCookie(res, data.access_token);
-    json(req, res, pkgRes.status, data);
+    if (ct.includes("application/json")) {
+      const data = await pkgRes.json();
+      if (captureLogin && pkgRes.ok && data?.access_token) setAuthCookie(res, data.access_token);
+      return json(req, res, pkgRes.status, data);
+    }
+    const data = Buffer.from(await pkgRes.arrayBuffer());
+    setCORS(req, res);
+    for (const name of ["content-type", "cache-control", "content-disposition", "content-length"]) {
+      const value = pkgRes.headers.get(name);
+      if (value) res.setHeader(name, value);
+    }
+    res.writeHead(pkgRes.status);
+    res.end(data);
   } catch (err) {
     json(req, res, 502, { error: "PKG unreachable: " + err.message });
   }
@@ -624,17 +634,27 @@ async function harnessChat(req, res, requestId, agentMemoryStore) {
       content: [{ type: "text", text: memoryContext ? `${memoryContext}\n\n${prompt}` : prompt }],
       ...(typeof body?.client_time_zone === "string" ? { clientTimeZone: body.client_time_zone } : {}),
     };
-    try {
-      await harnessRpc("session.prompt", promptPayload, { signal: abort.signal, requestId });
-    } catch (error) {
-      if (!createRequestedSession && requestedSessionId && error instanceof HarnessRpcError && error.code === "session-not-found") {
-        created = await createSession();
-        sessionId = created.sessionId;
-        bindSessionAuth(sessionId, user.id, authorization);
-        activeHarnessSessionId = sessionId;
-        await harnessRpc("session.prompt", { ...promptPayload, sessionId }, { signal: abort.signal, requestId });
-      } else {
-        throw error;
+    if (!requestedSessionId || createRequestedSession) {
+      void harnessRpc("session.prompt", promptPayload, { signal: abort.signal, requestId })
+        .catch((error) => {
+          if (!abort.signal.aborted) {
+            sse(res, { type: "error", content: error.message, session_id: sessionId });
+            abort.abort(error);
+          }
+        });
+    } else {
+      try {
+        await harnessRpc("session.prompt", promptPayload, { signal: abort.signal, requestId });
+      } catch (error) {
+        if (error instanceof HarnessRpcError && error.code === "session-not-found") {
+          created = await createSession();
+          sessionId = created.sessionId;
+          bindSessionAuth(sessionId, user.id, authorization);
+          activeHarnessSessionId = sessionId;
+          await harnessRpc("session.prompt", { ...promptPayload, sessionId }, { signal: abort.signal, requestId });
+        } else {
+          throw error;
+        }
       }
     }
     sse(res, { type: "session", session_id: sessionId, preset: created?.agentPreset || preset });
