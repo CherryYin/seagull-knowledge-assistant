@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Focus, Move, Pencil, Plus, RotateCcw, Trash2, X } from "lucide-react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { ArrowLeft, ExternalLink, Focus, Move, Pencil, Plus, RotateCcw, Trash2, X } from "lucide-react";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   MindMapCanvas,
   MindMapNodeMutationDialog,
@@ -26,6 +26,7 @@ import type { MindMapLayoutMode } from "@/lib/mind-map-layout";
 export function MindMapPage() {
   const { mapId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const treeQuery = useQuery({
     queryKey: ["mind-map-tree", mapId],
@@ -47,12 +48,47 @@ export function MindMapPage() {
 
   useEffect(() => {
     if (!treeQuery.data || treeQuery.data.map.id === initializedMapId) return;
-    setLayoutMode(treeQuery.data.map.layout_mode);
-    setCollapsedIds(new Set(treeQuery.data.nodes.filter((node) => node.collapsed).map((node) => node.id)));
-    setFocusId(null);
-    setSelectedId(null);
+    const nodeIds = new Set(treeQuery.data.nodes.map((node) => node.id));
+    const requestedSelectedId = new URLSearchParams(location.search).get("selected");
+    let storedState: {
+      layoutMode?: MindMapLayoutMode;
+      collapsedIds?: string[];
+      focusId?: string | null;
+      selectedId?: string | null;
+    } | null = null;
+    try {
+      const rawState = sessionStorage.getItem(`mind-map-view:${treeQuery.data.map.id}`);
+      storedState = rawState ? JSON.parse(rawState) : null;
+    } catch {
+      storedState = null;
+    }
+    const storedLayoutMode = storedState?.layoutMode;
+    setLayoutMode(storedLayoutMode === "balanced" || storedLayoutMode === "right"
+      ? storedLayoutMode
+      : treeQuery.data.map.layout_mode);
+    setCollapsedIds(storedState?.collapsedIds
+      ? new Set(storedState.collapsedIds.filter((nodeId) => nodeIds.has(nodeId)))
+      : new Set(treeQuery.data.nodes.filter((node) => node.collapsed).map((node) => node.id)));
+    setFocusId(storedState?.focusId && nodeIds.has(storedState.focusId) ? storedState.focusId : null);
+    setSelectedId(
+      requestedSelectedId && nodeIds.has(requestedSelectedId)
+        ? requestedSelectedId
+        : storedState?.selectedId && nodeIds.has(storedState.selectedId)
+          ? storedState.selectedId
+          : null,
+    );
     setInitializedMapId(treeQuery.data.map.id);
-  }, [initializedMapId, treeQuery.data]);
+  }, [initializedMapId, location.search, treeQuery.data]);
+
+  useEffect(() => {
+    if (!mapId || initializedMapId !== mapId) return;
+    sessionStorage.setItem(`mind-map-view:${mapId}`, JSON.stringify({
+      layoutMode,
+      collapsedIds: [...collapsedIds],
+      focusId,
+      selectedId,
+    }));
+  }, [collapsedIds, focusId, initializedMapId, layoutMode, mapId, selectedId]);
 
   const referencesByNode = useMemo(() => {
     const result = new Map<string, MindMapReferenceRead[]>();
@@ -211,6 +247,20 @@ export function MindMapPage() {
   const ownerPath = map.owner_type === "source"
     ? `/sources/${encodeURIComponent(map.owner_id)}`
     : `/assets/${encodeURIComponent(map.owner_id)}`;
+  const openSourceChunk = (reference: MindMapReferenceRead) => {
+    if (map.owner_type !== "source" || reference.ref_type !== "source_chunk" || !selectedNode) return;
+    const query = new URLSearchParams({ view: "slices", chunk_id: reference.ref_id });
+    const page = reference.fragment_selector?.page;
+    const quote = reference.fragment_selector?.quote;
+    if (typeof page === "number" || typeof page === "string") query.set("page", String(page));
+    if (typeof quote === "string" && quote.trim()) query.set("quote", quote.trim());
+    navigate(`/sources/${encodeURIComponent(map.owner_id)}?${query}`, {
+      state: {
+        backTo: `/mind-maps/${encodeURIComponent(map.id)}?selected=${encodeURIComponent(selectedNode.id)}`,
+        backLabel: "Back to Mind Map",
+      },
+    });
+  };
   const resetView = () => {
     setCollapsedIds(new Set());
     setFocusId(null);
@@ -326,9 +376,29 @@ export function MindMapPage() {
                   ) : (
                     <div className="mt-2 space-y-2">
                       {selectedReferences.map((reference) => (
-                        <div key={reference.id} className="rounded-lg border p-2.5 text-xs">
-                          <div className="flex items-center justify-between gap-2"><Badge variant="secondary">{reference.ref_type}</Badge><span>{reference.relation}</span></div>
-                          <p className="mt-2 break-all text-muted-foreground">{reference.ref_id}</p>
+                        <div key={reference.id} className="rounded-lg border p-3 text-xs" data-testid={`mind-map-reference-${reference.id}`}>
+                          <div className="flex items-center justify-between gap-2">
+                            <Badge variant="secondary">
+                              {reference.ref_type === "source_chunk" ? `Chunk #${reference.ref_id}` : reference.ref_type}
+                            </Badge>
+                            <span className="text-muted-foreground">{reference.relation}</span>
+                          </div>
+                          {reference.ref_type !== "source_chunk" && (
+                            <p className="mt-2 break-all text-muted-foreground">{reference.ref_id}</p>
+                          )}
+                          {(typeof reference.fragment_selector?.page === "number" || typeof reference.fragment_selector?.page === "string") && (
+                            <p className="mt-2 font-medium">Page {String(reference.fragment_selector.page)}</p>
+                          )}
+                          {typeof reference.fragment_selector?.quote === "string" && reference.fragment_selector.quote.trim() && (
+                            <blockquote className="mt-2 line-clamp-4 border-l-2 pl-2 text-muted-foreground">
+                              {reference.fragment_selector.quote}
+                            </blockquote>
+                          )}
+                          {map.owner_type === "source" && reference.ref_type === "source_chunk" && (
+                            <Button type="button" variant="outline" size="sm" className="mt-3 w-full" onClick={() => openSourceChunk(reference)}>
+                              <ExternalLink className="h-3.5 w-3.5" />Open Source Chunk
+                            </Button>
+                          )}
                         </div>
                       ))}
                     </div>

@@ -7,3 +7,4 @@ export type {
 } from "./MindMapNodeMutationDialog";
 export { MindMapOutlinePanel } from "./MindMapOutlinePanel";
 export { MindMapRevisionPanel } from "./MindMapRevisionPanel";
+export { SourceMindMapPanel } from "./SourceMindMapPanel";

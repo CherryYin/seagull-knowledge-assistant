@@ -1,7 +1,7 @@
 import { useLocation, useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo, useRef, useEffect } from "react";
-import { ArrowLeft, Download, ExternalLink, Trash2, List, FileText, Pencil, Check, X, Rss, RefreshCw, Bot, StickyNote, BookOpen } from "lucide-react";
+import { ArrowLeft, Download, ExternalLink, Trash2, List, FileText, Pencil, Check, X, Rss, RefreshCw, Bot, StickyNote, BookOpen, Network } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -12,8 +12,9 @@ import { sourcesApi, notesApi, wikiApi, categoriesApi, downloadFile, type Source
 import { buildAssetHandoffState } from "@/lib/asset-handoff";
 import { getSourceProcessingState, getSourceProcessingSteps } from "@/lib/sourceProcessingStatus";
 import { isRssFeedSource, sourcePresentationLabel } from "@/lib/source-presentation";
+import { SourceMindMapPanel } from "@/components/mind-map";
 
-type ViewMode = "full" | "slices";
+type ViewMode = "full" | "slices" | "mind-map";
 type SourceEditDraft = {
   title: string;
   category_id: number;
@@ -30,10 +31,15 @@ export function SourceDetailPage() {
   const locationState = location.state as { backTo?: string; backLabel?: string } | null;
   const backTo = locationState?.backTo || "/sources";
   const backLabel = locationState?.backLabel || "Back to Sources";
+  const navigationParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const requestedChunkId = navigationParams.get("chunk_id");
+  const requestedPage = navigationParams.get("page");
+  const requestedQuote = navigationParams.get("quote");
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [viewMode, setViewMode] = useState<ViewMode>("full");
+  const [viewMode, setViewMode] = useState<ViewMode>(() => navigationParams.get("view") === "slices" ? "slices" : "full");
   const [selectedChunk, setSelectedChunk] = useState(0);
   const previewRef = useRef<HTMLDivElement>(null);
+  const handledChunkTargetRef = useRef<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<SourceEditDraft | null>(null);
 
@@ -48,6 +54,18 @@ export function SourceDetailPage() {
     queryFn: () => sourcesApi.chunks(id!),
     enabled: !!id && viewMode === "slices",
   });
+
+  useEffect(() => {
+    handledChunkTargetRef.current = null;
+    if (navigationParams.get("view") === "slices") setViewMode("slices");
+  }, [location.search, navigationParams]);
+
+  useEffect(() => {
+    if (!requestedChunkId || !chunks || handledChunkTargetRef.current === requestedChunkId) return;
+    const targetIndex = chunks.findIndex((chunk) => String(chunk.id) === requestedChunkId);
+    if (targetIndex >= 0) setSelectedChunk(targetIndex);
+    handledChunkTargetRef.current = requestedChunkId;
+  }, [chunks, requestedChunkId]);
 
   const { data: chunkCountData } = useQuery({
     queryKey: ["source-chunk-count", id],
@@ -305,6 +323,9 @@ export function SourceDetailPage() {
 
   const hasChunks = chunks && chunks.length > 0;
   const chunkCount = chunkCountData?.count ?? chunks?.length ?? null;
+  const requestedChunkExists = !requestedChunkId || !chunks
+    ? null
+    : chunks.some((chunk) => String(chunk.id) === requestedChunkId);
   const processing = getSourceProcessingState(source, { chunkCount });
   const processingSteps = getSourceProcessingSteps(source, { chunkCount });
 
@@ -347,6 +368,14 @@ export function SourceDetailPage() {
             >
               <List className="h-3.5 w-3.5 inline-block mr-1" />Slices
             </button>
+            {source.source_type === "pdf" && (
+              <button
+                onClick={() => setViewMode("mind-map")}
+                className={`px-2.5 py-1 rounded text-xs transition-colors cursor-pointer ${viewMode === "mind-map" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent"}`}
+              >
+                <Network className="h-3.5 w-3.5 inline-block mr-1" />Mind Map
+              </button>
+            )}
           </div>
         </div>
 
@@ -793,14 +822,34 @@ export function SourceDetailPage() {
         )}
 
         {/* Content area */}
-        {viewMode === "full" ? (
+        {viewMode === "mind-map" ? (
+          <SourceMindMapPanel source={source} chunkCount={chunkCount ?? 0} />
+        ) : viewMode === "full" ? (
           <div className="rounded-lg border border-border p-6 max-h-[70vh] overflow-y-auto" data-source-content>
             <div className={`prose max-w-none ${source.source_type === "web" ? "whitespace-pre-wrap" : ""}`}>
               <MarkdownRenderer>{source.raw_content || (source.file_path ? "*(Original file stored in MinIO)*" : "*No content*")}</MarkdownRenderer>
             </div>
           </div>
         ) : (
-          <div className="flex gap-4" style={{ height: "calc(100vh - 320px)" }}>
+          <div className="space-y-3">
+            {requestedChunkId && (
+              <div
+                className={`rounded-lg border p-3 text-sm ${requestedChunkExists === false ? "border-amber-500/30 bg-amber-500/10" : "border-primary/20 bg-primary/5"}`}
+                data-testid="source-chunk-navigation-context"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="secondary">Chunk #{requestedChunkId}</Badge>
+                  {requestedPage && <Badge variant="outline">Page {requestedPage}</Badge>}
+                  {requestedChunkExists === false && <span className="text-amber-700 dark:text-amber-300">This referenced chunk is not present in the current Source revision.</span>}
+                </div>
+                {requestedQuote && (
+                  <blockquote className="mt-2 border-l-2 border-primary/40 pl-3 text-muted-foreground">
+                    {requestedQuote}
+                  </blockquote>
+                )}
+              </div>
+            )}
+            <div className="flex gap-4" style={{ height: "calc(100vh - 320px)" }}>
             {/* Left: Chunk list */}
             <div className="w-56 shrink-0 rounded-lg border border-border overflow-y-auto">
               <div className="p-2 border-b border-border bg-muted/30">
@@ -811,7 +860,10 @@ export function SourceDetailPage() {
               {hasChunks && chunks.map((chunk, idx) => (
                 <button
                   key={chunk.id}
+                  type="button"
                   onClick={() => setSelectedChunk(idx)}
+                  data-testid={`source-chunk-${chunk.id}`}
+                  aria-current={selectedChunk === idx ? "true" : undefined}
                   className={`w-full text-left px-3 py-2 border-b border-border/50 transition-colors cursor-pointer ${
                     selectedChunk === idx
                       ? "bg-primary/10 border-l-2 border-l-primary"
@@ -823,7 +875,7 @@ export function SourceDetailPage() {
                       #{idx + 1}
                     </span>
                     <span className="text-[10px] text-muted-foreground">
-                      {chunk.content.length} chars
+                      ID {chunk.id} · {chunk.content.length} chars
                     </span>
                   </div>
                   <p className="text-[10px] text-muted-foreground mt-0.5 line-clamp-2">
@@ -850,7 +902,7 @@ export function SourceDetailPage() {
               </div>
               <div className="p-4">
                 {hasChunks && chunks[selectedChunk] ? (
-                  <div className="prose text-sm">
+                  <div className="prose text-sm" data-testid="selected-source-chunk-content">
                     <MarkdownRenderer>{chunks[selectedChunk].content}</MarkdownRenderer>
                   </div>
                 ) : (
@@ -881,6 +933,7 @@ export function SourceDetailPage() {
                   "*No content*"
                 )}
               </div>
+            </div>
             </div>
           </div>
         )}

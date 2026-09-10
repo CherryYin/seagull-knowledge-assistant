@@ -116,7 +116,11 @@ export function MindMapCanvas({
       type: "smoothstep",
       sourceHandle: side === -1 ? "source-left" : "source-right",
       targetHandle: side === -1 ? "target-right" : "target-left",
-      style: { stroke: "hsl(var(--muted-foreground))", strokeWidth: 1.3 },
+      style: {
+        stroke: "var(--color-muted-foreground)",
+        strokeWidth: 1.75,
+        opacity: 0.72,
+      },
     };
   }), [measurement.layout.edges, sideByNodeId]);
   const viewKey = `${layoutMode}:${focusId ?? "root"}:${[...collapsedIds].sort().join(",")}`;

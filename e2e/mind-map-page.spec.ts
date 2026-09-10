@@ -58,10 +58,30 @@ async function installMockBff(page: Page) {
           { id: "leaf", map_id: "map-1", display_id: 3, parent_id: "branch", content: "Shared state", note: null, position: 0, collapsed: false, node_kind: "evidence", updated_by: "human", created_at: "2026-09-09T08:00:00.000Z", updated_at: "2026-09-09T08:00:00.000Z" },
         ],
         references: [
-          { id: "reference-1", map_id: "map-1", node_id: "branch", ref_type: "source_chunk", ref_id: "42", relation: "derived_from", fragment_selector: { page: 3 }, created_at: "2026-09-09T08:00:00.000Z" },
+          { id: "reference-1", map_id: "map-1", node_id: "branch", ref_type: "source_chunk", ref_id: "42", relation: "derived_from", fragment_selector: { page: 3, quote: "Consensus establishes a shared decision." }, created_at: "2026-09-09T08:00:00.000Z" },
         ],
       });
     }
+    if (path === "/api/sources/source-1") {
+      return json(route, {
+        id: "source-1",
+        title: "Distributed systems source",
+        category_id: 1,
+        category_name: "Research",
+        source_type: "pdf",
+        raw_content: "Coordination requires explicit failure handling.\n\nConsensus establishes a shared decision.",
+        metadata_: {},
+        ingested_at: "2026-09-09T08:00:00.000Z",
+      });
+    }
+    if (path === "/api/sources/source-1/chunks") {
+      return json(route, [
+        { id: 41, source_id: "source-1", chunk_index: 0, content: "Coordination requires explicit failure handling." },
+        { id: 42, source_id: "source-1", chunk_index: 1, content: "Consensus establishes a shared decision." },
+      ]);
+    }
+    if (path === "/api/sources/source-1/chunk-count") return json(route, { count: 2 });
+    if (path === "/api/categories") return json(route, { items: [{ id: 1, name: "Research" }], total: 1 });
     return json(route, {});
   });
 }
@@ -85,8 +105,9 @@ test("production Mind Map page loads references and supports view controls", asy
 
   await page.getByTestId("mind-map-node-branch").click();
   await expect(page.getByText("How agents share state.")).toBeVisible();
-  await expect(page.getByText("source_chunk", { exact: true })).toBeVisible();
-  await expect(page.getByText("42", { exact: true })).toBeVisible();
+  await expect(page.getByText("Chunk #42", { exact: true })).toBeVisible();
+  await expect(page.getByText("Page 3", { exact: true })).toBeVisible();
+  await expect(page.getByText("Consensus establishes a shared decision.", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Collapse Coordination" }).click();
   await expect(page.getByTestId("mind-map-visible-summary")).toHaveText("2 visible / 3 total");
@@ -97,4 +118,24 @@ test("production Mind Map page loads references and supports view controls", asy
   await expect(page.getByTestId("mind-map-visible-summary")).toHaveText("2 visible / 3 total");
   await page.getByRole("button", { name: "Reset view" }).click();
   await expect(page.getByTestId("mind-map-visible-summary")).toHaveText("3 visible / 3 total");
+});
+
+test("Source Chunk reference opens the exact slice and preserves the selected node on return", async ({ page }) => {
+  await installMockBff(page);
+  await signIn(page);
+
+  await page.goto("/mind-maps/map-1");
+  await page.getByTestId("mind-map-node-branch").click();
+  await page.getByRole("button", { name: "Open Source Chunk" }).click();
+
+  await expect(page).toHaveURL(/\/sources\/source-1\?view=slices&chunk_id=42&page=3&quote=/);
+  await expect(page.getByTestId("source-chunk-navigation-context")).toContainText("Chunk #42");
+  await expect(page.getByTestId("source-chunk-navigation-context")).toContainText("Page 3");
+  await expect(page.getByTestId("source-chunk-42")).toHaveAttribute("aria-current", "true");
+  await expect(page.getByTestId("selected-source-chunk-content")).toContainText("Consensus establishes a shared decision.");
+
+  await page.getByRole("button", { name: "Back to Mind Map" }).click();
+  await expect(page).toHaveURL(/\/mind-maps\/map-1\?selected=branch/);
+  await expect(page.getByRole("heading", { name: "Coordination", exact: true })).toBeVisible();
+  await expect(page.getByText("Chunk #42", { exact: true })).toBeVisible();
 });

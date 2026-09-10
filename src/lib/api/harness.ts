@@ -11,6 +11,7 @@ export interface HarnessChatEvent {
   tool?: string;
   args?: unknown;
   result?: string;
+  error?: unknown;
   session_id?: string;
   preset?: string;
   call_id?: string;
