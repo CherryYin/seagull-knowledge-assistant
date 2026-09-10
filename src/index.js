@@ -2,6 +2,7 @@
 // v2 — clean rewrite with proper auth passthrough
 
 import http from "node:http";
+import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import {
   AgentMemoryStore,
@@ -208,7 +209,11 @@ function statusError(status, message) {
   return error;
 }
 
-async function ensurePkgChatSession(sessionId, authorization, { createIfMissing = false, requestId } = {}) {
+async function ensurePkgChatSession(sessionId, authorization, {
+  createIfMissing = false,
+  isEphemeral = false,
+  requestId,
+} = {}) {
   const encodedId = encodeURIComponent(sessionId);
   const existing = await pkgUserRequest(`/chat-sessions/${encodedId}`, authorization, { requestId });
   if (existing.ok) return existing.json();
@@ -218,7 +223,7 @@ async function ensurePkgChatSession(sessionId, authorization, { createIfMissing 
 
   const created = await pkgUserRequest("/chat-sessions", authorization, {
     method: "POST",
-    body: { id: sessionId },
+    body: { id: sessionId, is_ephemeral: isEphemeral },
     requestId,
   });
   if (created.ok) return created.json();
@@ -527,6 +532,11 @@ async function harnessChat(req, res, requestId, agentMemoryStore) {
     ? body.session_id.trim()
     : undefined;
   const createRequestedSession = body?.create_session === true;
+  const ephemeralSession = body?.ephemeral_session === true;
+  if (ephemeralSession && requestedSessionId) {
+    return json(req, res, 400, { error: "ephemeral_session cannot reuse a requested session_id" });
+  }
+  const allocatedSessionId = requestedSessionId || `session-${randomUUID()}`;
   let user;
   try {
     user = await currentPkgUser(authorization, requestId);
@@ -536,6 +546,12 @@ async function harnessChat(req, res, requestId, agentMemoryStore) {
         requestId,
       });
       bindSessionAuth(requestedSessionId, user.id, authorization);
+    } else {
+      await ensurePkgChatSession(allocatedSessionId, authorization, {
+        createIfMissing: true,
+        isEphemeral: ephemeralSession,
+        requestId,
+      });
     }
   } catch (error) {
     if (error.status === 401) return respondAuthExpired(req, res, authorization);
@@ -564,17 +580,14 @@ async function harnessChat(req, res, requestId, agentMemoryStore) {
   try {
     const events = await openHarnessEvents(abort.signal);
     let created;
-    let sessionId = requestedSessionId;
+    let sessionId = allocatedSessionId;
     const createSession = async () => harnessRpc("session.create", {
-      ...(requestedSessionId ? { sessionId: requestedSessionId } : {}),
+      sessionId,
       ...(preset ? { agentPreset: preset } : {}),
     }, { signal: abort.signal, requestId });
-    if (!sessionId || createRequestedSession) {
+    if (!requestedSessionId || createRequestedSession) {
       created = await createSession();
       sessionId = created.sessionId;
-    }
-    if (!requestedSessionId) {
-      await ensurePkgChatSession(sessionId, authorization, { createIfMissing: true, requestId });
     }
     bindSessionAuth(sessionId, user.id, authorization);
     activeHarnessSessionId = sessionId;
@@ -627,6 +640,7 @@ async function harnessChat(req, res, requestId, agentMemoryStore) {
     sse(res, { type: "session", session_id: sessionId, preset: created?.agentPreset || preset });
 
     const streamedSteps = new Set();
+    const toolNamesByCallId = new Map();
     for await (const envelope of events) {
       const frame = envelope?.payload;
       if (!frame) continue;
@@ -665,6 +679,7 @@ async function harnessChat(req, res, requestId, agentMemoryStore) {
         const text = contentText(event.data?.message?.content);
         if (text) sse(res, { type: "text", content: text, session_id: sessionId });
       } else if (event.type === "tool/call") {
+        if (event.data?.callId && event.data?.name) toolNamesByCallId.set(event.data.callId, event.data.name);
         sse(res, {
           type: "tool_call",
           tool: event.data?.name,
@@ -673,13 +688,15 @@ async function harnessChat(req, res, requestId, agentMemoryStore) {
           session_id: sessionId,
         });
       } else if (event.type === "tool/result") {
+        const callId = event.data?.message?.source?.callId;
         sse(res, {
           type: "tool_result",
-          tool: event.data?.message?.source?.toolName,
+          tool: event.data?.message?.source?.toolName || toolNamesByCallId.get(callId),
           result: contentText(event.data?.message?.content) || JSON.stringify(event.data?.message?.content ?? null),
           error: event.data?.error,
           session_id: sessionId,
         });
+        if (callId) toolNamesByCallId.delete(callId);
       } else if (event.type === "turn/end") {
         turnCompleted = true;
         const reason = event.data?.reason;
@@ -716,9 +733,12 @@ async function harnessQuestionResponse(req, res, requestId) {
     if (!Array.isArray(answers) || answers.length === 0) throw new TypeError("answers are required");
 
     const user = await currentPkgUser(authorization, requestId);
-    await ensurePkgChatSession(sessionId, authorization, { requestId });
     const binding = sessionAuth(sessionId);
-    if (binding && binding.userId !== user.id) return json(req, res, 403, { error: "Forbidden" });
+    if (binding) {
+      if (binding.userId !== user.id) return json(req, res, 403, { error: "Forbidden" });
+    } else {
+      await ensurePkgChatSession(sessionId, authorization, { requestId });
+    }
 
     const receipt = await harnessRespond({
       type: "client-response",

@@ -70,6 +70,7 @@ test("login cookie authenticates direct API requests and preserves query params"
   const pkgReceived = [];
   let sourceUpload;
   const ownedChatSessions = new Set(["session-1", "local-session"]);
+  const ephemeralChatSessions = new Set();
   const pkg = http.createServer(async (req, res) => {
     pkgReceived.push({ url: req.url, authorization: req.headers.authorization, requestId: req.headers["x-request-id"] });
     res.setHeader("Content-Type", "application/json");
@@ -88,8 +89,10 @@ test("login cookie authenticates direct API requests and preserves query params"
     }
     if (req.url === "/chat-sessions?limit=200&offset=0") {
       res.end(JSON.stringify({
-        items: [...ownedChatSessions].map((id) => ({ id, user_id: "user-1", title: id, messages: [] })),
-        total: ownedChatSessions.size,
+        items: [...ownedChatSessions]
+          .filter((id) => !ephemeralChatSessions.has(id))
+          .map((id) => ({ id, user_id: "user-1", title: id, messages: [], is_ephemeral: false })),
+        total: ownedChatSessions.size - ephemeralChatSessions.size,
       }));
       return;
     }
@@ -99,13 +102,21 @@ test("login cookie authenticates direct API requests and preserves query params"
       req.on("end", () => {
         const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
         ownedChatSessions.add(body.id);
+        if (body.is_ephemeral === true) ephemeralChatSessions.add(body.id);
         res.writeHead(201);
-        res.end(JSON.stringify({ id: body.id, user_id: "user-1", title: "New Session", messages: [] }));
+        res.end(JSON.stringify({
+          id: body.id,
+          user_id: "user-1",
+          title: "New Session",
+          messages: [],
+          is_ephemeral: body.is_ephemeral === true,
+        }));
       });
       return;
     }
     if (req.url?.startsWith("/chat-sessions/") && req.method === "DELETE") {
       const id = req.url.slice("/chat-sessions/".length);
+      ephemeralChatSessions.delete(id);
       if (!ownedChatSessions.delete(id)) {
         res.writeHead(404);
         res.end(JSON.stringify({ detail: "Session not found" }));
@@ -116,7 +127,13 @@ test("login cookie authenticates direct API requests and preserves query params"
     }
     if (req.url?.startsWith("/chat-sessions/") && req.method === "GET" && ownedChatSessions.has(req.url.slice("/chat-sessions/".length))) {
       const id = req.url.slice("/chat-sessions/".length);
-      res.end(JSON.stringify({ id, user_id: "user-1", title: id, messages: [] }));
+      res.end(JSON.stringify({
+        id,
+        user_id: "user-1",
+        title: id,
+        messages: [],
+        is_ephemeral: ephemeralChatSessions.has(id),
+      }));
       return;
     }
     if (req.url?.startsWith("/chat-sessions/")) {
@@ -161,8 +178,10 @@ test("login cookie authenticates direct API requests and preserves query params"
 
   const harnessReceived = [];
   const harnessRpcCalls = [];
+  const sessionCreateOwnershipChecks = [];
   const harnessSessions = new Set();
   let chatSessionId = "session-chat";
+  let generatedSessionCount = 0;
   const harness = http.createServer(async (req, res) => {
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
@@ -275,7 +294,8 @@ test("login cookie authenticates direct API requests and preserves query params"
         return;
       }
       if (envelope.method === "session.create") {
-        chatSessionId = envelope.payload.sessionId || chatSessionId;
+        sessionCreateOwnershipChecks.push(ownedChatSessions.has(envelope.payload.sessionId));
+        chatSessionId = envelope.payload.sessionId || `ephemeral-session-${++generatedSessionCount}`;
         harnessSessions.add(chatSessionId);
         reply({ sessionId: chatSessionId, agentPreset: envelope.payload.agentPreset });
         return;
@@ -363,8 +383,25 @@ test("login cookie authenticates direct API requests and preserves query params"
             type: "session/event",
             sessionId: chatSessionId,
             event: {
-              type: "turn/end",
+              type: "tool/result",
               seq: 3,
+              time: Date.now(),
+              data: {
+                turn: 1,
+                step: 1,
+                message: {
+                  source: { kind: "tool", callId: "call-1" },
+                  content: [{ type: "tool-result", content: [{ type: "text", text: "search complete" }] }],
+                },
+              },
+            },
+          });
+          push({
+            type: "session/event",
+            sessionId: chatSessionId,
+            event: {
+              type: "turn/end",
+              seq: 4,
               time: Date.now(),
               data: { turn: 1, reason: { kind: "completed" } },
             },
@@ -638,10 +675,12 @@ test("login cookie authenticates direct API requests and preserves query params"
     .split("\n\n")
     .filter(Boolean)
     .map((frame) => JSON.parse(frame.slice("data: ".length)));
-  assert.deepEqual(chatEvents.map((event) => event.type), ["session", "text", "tool_call", "done"]);
+  assert.deepEqual(chatEvents.map((event) => event.type), ["session", "text", "tool_call", "tool_result", "done"]);
   assert.equal(chatEvents[0].session_id, "local-session");
   assert.equal(chatEvents[1].content, "hello");
   assert.deepEqual(chatEvents[2].args, { query: "test" });
+  assert.equal(chatEvents[3].tool, "pkg_search");
+  assert.equal(chatEvents[3].result, "search complete");
   assert.match(MockWebSocket.urls[0], /^ws:\/\/127\.0\.0\.1:\d+\/api\/events\.mux$/);
 
   const followup = await fetch(`${base}/api/chat`, {
@@ -659,7 +698,7 @@ test("login cookie authenticates direct API requests and preserves query params"
     .split("\n\n")
     .filter(Boolean)
     .map((frame) => JSON.parse(frame.slice("data: ".length)));
-  assert.deepEqual(followupEvents.map((event) => event.type), ["session", "text", "tool_call", "done"]);
+  assert.deepEqual(followupEvents.map((event) => event.type), ["session", "text", "tool_call", "tool_result", "done"]);
 
   const clarification = await fetch(`${base}/api/chat`, {
     method: "POST",
@@ -775,6 +814,56 @@ test("login cookie authenticates direct API requests and preserves query params"
     },
   });
   assert.equal(afterDelete.status, 401);
+
+  const ephemeralChat = await fetch(`${base}/api/chat`, {
+    method: "POST",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt: "clarify",
+      preset: "distill-asset-knowledge",
+      create_session: true,
+      ephemeral_session: true,
+    }),
+  });
+  assert.equal(ephemeralChat.status, 200);
+  const ephemeralEvents = (await ephemeralChat.text())
+    .split("\n\n")
+    .filter(Boolean)
+    .map((frame) => JSON.parse(frame.slice("data: ".length)));
+  assert.deepEqual(ephemeralEvents.map((event) => event.type), ["session", "question", "done"]);
+  const ephemeralSessionId = ephemeralEvents[0].session_id;
+  assert.match(ephemeralSessionId, /^session-[0-9a-f-]{36}$/);
+  assert.equal(ownedChatSessions.has(ephemeralSessionId), true);
+  assert.equal(ephemeralChatSessions.has(ephemeralSessionId), true);
+  assert.equal(sessionCreateOwnershipChecks.at(-1), true);
+
+  const visibleSessions = await fetch(`${base}/api/sessions`, { headers: { Cookie: cookie } });
+  assert.equal(visibleSessions.status, 200);
+  assert.equal((await visibleSessions.json()).some((item) => item.id === ephemeralSessionId), false);
+
+  const ephemeralAnswer = await fetch(`${base}/api/harness/questions/respond`, {
+    method: "POST",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      rpc_id: ephemeralEvents[1].rpc_id,
+      session_id: ephemeralSessionId,
+      answers: [{ question_id: "audience", option_labels: ["Architecture reviewers"] }],
+    }),
+  });
+  assert.equal(ephemeralAnswer.status, 200);
+
+  const invalidEphemeralReuse = await fetch(`${base}/api/chat`, {
+    method: "POST",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt: "do not reuse",
+      preset: "knowledge-lab",
+      session_id: ephemeralSessionId,
+      create_session: true,
+      ephemeral_session: true,
+    }),
+  });
+  assert.equal(invalidEphemeralReuse.status, 400);
 
   const logout = await fetch(`${base}/api/auth/logout`, {
     method: "POST",
