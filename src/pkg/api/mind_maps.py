@@ -255,6 +255,9 @@ async def validate_source_mind_map_proposal_route(
         source_id=result.source_id,
         basis_revision=result.basis_revision,
         proposal=result.proposal,
+        map_id=body.map_id,
+        base_version=body.base_version,
+        target_node_id=body.target_node_id,
         node_count=result.node_count,
         reference_count=result.reference_count,
     )

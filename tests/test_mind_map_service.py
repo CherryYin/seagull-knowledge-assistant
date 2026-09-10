@@ -142,12 +142,19 @@ async def test_build_source_generation_context_is_bounded_and_evenly_sampled() -
     )
 
     summaries = context.input_summary.chunk_summaries
-    assert len(summaries) == 120
+    assert len(summaries) == 80
     assert summaries[0].chunk_index == 0
     assert summaries[-1].chunk_index == 144
     assert all(len(summary.summary) <= 360 for summary in summaries)
-    assert len(context.input_summary.section_summaries) == 10
+    assert len(context.input_summary.section_summaries) == 7
     assert context.basis_revision.chunk_count == 145
+    assert context.sampling.strategy == "evenly_spaced"
+    assert context.sampling.total_chunk_count == 145
+    assert context.sampling.sampled_chunk_count == 80
+    assert context.sampling.omitted_chunk_count == 65
+    assert context.sampling.coverage_percent == 55
+    assert context.sampling.max_sampled_chunks == 80
+    assert context.sampling.section_count == 7
     assert context.model_dump().get("raw_content") is None
 
 
@@ -301,10 +308,61 @@ def make_source_proposal_request(
 def make_source_proposal_apply(*, map_id: str | None = None, base_version: int | None = None):
     request = make_source_proposal_request()
     return SourceMindMapProposalApply(
-        **request.model_dump(),
+        **request.model_dump(exclude={"map_id", "base_version", "target_node_id"}),
         map_id=map_id,
         base_version=base_version,
         session_id="session-agent-1",
+        confirm=True,
+    )
+
+
+def make_large_source_proposal_apply() -> SourceMindMapProposalApply:
+    nodes = [
+        {
+            "temp_id": "root",
+            "parent_temp_id": None,
+            "position": 0,
+            "content": "Large document",
+            "node_kind": "topic",
+        }
+    ]
+    for section_index in range(4):
+        section_id = f"section-{section_index}"
+        nodes.append(
+            {
+                "temp_id": section_id,
+                "parent_temp_id": "root",
+                "position": section_index,
+                "content": f"Section {section_index}",
+                "node_kind": "section",
+            }
+        )
+        for topic_index in range(3):
+            topic_id = f"{section_id}-topic-{topic_index}"
+            nodes.append(
+                {
+                    "temp_id": topic_id,
+                    "parent_temp_id": section_id,
+                    "position": topic_index,
+                    "content": f"Topic {section_index}.{topic_index}",
+                    "node_kind": "concept",
+                }
+            )
+            for detail_index in range(3):
+                nodes.append(
+                    {
+                        "temp_id": f"{topic_id}-detail-{detail_index}",
+                        "parent_temp_id": topic_id,
+                        "position": detail_index,
+                        "content": f"Detail {section_index}.{topic_index}.{detail_index}",
+                        "node_kind": "concept",
+                    }
+                )
+    return SourceMindMapProposalApply(
+        source_id="source-1",
+        basis_revision={"source_content_hash": "hash-1", "chunk_count": 2, "chunk_revision": 2},
+        proposal={"title": "Large document", "nodes": nodes, "references": []},
+        session_id="session-agent-large",
         confirm=True,
     )
 
@@ -359,6 +417,27 @@ async def test_apply_source_proposal_creates_complete_formal_map() -> None:
 
 
 @pytest.mark.asyncio
+async def test_apply_large_source_proposal_collapses_depth_two_branches_by_default() -> None:
+    session = make_session(
+        QueryResult(scalar=make_source()),
+        QueryResult(scalar=2),
+        QueryResult(scalar=None),
+    )
+
+    tree = await apply_source_mind_map_proposal(
+        session,
+        user_id="user-1",
+        body=make_large_source_proposal_apply(),
+    )
+
+    collapsed_nodes = [node for node in tree.nodes if node.collapsed]
+    assert len(tree.nodes) == 53
+    assert len(collapsed_nodes) == 12
+    assert all("Topic " in node.content for node in collapsed_nodes)
+    assert all(not node.collapsed for node in tree.nodes if node.node_kind == "section")
+
+
+@pytest.mark.asyncio
 async def test_apply_source_proposal_merges_without_deleting_existing_nodes() -> None:
     mind_map = make_map(version=3)
     root = make_node("root", 1, None, 0)
@@ -385,6 +464,46 @@ async def test_apply_source_proposal_merges_without_deleting_existing_nodes() ->
     assert len(tree.references) == 1
     session.delete.assert_not_awaited()
     session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_apply_source_branch_proposal_only_expands_selected_target() -> None:
+    mind_map = make_map(version=3)
+    root = make_node("root", 1, None, 0)
+    root.content = "Distributed systems"
+    target = make_node("target", 2, root.id, 0)
+    target.content = "Coordination"
+    request = make_source_proposal_request()
+    request.proposal.title = "Ignored branch title"
+    request.proposal.nodes[0].content = target.content
+    body = SourceMindMapProposalApply(
+        **request.model_dump(exclude={"map_id", "base_version", "target_node_id"}),
+        map_id=mind_map.id,
+        base_version=mind_map.version,
+        target_node_id=target.id,
+        session_id="session-branch-1",
+        confirm=True,
+    )
+    session = make_session(
+        QueryResult(scalar=make_source()),
+        QueryResult(scalar=2),
+        QueryResult(rows=[(11, "Coordination requires explicit failure handling.")]),
+        QueryResult(scalar=mind_map),
+        QueryResult(scalar=target),
+        QueryResult(scalar=mind_map),
+        QueryResult(items=[root, target]),
+        QueryResult(items=[]),
+    )
+
+    tree = await apply_source_mind_map_proposal(session, user_id="user-1", body=body)
+
+    created = next(node for node in tree.nodes if node.content == "Coordination requires failure handling")
+    assert created.parent_id == target.id
+    assert target.content == "Coordination"
+    assert target.updated_by == "human"
+    assert mind_map.title == "Distributed systems"
+    assert mind_map.layout_mode == "balanced"
+    assert mind_map.version == 4
 
 
 @pytest.mark.asyncio

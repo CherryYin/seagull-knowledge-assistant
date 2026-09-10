@@ -90,6 +90,15 @@ def test_source_generation_context_excludes_raw_pdf_content() -> None:
             "chunk_count": 2,
             "chunk_revision": 3,
         },
+        sampling={
+            "strategy": "all_chunks",
+            "total_chunk_count": 2,
+            "sampled_chunk_count": 2,
+            "omitted_chunk_count": 0,
+            "coverage_percent": 100,
+            "max_sampled_chunks": 80,
+            "section_count": 1,
+        },
         input_summary={
             "section_summaries": [
                 {"title": "Overview", "summary": "Bounded overview", "chunk_ids": [11, 12]}
@@ -137,6 +146,13 @@ def test_source_proposal_apply_requires_confirmation_and_version_pair() -> None:
         session_id=" session-1 ",
     )
     assert request.session_id == "session-1"
+
+    with pytest.raises(ValidationError, match="branch proposals require"):
+        SourceMindMapProposalApply(
+            **proposal,
+            confirm=True,
+            target_node_id="node-2",
+        )
 
 
 def test_versioned_updates_require_an_explicit_change() -> None:

@@ -105,11 +105,13 @@ class ParsedMindMapOutlineNode:
 MAX_OUTLINE_NODES = 500
 OUTLINE_LINE_PATTERN = re.compile(r"^(?P<indent> *)(?:- )(?P<content>.+)$")
 OUTLINE_ID_PATTERN = re.compile(r"^\[id:(?P<display_id>\d+)\]\s+(?P<content>.+)$")
-SOURCE_CONTEXT_MAX_CHUNKS = 120
+SOURCE_CONTEXT_MAX_CHUNKS = 80
 SOURCE_CONTEXT_CHUNK_SUMMARY_CHARS = 360
 SOURCE_CONTEXT_SECTION_SUMMARY_CHARS = 240
 SOURCE_CONTEXT_SECTION_SIZE = 12
 SOURCE_CONTEXT_HEADING_PATTERN = re.compile(r"^#{1,6}\s+(?P<title>.+?)\s*$", re.MULTILINE)
+SOURCE_MIND_MAP_AUTO_COLLAPSE_THRESHOLD = 40
+SOURCE_MIND_MAP_AUTO_COLLAPSE_DEPTH = 2
 
 
 def make_mind_map_id() -> str:
@@ -196,6 +198,8 @@ async def build_source_mind_map_generation_context(
         )
 
     source_metadata = source.metadata_ if isinstance(source.metadata_, dict) else {}
+    sampled_chunk_count = len(selected_chunks)
+    total_chunk_count = len(chunks)
     return SourceMindMapGenerationContextRead(
         source_id=source.id,
         source_metadata=SourceMindMapGenerationSource(
@@ -207,6 +211,15 @@ async def build_source_mind_map_generation_context(
             "source_content_hash": source.content_hash,
             "chunk_count": len(chunks),
             "chunk_revision": source_metadata.get("chunk_revision"),
+        },
+        sampling={
+            "strategy": "all_chunks" if sampled_chunk_count == total_chunk_count else "evenly_spaced",
+            "total_chunk_count": total_chunk_count,
+            "sampled_chunk_count": sampled_chunk_count,
+            "omitted_chunk_count": total_chunk_count - sampled_chunk_count,
+            "coverage_percent": round(sampled_chunk_count / total_chunk_count * 100),
+            "max_sampled_chunks": SOURCE_CONTEXT_MAX_CHUNKS,
+            "section_count": len(section_summaries),
         },
         input_summary=SourceMindMapInputSummary(
             section_summaries=section_summaries,
@@ -986,6 +999,37 @@ async def validate_source_mind_map_proposal(
             },
         )
 
+    if body.target_node_id is not None:
+        assert body.map_id is not None and body.base_version is not None
+        mind_map = await _get_map(session, user_id=user_id, map_id=body.map_id)
+        _validate_version(mind_map, body.base_version)
+        if mind_map.owner_type != "source" or mind_map.owner_id != body.source_id or mind_map.purpose != "document_overview":
+            raise HTTPException(status_code=422, detail="Branch proposal does not belong to the target Source Mind Map")
+        target_row = await session.execute(
+            select(MindMapNode).where(
+                MindMapNode.id == body.target_node_id,
+                MindMapNode.map_id == mind_map.id,
+            )
+        )
+        target_node = target_row.scalar_one_or_none()
+        if target_node is None:
+            raise HTTPException(status_code=404, detail="Branch expansion target node not found")
+        root_proposal = next(node for node in body.proposal.nodes if node.parent_temp_id is None)
+        if root_proposal.content != target_node.content:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "source_mind_map_branch_anchor_mismatch",
+                    "message": "Branch proposal root must exactly match the selected target node",
+                    "target_node_id": target_node.id,
+                },
+            )
+        if any(reference.node_temp_id == root_proposal.temp_id for reference in body.proposal.references):
+            raise HTTPException(
+                status_code=422,
+                detail="Branch proposal cannot add references to the existing target node",
+            )
+
     return SourceMindMapProposalValidationState(
         source_id=source.id,
         basis_revision=current_basis,
@@ -1011,6 +1055,24 @@ def _proposal_nodes_in_tree_order(proposal: SourceMindMapProposal):
 
     visit(None)
     return ordered
+
+
+def _default_collapsed_proposal_ids(proposal_nodes: list) -> set[str]:
+    if len(proposal_nodes) <= SOURCE_MIND_MAP_AUTO_COLLAPSE_THRESHOLD:
+        return set()
+    depth_by_temp_id: dict[str, int] = {}
+    parent_temp_ids = {
+        node.parent_temp_id
+        for node in proposal_nodes
+        if node.parent_temp_id is not None
+    }
+    collapsed_ids: set[str] = set()
+    for node in proposal_nodes:
+        depth = 0 if node.parent_temp_id is None else depth_by_temp_id[node.parent_temp_id] + 1
+        depth_by_temp_id[node.temp_id] = depth
+        if depth == SOURCE_MIND_MAP_AUTO_COLLAPSE_DEPTH and node.temp_id in parent_temp_ids:
+            collapsed_ids.add(node.temp_id)
+    return collapsed_ids
 
 
 def _proposal_reference(
@@ -1045,6 +1107,7 @@ async def apply_source_mind_map_proposal(
     await validate_source_mind_map_proposal(session, user_id=user_id, body=body)
     now = datetime.now(UTC)
     proposal_nodes = _proposal_nodes_in_tree_order(body.proposal)
+    default_collapsed_ids = _default_collapsed_proposal_ids(proposal_nodes)
     root_proposal = proposal_nodes[0]
 
     if body.map_id is None:
@@ -1094,7 +1157,7 @@ async def apply_source_mind_map_proposal(
                 content=proposal_node.content,
                 note=proposal_node.note,
                 position=proposal_node.position,
-                collapsed=False,
+                collapsed=proposal_node.temp_id in default_collapsed_ids,
                 node_kind=proposal_node.node_kind,
                 updated_by="agent",
                 created_at=now,
@@ -1146,15 +1209,23 @@ async def apply_source_mind_map_proposal(
     nodes = await _load_nodes(session, map_id=mind_map.id, for_update=True)
     references = await _load_references(session, map_id=mind_map.id)
     root = _root_node(mind_map.id, nodes)
-    node_by_temp_id = {root_proposal.temp_id: root}
-    root.content = root_proposal.content
-    root.note = root_proposal.note
-    root.node_kind = root_proposal.node_kind
-    root.updated_by = "agent"
-    root.updated_at = now
+    branch_target = next(
+        (node for node in nodes if node.id == body.target_node_id),
+        None,
+    ) if body.target_node_id is not None else None
+    if body.target_node_id is not None and branch_target is None:
+        raise HTTPException(status_code=404, detail="Branch expansion target node not found")
+    proposal_anchor = branch_target or root
+    node_by_temp_id = {root_proposal.temp_id: proposal_anchor}
+    if branch_target is None:
+        root.content = root_proposal.content
+        root.note = root_proposal.note
+        root.node_kind = root_proposal.node_kind
+        root.updated_by = "agent"
+        root.updated_at = now
 
     next_display_id = max(node.display_id for node in nodes) + 1
-    used_existing_ids = {root.id}
+    used_existing_ids = {proposal_anchor.id}
     for proposal_node in proposal_nodes[1:]:
         parent = node_by_temp_id[proposal_node.parent_temp_id]
         match = next(
@@ -1178,7 +1249,7 @@ async def apply_source_mind_map_proposal(
                 content=proposal_node.content,
                 note=proposal_node.note,
                 position=max(sibling_positions, default=-1) + 1,
-                collapsed=False,
+                collapsed=proposal_node.temp_id in default_collapsed_ids,
                 node_kind=proposal_node.node_kind,
                 updated_by="agent",
                 created_at=now,
@@ -1211,8 +1282,9 @@ async def apply_source_mind_map_proposal(
         reference_keys.add(key)
 
     previous_version = mind_map.version
-    mind_map.title = body.proposal.title
-    mind_map.layout_mode = body.proposal.layout_mode
+    if branch_target is None:
+        mind_map.title = body.proposal.title
+        mind_map.layout_mode = body.proposal.layout_mode
     mind_map.basis_revision = body.basis_revision.model_dump()
     mind_map.generation_status = "ready"
     mind_map.version += 1
@@ -1228,8 +1300,10 @@ async def apply_source_mind_map_proposal(
         actor_ref=body.session_id,
         action="outline_applied",
         summary=(
-            f"Merged confirmed Agent proposal into Source Mind Map version {previous_version}; "
+            f"Expanded Source Mind Map branch {branch_target.display_id} from confirmed Agent proposal; "
             "existing nodes were preserved"
+            if branch_target is not None
+            else f"Merged confirmed Agent proposal into Source Mind Map version {previous_version}; existing nodes were preserved"
         ),
         now=now,
     )

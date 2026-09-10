@@ -418,6 +418,17 @@ class TestPushContentVersion:
         assert note.content_versions[-1]["content"] == "C"
 
 
+class TestNormalizePdfMarkdown:
+    def test_aligns_commonmark_indented_headings_without_touching_fences(self):
+        from pkg.api.notes import _normalize_pdf_markdown
+
+        content = " ## Section\n  ### Detail\n```markdown\n ## Example\n```\n# Existing\n"
+
+        assert _normalize_pdf_markdown(content) == (
+            "## Section\n### Detail\n```markdown\n ## Example\n```\n# Existing\n"
+        )
+
+
 # ---------------------------------------------------------------------------
 # POST /notes/{note_id}/images
 # ---------------------------------------------------------------------------

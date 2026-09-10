@@ -61,10 +61,21 @@ class SourceMindMapInputSummary(BaseModel):
     chunk_summaries: list[SourceMindMapChunkSummary] = Field(min_length=1, max_length=120)
 
 
+class SourceMindMapSamplingRead(BaseModel):
+    strategy: Literal["all_chunks", "evenly_spaced"]
+    total_chunk_count: int = Field(ge=1)
+    sampled_chunk_count: int = Field(ge=1)
+    omitted_chunk_count: int = Field(ge=0)
+    coverage_percent: int = Field(ge=1, le=100)
+    max_sampled_chunks: int = Field(ge=1)
+    section_count: int = Field(ge=1)
+
+
 class SourceMindMapGenerationContextRead(BaseModel):
     source_id: str
     source_metadata: SourceMindMapGenerationSource
     basis_revision: SourceMindMapBasis
+    sampling: SourceMindMapSamplingRead
     input_summary: SourceMindMapInputSummary
 
 
@@ -198,23 +209,32 @@ class SourceMindMapProposalValidate(BaseModel):
     source_id: str = Field(min_length=1, max_length=200)
     basis_revision: SourceMindMapBasis
     proposal: SourceMindMapProposal
+    map_id: str | None = Field(default=None, min_length=1, max_length=200)
+    base_version: int | None = Field(default=None, ge=1)
+    target_node_id: str | None = Field(default=None, min_length=1, max_length=200)
 
-    @field_validator("source_id")
+    @field_validator("source_id", "map_id", "target_node_id")
     @classmethod
-    def normalize_source_id(cls, value: str) -> str:
+    def normalize_source_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         normalized = value.strip()
         if not normalized:
             raise ValueError("must not be blank")
         return normalized
 
+    @model_validator(mode="after")
+    def require_branch_target_version(self):
+        if self.target_node_id is not None and (self.map_id is None or self.base_version is None):
+            raise ValueError("branch proposals require map_id, base_version, and target_node_id")
+        return self
+
 
 class SourceMindMapProposalApply(SourceMindMapProposalValidate):
-    map_id: str | None = Field(default=None, min_length=1, max_length=200)
-    base_version: int | None = Field(default=None, ge=1)
     session_id: str | None = Field(default=None, min_length=1, max_length=200)
     confirm: bool
 
-    @field_validator("map_id", "session_id")
+    @field_validator("session_id")
     @classmethod
     def normalize_optional_id(cls, value: str | None) -> str | None:
         if value is None:
@@ -237,6 +257,9 @@ class SourceMindMapProposalValidationRead(BaseModel):
     source_id: str
     basis_revision: SourceMindMapBasis
     proposal: SourceMindMapProposal
+    map_id: str | None = None
+    base_version: int | None = None
+    target_node_id: str | None = None
     node_count: int = Field(ge=1, le=SOURCE_MIND_MAP_PROPOSAL_MAX_NODES)
     reference_count: int = Field(ge=0)
 

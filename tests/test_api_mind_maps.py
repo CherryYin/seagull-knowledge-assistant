@@ -258,6 +258,15 @@ async def test_source_generation_context_route_returns_bounded_contract() -> Non
             "chunk_count": 1,
             "chunk_revision": 2,
         },
+        sampling={
+            "strategy": "all_chunks",
+            "total_chunk_count": 1,
+            "sampled_chunk_count": 1,
+            "omitted_chunk_count": 0,
+            "coverage_percent": 100,
+            "max_sampled_chunks": 80,
+            "section_count": 1,
+        },
         input_summary={
             "section_summaries": [],
             "chunk_summaries": [

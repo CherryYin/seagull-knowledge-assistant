@@ -1,3 +1,4 @@
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -583,6 +584,28 @@ del {{ color: #999; text-decoration: line-through; }}
 </html>
 """
 
+_PDF_ATX_HEADING = re.compile(r"^ {1,3}(#{1,6})([ \t]+\S.*)$")
+_PDF_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
+def _normalize_pdf_markdown(content: str) -> str:
+    lines = []
+    fence_marker: str | None = None
+    for line in content.splitlines(keepends=True):
+        fence = _PDF_FENCE.match(line)
+        if fence is not None:
+            marker = fence.group(1)
+            if fence_marker is None:
+                fence_marker = marker
+            elif marker[0] == fence_marker[0] and len(marker) >= len(fence_marker):
+                fence_marker = None
+            lines.append(line)
+            continue
+        if fence_marker is None:
+            line = _PDF_ATX_HEADING.sub(r"\1\2", line)
+        lines.append(line)
+    return "".join(lines)
+
 
 @router.get("/{note_id}/export/pdf")
 async def export_note_pdf(
@@ -603,7 +626,7 @@ async def export_note_pdf(
     from weasyprint import HTML
 
     html_body = md.markdown(
-        content,
+        _normalize_pdf_markdown(content),
         extensions=[
             "tables",
             "toc",
