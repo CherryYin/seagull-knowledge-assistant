@@ -59,6 +59,15 @@ export interface SourceMindMapGenerationContext {
     ingested_at: string;
   };
   basis_revision: SourceMindMapBasis;
+  sampling: {
+    strategy: "all_chunks" | "evenly_spaced";
+    total_chunk_count: number;
+    sampled_chunk_count: number;
+    omitted_chunk_count: number;
+    coverage_percent: number;
+    max_sampled_chunks: number;
+    section_count: number;
+  };
   input_summary: {
     section_summaries: SourceMindMapSectionSummary[];
     chunk_summaries: SourceMindMapChunkSummary[];
@@ -92,6 +101,9 @@ export interface SourceMindMapProposalValidate {
   source_id: string;
   basis_revision: SourceMindMapBasis;
   proposal: SourceMindMapProposal;
+  map_id?: string | null;
+  base_version?: number | null;
+  target_node_id?: string | null;
 }
 
 export interface SourceMindMapProposalValidation extends SourceMindMapProposalValidate {

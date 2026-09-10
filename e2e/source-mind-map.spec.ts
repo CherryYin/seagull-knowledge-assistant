@@ -14,7 +14,10 @@ async function installMockBff(page: Page, options?: {
   existingMap?: boolean;
   staleReasons?: Array<"source_content_hash" | "chunk_count" | "chunk_revision">;
   agentProposal?: "valid" | "invalid-once" | "basis-conflict";
+  agentDelayMs?: number;
+  largeProposal?: boolean;
   applyVersionConflict?: boolean;
+  contextFailure?: boolean;
 }) {
   let loggedIn = false;
   let hasMap = options?.existingMap ?? false;
@@ -22,6 +25,7 @@ async function installMockBff(page: Page, options?: {
   let validatedBody: Record<string, unknown> | null = null;
   let chatBody: Record<string, unknown> | null = null;
   let appliedBody: Record<string, unknown> | null = null;
+  let noteBody: Record<string, unknown> | null = null;
   let chatAttempts = 0;
   const sourceType = options?.sourceType ?? "pdf";
   const chunkCount = options?.chunkCount ?? 3;
@@ -39,6 +43,10 @@ async function installMockBff(page: Page, options?: {
     ingested_at: now,
     metadata_: { chunk_revision: 2, extraction_status: rawContent ? "completed" : "pending" },
   };
+  const chunks = [
+    { id: 11, source_id: source.id, chunk_index: 0, content: "Coordination requires explicit failure handling.", token_count: 6, embedding_status: "completed", created_at: now },
+    { id: 12, source_id: source.id, chunk_index: 1, content: "Consensus establishes a shared decision.", token_count: 5, embedding_status: "completed", created_at: now },
+  ];
   const map = {
     id: "map-source-pdf",
     user_id: "source-map-user",
@@ -58,11 +66,21 @@ async function installMockBff(page: Page, options?: {
     { id: "root", map_id: map.id, display_id: 1, parent_id: null, content: "Distributed Systems Paper", note: null, position: 0, collapsed: false, node_kind: "topic", updated_by: "human", created_at: now, updated_at: now },
     { id: "branch", map_id: map.id, display_id: 2, parent_id: "root", content: "Coordination", note: null, position: 0, collapsed: false, node_kind: "concept", updated_by: "agent", created_at: now, updated_at: now },
   ];
-  const tree = () => ({ map, root_id: "root", nodes: hasMap ? nodes : nodes.slice(0, 1), references: [] });
+  const references = [{ id: "ref-branch-11", map_id: map.id, node_id: "branch", ref_type: "source_chunk", ref_id: "11", relation: "supports", fragment_selector: { page: 8 }, created_at: now }];
+  const tree = () => ({ map, root_id: "root", nodes: hasMap ? nodes : nodes.slice(0, 1), references: hasMap ? references : [] });
   const generationContext = {
     source_id: source.id,
     source_metadata: { title: source.title, source_type: "pdf", ingested_at: now },
-    basis_revision: { source_content_hash: source.content_hash, chunk_count: 3, chunk_revision: 2 },
+    basis_revision: { source_content_hash: source.content_hash, chunk_count: chunkCount, chunk_revision: 2 },
+    sampling: {
+      strategy: chunkCount > 80 ? "evenly_spaced" : "all_chunks",
+      total_chunk_count: chunkCount,
+      sampled_chunk_count: Math.min(chunkCount, 80),
+      omitted_chunk_count: Math.max(0, chunkCount - 80),
+      coverage_percent: Math.round(Math.min(chunkCount, 80) / chunkCount * 100),
+      max_sampled_chunks: 80,
+      section_count: Math.ceil(Math.min(chunkCount, 80) / 12),
+    },
     input_summary: {
       section_summaries: [{ title: "Coordination", summary: "Coordination patterns", chunk_ids: [11, 12] }],
       chunk_summaries: [
@@ -71,17 +89,45 @@ async function installMockBff(page: Page, options?: {
       ],
     },
   };
+  const proposalNodes = options?.largeProposal
+    ? [
+        { temp_id: "root", parent_temp_id: null, position: 0, content: "Distributed Systems", note: null, node_kind: "topic" },
+        ...Array.from({ length: 4 }, (_, sectionIndex) => {
+          const sectionId = `section-${sectionIndex}`;
+          return [
+            { temp_id: sectionId, parent_temp_id: "root", position: sectionIndex, content: `Section ${sectionIndex}`, note: null, node_kind: "section" },
+            ...Array.from({ length: 3 }, (_, topicIndex) => {
+              const topicId = `${sectionId}-topic-${topicIndex}`;
+              return [
+                { temp_id: topicId, parent_temp_id: sectionId, position: topicIndex, content: `Topic ${sectionIndex}.${topicIndex}`, note: null, node_kind: "concept" },
+                ...Array.from({ length: 3 }, (_, detailIndex) => ({
+                  temp_id: `${topicId}-detail-${detailIndex}`,
+                  parent_temp_id: topicId,
+                  position: detailIndex,
+                  content: `Detail ${sectionIndex}.${topicIndex}.${detailIndex}`,
+                  note: null,
+                  node_kind: "concept",
+                })),
+              ];
+            }).flat(),
+          ];
+        }).flat(),
+      ]
+    : [
+        { temp_id: "root", parent_temp_id: null, position: 0, content: "Distributed Systems", note: null, node_kind: "topic" },
+        { temp_id: "coordination", parent_temp_id: "root", position: 0, content: "Coordination", note: null, node_kind: "claim" },
+      ];
+  const proposalReferences = options?.largeProposal
+    ? []
+    : [{ node_temp_id: "coordination", chunk_id: 11, relation: "supports", fragment_selector: null }];
   const proposal = {
     source_id: source.id,
     basis_revision: generationContext.basis_revision,
     proposal: {
       title: "Distributed Systems Overview",
       layout_mode: "balanced",
-      nodes: [
-        { temp_id: "root", parent_temp_id: null, position: 0, content: "Distributed Systems", note: null, node_kind: "topic" },
-        { temp_id: "coordination", parent_temp_id: "root", position: 0, content: "Coordination", note: null, node_kind: "claim" },
-      ],
-      references: [{ node_temp_id: "coordination", chunk_id: 11, relation: "supports", fragment_selector: null }],
+      nodes: proposalNodes,
+      references: proposalReferences,
     },
     authorship: "agent",
     requiresUserConfirmation: true,
@@ -102,28 +148,58 @@ async function installMockBff(page: Page, options?: {
     if (path === "/api/auth/me/settings") return json(route, { settings: { modules: { onboarding_completed: true, enabled: [] } }, updated_at: now });
     if (path === "/api/sources/source-pdf") return json(route, source);
     if (path === "/api/sources/source-pdf/chunk-count") return json(route, { count: chunkCount });
+    if (path === "/api/sources/source-pdf/chunks") return json(route, chunks);
     if (path === "/api/categories") return json(route, { items: [{ id: 1, name: "Research" }], total: 1 });
+    if (path === "/api/notes" && request.method() === "POST") {
+      noteBody = request.postDataJSON() as Record<string, unknown>;
+      return json(route, { id: "note-from-map", ...noteBody, domains: [], created_at: now, updated_at: now }, 201);
+    }
     if (path === "/api/mind-maps" && request.method() === "GET") return json(route, { items: hasMap ? [map] : [], total: hasMap ? 1 : 0 });
     if (path === "/api/mind-maps" && request.method() === "POST") {
       createdBody = request.postDataJSON() as Record<string, unknown>;
       hasMap = true;
       return json(route, tree(), 201);
     }
-    if (path === "/api/mind-maps/proposals/source/context") return json(route, generationContext);
+    if (path === "/api/mind-maps/proposals/source/context") {
+      if (options?.contextFailure) return json(route, { detail: "Mind Map generation context is temporarily unavailable" }, 503);
+      return json(route, generationContext);
+    }
     if (path === "/api/chat" && request.method() === "POST") {
       chatAttempts += 1;
       chatBody = request.postDataJSON() as Record<string, unknown>;
       const invalid = options?.agentProposal === "invalid-once" && chatAttempts === 1;
+      const isBranchExpansion = String(chatBody.prompt ?? "").includes("Expand only the selected Source Mind Map branch");
+      const agentResult = isBranchExpansion ? {
+        source_id: source.id,
+        basis_revision: generationContext.basis_revision,
+        map_id: map.id,
+        base_version: map.version,
+        target_node_id: "branch",
+        proposal: {
+          title: "Coordination branch expansion",
+          layout_mode: "balanced",
+          nodes: [
+            { temp_id: "anchor", parent_temp_id: null, position: 0, content: "Coordination", note: null, node_kind: "topic" },
+            { temp_id: "failure-modes", parent_temp_id: "anchor", position: 0, content: "Failure modes", note: null, node_kind: "concept" },
+          ],
+          references: [],
+        },
+        authorship: "agent",
+        requiresUserConfirmation: true,
+      } : proposal;
       const events = [
         { type: "session", session_id: `session-mind-map-${chatAttempts}`, preset: "generate-source-mind-map" },
         { type: "tool_call", tool: "propose_source_mind_map", args: {} },
         {
           type: "tool_result",
           tool: "propose_source_mind_map",
-          result: invalid ? "Error: proposal.nodes[0] contains unsupported fields: text, category, branches" : JSON.stringify(proposal),
+          result: invalid ? "Error: proposal.nodes[0] contains unsupported fields: text, category, branches" : JSON.stringify(agentResult),
         },
         { type: "done", session_id: `session-mind-map-${chatAttempts}` },
       ];
+      if (options?.agentDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, options.agentDelayMs));
+      }
       return route.fulfill({
         status: 200,
         contentType: "text/event-stream",
@@ -140,7 +216,12 @@ async function installMockBff(page: Page, options?: {
           },
         }, 409);
       }
-      return json(route, { ...proposal, node_count: 2, reference_count: 1 });
+      const validatedProposal = validatedBody.proposal as { nodes?: unknown[]; references?: unknown[] };
+      return json(route, {
+        ...validatedBody,
+        node_count: validatedProposal.nodes?.length ?? 0,
+        reference_count: validatedProposal.references?.length ?? 0,
+      });
     }
     if (path === "/api/mind-maps/proposals/source/apply" && request.method() === "POST") {
       appliedBody = request.postDataJSON() as Record<string, unknown>;
@@ -184,6 +265,7 @@ async function installMockBff(page: Page, options?: {
     getValidatedBody: () => validatedBody,
     getChatBody: () => chatBody,
     getAppliedBody: () => appliedBody,
+    getNoteBody: () => noteBody,
   };
 }
 
@@ -291,6 +373,37 @@ test("validated Proposal can be discarded without changing the formal Map", asyn
   await expect(page.getByRole("button", { name: "Generate Agent Proposal" })).toBeVisible();
 });
 
+test("large PDF generation shows bounded coverage and can be cancelled safely", async ({ page }) => {
+  await installMockBff(page, { chunkCount: 145, agentDelayMs: 5_000 });
+  await signIn(page);
+  await page.goto("/sources/source-pdf");
+
+  await page.getByRole("button", { name: "Mind Map" }).click();
+  await page.getByRole("button", { name: "Generate Agent Proposal" }).click();
+  const metrics = page.getByTestId("source-mind-map-generation-metrics");
+  await expect(metrics).toContainText("145 source chunks");
+  await expect(metrics).toContainText("80 Agent input chunks");
+  await expect(metrics).toContainText("55% coverage");
+  await expect(page.getByText(/Large PDF protection is active/)).toContainText("65 are omitted");
+
+  await page.getByRole("button", { name: "Cancel Generation" }).click();
+  await expect(page.getByText("Generation cancelled. No Proposal was saved or applied.")).toBeVisible();
+  await expect(page.getByTestId("source-mind-map-proposal-preview")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Try Again" })).toBeVisible();
+});
+
+test("large Agent Proposal starts folded at depth two", async ({ page }) => {
+  await installMockBff(page, { chunkCount: 145, largeProposal: true });
+  await signIn(page);
+  await page.goto("/sources/source-pdf");
+
+  await page.getByRole("button", { name: "Mind Map" }).click();
+  await page.getByRole("button", { name: "Generate Agent Proposal" }).click();
+  await expect(page.getByTestId("source-mind-map-auto-collapse-notice")).toContainText("folded at depth 2");
+  const visibleNodes = page.getByTestId("source-mind-map-proposal-preview").locator(".react-flow__node");
+  await expect.poll(() => visibleNodes.count()).toBe(17);
+});
+
 test("Map version conflict keeps the validated Proposal for retry", async ({ page }) => {
   await installMockBff(page, { existingMap: true, agentProposal: "valid", applyVersionConflict: true });
   await signIn(page);
@@ -332,6 +445,87 @@ test("basis conflict blocks Proposal preview and asks for retry", async ({ page 
   await expect(page.getByText(/source_mind_map_basis_conflict/)).toBeVisible();
   await expect(page.getByTestId("source-mind-map-proposal-preview")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Try Again" })).toBeVisible();
+});
+
+test("Mind Map generation failure does not block Full or Slices reading", async ({ page }) => {
+  await installMockBff(page, { contextFailure: true });
+  await signIn(page);
+  await page.goto("/sources/source-pdf");
+
+  await page.getByRole("button", { name: "Mind Map" }).click();
+  await page.getByRole("button", { name: "Generate Agent Proposal" }).click();
+  await expect(page.getByText(/Mind Map generation context is temporarily unavailable/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Try Again" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Full" }).click();
+  await expect(page.locator("[data-source-content]")).toContainText("Extracted PDF content");
+
+  await page.getByRole("button", { name: "Slices" }).click();
+  await expect(page.getByText("2 slices", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("selected-source-chunk-content")).toContainText("Coordination requires explicit failure handling");
+});
+
+test("selected Source branch expands through a version-safe confirmed Proposal", async ({ page }) => {
+  const mock = await installMockBff(page, { existingMap: true });
+  await signIn(page);
+  await page.goto("/sources/source-pdf");
+
+  await page.getByRole("button", { name: "Mind Map" }).click();
+  await page.getByTestId("source-mind-map-preview").getByText("Coordination", { exact: true }).click();
+  await page.getByRole("button", { name: "Expand Selected Branch" }).click();
+
+  await expect(page.getByRole("heading", { name: "Branch Expansion Proposal" })).toBeVisible();
+  await expect(page.getByTestId("source-mind-map-proposal-preview")).toContainText("Failure modes");
+  expect(mock.getChatBody()).toMatchObject({ preset: "generate-source-mind-map", ephemeral_session: true });
+  expect(String(mock.getChatBody()?.prompt)).toContain("target_node_id");
+  expect(mock.getValidatedBody()).toMatchObject({ map_id: "map-source-pdf", base_version: 2, target_node_id: "branch" });
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Review & Save to Mind Map" }).click();
+  expect(mock.getAppliedBody()).toMatchObject({
+    map_id: "map-source-pdf",
+    base_version: 2,
+    target_node_id: "branch",
+    confirm: true,
+  });
+});
+
+test("selected Source node hands off provenance to Asset, Note, and Wiki workflows", async ({ page }) => {
+  const mock = await installMockBff(page, { existingMap: true });
+  await signIn(page);
+  await page.goto("/sources/source-pdf");
+
+  const selectCoordination = async () => {
+    await page.getByRole("button", { name: "Mind Map" }).click();
+    await page.getByTestId("source-mind-map-preview").getByText("Coordination", { exact: true }).click();
+    await expect(page.getByTestId("source-mind-map-node-handoff")).toContainText("1 Source Chunk reference");
+  };
+
+  await selectCoordination();
+  await page.getByTestId("source-mind-map-node-handoff").getByRole("button", { name: "Use in Asset Evidence" }).click();
+  await expect(page).toHaveURL(/\/assets\/new$/);
+  const assetHandoff = await page.evaluate(() => window.history.state.usr.assetHandoff);
+  expect(assetHandoff).toMatchObject({ title: "Coordination", source_refs: ["source-pdf"] });
+  expect(String(assetHandoff.brief)).toContain("Referenced Source Chunks: 11");
+
+  await page.goBack();
+  await selectCoordination();
+  await page.getByTestId("source-mind-map-node-handoff").getByRole("button", { name: "Draft Wiki", exact: true }).click();
+  await expect(page).toHaveURL(/\/chat$/);
+  const wikiHandoff = await page.evaluate(() => window.history.state.usr);
+  expect(wikiHandoff.workflowId).toBe("draft-wiki-refresh");
+  expect(String(wikiHandoff.promptSeed)).toContain("Referenced Source Chunks: 11");
+
+  await page.goBack();
+  await selectCoordination();
+  await page.getByTestId("source-mind-map-node-handoff").getByRole("button", { name: "Create Note", exact: true }).click();
+  await expect(page).toHaveURL(/\/notes\/note-from-map$/);
+  expect(mock.getNoteBody()).toMatchObject({
+    title: "Distributed Systems Paper · Coordination",
+    tags: ["from-source", "from-mind-map"],
+    source_ids: ["source-pdf"],
+  });
+  expect(String(mock.getNoteBody()?.content)).toContain("Source Chunks: 11");
 });
 
 test("PDF Source marks a changed basis stale without replacing Map nodes", async ({ page }) => {
