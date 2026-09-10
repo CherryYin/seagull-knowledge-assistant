@@ -3,9 +3,6 @@
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
-import pytest
-
-
 # ---------------------------------------------------------------------------
 # POST /chat-sessions
 # ---------------------------------------------------------------------------
@@ -94,6 +91,7 @@ def _make_chat_session(session_id: str, user_id: str):
     obj.user_id = user_id
     obj.title = "Test Session"
     obj.messages = []
+    obj.is_ephemeral = False
     obj.created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     obj.updated_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     return obj

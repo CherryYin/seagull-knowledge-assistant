@@ -16,6 +16,7 @@ class ChatSessionCreate(BaseModel):
     title: str = "New Session"
     messages: list[ChatMessageSchema] = []
     profile_id: str | None = None
+    is_ephemeral: bool = False
 
 
 class ChatSessionRead(BaseModel):
@@ -25,6 +26,7 @@ class ChatSessionRead(BaseModel):
     title: str
     messages: list[ChatMessageSchema]
     profile_id: str | None = None
+    is_ephemeral: bool = False
     created_at: datetime
     updated_at: datetime
 

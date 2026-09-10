@@ -7,12 +7,16 @@ from fastapi import HTTPException
 from pkg.api.app import app
 from pkg.api.mind_maps import (
     add_mind_map_node_route,
+    apply_source_mind_map_proposal_route,
     apply_mind_map_outline_route,
+    check_mind_map_staleness_route,
     create_mind_map_reference_route,
     create_mind_map_route,
     delete_mind_map_route,
+    get_source_mind_map_generation_context_route,
     restore_mind_map_revision_route,
     update_mind_map_route,
+    validate_source_mind_map_proposal_route,
 )
 from pkg.models.application.mind_map import (
     MindMap,
@@ -28,8 +32,16 @@ from pkg.schemas.application.mind_map import (
     MindMapReferenceCreate,
     MindMapRevisionRestore,
     MindMapUpdate,
+    SourceMindMapGenerationContextRead,
+    SourceMindMapProposalApply,
+    SourceMindMapProposalValidate,
 )
-from pkg.services.application.mind_maps import MindMapMutationState, MindMapTreeState
+from pkg.services.application.mind_maps import (
+    MindMapMutationState,
+    MindMapStalenessState,
+    MindMapTreeState,
+    SourceMindMapProposalValidationState,
+)
 
 
 NOW = datetime(2026, 9, 9, tzinfo=UTC)
@@ -145,6 +157,8 @@ def test_core_mind_map_routes_are_registered() -> None:
     assert {"GET", "POST"} <= methods_by_path["/mind-maps"]
     assert {"GET", "PATCH", "DELETE"} <= methods_by_path["/mind-maps/{map_id}"]
     assert "GET" in methods_by_path["/mind-maps/{map_id}/tree"]
+    assert "POST" in methods_by_path["/mind-maps/{map_id}/check-staleness"]
+    assert "POST" in methods_by_path["/mind-maps/proposals/source/validate"]
     assert "POST" in methods_by_path["/mind-maps/{map_id}/nodes"]
     assert {"PATCH", "DELETE"} <= methods_by_path[
         "/mind-maps/{map_id}/nodes/{node_id}"
@@ -178,6 +192,166 @@ def test_openapi_documents_version_conflict_contract() -> None:
     assert "MindMapRevisionRestore" in schema["components"]["schemas"]
     assert "MindMapReferenceList" in schema["components"]["schemas"]
     assert "MindMapOutlineApplyResult" in schema["components"]["schemas"]
+    assert "MindMapStalenessRead" in schema["components"]["schemas"]
+    assert "SourceMindMapProposalValidationRead" in schema["components"]["schemas"]
+
+
+@pytest.mark.asyncio
+async def test_source_proposal_validation_route_returns_read_only_preview_contract() -> None:
+    body = SourceMindMapProposalValidate(
+        source_id="source-1",
+        basis_revision={
+            "source_content_hash": "hash-1",
+            "chunk_count": 2,
+            "chunk_revision": 3,
+        },
+        proposal={
+            "title": "Document overview",
+            "nodes": [
+                {
+                    "temp_id": "root",
+                    "parent_temp_id": None,
+                    "position": 0,
+                    "content": "Document overview",
+                    "node_kind": "topic",
+                }
+            ],
+        },
+    )
+    result = SourceMindMapProposalValidationState(
+        source_id="source-1",
+        basis_revision=body.basis_revision.model_dump(),
+        proposal=body.proposal,
+        node_count=1,
+        reference_count=0,
+    )
+    session = AsyncMock()
+
+    with patch(
+        "pkg.api.mind_maps.validate_source_mind_map_proposal",
+        new=AsyncMock(return_value=result),
+    ) as mock:
+        response = await validate_source_mind_map_proposal_route(
+            body=body,
+            user=make_user(),
+            session=session,
+        )
+
+    assert response.source_id == "source-1"
+    assert response.node_count == 1
+    assert response.reference_count == 0
+    assert response.proposal.nodes[0].temp_id == "root"
+    mock.assert_awaited_once_with(session, user_id="user-1", body=body)
+
+
+@pytest.mark.asyncio
+async def test_source_generation_context_route_returns_bounded_contract() -> None:
+    context = SourceMindMapGenerationContextRead(
+        source_id="source-1",
+        source_metadata={
+            "title": "Document",
+            "source_type": "pdf",
+            "ingested_at": NOW,
+        },
+        basis_revision={
+            "source_content_hash": "hash-1",
+            "chunk_count": 1,
+            "chunk_revision": 2,
+        },
+        input_summary={
+            "section_summaries": [],
+            "chunk_summaries": [
+                {"chunk_id": 11, "chunk_index": 0, "summary": "Bounded summary"}
+            ],
+        },
+    )
+    session = AsyncMock()
+
+    with patch(
+        "pkg.api.mind_maps.build_source_mind_map_generation_context",
+        new=AsyncMock(return_value=context),
+    ) as mock:
+        response = await get_source_mind_map_generation_context_route(
+            source_id="source-1",
+            user=make_user(),
+            session=session,
+        )
+
+    assert response == context
+    mock.assert_awaited_once_with(session, user_id="user-1", source_id="source-1")
+
+
+@pytest.mark.asyncio
+async def test_source_proposal_apply_route_returns_persisted_tree() -> None:
+    body = SourceMindMapProposalApply(
+        source_id="source-1",
+        basis_revision={"source_content_hash": "hash-1", "chunk_count": 1, "chunk_revision": None},
+        proposal={
+            "title": "Document map",
+            "nodes": [
+                {
+                    "temp_id": "root",
+                    "parent_temp_id": None,
+                    "position": 0,
+                    "content": "Document map",
+                    "node_kind": "topic",
+                }
+            ],
+        },
+        confirm=True,
+    )
+    mind_map = make_map(version=1)
+    root = make_node()
+    tree = MindMapTreeState(map=mind_map, root_id=root.id, nodes=[root], references=[])
+    session = AsyncMock()
+
+    with patch(
+        "pkg.api.mind_maps.apply_source_mind_map_proposal",
+        new=AsyncMock(return_value=tree),
+    ) as mock:
+        response = await apply_source_mind_map_proposal_route(
+            body=body,
+            user=make_user(),
+            session=session,
+        )
+
+    assert response.root_id == "root"
+    mock.assert_awaited_once_with(session, user_id="user-1", body=body)
+
+
+@pytest.mark.asyncio
+async def test_staleness_route_returns_map_basis_and_reasons() -> None:
+    mind_map = make_map(version=3)
+    mind_map.generation_status = "stale"
+    result = MindMapStalenessState(
+        map=mind_map,
+        root_id="root",
+        stale=True,
+        reasons=("source_content_hash", "chunk_count"),
+        current_basis={
+            "source_content_hash": "hash-2",
+            "chunk_count": 4,
+            "chunk_revision": 3,
+        },
+    )
+    session = AsyncMock()
+
+    with patch(
+        "pkg.api.mind_maps.check_source_mind_map_staleness",
+        new=AsyncMock(return_value=result),
+    ) as mock:
+        response = await check_mind_map_staleness_route(
+            map_id="map-1",
+            user=make_user(),
+            session=session,
+        )
+
+    assert response.map.root_node_id == "root"
+    assert response.map.version == 3
+    assert response.stale is True
+    assert response.reasons == ["source_content_hash", "chunk_count"]
+    assert response.current_basis["chunk_revision"] == 3
+    mock.assert_awaited_once_with(session, user_id="user-1", map_id="map-1")
 
 
 @pytest.mark.asyncio

@@ -10,6 +10,7 @@ from pkg.models.application.mind_map import (
     MindMapNodeReference,
     MindMapRevision,
 )
+from pkg.models.foundation.source import Source, SourceChunk
 from pkg.schemas.application.mind_map import (
     MindMapCreate,
     MindMapDelete,
@@ -23,11 +24,16 @@ from pkg.schemas.application.mind_map import (
     MindMapReferenceUpdate,
     MindMapRevisionRestore,
     MindMapUpdate,
+    SourceMindMapProposalValidate,
+    SourceMindMapProposalApply,
 )
 from pkg.services.application.mind_maps import (
     _validate_reference_target,
     add_mind_map_node,
     apply_mind_map_outline,
+    apply_source_mind_map_proposal,
+    build_source_mind_map_generation_context,
+    check_source_mind_map_staleness,
     create_mind_map_reference,
     create_mind_map,
     delete_mind_map,
@@ -45,6 +51,7 @@ from pkg.services.application.mind_maps import (
     update_mind_map,
     update_mind_map_reference,
     update_mind_map_node,
+    validate_source_mind_map_proposal,
 )
 
 
@@ -98,6 +105,66 @@ def make_map(*, version: int = 3, user_id: str = "user-1") -> MindMap:
     )
 
 
+def make_source(*, content_hash: str = "hash-1", chunk_revision: int = 2) -> Source:
+    return Source(
+        id="source-1",
+        user_id="user-1",
+        category_id=1,
+        title="Distributed systems",
+        source_type="pdf",
+        content_hash=content_hash,
+        raw_content="Extracted content",
+        metadata_={"chunk_revision": chunk_revision},
+        ingested_at=NOW,
+    )
+
+
+@pytest.mark.asyncio
+async def test_build_source_generation_context_is_bounded_and_evenly_sampled() -> None:
+    chunks = [
+        SourceChunk(
+            id=index + 1,
+            source_id="source-1",
+            chunk_index=index,
+            content=f"## Section {index // 12 + 1}\n\nChunk {index} " + ("detail " * 100),
+        )
+        for index in range(145)
+    ]
+    session = make_session(
+        QueryResult(scalar=make_source()),
+        QueryResult(items=chunks),
+    )
+
+    context = await build_source_mind_map_generation_context(
+        session,
+        user_id="user-1",
+        source_id="source-1",
+    )
+
+    summaries = context.input_summary.chunk_summaries
+    assert len(summaries) == 120
+    assert summaries[0].chunk_index == 0
+    assert summaries[-1].chunk_index == 144
+    assert all(len(summary.summary) <= 360 for summary in summaries)
+    assert len(context.input_summary.section_summaries) == 10
+    assert context.basis_revision.chunk_count == 145
+    assert context.model_dump().get("raw_content") is None
+
+
+@pytest.mark.asyncio
+async def test_build_source_generation_context_rejects_non_pdf_source() -> None:
+    source = make_source()
+    source.source_type = "web"
+    session = make_session(QueryResult(scalar=source))
+
+    with pytest.raises(HTTPException, match="requires a PDF Source"):
+        await build_source_mind_map_generation_context(
+            session,
+            user_id="user-1",
+            source_id="source-1",
+        )
+
+
 def make_node(
     node_id: str,
     display_id: int,
@@ -118,6 +185,259 @@ def make_node(
         created_at=NOW,
         updated_at=NOW,
     )
+
+
+@pytest.mark.asyncio
+async def test_source_map_staleness_marks_status_without_changing_version() -> None:
+    mind_map = make_map(version=3)
+    mind_map.basis_revision = {
+        "source_content_hash": "hash-1",
+        "chunk_count": 2,
+        "chunk_revision": 2,
+    }
+    session = make_session(
+        QueryResult(scalar=mind_map),
+        QueryResult(scalar=make_source(content_hash="hash-2", chunk_revision=3)),
+        QueryResult(scalar=4),
+        QueryResult(items=["root"]),
+    )
+
+    result = await check_source_mind_map_staleness(
+        session,
+        user_id="user-1",
+        map_id="map-1",
+    )
+
+    assert result.stale is True
+    assert result.root_id == "root"
+    assert result.reasons == (
+        "source_content_hash",
+        "chunk_count",
+        "chunk_revision",
+    )
+    assert result.current_basis == {
+        "source_content_hash": "hash-2",
+        "chunk_count": 4,
+        "chunk_revision": 3,
+    }
+    assert mind_map.generation_status == "stale"
+    assert mind_map.version == 3
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_source_map_staleness_matching_basis_is_read_only() -> None:
+    mind_map = make_map(version=3)
+    mind_map.basis_revision = {
+        "source_content_hash": "hash-1",
+        "chunk_count": 2,
+        "source_chunk_revision": 2,
+    }
+    session = make_session(
+        QueryResult(scalar=mind_map),
+        QueryResult(scalar=make_source()),
+        QueryResult(scalar=2),
+        QueryResult(items=["root"]),
+    )
+
+    result = await check_source_mind_map_staleness(
+        session,
+        user_id="user-1",
+        map_id="map-1",
+    )
+
+    assert result.stale is False
+    assert result.reasons == ()
+    assert mind_map.generation_status == "ready"
+    assert mind_map.version == 3
+    session.commit.assert_not_awaited()
+
+
+def make_source_proposal_request(
+    *,
+    content_hash: str = "hash-1",
+    chunk_count: int = 2,
+    chunk_revision: int = 2,
+    chunk_id: int = 11,
+    quote: str = "failure handling",
+) -> SourceMindMapProposalValidate:
+    return SourceMindMapProposalValidate(
+        source_id="source-1",
+        basis_revision={
+            "source_content_hash": content_hash,
+            "chunk_count": chunk_count,
+            "chunk_revision": chunk_revision,
+        },
+        proposal={
+            "title": "Distributed systems overview",
+            "nodes": [
+                {
+                    "temp_id": "root",
+                    "parent_temp_id": None,
+                    "position": 0,
+                    "content": "Distributed systems",
+                    "node_kind": "topic",
+                },
+                {
+                    "temp_id": "claim-1",
+                    "parent_temp_id": "root",
+                    "position": 0,
+                    "content": "Coordination requires failure handling",
+                    "node_kind": "claim",
+                },
+            ],
+            "references": [
+                {
+                    "node_temp_id": "claim-1",
+                    "chunk_id": chunk_id,
+                    "relation": "supports",
+                    "fragment_selector": {"page": 8, "quote": quote},
+                }
+            ],
+        },
+    )
+
+
+def make_source_proposal_apply(*, map_id: str | None = None, base_version: int | None = None):
+    request = make_source_proposal_request()
+    return SourceMindMapProposalApply(
+        **request.model_dump(),
+        map_id=map_id,
+        base_version=base_version,
+        session_id="session-agent-1",
+        confirm=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_validate_source_proposal_is_read_only_and_returns_normalized_counts() -> None:
+    session = make_session(
+        QueryResult(scalar=make_source()),
+        QueryResult(scalar=2),
+        QueryResult(rows=[(11, "Coordination requires explicit failure handling.")]),
+    )
+
+    result = await validate_source_mind_map_proposal(
+        session,
+        user_id="user-1",
+        body=make_source_proposal_request(),
+    )
+
+    assert result.source_id == "source-1"
+    assert result.node_count == 2
+    assert result.reference_count == 1
+    assert result.basis_revision["chunk_revision"] == 2
+    session.commit.assert_not_awaited()
+    session.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_apply_source_proposal_creates_complete_formal_map() -> None:
+    session = make_session(
+        QueryResult(scalar=make_source()),
+        QueryResult(scalar=2),
+        QueryResult(rows=[(11, "Coordination requires explicit failure handling.")]),
+        QueryResult(scalar=None),
+    )
+
+    tree = await apply_source_mind_map_proposal(
+        session,
+        user_id="user-1",
+        body=make_source_proposal_apply(),
+    )
+
+    assert tree.map.generation_status == "ready"
+    assert tree.map.version == 1
+    assert len(tree.nodes) == 2
+    assert tree.nodes[1].parent_id == tree.root_id
+    assert tree.nodes[1].node_kind == "claim"
+    assert tree.references[0].node_id == tree.nodes[1].id
+    assert tree.references[0].ref_id == "11"
+    revisions = [call.args[0] for call in session.add.call_args_list if isinstance(call.args[0], MindMapRevision)]
+    assert revisions[0].actor_ref == "session-agent-1"
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_apply_source_proposal_merges_without_deleting_existing_nodes() -> None:
+    mind_map = make_map(version=3)
+    root = make_node("root", 1, None, 0)
+    manual = make_node("manual", 2, "root", 0)
+    manual.content = "Personal observation"
+    session = make_session(
+        QueryResult(scalar=make_source()),
+        QueryResult(scalar=2),
+        QueryResult(rows=[(11, "Coordination requires explicit failure handling.")]),
+        QueryResult(scalar=mind_map),
+        QueryResult(items=[root, manual]),
+        QueryResult(items=[]),
+    )
+
+    tree = await apply_source_mind_map_proposal(
+        session,
+        user_id="user-1",
+        body=make_source_proposal_apply(map_id="map-1", base_version=3),
+    )
+
+    assert tree.map.version == 4
+    assert manual in tree.nodes
+    assert any(node.content == "Coordination requires failure handling" for node in tree.nodes)
+    assert len(tree.references) == 1
+    session.delete.assert_not_awaited()
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_validate_source_proposal_rejects_changed_source_basis() -> None:
+    session = make_session(
+        QueryResult(scalar=make_source(content_hash="hash-2", chunk_revision=3)),
+        QueryResult(scalar=3),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await validate_source_mind_map_proposal(
+            session,
+            user_id="user-1",
+            body=make_source_proposal_request(),
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "source_mind_map_basis_conflict"
+    assert exc.value.detail["mismatches"] == [
+        "source_content_hash",
+        "chunk_count",
+        "chunk_revision",
+    ]
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_validate_source_proposal_rejects_foreign_chunks_and_invented_quotes() -> None:
+    foreign_chunk_session = make_session(
+        QueryResult(scalar=make_source()),
+        QueryResult(scalar=2),
+        QueryResult(rows=[]),
+    )
+    with pytest.raises(HTTPException) as foreign_exc:
+        await validate_source_mind_map_proposal(
+            foreign_chunk_session,
+            user_id="user-1",
+            body=make_source_proposal_request(),
+        )
+    assert foreign_exc.value.detail["code"] == "source_mind_map_invalid_chunk_references"
+
+    invented_quote_session = make_session(
+        QueryResult(scalar=make_source()),
+        QueryResult(scalar=2),
+        QueryResult(rows=[(11, "Coordination material without the cited sentence.")]),
+    )
+    with pytest.raises(HTTPException) as quote_exc:
+        await validate_source_mind_map_proposal(
+            invented_quote_session,
+            user_id="user-1",
+            body=make_source_proposal_request(),
+        )
+    assert quote_exc.value.detail["code"] == "source_mind_map_invalid_fragment_quotes"
 
 
 def make_reference(node_id: str) -> MindMapNodeReference:

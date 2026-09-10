@@ -14,6 +14,9 @@ from pkg.schemas.application.mind_map import (
     MindMapTreeRead,
     MindMapUpdate,
     MindMapVersionConflictResponse,
+    SourceMindMapGenerationContextRead,
+    SourceMindMapProposal,
+    SourceMindMapProposalApply,
 )
 
 
@@ -72,6 +75,68 @@ def test_create_contract_normalizes_text_and_enforces_owner_purpose() -> None:
             purpose="asset_outline",
             title="Asset outline",
         )
+
+
+def test_source_generation_context_excludes_raw_pdf_content() -> None:
+    context = SourceMindMapGenerationContextRead(
+        source_id="source-1",
+        source_metadata={
+            "title": "Distributed systems",
+            "source_type": "pdf",
+            "ingested_at": NOW,
+        },
+        basis_revision={
+            "source_content_hash": "hash-1",
+            "chunk_count": 2,
+            "chunk_revision": 3,
+        },
+        input_summary={
+            "section_summaries": [
+                {"title": "Overview", "summary": "Bounded overview", "chunk_ids": [11, 12]}
+            ],
+            "chunk_summaries": [
+                {"chunk_id": 11, "chunk_index": 0, "summary": "First bounded summary"},
+                {"chunk_id": 12, "chunk_index": 1, "summary": "Second bounded summary"},
+            ],
+        },
+    )
+
+    value = context.model_dump(mode="json")
+    assert "raw_content" not in value
+    assert value["input_summary"]["chunk_summaries"][0]["chunk_id"] == 11
+
+
+def test_source_proposal_apply_requires_confirmation_and_version_pair() -> None:
+    proposal = {
+        "source_id": "source-1",
+        "basis_revision": {"source_content_hash": "hash-1", "chunk_count": 1, "chunk_revision": None},
+        "proposal": {
+            "title": "Document map",
+            "nodes": [
+                {
+                    "temp_id": "root",
+                    "parent_temp_id": None,
+                    "position": 0,
+                    "content": "Document map",
+                    "node_kind": "topic",
+                }
+            ],
+        },
+    }
+
+    with pytest.raises(ValidationError, match="confirm=true"):
+        SourceMindMapProposalApply(**proposal, confirm=False)
+    with pytest.raises(ValidationError, match="supplied together"):
+        SourceMindMapProposalApply(**proposal, confirm=True, map_id="map-1")
+
+    request = SourceMindMapProposalApply(
+        **proposal,
+        confirm=True,
+        map_id="map-1",
+        base_version=3,
+        session_id=" session-1 ",
+    )
+    assert request.session_id == "session-1"
 
 
 def test_versioned_updates_require_an_explicit_change() -> None:
@@ -157,3 +222,84 @@ def test_version_conflict_response_is_structured_for_clients() -> None:
     assert response.detail.code == "mind_map_version_conflict"
     assert response.detail.expected_version == 8
     assert response.detail.current_version == 9
+
+
+def test_source_proposal_accepts_a_bounded_tree_with_chunk_references() -> None:
+    proposal = SourceMindMapProposal(
+        title=" Distributed systems overview ",
+        nodes=[
+            {
+                "temp_id": "root",
+                "parent_temp_id": None,
+                "position": 0,
+                "content": "Distributed systems",
+                "node_kind": "topic",
+            },
+            {
+                "temp_id": "claim-1",
+                "parent_temp_id": "root",
+                "position": 0,
+                "content": "Coordination requires explicit failure handling",
+                "node_kind": "claim",
+            },
+        ],
+        references=[
+            {
+                "node_temp_id": "claim-1",
+                "chunk_id": 12,
+                "relation": "supports",
+                "fragment_selector": {"page": 8, "quote": "explicit failure handling"},
+            }
+        ],
+    )
+
+    assert proposal.title == "Distributed systems overview"
+    assert proposal.nodes[1].parent_temp_id == "root"
+    assert proposal.references[0].fragment_selector.page == 8
+
+
+@pytest.mark.parametrize(
+    ("nodes", "references", "message"),
+    [
+        (
+            [
+                {"temp_id": "root", "parent_temp_id": None, "position": 0, "content": "Root", "node_kind": "topic"},
+                {"temp_id": "claim", "parent_temp_id": "root", "position": 0, "content": "Claim", "node_kind": "claim"},
+            ],
+            [],
+            "factual proposal nodes require source chunk references",
+        ),
+        (
+            [
+                {"temp_id": "root", "parent_temp_id": None, "position": 0, "content": "Root", "node_kind": "topic"},
+                {"temp_id": "a", "parent_temp_id": "b", "position": 0, "content": "A", "node_kind": "concept"},
+                {"temp_id": "b", "parent_temp_id": "a", "position": 0, "content": "B", "node_kind": "concept"},
+            ],
+            [],
+            "proposal contains a cycle",
+        ),
+    ],
+)
+def test_source_proposal_rejects_untraceable_or_invalid_trees(
+    nodes: list[dict],
+    references: list[dict],
+    message: str,
+) -> None:
+    with pytest.raises(ValidationError, match=message):
+        SourceMindMapProposal(title="Invalid", nodes=nodes, references=references)
+
+
+def test_source_proposal_rejects_more_than_eighty_nodes() -> None:
+    nodes = [
+        {
+            "temp_id": "root" if index == 0 else f"node-{index}",
+            "parent_temp_id": None if index == 0 else "root",
+            "position": 0 if index == 0 else index - 1,
+            "content": f"Node {index}",
+            "node_kind": "topic" if index == 0 else "concept",
+        }
+        for index in range(81)
+    ]
+
+    with pytest.raises(ValidationError):
+        SourceMindMapProposal(title="Too large", nodes=nodes)

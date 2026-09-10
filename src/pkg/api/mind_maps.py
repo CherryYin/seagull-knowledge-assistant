@@ -34,9 +34,14 @@ from pkg.schemas.application.mind_map import (
     MindMapRevisionList,
     MindMapRevisionRead,
     MindMapRevisionRestore,
+    MindMapStalenessRead,
     MindMapTreeRead,
     MindMapUpdate,
     MindMapVersionConflictResponse,
+    SourceMindMapGenerationContextRead,
+    SourceMindMapProposalApply,
+    SourceMindMapProposalValidate,
+    SourceMindMapProposalValidationRead,
 )
 from pkg.services.application.mind_maps import (
     MindMapMutationState,
@@ -44,6 +49,9 @@ from pkg.services.application.mind_maps import (
     MindMapTreeState,
     add_mind_map_node,
     apply_mind_map_outline,
+    apply_source_mind_map_proposal,
+    build_source_mind_map_generation_context,
+    check_source_mind_map_staleness,
     create_mind_map_reference,
     create_mind_map,
     delete_mind_map_reference,
@@ -60,6 +68,7 @@ from pkg.services.application.mind_maps import (
     update_mind_map,
     update_mind_map_reference,
     update_mind_map_node,
+    validate_source_mind_map_proposal,
 )
 
 
@@ -202,6 +211,22 @@ async def list_mind_map_references_by_target_route(
     )
 
 
+@router.get(
+    "/proposals/source/context",
+    response_model=SourceMindMapGenerationContextRead,
+)
+async def get_source_mind_map_generation_context_route(
+    source_id: str = Query(min_length=1, max_length=200),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> SourceMindMapGenerationContextRead:
+    return await build_source_mind_map_generation_context(
+        session,
+        user_id=user.id,
+        source_id=source_id,
+    )
+
+
 @router.get("/{map_id}", response_model=MindMapRead)
 async def get_mind_map_route(
     map_id: str,
@@ -210,6 +235,61 @@ async def get_mind_map_route(
 ) -> MindMapRead:
     summary = await get_mind_map_summary(session, user_id=user.id, map_id=map_id)
     return _summary_read(summary)
+
+
+@router.post(
+    "/proposals/source/validate",
+    response_model=SourceMindMapProposalValidationRead,
+)
+async def validate_source_mind_map_proposal_route(
+    body: SourceMindMapProposalValidate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> SourceMindMapProposalValidationRead:
+    result = await validate_source_mind_map_proposal(
+        session,
+        user_id=user.id,
+        body=body,
+    )
+    return SourceMindMapProposalValidationRead(
+        source_id=result.source_id,
+        basis_revision=result.basis_revision,
+        proposal=result.proposal,
+        node_count=result.node_count,
+        reference_count=result.reference_count,
+    )
+
+
+@router.post(
+    "/proposals/source/apply",
+    response_model=MindMapTreeRead,
+)
+async def apply_source_mind_map_proposal_route(
+    body: SourceMindMapProposalApply,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> MindMapTreeRead:
+    tree = await apply_source_mind_map_proposal(session, user_id=user.id, body=body)
+    return _tree_read(tree)
+
+
+@router.post("/{map_id}/check-staleness", response_model=MindMapStalenessRead)
+async def check_mind_map_staleness_route(
+    map_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> MindMapStalenessRead:
+    result = await check_source_mind_map_staleness(
+        session,
+        user_id=user.id,
+        map_id=map_id,
+    )
+    return MindMapStalenessRead(
+        map=_map_read(result.map, result.root_id),
+        stale=result.stale,
+        reasons=list(result.reasons),
+        current_basis=result.current_basis,
+    )
 
 
 @router.patch(

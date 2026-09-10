@@ -32,6 +32,14 @@ from pkg.schemas.application.mind_map import (
     MindMapReferenceUpdate,
     MindMapRevisionRestore,
     MindMapSnapshotRead,
+    SourceMindMapChunkSummary,
+    SourceMindMapGenerationContextRead,
+    SourceMindMapGenerationSource,
+    SourceMindMapInputSummary,
+    SourceMindMapProposal,
+    SourceMindMapProposalApply,
+    SourceMindMapProposalValidate,
+    SourceMindMapSectionSummary,
     MindMapTreeRead,
     MindMapUpdate,
 )
@@ -49,6 +57,24 @@ class MindMapTreeState:
     root_id: str
     nodes: list[MindMapNode]
     references: list[MindMapNodeReference]
+
+
+@dataclass(frozen=True)
+class MindMapStalenessState:
+    map: MindMap
+    root_id: str
+    stale: bool
+    reasons: tuple[str, ...]
+    current_basis: dict
+
+
+@dataclass(frozen=True)
+class SourceMindMapProposalValidationState:
+    source_id: str
+    basis_revision: dict
+    proposal: SourceMindMapProposal
+    node_count: int
+    reference_count: int
 
 
 @dataclass(frozen=True)
@@ -79,6 +105,11 @@ class ParsedMindMapOutlineNode:
 MAX_OUTLINE_NODES = 500
 OUTLINE_LINE_PATTERN = re.compile(r"^(?P<indent> *)(?:- )(?P<content>.+)$")
 OUTLINE_ID_PATTERN = re.compile(r"^\[id:(?P<display_id>\d+)\]\s+(?P<content>.+)$")
+SOURCE_CONTEXT_MAX_CHUNKS = 120
+SOURCE_CONTEXT_CHUNK_SUMMARY_CHARS = 360
+SOURCE_CONTEXT_SECTION_SUMMARY_CHARS = 240
+SOURCE_CONTEXT_SECTION_SIZE = 12
+SOURCE_CONTEXT_HEADING_PATTERN = re.compile(r"^#{1,6}\s+(?P<title>.+?)\s*$", re.MULTILINE)
 
 
 def make_mind_map_id() -> str:
@@ -87,6 +118,101 @@ def make_mind_map_id() -> str:
 
 def make_mind_map_node_id() -> str:
     return f"mind-map-node-{uuid.uuid4().hex[:12]}"
+
+
+def _bounded_text(value: str, max_chars: int) -> str:
+    normalized = re.sub(r"\s+", " ", value).strip()
+    if len(normalized) <= max_chars:
+        return normalized
+    boundary = normalized.rfind(" ", 0, max_chars)
+    if boundary < max_chars // 2:
+        boundary = max_chars - 1
+    return normalized[:boundary].rstrip(" ,;:-") + "…"
+
+
+def _sample_source_chunks(chunks: list[SourceChunk]) -> list[SourceChunk]:
+    if len(chunks) <= SOURCE_CONTEXT_MAX_CHUNKS:
+        return chunks
+    last_index = len(chunks) - 1
+    return [
+        chunks[(sample_index * last_index) // (SOURCE_CONTEXT_MAX_CHUNKS - 1)]
+        for sample_index in range(SOURCE_CONTEXT_MAX_CHUNKS)
+    ]
+
+
+def _section_title(chunks: list[SourceChunk], segment_number: int) -> str:
+    for chunk in chunks:
+        match = SOURCE_CONTEXT_HEADING_PATTERN.search(chunk.content)
+        if match:
+            return _bounded_text(match.group("title"), 300)
+    return f"Document segment {segment_number}"
+
+
+async def build_source_mind_map_generation_context(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    source_id: str,
+) -> SourceMindMapGenerationContextRead:
+    source_row = await session.execute(
+        select(Source).where(Source.id == source_id, Source.user_id == user_id)
+    )
+    source = source_row.scalar_one_or_none()
+    if source is None:
+        raise HTTPException(status_code=404, detail="Source not found")
+    if source.source_type != "pdf":
+        raise HTTPException(status_code=422, detail="Source Mind Map generation requires a PDF Source")
+
+    chunk_rows = await session.execute(
+        select(SourceChunk)
+        .where(SourceChunk.source_id == source.id)
+        .order_by(SourceChunk.chunk_index)
+    )
+    chunks = list(chunk_rows.scalars().all())
+    if not chunks:
+        raise HTTPException(status_code=422, detail="PDF extraction must produce Source Chunks before generation")
+
+    selected_chunks = _sample_source_chunks(chunks)
+    chunk_summaries = [
+        SourceMindMapChunkSummary(
+            chunk_id=chunk.id,
+            chunk_index=chunk.chunk_index,
+            summary=_bounded_text(chunk.content, SOURCE_CONTEXT_CHUNK_SUMMARY_CHARS),
+        )
+        for chunk in selected_chunks
+    ]
+    summary_by_id = {summary.chunk_id: summary.summary for summary in chunk_summaries}
+    section_summaries = []
+    for start in range(0, len(selected_chunks), SOURCE_CONTEXT_SECTION_SIZE):
+        section_chunks = selected_chunks[start : start + SOURCE_CONTEXT_SECTION_SIZE]
+        chunk_ids = [chunk.id for chunk in section_chunks]
+        section_text = " ".join(summary_by_id[chunk_id] for chunk_id in chunk_ids[:2])
+        section_summaries.append(
+            SourceMindMapSectionSummary(
+                title=_section_title(section_chunks, len(section_summaries) + 1),
+                summary=_bounded_text(section_text, SOURCE_CONTEXT_SECTION_SUMMARY_CHARS),
+                chunk_ids=chunk_ids,
+            )
+        )
+
+    source_metadata = source.metadata_ if isinstance(source.metadata_, dict) else {}
+    return SourceMindMapGenerationContextRead(
+        source_id=source.id,
+        source_metadata=SourceMindMapGenerationSource(
+            title=source.title,
+            source_type="pdf",
+            ingested_at=source.ingested_at,
+        ),
+        basis_revision={
+            "source_content_hash": source.content_hash,
+            "chunk_count": len(chunks),
+            "chunk_revision": source_metadata.get("chunk_revision"),
+        },
+        input_summary=SourceMindMapInputSummary(
+            section_summaries=section_summaries,
+            chunk_summaries=chunk_summaries,
+        ),
+    )
 
 
 def make_mind_map_revision_id() -> str:
@@ -714,6 +840,403 @@ async def get_mind_map_summary(
     if len(root_ids) != 1:
         raise _invalid_tree(map_id, f"Expected exactly one root node, found {len(root_ids)}")
     return MindMapSummaryState(map=mind_map, root_id=root_ids[0])
+
+
+async def check_source_mind_map_staleness(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    map_id: str,
+) -> MindMapStalenessState:
+    mind_map = await _get_map_for_update(session, user_id=user_id, map_id=map_id)
+    if mind_map.owner_type != "source" or mind_map.purpose != "document_overview":
+        raise HTTPException(status_code=422, detail="Staleness checks require a Source document overview map")
+
+    source_row = await session.execute(
+        select(Source).where(Source.id == mind_map.owner_id, Source.user_id == user_id)
+    )
+    source = source_row.scalar_one_or_none()
+    if source is None:
+        raise HTTPException(status_code=404, detail="Source owner not found")
+    chunk_count_row = await session.execute(
+        select(func.count(SourceChunk.id)).where(SourceChunk.source_id == source.id)
+    )
+    chunk_count = int(chunk_count_row.scalar_one())
+    root_rows = await session.execute(
+        select(MindMapNode.id).where(
+            MindMapNode.map_id == map_id,
+            MindMapNode.parent_id.is_(None),
+        )
+    )
+    root_ids = list(root_rows.scalars().all())
+    if len(root_ids) != 1:
+        raise _invalid_tree(map_id, f"Expected exactly one root node, found {len(root_ids)}")
+    source_metadata = source.metadata_ if isinstance(source.metadata_, dict) else {}
+    current_basis = {
+        "source_content_hash": source.content_hash,
+        "chunk_count": chunk_count,
+        "chunk_revision": source_metadata.get("chunk_revision"),
+    }
+    recorded_basis = mind_map.basis_revision if isinstance(mind_map.basis_revision, dict) else {}
+    reasons: list[str] = []
+    if "source_content_hash" in recorded_basis and recorded_basis.get("source_content_hash") != current_basis["source_content_hash"]:
+        reasons.append("source_content_hash")
+    if "chunk_count" in recorded_basis and recorded_basis.get("chunk_count") != current_basis["chunk_count"]:
+        reasons.append("chunk_count")
+    recorded_chunk_revision = recorded_basis.get("chunk_revision", recorded_basis.get("source_chunk_revision"))
+    if recorded_chunk_revision is not None and recorded_chunk_revision != current_basis["chunk_revision"]:
+        reasons.append("chunk_revision")
+
+    if reasons and mind_map.generation_status not in {"stale", "generating", "failed"}:
+        mind_map.generation_status = "stale"
+        mind_map.updated_at = datetime.now(UTC)
+        await session.commit()
+        await session.refresh(mind_map)
+    return MindMapStalenessState(
+        map=mind_map,
+        root_id=root_ids[0],
+        stale=bool(reasons) or mind_map.generation_status == "stale",
+        reasons=tuple(reasons),
+        current_basis=current_basis,
+    )
+
+
+async def validate_source_mind_map_proposal(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    body: SourceMindMapProposalValidate,
+) -> SourceMindMapProposalValidationState:
+    source_row = await session.execute(
+        select(Source).where(Source.id == body.source_id, Source.user_id == user_id)
+    )
+    source = source_row.scalar_one_or_none()
+    if source is None:
+        raise HTTPException(status_code=404, detail="Source not found")
+    if source.source_type != "pdf":
+        raise HTTPException(status_code=422, detail="Source Mind Map proposals require a PDF Source")
+
+    chunk_count_row = await session.execute(
+        select(func.count(SourceChunk.id)).where(SourceChunk.source_id == source.id)
+    )
+    chunk_count = int(chunk_count_row.scalar_one())
+    if chunk_count == 0:
+        raise HTTPException(status_code=422, detail="PDF extraction must produce Source Chunks before proposal validation")
+    source_metadata = source.metadata_ if isinstance(source.metadata_, dict) else {}
+    current_basis = {
+        "source_content_hash": source.content_hash,
+        "chunk_count": chunk_count,
+        "chunk_revision": source_metadata.get("chunk_revision"),
+    }
+    requested_basis = body.basis_revision.model_dump()
+    mismatches = [
+        key
+        for key in ("source_content_hash", "chunk_count", "chunk_revision")
+        if requested_basis[key] != current_basis[key]
+    ]
+    if mismatches:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "source_mind_map_basis_conflict",
+                "message": "Source content changed after the Mind Map proposal was generated",
+                "source_id": source.id,
+                "mismatches": mismatches,
+                "expected_basis": requested_basis,
+                "current_basis": current_basis,
+            },
+        )
+
+    chunk_ids = sorted({reference.chunk_id for reference in body.proposal.references})
+    chunk_by_id: dict[int, str] = {}
+    if chunk_ids:
+        chunk_rows = await session.execute(
+            select(SourceChunk.id, SourceChunk.content).where(
+                SourceChunk.source_id == source.id,
+                SourceChunk.id.in_(chunk_ids),
+            )
+        )
+        chunk_by_id = {int(chunk_id): content for chunk_id, content in chunk_rows.all()}
+        missing_chunk_ids = [chunk_id for chunk_id in chunk_ids if chunk_id not in chunk_by_id]
+        if missing_chunk_ids:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "source_mind_map_invalid_chunk_references",
+                    "message": "Proposal references Source Chunks outside the selected PDF",
+                    "source_id": source.id,
+                    "chunk_ids": missing_chunk_ids,
+                },
+            )
+
+    invalid_quotes: list[dict[str, int | str]] = []
+    for reference in body.proposal.references:
+        quote = reference.fragment_selector.quote if reference.fragment_selector else None
+        if quote is not None and quote not in chunk_by_id[reference.chunk_id]:
+            invalid_quotes.append(
+                {"node_temp_id": reference.node_temp_id, "chunk_id": reference.chunk_id}
+            )
+    if invalid_quotes:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "source_mind_map_invalid_fragment_quotes",
+                "message": "Proposal fragment quotes must occur in their referenced Source Chunks",
+                "references": invalid_quotes,
+            },
+        )
+
+    return SourceMindMapProposalValidationState(
+        source_id=source.id,
+        basis_revision=current_basis,
+        proposal=body.proposal,
+        node_count=len(body.proposal.nodes),
+        reference_count=len(body.proposal.references),
+    )
+
+
+def _proposal_nodes_in_tree_order(proposal: SourceMindMapProposal):
+    children_by_parent: dict[str | None, list] = {}
+    for node in proposal.nodes:
+        children_by_parent.setdefault(node.parent_temp_id, []).append(node)
+    for children in children_by_parent.values():
+        children.sort(key=lambda item: item.position)
+
+    ordered = []
+
+    def visit(parent_temp_id: str | None) -> None:
+        for node in children_by_parent.get(parent_temp_id, []):
+            ordered.append(node)
+            visit(node.temp_id)
+
+    visit(None)
+    return ordered
+
+
+def _proposal_reference(
+    *,
+    map_id: str,
+    node_id: str,
+    proposal_reference,
+    now: datetime,
+) -> MindMapNodeReference:
+    return MindMapNodeReference(
+        id=make_mind_map_reference_id(),
+        map_id=map_id,
+        node_id=node_id,
+        ref_type="source_chunk",
+        ref_id=str(proposal_reference.chunk_id),
+        relation=proposal_reference.relation,
+        fragment_selector=(
+            proposal_reference.fragment_selector.model_dump(exclude_none=True)
+            if proposal_reference.fragment_selector is not None
+            else None
+        ),
+        created_at=now,
+    )
+
+
+async def apply_source_mind_map_proposal(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    body: SourceMindMapProposalApply,
+) -> MindMapTreeState:
+    await validate_source_mind_map_proposal(session, user_id=user_id, body=body)
+    now = datetime.now(UTC)
+    proposal_nodes = _proposal_nodes_in_tree_order(body.proposal)
+    root_proposal = proposal_nodes[0]
+
+    if body.map_id is None:
+        existing_row = await session.execute(
+            select(MindMap.id).where(
+                MindMap.user_id == user_id,
+                MindMap.owner_type == "source",
+                MindMap.owner_id == body.source_id,
+                MindMap.purpose == "document_overview",
+            )
+        )
+        existing_map_id = existing_row.scalar_one_or_none()
+        if existing_map_id is not None:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "source_mind_map_already_exists",
+                    "message": "A Source Mind Map was created before this proposal was applied",
+                    "map_id": existing_map_id,
+                },
+            )
+
+        mind_map = MindMap(
+            id=make_mind_map_id(),
+            user_id=user_id,
+            title=body.proposal.title,
+            owner_type="source",
+            owner_id=body.source_id,
+            purpose="document_overview",
+            layout_mode=body.proposal.layout_mode,
+            version=1,
+            basis_revision=body.basis_revision.model_dump(),
+            generation_status="ready",
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(mind_map)
+        nodes: list[MindMapNode] = []
+        node_by_temp_id: dict[str, MindMapNode] = {}
+        for display_id, proposal_node in enumerate(proposal_nodes, start=1):
+            parent = node_by_temp_id.get(proposal_node.parent_temp_id)
+            node = MindMapNode(
+                id=make_mind_map_node_id(),
+                map_id=mind_map.id,
+                display_id=display_id,
+                parent_id=parent.id if parent is not None else None,
+                content=proposal_node.content,
+                note=proposal_node.note,
+                position=proposal_node.position,
+                collapsed=False,
+                node_kind=proposal_node.node_kind,
+                updated_by="agent",
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(node)
+            nodes.append(node)
+            node_by_temp_id[proposal_node.temp_id] = node
+        await session.flush()
+        references = [
+            _proposal_reference(
+                map_id=mind_map.id,
+                node_id=node_by_temp_id[reference.node_temp_id].id,
+                proposal_reference=reference,
+                now=now,
+            )
+            for reference in body.proposal.references
+        ]
+        for reference in references:
+            session.add(reference)
+        await session.flush()
+        revision = await _record_revision(
+            session,
+            mind_map=mind_map,
+            root_id=node_by_temp_id[root_proposal.temp_id].id,
+            nodes=nodes,
+            references=references,
+            actor_type="agent",
+            actor_ref=body.session_id,
+            action="map_created",
+            summary=f"Created Source Mind Map from confirmed Agent proposal with {len(nodes)} nodes",
+            now=now,
+        )
+        await session.commit()
+        await session.refresh(mind_map)
+        await session.refresh(revision)
+        return MindMapTreeState(
+            map=mind_map,
+            root_id=node_by_temp_id[root_proposal.temp_id].id,
+            nodes=nodes,
+            references=references,
+        )
+
+    mind_map = await _get_map_for_update(session, user_id=user_id, map_id=body.map_id)
+    _validate_version(mind_map, body.base_version)
+    if mind_map.owner_type != "source" or mind_map.owner_id != body.source_id or mind_map.purpose != "document_overview":
+        raise HTTPException(status_code=422, detail="Proposal does not belong to the target Source Mind Map")
+
+    nodes = await _load_nodes(session, map_id=mind_map.id, for_update=True)
+    references = await _load_references(session, map_id=mind_map.id)
+    root = _root_node(mind_map.id, nodes)
+    node_by_temp_id = {root_proposal.temp_id: root}
+    root.content = root_proposal.content
+    root.note = root_proposal.note
+    root.node_kind = root_proposal.node_kind
+    root.updated_by = "agent"
+    root.updated_at = now
+
+    next_display_id = max(node.display_id for node in nodes) + 1
+    used_existing_ids = {root.id}
+    for proposal_node in proposal_nodes[1:]:
+        parent = node_by_temp_id[proposal_node.parent_temp_id]
+        match = next(
+            (
+                node
+                for node in nodes
+                if node.id not in used_existing_ids
+                and node.parent_id == parent.id
+                and node.content == proposal_node.content
+                and node.node_kind == proposal_node.node_kind
+            ),
+            None,
+        )
+        if match is None:
+            sibling_positions = [node.position for node in nodes if node.parent_id == parent.id]
+            match = MindMapNode(
+                id=make_mind_map_node_id(),
+                map_id=mind_map.id,
+                display_id=next_display_id,
+                parent_id=parent.id,
+                content=proposal_node.content,
+                note=proposal_node.note,
+                position=max(sibling_positions, default=-1) + 1,
+                collapsed=False,
+                node_kind=proposal_node.node_kind,
+                updated_by="agent",
+                created_at=now,
+                updated_at=now,
+            )
+            next_display_id += 1
+            session.add(match)
+            nodes.append(match)
+        used_existing_ids.add(match.id)
+        node_by_temp_id[proposal_node.temp_id] = match
+
+    reference_keys = {
+        (reference.node_id, reference.ref_id, reference.relation)
+        for reference in references
+        if reference.ref_type == "source_chunk"
+    }
+    for proposal_reference in body.proposal.references:
+        node = node_by_temp_id[proposal_reference.node_temp_id]
+        key = (node.id, str(proposal_reference.chunk_id), proposal_reference.relation)
+        if key in reference_keys:
+            continue
+        reference = _proposal_reference(
+            map_id=mind_map.id,
+            node_id=node.id,
+            proposal_reference=proposal_reference,
+            now=now,
+        )
+        session.add(reference)
+        references.append(reference)
+        reference_keys.add(key)
+
+    previous_version = mind_map.version
+    mind_map.title = body.proposal.title
+    mind_map.layout_mode = body.proposal.layout_mode
+    mind_map.basis_revision = body.basis_revision.model_dump()
+    mind_map.generation_status = "ready"
+    mind_map.version += 1
+    mind_map.updated_at = now
+    await session.flush()
+    revision = await _record_revision(
+        session,
+        mind_map=mind_map,
+        root_id=root.id,
+        nodes=nodes,
+        references=references,
+        actor_type="agent",
+        actor_ref=body.session_id,
+        action="outline_applied",
+        summary=(
+            f"Merged confirmed Agent proposal into Source Mind Map version {previous_version}; "
+            "existing nodes were preserved"
+        ),
+        now=now,
+    )
+    await session.commit()
+    await session.refresh(mind_map)
+    await session.refresh(revision)
+    return MindMapTreeState(map=mind_map, root_id=root.id, nodes=nodes, references=references)
 
 
 async def update_mind_map(

@@ -15,6 +15,7 @@ class ChatSession(Base):
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
     title: Mapped[str] = mapped_column(Text, nullable=False, server_default="New Session")
     messages: Mapped[list] = mapped_column(JSONB, server_default="[]")
+    is_ephemeral: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     profile_id: Mapped[str | None] = mapped_column(String, nullable=True)
     harness_format_version: Mapped[int | None] = mapped_column(Integer, nullable=True)

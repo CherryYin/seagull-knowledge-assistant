@@ -144,6 +144,7 @@ class TestChatSessionSchemas:
         s = ChatSessionCreate()
         assert s.title == "New Session"
         assert s.messages == []
+        assert s.is_ephemeral is False
 
     def test_session_create_with_messages(self):
         msg = ChatMessageSchema(

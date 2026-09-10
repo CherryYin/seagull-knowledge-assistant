@@ -30,6 +30,7 @@ async def create_session(
         user_id=user.id,
         title=body.title,
         messages=[m.model_dump() for m in body.messages],
+        is_ephemeral=body.is_ephemeral,
     )
     db.add(obj)
     await db.commit()
@@ -41,15 +42,19 @@ async def create_session(
 async def list_sessions(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    include_ephemeral: bool = Query(default=False),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
-    count_stmt = select(func.count()).select_from(ChatSession).where(ChatSession.user_id == user.id)
+    filters = [ChatSession.user_id == user.id]
+    if not include_ephemeral:
+        filters.append(ChatSession.is_ephemeral.is_(False))
+    count_stmt = select(func.count()).select_from(ChatSession).where(*filters)
     total = (await db.execute(count_stmt)).scalar() or 0
 
     stmt = (
         select(ChatSession)
-        .where(ChatSession.user_id == user.id)
+        .where(*filters)
         .order_by(ChatSession.updated_at.desc())
         .offset(offset)
         .limit(limit)
