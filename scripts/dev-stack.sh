@@ -74,10 +74,15 @@ read_pid() {
   [[ -f "$file" ]] && cat "$file"
 }
 
+process_group_running() {
+  local pid="$1"
+  kill -0 "$pid" 2>/dev/null || kill -0 -- "-$pid" 2>/dev/null
+}
+
 is_running() {
   local pid
   pid="$(read_pid "$1" || true)"
-  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+  [[ -n "$pid" ]] && process_group_running "$pid"
 }
 
 clean_stale_pid() {
@@ -118,6 +123,10 @@ start_service() {
     log "$service already running (PID $(read_pid "$service"))"
     return
   fi
+  if [[ -n "$health_url" ]] && curl --fail --silent --show-error --max-time 2 "$health_url" >/dev/null 2>&1; then
+    log "$service URL is already served by an unmanaged process: $health_url"
+    return 1
+  fi
 
   mkdir -p "$RUN_ROOT" "$LOG_ROOT"
   log "starting $service"
@@ -139,6 +148,12 @@ start_service() {
   if [[ -n "$health_url" ]]; then
     wait_for_url "$service" "$health_url"
   fi
+  sleep 0.2
+  if ! is_running "$service"; then
+    log "$service exited immediately after becoming ready; last log lines:"
+    tail -n 30 "$(log_file "$service")" >&2 || true
+    return 1
+  fi
   log "$service ready (PID $pid${health_url:+, $health_url})"
 }
 
@@ -151,7 +166,7 @@ stop_service() {
     log "$service is not managed by this script"
     return
   fi
-  if ! kill -0 "$pid" 2>/dev/null; then
+  if ! process_group_running "$pid"; then
     log "$service is not running (stale PID $pid)"
     rm -f "$(pid_file "$service")"
     return
@@ -160,10 +175,10 @@ stop_service() {
   log "stopping $service (PID $pid)"
   kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
   local deadline=$((SECONDS + 15))
-  while kill -0 "$pid" 2>/dev/null && (( SECONDS < deadline )); do
+  while process_group_running "$pid" && (( SECONDS < deadline )); do
     sleep 0.25
   done
-  if kill -0 "$pid" 2>/dev/null; then
+  if process_group_running "$pid"; then
     log "$service did not stop gracefully; sending KILL"
     kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
   fi

@@ -58,6 +58,7 @@ function normalizeAssetDraft(value) {
     creationMode,
     scope: stringList(value.scope, 'assetDraft.scope'),
     constraints: stringList(value.constraints, 'assetDraft.constraints'),
+    draftBasis: optionalText(value.draftBasis, 'assetDraft.draftBasis') || undefined,
     intakeMode,
     researchMode,
   }

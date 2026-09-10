@@ -53,6 +53,9 @@
     - id: asset-intent-proposal
       name: ../../../plugins/asset-intent-proposal/src/index.js
       inject: [tools]
+    - id: source-mind-map-proposal
+      name: ../../../plugins/source-mind-map-proposal/src/index.js
+      inject: [tools]
     - id: kobo-client
       name: ../../../plugins/kobo-client/src/index.js
       inject: [tools]

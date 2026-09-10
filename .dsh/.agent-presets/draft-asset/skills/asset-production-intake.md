@@ -6,7 +6,9 @@ whenToUse: Use whenever the user starts or continues the draft-asset workflow.
 # Asset Production Intake
 
 ## Core Boundary
-The current Harness Session is the production workspace. PKG remains the durable knowledge store and is read-only to the Agent. No Asset exists until the user explicitly saves the final draft in Seagull.
+The current Harness Session is the drafting workspace. PKG remains the durable knowledge store and is read-only to the Agent. An Asset shell may already exist with confirmed Intent, Evidence, and Claims; the Agent cannot update its draft until the user explicitly applies the result in Seagull.
+
+When the delivery contract includes a `Structured drafting basis` and says the research gates are complete, skip local discovery and web gap filling. Use only the accepted Evidence, accepted Claims, and retained Hypotheses in that basis. If they are insufficient, record the gap in `Review Notes` so the user can return to the Evidence stage.
 
 ## Phase 1: Clarify
 1. Read the supplied Asset delivery contract and user need.
@@ -16,13 +18,18 @@ The current Harness Session is the production workspace. PKG remains the durable
 5. Wait for the answers before drafting. Do not emit a placeholder deliverable while waiting.
 
 ## Phase 2: Discover Local Evidence
+Skip this phase when a Structured drafting basis is supplied.
+
 1. Search PKG first with multiple focused `pkg_search` queries derived from the confirmed need.
 2. Inspect explicit seed references even when search finds newer alternatives.
 3. Read the full relevant Source or Note when a read tool exists.
 4. Prefer a small evidence set that directly supports the deliverable over a large undifferentiated list.
 5. Track consulted IDs and cite grounded claims inline as `[Source: id]`, `[Note: id]`, or `[Wiki: id]`.
+   Web search results are not PKG Sources: cite their real URL and never invent a `[Source: id]` marker unless the page was explicitly imported into PKG.
 
 ## Phase 3: Fill Gaps
+Skip this phase when a Structured drafting basis is supplied, even if the Asset originally allowed web research.
+
 1. When the delivery contract says `local_then_web`, finish the PKG pass first, identify at least one concrete freshness or evidence gap, and call `web_search` at least once for that gap.
 2. Search for the specific unresolved gap rather than repeating the whole topic.
 3. Prefer primary or authoritative results and use only claims supported by the returned snippets or answer.

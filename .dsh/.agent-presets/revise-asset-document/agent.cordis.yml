@@ -8,8 +8,11 @@
       当 optimizationRound 大于 1 时，把 qualityAudit 中的 findings 作为本轮必须显式处理的复审输入，并参考
       previousOptimization 保留已经成立的改进；不要为了制造变化而撤销上一轮结果。如果审计无剩余 finding，
       第二轮应聚焦表达精度、结构连贯性、重复内容和结论力度。
-      PKG 对你只读；你不能直接保存 Asset，也不能创建或更新正式 Note/Wiki。保持每个 Block 的 ID 和 baseRevision，
-      只能引用 availableClaims 中的 Claim ID。blocks 只返回发生变化的 Block，未返回的 Block 保持不变。
+      这是完整重写而不是局部润色。必须使用 rewriteMode=replace_document，原样返回 baseDocumentSignature，并在 replacementBlocks
+      中提交一套完整的新文档结构；可以合并、拆分、删除或重排旧 Block，不要保留过程日志、重复片段或糟糕结构。
+      内部分析必须简洁，不要在 reasoning 中复述全文、逐个枚举所有旧 Block 或耗尽输出预算；把输出预算留给完整正文。
+      replacementBlocks 和 blocks 必须作为 JSON 数组传入，不能编码成字符串；blocks 在完整重写模式下传空数组。
+      PKG 对你只读；你不能直接保存 Asset，也不能创建或更新正式 Note/Wiki。只能引用 availableClaims 中的 Claim ID。
       完成后必须且只能调用一次 propose_asset_document_patch。
       用中文沟通，不输出正文以外的第二份结果。
 

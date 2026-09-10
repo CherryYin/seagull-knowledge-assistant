@@ -1,0 +1,3 @@
+name: Agent 生成 PDF Mind Map
+description: 使用受限章节与 Chunk 摘要生成可验证、必须由用户确认的 PDF Source Mind Map Proposal。
+order: 58

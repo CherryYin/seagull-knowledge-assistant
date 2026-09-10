@@ -26,8 +26,16 @@ function normalizeStrings(value) {
 }
 
 function normalizeDocumentBlocks(value) {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((item) => {
+  let candidate = value;
+  if (typeof candidate === "string") {
+    try {
+      candidate = JSON.parse(candidate);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(candidate)) return [];
+  return candidate.flatMap((item) => {
     if (!item || typeof item !== "object") return [];
     if (typeof item.blockId !== "string" || typeof item.baseRevision !== "number" || typeof item.replacementMarkdown !== "string") return [];
     return [{
@@ -36,6 +44,24 @@ function normalizeDocumentBlocks(value) {
       replacementMarkdown: item.replacementMarkdown,
       claimRefs: normalizeStrings(item.claimRefs),
     }];
+  });
+}
+
+function normalizeReplacementBlocks(value) {
+  let candidate = value;
+  if (typeof candidate === "string") {
+    try {
+      candidate = JSON.parse(candidate);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(candidate)) return [];
+  return candidate.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const markdown = item.markdown ?? item.replacementMarkdown ?? item.replacement_markdown;
+    if (typeof markdown !== "string" || !markdown.trim()) return [];
+    return [{ markdown: markdown.trim(), claimRefs: normalizeStrings(item.claimRefs ?? item.claim_refs) }];
   });
 }
 
@@ -87,6 +113,8 @@ export function apply(ctx) {
         baseWorkspaceRevision: { type: "number", description: "发起优化时的 Workspace revision" },
         replacementTitle: { type: "string", description: "优化后的 Asset 标题" },
         replacementBrief: { type: "string", description: "优化后的 Asset 摘要" },
+        rewriteMode: { type: "string", enum: ["patch_blocks", "replace_document"], description: "局部 Block patch 或完整文档替换" },
+        baseDocumentSignature: { type: "string", description: "完整重写开始时的文档签名，必须原样返回" },
         explanation: { type: "string", description: "简短说明整篇优化策略与关键变化" },
         blocks: {
           type: "array",
@@ -102,19 +130,42 @@ export function apply(ctx) {
             required: ["blockId", "baseRevision", "replacementMarkdown", "claimRefs"],
           },
         },
+        replacementBlocks: {
+          type: "array",
+          description: "replace_document 模式下完整的新文档 Block 列表，可重新组织、合并或减少原 Block",
+          items: {
+            type: "object",
+            properties: {
+              markdown: { type: "string", description: "新 Block 的完整 Markdown" },
+              claimRefs: { type: "array", items: { type: "string" }, description: "该新 Block 表达的 Accepted Claim 或保留 Hypothesis ID" },
+            },
+            required: ["markdown", "claimRefs"],
+          },
+        },
       },
       required: ["assetId", "baseWorkspaceRevision", "replacementTitle", "replacementBrief", "blocks"],
     },
     output: textOutput("Structured full Asset optimization proposal awaiting explicit user confirmation"),
-    execute: async (args) => JSON.stringify({
-      assetId: args.assetId,
-      baseWorkspaceRevision: args.baseWorkspaceRevision,
-      replacementTitle: typeof args.replacementTitle === "string" ? args.replacementTitle.trim() : "",
-      replacementBrief: typeof args.replacementBrief === "string" ? args.replacementBrief.trim() : "",
-      ...(typeof args.explanation === "string" && args.explanation.trim() ? { explanation: args.explanation.trim() } : {}),
-      blocks: normalizeDocumentBlocks(args.blocks),
-      requiresUserConfirmation: true,
-      writesAsset: false,
-    }),
+    execute: async (args) => {
+      const replacementBlocks = args.rewriteMode === "replace_document"
+        ? normalizeReplacementBlocks(args.replacementBlocks)
+        : undefined;
+      if (args.rewriteMode === "replace_document" && replacementBlocks.length === 0) {
+        throw new Error("replace_document requires at least one valid replacement Block");
+      }
+      return JSON.stringify({
+        assetId: args.assetId,
+        baseWorkspaceRevision: args.baseWorkspaceRevision,
+        replacementTitle: typeof args.replacementTitle === "string" ? args.replacementTitle.trim() : "",
+        replacementBrief: typeof args.replacementBrief === "string" ? args.replacementBrief.trim() : "",
+        ...(typeof args.rewriteMode === "string" ? { rewriteMode: args.rewriteMode === "replace_document" ? "replace_document" : "patch_blocks" } : {}),
+        ...(typeof args.baseDocumentSignature === "string" && args.baseDocumentSignature.trim() ? { baseDocumentSignature: args.baseDocumentSignature.trim() } : {}),
+        ...(typeof args.explanation === "string" && args.explanation.trim() ? { explanation: args.explanation.trim() } : {}),
+        blocks: normalizeDocumentBlocks(args.blocks),
+        ...(replacementBlocks ? { replacementBlocks } : {}),
+        requiresUserConfirmation: true,
+        writesAsset: false,
+      });
+    },
   });
 }

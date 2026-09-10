@@ -99,7 +99,9 @@ export async function checkAssetProductionIntegration() {
   ])
   includesAll(values.documentSkill, files.documentSkill, [
     'accepted Claims',
-    'every `blockId`',
+    '`baseDocumentSignature`',
+    '`replacementBlocks`',
+    'merge, split, remove, or reorder',
     '`optimizationRound` is greater than 1',
     '`qualityAudit.findings`',
     '`previousOptimization`',
@@ -188,25 +190,30 @@ export async function checkAssetProductionIntegration() {
     'existing form values will not be overwritten',
   ])
   includesAll(values.wizard, files.wizard, [
-    'intakeMode: "agent_assisted"',
-    'researchMode: allowWebResearch ? "local_then_web" : "local_only"',
+    'generation_mode: "agent_assisted"',
+    'research_mode: allowWebResearch ? "local_then_web" : "local_only"',
     'Add optional seed evidence',
     'reviseAssetIntent(asset.id',
+    'assetsApi.proposeEvidence(asset.id',
+    'initialTab: "evidence"',
     'Discuss Intent with Agent',
     'workflowId: "clarify-asset-intent"',
     'Agent proposal applied to previously blank fields',
     'fillBlank',
-    'Confirm Intent & Start Agent',
+    'Confirm Intent & Review Evidence',
   ])
   includesAll(values.contract, files.contract, [
     'call ask_user_question',
     'Search PKG before drafting',
     'call web_search at least once',
+    'Structured drafting basis',
+    'Do not run a new PKG or Web search during drafting',
     'Keep all reasoning, planning, search narration, and tool commentary internal',
     'The response starts directly with the document H1',
   ])
   includesAll(values.save, files.save, [
     'collectInlineKnowledgeReferences',
+    'resolvePersistableReferences',
     'generation_mode: assetDraft?.intakeMode === "agent_assisted"',
     'research_mode: assetDraft?.researchMode || null',
   ])
@@ -253,6 +260,9 @@ export async function checkAssetProductionIntegration() {
     'optimizationRound',
     'previousOptimization',
     'Run Second-Round Polish',
+    'Continue to Claims',
+    'Generate Initial Draft',
+    'draftBasis',
     'asset_optimization_v1',
     'data-document-agent-diff-preview',
     'You must still use Save Changes below.',

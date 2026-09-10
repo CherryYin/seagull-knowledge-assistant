@@ -32,6 +32,7 @@ const context = {
     sourceRefs: ['source-1'],
     noteRefs: ['note-1'],
     wikiRefs: [],
+    draftBasis: '{"acceptedEvidence":[],"acceptedClaims":[]}',
   },
 }
 
@@ -43,6 +44,7 @@ test('stores and restores one Asset generation context by owner and session', as
   assert.deepEqual((await store.get('user-1', 'session-1')).assetDraft.sourceRefs, ['source-1'])
   assert.equal((await store.get('user-1', 'session-1')).assetDraft.assetId, 'asset-1')
   assert.equal((await store.get('user-1', 'session-1')).assetDraft.question, 'Should Agents receive database access?')
+  assert.equal((await store.get('user-1', 'session-1')).assetDraft.draftBasis, '{"acceptedEvidence":[],"acceptedClaims":[]}')
   assert.equal(await store.get('user-2', 'session-1'), null)
 })
 
