@@ -1,5 +1,6 @@
 """Tests for sources API endpoints (/sources/*)."""
 
+import hashlib
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -31,10 +32,12 @@ async def test_upload_pdf_records_extraction_metadata_without_review(mock_sessio
 
     with (
         patch("pkg.api.sources.extract_text_content", new=AsyncMock(return_value="Extracted PDF text")),
+        patch("pkg.api.sources.find_owned_uploaded_source_by_hash", new=AsyncMock(return_value=None)),
         patch("pkg.api.sources.get_storage_service", return_value=storage),
         patch("pkg.api.sources.persist_source", new=AsyncMock(side_effect=fake_persist_source)),
     ):
         result = await upload_source(
+            response=MagicMock(),
             file=file,
             title="Uploaded PDF",
             source_type="pdf",
@@ -46,9 +49,55 @@ async def test_upload_pdf_records_extraction_metadata_without_review(mock_sessio
         )
 
     assert result.id == "src-upload"
+    assert result.created is True
+    assert result.duplicate is False
     assert captured["body"].metadata["extraction_status"] == "completed"
     assert captured["body"].metadata["extraction_mode"] == "pymupdf"
     assert "review_status" not in captured["body"].metadata
+
+
+@pytest.mark.asyncio
+async def test_upload_duplicate_returns_existing_source_without_extracting_or_storing(mock_session, fake_user):
+    from pkg.api.sources import upload_source
+
+    existing = _make_source("src-existing", fake_user.id)
+    existing.file_path = "minio://sources/existing.pdf"
+    payload = b"identical file bytes"
+    content_hash = hashlib.sha256(payload).hexdigest()
+    existing.content_hash = content_hash
+    file = MagicMock()
+    file.filename = "same-again.pdf"
+    file.content_type = "application/pdf"
+    file.read = AsyncMock(return_value=payload)
+    response = MagicMock()
+    find_duplicate = AsyncMock(return_value=existing)
+
+    with (
+        patch("pkg.api.sources.find_owned_uploaded_source_by_hash", new=find_duplicate),
+        patch("pkg.api.sources.extract_text_content", new=AsyncMock()) as extract_text,
+        patch("pkg.api.sources.get_storage_service") as get_storage,
+        patch("pkg.api.sources.persist_source", new=AsyncMock()) as persist,
+    ):
+        result = await upload_source(
+            response=response,
+            file=file,
+            title="Same Again",
+            source_type="pdf",
+            category_id=1,
+            url=None,
+            pdf_type="text",
+            user=fake_user,
+            session=mock_session,
+        )
+
+    assert response.status_code == 200
+    assert result.id == "src-existing"
+    assert result.created is False
+    assert result.duplicate is True
+    find_duplicate.assert_awaited_once_with(mock_session, user_id=fake_user.id, content_hash=content_hash)
+    extract_text.assert_not_awaited()
+    get_storage.assert_not_called()
+    persist.assert_not_awaited()
 
 
 @pytest.mark.asyncio

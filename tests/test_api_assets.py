@@ -112,7 +112,7 @@ async def test_newsletter_automation_routes_delegate_to_services():
     fake_user = MagicMock(id="user-1")
     session = AsyncMock()
     config = NewsletterAutomationConfig(enabled=True, frequency="daily")
-    body = NewsletterAutomationUpdate(**config.model_dump(exclude={"last_generated_at", "last_asset_id"}))
+    body = NewsletterAutomationUpdate(**config.model_dump(include=set(NewsletterAutomationUpdate.model_fields)))
 
     with patch("pkg.api.assets.get_newsletter_config", new=AsyncMock(return_value=config)) as get_mock:
         result = await get_newsletter_automation_route(user=fake_user, session=session)

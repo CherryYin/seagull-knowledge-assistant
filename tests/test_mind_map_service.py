@@ -10,8 +10,10 @@ from pkg.models.application.mind_map import (
     MindMapNodeReference,
     MindMapRevision,
 )
+from pkg.models.application.asset import Asset
 from pkg.models.foundation.source import Source, SourceChunk
 from pkg.schemas.application.mind_map import (
+    AssetOutlineRefreshApply,
     MindMapCreate,
     MindMapDelete,
     MindMapNodeCreate,
@@ -31,8 +33,12 @@ from pkg.services.application.mind_maps import (
     _validate_reference_target,
     add_mind_map_node,
     apply_mind_map_outline,
+    apply_asset_outline_refresh_proposal,
     apply_source_mind_map_proposal,
+    build_asset_outline_proposal,
+    build_asset_outline_refresh_proposal,
     build_source_mind_map_generation_context,
+    check_asset_outline_staleness,
     check_source_mind_map_staleness,
     create_mind_map_reference,
     create_mind_map,
@@ -116,6 +122,59 @@ def make_source(*, content_hash: str = "hash-1", chunk_revision: int = 2) -> Sou
         raw_content="Extracted content",
         metadata_={"chunk_revision": chunk_revision},
         ingested_at=NOW,
+    )
+
+
+def make_asset(*, document_revision: int = 5, heading: str = "Executive Summary") -> Asset:
+    return Asset(
+        id="asset-1",
+        user_id="user-1",
+        asset_type="blog_post",
+        status="draft",
+        title="Architecture Brief",
+        metadata_={
+            "asset_workspace_v1": {
+                "workspace_revision": 4,
+                "intent": {"status": "confirmed", "revision": 2},
+                "claims": [{"id": "claim-1", "status": "accepted"}],
+            },
+            "asset_document": {
+                "revision": document_revision,
+                "blocks": [
+                    {
+                        "id": "block-1",
+                        "revision": 1,
+                        "markdown": f"# {heading}",
+                        "claim_refs": ["claim-1"],
+                    },
+                    {
+                        "id": "block-2",
+                        "revision": 1,
+                        "markdown": "The gateway owns the external boundary.",
+                        "claim_refs": [],
+                    },
+                ],
+            },
+        },
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+
+def make_asset_map(*, asset: Asset, version: int = 3) -> MindMap:
+    return MindMap(
+        id="map-asset-1",
+        user_id="user-1",
+        title="Architecture Brief · Outline",
+        owner_type="asset",
+        owner_id=asset.id,
+        purpose="asset_outline",
+        layout_mode="right",
+        version=version,
+        basis_revision=build_asset_outline_proposal(asset).basis_revision.model_dump(),
+        generation_status="ready",
+        created_at=NOW,
+        updated_at=NOW,
     )
 
 
@@ -257,6 +316,168 @@ async def test_source_map_staleness_matching_basis_is_read_only() -> None:
     assert result.reasons == ()
     assert mind_map.generation_status == "ready"
     assert mind_map.version == 3
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_asset_outline_staleness_marks_map_without_changing_version() -> None:
+    original_asset = make_asset()
+    mind_map = make_asset_map(asset=original_asset, version=7)
+    current_asset = make_asset(document_revision=6, heading="Updated Executive Summary")
+    session = make_session(
+        QueryResult(scalar=mind_map),
+        QueryResult(scalar=current_asset),
+        QueryResult(items=["root"]),
+    )
+
+    result = await check_asset_outline_staleness(
+        session,
+        user_id="user-1",
+        map_id=mind_map.id,
+    )
+
+    assert result.stale is True
+    assert result.root_id == "root"
+    assert result.reasons == ("asset_document_revision", "base_document_signature")
+    assert result.current_basis["asset_document_revision"] == 6
+    assert mind_map.generation_status == "stale"
+    assert mind_map.version == 7
+    session.commit.assert_awaited_once()
+    session.add.assert_not_called()
+    session.delete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_asset_outline_staleness_matching_basis_is_read_only() -> None:
+    asset = make_asset()
+    mind_map = make_asset_map(asset=asset, version=7)
+    session = make_session(
+        QueryResult(scalar=mind_map),
+        QueryResult(scalar=asset),
+        QueryResult(items=["root"]),
+    )
+
+    result = await check_asset_outline_staleness(
+        session,
+        user_id="user-1",
+        map_id=mind_map.id,
+    )
+
+    assert result.stale is False
+    assert result.reasons == ()
+    assert mind_map.generation_status == "ready"
+    assert mind_map.version == 7
+    session.commit.assert_not_awaited()
+    session.refresh.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_asset_outline_refresh_proposal_uses_current_asset_without_writes() -> None:
+    original_asset = make_asset()
+    mind_map = make_asset_map(asset=original_asset, version=7)
+    current_asset = make_asset(document_revision=6, heading="Updated Executive Summary")
+    session = make_session(
+        QueryResult(scalar=mind_map),
+        QueryResult(scalar=current_asset),
+    )
+
+    result = await build_asset_outline_refresh_proposal(
+        session,
+        user_id="user-1",
+        map_id=mind_map.id,
+    )
+
+    assert result.map_id == mind_map.id
+    assert result.base_version == 7
+    assert result.proposal.basis_revision.asset_document_revision == 6
+    assert result.proposal.nodes[1].content == "Updated Executive Summary"
+    assert result.proposal.requires_user_confirmation is True
+    assert result.proposal.writes_asset is False
+    assert result.node_count == 3
+    assert result.reference_count == 3
+    session.commit.assert_not_awaited()
+    session.add.assert_not_called()
+    session.delete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_asset_outline_refresh_apply_replaces_map_with_versioned_revision() -> None:
+    asset = make_asset(document_revision=6, heading="Updated Executive Summary")
+    mind_map = make_asset_map(asset=make_asset(), version=7)
+    current_root = make_node("old-root", 1, None, 0)
+    current_root.map_id = mind_map.id
+    current_child = make_node("old-child", 2, current_root.id, 0)
+    current_child.map_id = mind_map.id
+    proposal = build_asset_outline_proposal(asset)
+    session = make_session(
+        QueryResult(scalar=mind_map),
+        QueryResult(scalar=asset),
+        QueryResult(items=[current_root, current_child]),
+        QueryResult(),
+    )
+
+    result = await apply_asset_outline_refresh_proposal(
+        session,
+        user_id="user-1",
+        map_id=mind_map.id,
+        body=AssetOutlineRefreshApply(base_version=7, proposal=proposal, confirm=True),
+    )
+
+    assert result.map.version == 8
+    assert result.map.generation_status == "ready"
+    assert result.map.basis_revision == proposal.basis_revision.model_dump()
+    assert result.nodes[1].content == "Updated Executive Summary"
+    assert len(result.nodes) == 3
+    assert len(result.references) == 3
+    assert result.root_id == result.nodes[0].id
+    assert {node.id for node in result.nodes}.isdisjoint({"old-root", "old-child"})
+    revisions = [call.args[0] for call in session.add.call_args_list if isinstance(call.args[0], MindMapRevision)]
+    assert len(revisions) == 1
+    assert revisions[0].action == "asset_outline_refreshed"
+    assert revisions[0].version == 8
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_asset_outline_refresh_apply_rejects_stale_proposal_without_writes() -> None:
+    proposal_asset = make_asset(document_revision=6)
+    current_asset = make_asset(document_revision=7, heading="Changed Again")
+    mind_map = make_asset_map(asset=make_asset(), version=7)
+    session = make_session(
+        QueryResult(scalar=mind_map),
+        QueryResult(scalar=current_asset),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await apply_asset_outline_refresh_proposal(
+            session,
+            user_id="user-1",
+            map_id=mind_map.id,
+            body=AssetOutlineRefreshApply(
+                base_version=7,
+                proposal=build_asset_outline_proposal(proposal_asset),
+                confirm=True,
+            ),
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "asset_outline_refresh_stale"
+    session.commit.assert_not_awaited()
+    session.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "operation",
+    [check_asset_outline_staleness, build_asset_outline_refresh_proposal],
+)
+async def test_asset_outline_operations_reject_wrong_map_purpose(operation) -> None:
+    session = make_session(QueryResult(scalar=make_map()))
+
+    with pytest.raises(HTTPException, match="Asset Outline Map") as exc_info:
+        await operation(session, user_id="user-1", map_id="map-1")
+
+    assert exc_info.value.status_code == 422
     session.commit.assert_not_awaited()
 
 

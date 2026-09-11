@@ -56,6 +56,11 @@ class SourceList(BaseModel):
     total: int
 
 
+class SourceUploadResult(SourceRead):
+    created: bool
+    duplicate: bool
+
+
 class ChunkRead(BaseModel):
     model_config = {"from_attributes": True}
 

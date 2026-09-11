@@ -17,6 +17,7 @@ from pkg.schemas.application.asset import (
     AssetProvenance,
     NewsletterAutomationConfig,
     NewsletterAutomationRunResult,
+    NewsletterAutomationRunSnapshot,
     NewsletterAutomationUpdate,
 )
 from pkg.services.application.assets import create_asset
@@ -32,7 +33,8 @@ def is_newsletter_due(config: NewsletterAutomationConfig, now: datetime) -> bool
     if not config.enabled or config.frequency == "manual":
         return False
     current = _ensure_utc(now)
-    last_run = _ensure_utc(config.last_generated_at) if config.last_generated_at else None
+    last_run_at = config.last_run_at or config.last_generated_at
+    last_run = _ensure_utc(last_run_at) if last_run_at else None
     if current.hour < config.hour_utc:
         return False
     if config.frequency == "daily":
@@ -59,8 +61,14 @@ async def update_newsletter_config(
     current = await get_newsletter_config(session, user_id=user_id)
     updated = NewsletterAutomationConfig(
         **body.model_dump(),
+        config_revision=current.config_revision + 1,
         last_generated_at=current.last_generated_at,
         last_asset_id=current.last_asset_id,
+        last_run_at=current.last_run_at,
+        last_run_status=current.last_run_status,
+        last_run_reason=current.last_run_reason,
+        last_news_count=current.last_news_count,
+        last_paper_count=current.last_paper_count,
     )
     await _save_newsletter_config(session, user_id=user_id, config=updated)
     return updated
@@ -75,8 +83,14 @@ async def generate_newsletter(
 ) -> NewsletterAutomationRunResult:
     current = _ensure_utc(now or datetime.now(timezone.utc))
     config = await get_newsletter_config(session, user_id=user_id)
+    run_snapshot = _newsletter_run_snapshot(config)
     if not force and not is_newsletter_due(config, current):
-        return NewsletterAutomationRunResult(status="skipped", reason="not_due")
+        return NewsletterAutomationRunResult(
+            status="skipped",
+            reason="not_due",
+            config_revision=config.config_revision,
+            config_snapshot=run_snapshot,
+        )
 
     cutoff = current - timedelta(days=config.lookback_days)
     database_cutoff = cutoff.replace(tzinfo=None)
@@ -121,7 +135,20 @@ async def generate_newsletter(
     )
 
     if not news_sources and not paper_sources and not paper_discoveries:
-        return NewsletterAutomationRunResult(status="skipped", reason="no_matching_items")
+        updated = config.model_copy(update={
+            "last_run_at": current,
+            "last_run_status": "skipped",
+            "last_run_reason": "no_matching_items",
+            "last_news_count": 0,
+            "last_paper_count": 0,
+        })
+        await _save_newsletter_config(session, user_id=user_id, config=updated)
+        return NewsletterAutomationRunResult(
+            status="skipped",
+            reason="no_matching_items",
+            config_revision=config.config_revision,
+            config_snapshot=run_snapshot,
+        )
 
     title = f"{config.name} · {current.date().isoformat()}"
     draft = build_newsletter_markdown(
@@ -149,6 +176,8 @@ async def generate_newsletter(
                 "delivery_format": config.delivery_format,
                 "generation_mode": "newsletter_automation",
                 "newsletter_automation": {
+                    "config_revision": config.config_revision,
+                    "config_snapshot": run_snapshot.model_dump(mode="json"),
                     "generated_at": current.isoformat(),
                     "lookback_days": config.lookback_days,
                     "topics": config.topics,
@@ -160,13 +189,43 @@ async def generate_newsletter(
             provenance=AssetProvenance(origin_type="user", action="save"),
         ),
     )
-    updated = config.model_copy(update={"last_generated_at": current, "last_asset_id": asset.id})
+    news_count = len(news_sources)
+    paper_count = len(paper_sources) + len(paper_discoveries)
+    updated = config.model_copy(update={
+        "last_generated_at": current,
+        "last_asset_id": asset.id,
+        "last_run_at": current,
+        "last_run_status": "generated",
+        "last_run_reason": None,
+        "last_news_count": news_count,
+        "last_paper_count": paper_count,
+    })
     await _save_newsletter_config(session, user_id=user_id, config=updated)
     return NewsletterAutomationRunResult(
         status="generated",
-        news_count=len(news_sources),
-        paper_count=len(paper_sources) + len(paper_discoveries),
+        news_count=news_count,
+        paper_count=paper_count,
+        config_revision=config.config_revision,
+        config_snapshot=run_snapshot,
         asset=asset,
+    )
+
+
+def _newsletter_run_snapshot(config: NewsletterAutomationConfig) -> NewsletterAutomationRunSnapshot:
+    return NewsletterAutomationRunSnapshot(
+        config_revision=config.config_revision,
+        enabled=config.enabled,
+        name=config.name,
+        topics=config.topics,
+        frequency=config.frequency,
+        hour_utc=config.hour_utc,
+        weekday_utc=config.weekday_utc,
+        lookback_days=config.lookback_days,
+        max_news_items=config.max_news_items,
+        max_paper_items=config.max_paper_items,
+        delivery_format=config.delivery_format,
+        audience=config.audience,
+        style_notes=config.style_notes,
     )
 
 

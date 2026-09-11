@@ -16,6 +16,7 @@ The core product goal is a durable personal knowledge graph with deterministic r
 - Expose authenticated REST APIs that Harness tools use to search, read, and write user knowledge.
 - Delegate interactive Agent Chat and workflow execution to DeepSeek Harness through the shared gateway.
 - Persist a per-message Agent Run contract in Chat sessions so Workflow/Owner context, terminal status, allowed save actions, and saved receipts survive Workflow changes, reloads, and History review.
+- Present Agent runs, Proposal actions, unsaved state, and recoverable errors through shared interaction components; user-facing copy explains impact and recovery while tool names, revisions, and raw contracts stay in diagnostic details.
 - Import or discover external knowledge from RSS, web pages, GitHub repositories, arXiv papers, and news providers.
 - Create `web` sources from a direct URL by fetching and extracting readable page text when content is left empty.
 - Discover article links from a `web` directory source such as a blog index and import each article as a child web source.
@@ -25,7 +26,9 @@ The core product goal is a durable personal knowledge graph with deterministic r
 - Preserve unsaved Asset Editor changes with a deterministic saved/editor signature, tab-scoped recovery draft, refresh and navigation warnings, and save-time cleanup; query refreshes must not overwrite a dirty editor.
 - Trace promoted or referenced Notes and Wiki pages back to their related Assets, including the originating Knowledge Candidate and Claim references when the record was distilled from an Asset.
 - Generate PDF Source Mind Map proposals from bounded section/Chunk summaries in ephemeral Harness sessions, validate Source basis and references in PKG, and require explicit version-safe confirmation before creating or safely merging the formal Map.
+- Project saved Asset Blocks into a revision-based Asset Outline Map with stable Block/Claim references; node navigation can locate the Editor Block, stale basis only marks the existing Map, and confirmed Refresh Apply requires matching Map/Asset revisions while updating only the formal Map and its Revision history.
 - Create and edit newsletter assets through PKG CRUD, then develop their content in Harness Agent Chat and explicitly save the reviewed result back to the Asset.
+- Run Newsletter automation only from a saved configuration revision: dirty UI settings must save before Run, each result carries a configuration snapshot, skipped runs are recorded, and generated Assets retain the revision used.
 - Pin notes for quick access, keep content version history (snapshots captured on content/title edits, restorable), and attach inline images to notes via drag-and-drop upload.
 - Mine recent knowledge materials for reusable concept/entity candidates and recommend concept wiki drafts with evidence.
 - Support persistent conversations, model/provider selection, observable background jobs, and user profiling.

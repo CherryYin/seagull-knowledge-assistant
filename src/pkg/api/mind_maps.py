@@ -11,6 +11,10 @@ from pkg.models.application.mind_map import (
 )
 from pkg.models.user import User
 from pkg.schemas.application.mind_map import (
+    AssetOutlineProjectionRequest,
+    AssetOutlineRefreshApply,
+    AssetOutlineRefreshProposalRead,
+    AssetOutlineStalenessRead,
     MindMapCreate,
     MindMapDelete,
     MindMapList,
@@ -48,9 +52,12 @@ from pkg.services.application.mind_maps import (
     MindMapSummaryState,
     MindMapTreeState,
     add_mind_map_node,
+    apply_asset_outline_refresh_proposal,
     apply_mind_map_outline,
     apply_source_mind_map_proposal,
+    build_asset_outline_refresh_proposal,
     build_source_mind_map_generation_context,
+    check_asset_outline_staleness,
     check_source_mind_map_staleness,
     create_mind_map_reference,
     create_mind_map,
@@ -64,6 +71,7 @@ from pkg.services.application.mind_maps import (
     list_mind_map_references_by_target,
     list_mind_maps,
     move_mind_map_node,
+    project_asset_outline_map,
     restore_mind_map_revision,
     update_mind_map,
     update_mind_map_reference,
@@ -188,6 +196,16 @@ async def create_mind_map_route(
     return _tree_read(tree)
 
 
+@router.post("/projections/asset-outline", response_model=MindMapTreeRead)
+async def project_asset_outline_map_route(
+    body: AssetOutlineProjectionRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> MindMapTreeRead:
+    tree = await project_asset_outline_map(session, user_id=user.id, asset_id=body.asset_id)
+    return _tree_read(tree)
+
+
 @router.get("/references", response_model=MindMapReferenceList)
 async def list_mind_map_references_by_target_route(
     ref_type: MindMapReferenceType,
@@ -293,6 +311,50 @@ async def check_mind_map_staleness_route(
         reasons=list(result.reasons),
         current_basis=result.current_basis,
     )
+
+
+@router.post("/{map_id}/check-asset-outline-staleness", response_model=AssetOutlineStalenessRead)
+async def check_asset_outline_staleness_route(
+    map_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> AssetOutlineStalenessRead:
+    result = await check_asset_outline_staleness(session, user_id=user.id, map_id=map_id)
+    return AssetOutlineStalenessRead(
+        map=_map_read(result.map, result.root_id),
+        stale=result.stale,
+        reasons=list(result.reasons),
+        current_basis=result.current_basis,
+    )
+
+
+@router.post("/{map_id}/proposals/asset-outline/refresh", response_model=AssetOutlineRefreshProposalRead)
+async def build_asset_outline_refresh_proposal_route(
+    map_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> AssetOutlineRefreshProposalRead:
+    return await build_asset_outline_refresh_proposal(session, user_id=user.id, map_id=map_id)
+
+
+@router.post(
+    "/{map_id}/proposals/asset-outline/refresh/apply",
+    response_model=MindMapTreeRead,
+    responses=VERSION_CONFLICT_RESPONSES,
+)
+async def apply_asset_outline_refresh_proposal_route(
+    map_id: str,
+    body: AssetOutlineRefreshApply,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> MindMapTreeRead:
+    tree = await apply_asset_outline_refresh_proposal(
+        session,
+        user_id=user.id,
+        map_id=map_id,
+        body=body,
+    )
+    return _tree_read(tree)
 
 
 @router.patch(

@@ -7,8 +7,11 @@ from fastapi import HTTPException
 from pkg.api.app import app
 from pkg.api.mind_maps import (
     add_mind_map_node_route,
+    apply_asset_outline_refresh_proposal_route,
     apply_source_mind_map_proposal_route,
     apply_mind_map_outline_route,
+    build_asset_outline_refresh_proposal_route,
+    check_asset_outline_staleness_route,
     check_mind_map_staleness_route,
     create_mind_map_reference_route,
     create_mind_map_route,
@@ -25,6 +28,8 @@ from pkg.models.application.mind_map import (
     MindMapRevision,
 )
 from pkg.schemas.application.mind_map import (
+    AssetOutlineRefreshApply,
+    AssetOutlineRefreshProposalRead,
     MindMapCreate,
     MindMapDelete,
     MindMapNodeCreate,
@@ -158,6 +163,10 @@ def test_core_mind_map_routes_are_registered() -> None:
     assert {"GET", "PATCH", "DELETE"} <= methods_by_path["/mind-maps/{map_id}"]
     assert "GET" in methods_by_path["/mind-maps/{map_id}/tree"]
     assert "POST" in methods_by_path["/mind-maps/{map_id}/check-staleness"]
+    assert "POST" in methods_by_path["/mind-maps/{map_id}/check-asset-outline-staleness"]
+    assert "POST" in methods_by_path["/mind-maps/{map_id}/proposals/asset-outline/refresh"]
+    assert "POST" in methods_by_path["/mind-maps/{map_id}/proposals/asset-outline/refresh/apply"]
+    assert "POST" in methods_by_path["/mind-maps/projections/asset-outline"]
     assert "POST" in methods_by_path["/mind-maps/proposals/source/validate"]
     assert "POST" in methods_by_path["/mind-maps/{map_id}/nodes"]
     assert {"PATCH", "DELETE"} <= methods_by_path[
@@ -361,6 +370,166 @@ async def test_staleness_route_returns_map_basis_and_reasons() -> None:
     assert response.reasons == ["source_content_hash", "chunk_count"]
     assert response.current_basis["chunk_revision"] == 3
     mock.assert_awaited_once_with(session, user_id="user-1", map_id="map-1")
+
+
+@pytest.mark.asyncio
+async def test_asset_outline_staleness_route_returns_current_basis() -> None:
+    mind_map = make_map(version=5)
+    mind_map.owner_type = "asset"
+    mind_map.owner_id = "asset-1"
+    mind_map.purpose = "asset_outline"
+    mind_map.generation_status = "stale"
+    result = MindMapStalenessState(
+        map=mind_map,
+        root_id="root",
+        stale=True,
+        reasons=("asset_document_revision", "base_document_signature"),
+        current_basis={
+            "workspace_revision": 4,
+            "intent_revision": 2,
+            "asset_document_revision": 6,
+            "base_document_signature": "document-current",
+            "accepted_claim_ids": ["claim-1"],
+        },
+    )
+    session = AsyncMock()
+
+    with patch(
+        "pkg.api.mind_maps.check_asset_outline_staleness",
+        new=AsyncMock(return_value=result),
+    ) as mock:
+        response = await check_asset_outline_staleness_route(
+            map_id="map-1",
+            user=make_user(),
+            session=session,
+        )
+
+    assert response.map.version == 5
+    assert response.stale is True
+    assert response.reasons == ["asset_document_revision", "base_document_signature"]
+    assert response.current_basis.asset_document_revision == 6
+    mock.assert_awaited_once_with(session, user_id="user-1", map_id="map-1")
+
+
+@pytest.mark.asyncio
+async def test_asset_outline_refresh_route_returns_preview_without_applying() -> None:
+    result = AssetOutlineRefreshProposalRead.model_validate({
+        "map_id": "map-1",
+        "base_version": 5,
+        "proposal": {
+            "asset_id": "asset-1",
+            "title": "Architecture Brief · Outline",
+            "basis_revision": {
+                "workspace_revision": 4,
+                "intent_revision": 2,
+                "asset_document_revision": 6,
+                "base_document_signature": "document-current",
+                "accepted_claim_ids": ["claim-1"],
+            },
+            "nodes": [
+                {
+                    "temp_id": "root",
+                    "parent_temp_id": None,
+                    "position": 0,
+                    "content": "Architecture Brief",
+                    "node_kind": "topic",
+                },
+                {
+                    "temp_id": "block-1",
+                    "parent_temp_id": "root",
+                    "position": 0,
+                    "content": "Updated Executive Summary",
+                    "node_kind": "section",
+                    "asset_block_id": "block-1",
+                    "claim_refs": ["claim-1"],
+                },
+            ],
+        },
+        "node_count": 2,
+        "reference_count": 2,
+    })
+    session = AsyncMock()
+
+    with patch(
+        "pkg.api.mind_maps.build_asset_outline_refresh_proposal",
+        new=AsyncMock(return_value=result),
+    ) as mock:
+        response = await build_asset_outline_refresh_proposal_route(
+            map_id="map-1",
+            user=make_user(),
+            session=session,
+        )
+
+    assert response is result
+    assert response.base_version == 5
+    assert response.proposal.requires_user_confirmation is True
+    assert response.proposal.writes_asset is False
+    mock.assert_awaited_once_with(session, user_id="user-1", map_id="map-1")
+
+
+@pytest.mark.asyncio
+async def test_asset_outline_refresh_apply_route_delegates_confirmed_proposal() -> None:
+    body = AssetOutlineRefreshApply.model_validate({
+        "base_version": 5,
+        "confirm": True,
+        "proposal": {
+            "asset_id": "asset-1",
+            "title": "Architecture Brief · Outline",
+            "basis_revision": {
+                "workspace_revision": 4,
+                "intent_revision": 2,
+                "asset_document_revision": 6,
+                "base_document_signature": "document-current",
+                "accepted_claim_ids": ["claim-1"],
+            },
+            "nodes": [
+                {
+                    "temp_id": "root",
+                    "parent_temp_id": None,
+                    "position": 0,
+                    "content": "Architecture Brief",
+                    "node_kind": "topic",
+                },
+                {
+                    "temp_id": "block-1",
+                    "parent_temp_id": "root",
+                    "position": 0,
+                    "content": "Updated Executive Summary",
+                    "node_kind": "section",
+                    "asset_block_id": "block-1",
+                    "claim_refs": ["claim-1"],
+                },
+            ],
+        },
+    })
+    mind_map = make_map(version=6)
+    mind_map.owner_type = "asset"
+    mind_map.owner_id = "asset-1"
+    mind_map.purpose = "asset_outline"
+    root = make_node()
+    root.content = "Architecture Brief"
+    tree = MindMapTreeState(map=mind_map, root_id=root.id, nodes=[root], references=[])
+    session = AsyncMock()
+
+    with patch(
+        "pkg.api.mind_maps.apply_asset_outline_refresh_proposal",
+        new=AsyncMock(return_value=tree),
+    ) as mock:
+        response = await apply_asset_outline_refresh_proposal_route(
+            map_id="map-1",
+            body=body,
+            user=make_user(),
+            session=session,
+        )
+
+    assert response.map.version == 6
+    assert response.root_id == "root"
+    mock.assert_awaited_once_with(
+        session,
+        user_id="user-1",
+        map_id="map-1",
+        body=body,
+    )
 
 
 @pytest.mark.asyncio

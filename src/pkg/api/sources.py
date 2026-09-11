@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy import delete, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +20,7 @@ from pkg.db import get_session
 from pkg.models.category import Category
 from pkg.models.foundation.source import Source, SourceChunk, SourceEmbedding
 from pkg.models.user import User
-from pkg.schemas.source import ChunkRead, SourceCreate, SourceList, SourceRead, SourceUpdate
+from pkg.schemas.source import ChunkRead, SourceCreate, SourceList, SourceRead, SourceUpdate, SourceUploadResult
 from pkg.services.cross_cutting.embedding import get_embedding_service
 from pkg.services.cross_cutting.storage import get_storage_service
 from pkg.services.foundation.chunking import chunk_text
@@ -241,6 +241,22 @@ async def persist_source(
     return source
 
 
+async def find_owned_uploaded_source_by_hash(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    content_hash: str,
+) -> Source | None:
+    result = await session.execute(
+        select(Source).where(
+            Source.user_id == user_id,
+            Source.content_hash == content_hash,
+            Source.file_path.is_not(None),
+        ).order_by(Source.ingested_at.asc()).limit(1)
+    )
+    return result.scalars().first()
+
+
 def source_embedding_text(source: Source) -> str:
     metadata = source.metadata_ or {}
     embedding_text = metadata.get("embedding_text")
@@ -388,8 +404,9 @@ async def download_source_pdf(
     return pdf_source
 
 
-@router.post("/upload", response_model=SourceRead, status_code=201)
+@router.post("/upload", response_model=SourceUploadResult, status_code=201)
 async def upload_source(
+    response: Response,
     file: UploadFile = File(...),
     title: str | None = Form(None),
     source_type: str = Form("article"),
@@ -402,6 +419,20 @@ async def upload_source(
     payload = await file.read()
     if not payload:
         raise HTTPException(status_code=400, detail="Uploaded source file is empty")
+
+    content_hash = hashlib.sha256(payload).hexdigest()
+    existing = await find_owned_uploaded_source_by_hash(
+        session,
+        user_id=user.id,
+        content_hash=content_hash,
+    )
+    if existing:
+        response.status_code = 200
+        return SourceUploadResult(
+            **SourceRead.model_validate(existing).model_dump(),
+            created=False,
+            duplicate=True,
+        )
 
     inferred_title = title or Path(file.filename or "source").stem
     extracted_text = await extract_text_content(file.filename, file.content_type, payload, pdf_type=pdf_type)
@@ -437,13 +468,18 @@ async def upload_source(
         content_type=file.content_type,
     )
 
-    return await persist_source(
+    source = await persist_source(
         session=session,
         body=body.model_copy(update={"id": source_id, "file_path": storage_uri}),
         user_id=user.id,
         file_path=storage_uri,
         raw_content_override=body.raw_content,
-        content_hash_override=hashlib.sha256(payload).hexdigest(),
+        content_hash_override=content_hash,
+    )
+    return SourceUploadResult(
+        **SourceRead.model_validate(source).model_dump(),
+        created=True,
+        duplicate=False,
     )
 
 

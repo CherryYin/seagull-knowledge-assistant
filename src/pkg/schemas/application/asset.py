@@ -145,6 +145,7 @@ class AssetFeedbackNoteResult(BaseModel):
 
 
 class NewsletterAutomationConfig(BaseModel):
+    config_revision: int = Field(default=0, ge=0)
     enabled: bool = False
     name: str = "Technology Newsletter"
     topics: list[str] = Field(default_factory=list)
@@ -159,6 +160,11 @@ class NewsletterAutomationConfig(BaseModel):
     style_notes: str = "Concise, evidence-led, and easy to scan."
     last_generated_at: datetime | None = None
     last_asset_id: str | None = None
+    last_run_at: datetime | None = None
+    last_run_status: Literal["generated", "skipped"] | None = None
+    last_run_reason: str | None = None
+    last_news_count: int = Field(default=0, ge=0)
+    last_paper_count: int = Field(default=0, ge=0)
 
 
 class NewsletterAutomationUpdate(BaseModel):
@@ -176,9 +182,27 @@ class NewsletterAutomationUpdate(BaseModel):
     style_notes: str = Field(default="", max_length=2000)
 
 
+class NewsletterAutomationRunSnapshot(BaseModel):
+    config_revision: int = Field(ge=0)
+    enabled: bool
+    name: str
+    topics: list[str]
+    frequency: Literal["manual", "daily", "weekly"]
+    hour_utc: int = Field(ge=0, le=23)
+    weekday_utc: int = Field(ge=0, le=6)
+    lookback_days: int = Field(ge=1, le=30)
+    max_news_items: int = Field(ge=0, le=50)
+    max_paper_items: int = Field(ge=0, le=50)
+    delivery_format: Literal["markdown", "html"]
+    audience: str
+    style_notes: str
+
+
 class NewsletterAutomationRunResult(BaseModel):
     status: Literal["generated", "skipped"]
     reason: str | None = None
     news_count: int = 0
     paper_count: int = 0
+    config_revision: int = Field(default=0, ge=0)
+    config_snapshot: NewsletterAutomationRunSnapshot | None = None
     asset: AssetRead | None = None

@@ -7,12 +7,13 @@ from pkg.models.application.asset import Asset
 from pkg.models.discovery import DiscoveryItem
 from pkg.models.foundation.source import Source
 from pkg.models.user import UserSettings
-from pkg.schemas.application.asset import NewsletterAutomationConfig
+from pkg.schemas.application.asset import NewsletterAutomationConfig, NewsletterAutomationUpdate
 from pkg.services.application.newsletter_automation import (
     _save_newsletter_config,
     build_newsletter_markdown,
     generate_newsletter,
     is_newsletter_due,
+    update_newsletter_config,
 )
 
 
@@ -24,6 +25,7 @@ def test_newsletter_due_respects_daily_and_weekly_schedule():
     assert is_newsletter_due(daily, now) is True
     assert is_newsletter_due(weekly, now) is True
     assert is_newsletter_due(daily.model_copy(update={"last_generated_at": now}), now) is False
+    assert is_newsletter_due(daily.model_copy(update={"last_run_at": now, "last_run_status": "skipped"}), now) is False
     assert is_newsletter_due(weekly.model_copy(update={"weekday_utc": 4}), now) is False
 
 
@@ -77,9 +79,32 @@ async def test_saving_newsletter_config_syncs_news_query_and_paper_profile():
 
 
 @pytest.mark.asyncio
+async def test_updating_newsletter_config_increments_revision_and_preserves_last_run():
+    current = NewsletterAutomationConfig(
+        config_revision=4,
+        last_run_at=datetime(2026, 9, 10, 8, 0, tzinfo=timezone.utc),
+        last_run_status="skipped",
+        last_run_reason="no_matching_items",
+    )
+    body = NewsletterAutomationUpdate(**NewsletterAutomationConfig(name="Updated Daily").model_dump(include=set(NewsletterAutomationUpdate.model_fields)))
+
+    with patch("pkg.services.application.newsletter_automation.get_newsletter_config", new=AsyncMock(return_value=current)), patch(
+        "pkg.services.application.newsletter_automation._save_newsletter_config", new=AsyncMock()
+    ) as save_mock:
+        updated = await update_newsletter_config(AsyncMock(), user_id="user-1", body=body)
+
+    assert updated.config_revision == 5
+    assert updated.name == "Updated Daily"
+    assert updated.last_run_status == "skipped"
+    assert updated.last_run_reason == "no_matching_items"
+    save_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_generate_newsletter_creates_draft_asset_from_recent_items():
     now = datetime(2026, 9, 3, 8, 0, tzinfo=timezone.utc)
     config = NewsletterAutomationConfig(
+        config_revision=3,
         enabled=True,
         name="Tech Daily",
         topics=["agent"],
@@ -110,15 +135,23 @@ async def test_generate_newsletter_creates_draft_asset_from_recent_items():
     assert result.status == "generated"
     assert result.news_count == 1
     assert result.paper_count == 1
+    assert result.config_revision == 3
+    assert result.config_snapshot is not None
+    assert result.config_snapshot.topics == ["agent"]
     body = create_mock.await_args.kwargs["body"]
     assert body.asset_type == "newsletter_issue"
     assert body.status == "draft"
     assert body.source_refs == ["news-1"]
     assert body.metadata["delivery_format"] == "html"
+    assert body.metadata["newsletter_automation"]["config_revision"] == 3
+    assert body.metadata["newsletter_automation"]["config_snapshot"]["max_news_items"] == 3
     source_statement = session.execute.await_args_list[0].args[0]
     discovery_statement = session.execute.await_args_list[1].args[0]
     source_datetimes = [value for value in source_statement.compile().params.values() if isinstance(value, datetime)]
     discovery_datetimes = [value for value in discovery_statement.compile().params.values() if isinstance(value, datetime)]
     assert source_datetimes and all(value.tzinfo is None for value in source_datetimes)
     assert discovery_datetimes and all(value.tzinfo is None for value in discovery_datetimes)
-    save_mock.assert_awaited_once()
+    saved_config = save_mock.await_args.kwargs["config"]
+    assert saved_config.last_run_status == "generated"
+    assert saved_config.last_news_count == 1
+    assert saved_config.last_paper_count == 1

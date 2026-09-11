@@ -1,3 +1,4 @@
+import json
 import re
 import uuid
 from copy import deepcopy
@@ -20,6 +21,10 @@ from pkg.models.foundation.note import Note
 from pkg.models.foundation.source import Source, SourceChunk
 from pkg.models.foundation.wiki import WikiPage
 from pkg.schemas.application.mind_map import (
+    AssetOutlineBasis,
+    AssetOutlineProposal,
+    AssetOutlineRefreshApply,
+    AssetOutlineRefreshProposalRead,
     MindMapCreate,
     MindMapDelete,
     MindMapNodeCreate,
@@ -112,6 +117,7 @@ SOURCE_CONTEXT_SECTION_SIZE = 12
 SOURCE_CONTEXT_HEADING_PATTERN = re.compile(r"^#{1,6}\s+(?P<title>.+?)\s*$", re.MULTILINE)
 SOURCE_MIND_MAP_AUTO_COLLAPSE_THRESHOLD = 40
 SOURCE_MIND_MAP_AUTO_COLLAPSE_DEPTH = 2
+ASSET_HEADING_PATTERN = re.compile(r"^(?P<marks>#{1,6})\s+(?P<title>.+?)\s*$")
 
 
 def make_mind_map_id() -> str:
@@ -120,6 +126,130 @@ def make_mind_map_id() -> str:
 
 def make_mind_map_node_id() -> str:
     return f"mind-map-node-{uuid.uuid4().hex[:12]}"
+
+
+def _base36(value: int) -> str:
+    alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
+    if value == 0:
+        return "0"
+    digits: list[str] = []
+    while value:
+        value, remainder = divmod(value, 36)
+        digits.append(alphabet[remainder])
+    return "".join(reversed(digits))
+
+
+def _asset_document_signature(blocks: list[dict]) -> str:
+    payload = [
+        {
+            "id": block["id"],
+            "revision": block["revision"],
+            "markdown": block["markdown"],
+            "claimRefs": block.get("claim_refs", block.get("claimRefs", [])),
+        }
+        for block in blocks
+    ]
+    value = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    hash_value = 2166136261
+    encoded = value.encode("utf-16-le")
+    for offset in range(0, len(encoded), 2):
+        code_unit = encoded[offset] | (encoded[offset + 1] << 8)
+        hash_value ^= code_unit
+        hash_value = (hash_value * 16777619) & 0xFFFFFFFF
+    return f"document-{_base36(hash_value)}"
+
+
+def build_asset_outline_proposal(asset: Asset) -> AssetOutlineProposal:
+    metadata = asset.metadata_ or {}
+    document = metadata.get("asset_document")
+    if not isinstance(document, dict) or not isinstance(document.get("blocks"), list) or not document["blocks"]:
+        raise HTTPException(
+            status_code=409,
+            detail="Save the Asset once to establish stable Blocks before creating an Outline Map",
+        )
+    workspace = metadata.get("asset_workspace_v1")
+    intent = workspace.get("intent") if isinstance(workspace, dict) else None
+    if not isinstance(intent, dict) or intent.get("status") != "confirmed" or not isinstance(intent.get("revision"), int):
+        raise HTTPException(status_code=409, detail="Confirm the Asset Intent before creating an Outline Map")
+
+    claims = workspace.get("claims", []) if isinstance(workspace, dict) else []
+    reviewed_claim_ids = {
+        claim.get("id")
+        for claim in claims
+        if isinstance(claim, dict)
+        and isinstance(claim.get("id"), str)
+        and claim.get("status") in {"accepted", "hypothesis"}
+    }
+    blocks = document["blocks"]
+    proposal_nodes = [{
+        "temp_id": "root",
+        "parent_temp_id": None,
+        "position": 0,
+        "content": asset.title,
+        "node_kind": "topic",
+    }]
+    heading_stack: dict[int, str] = {}
+    child_counts: dict[str, int] = {"root": 0}
+    for index, block in enumerate(blocks):
+        if not isinstance(block, dict):
+            raise HTTPException(status_code=422, detail="Asset Document contains an invalid Block")
+        block_id = block.get("id")
+        markdown = block.get("markdown")
+        revision = block.get("revision")
+        claim_refs = block.get("claim_refs", block.get("claimRefs", []))
+        if not isinstance(block_id, str) or not block_id.strip() or not isinstance(markdown, str) or not markdown.strip() or not isinstance(revision, int) or revision < 1:
+            raise HTTPException(status_code=422, detail="Asset Document contains an invalid Block contract")
+        if not isinstance(claim_refs, list) or any(not isinstance(claim_id, str) for claim_id in claim_refs):
+            raise HTTPException(status_code=422, detail=f"Asset Block {block_id} has invalid Claim references")
+        unknown_claim_ids = set(claim_refs) - reviewed_claim_ids
+        if unknown_claim_ids:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Asset Block {block_id} references unreviewed Claims: {', '.join(sorted(unknown_claim_ids))}",
+            )
+
+        heading_match = ASSET_HEADING_PATTERN.match(markdown.strip().splitlines()[0])
+        if heading_match:
+            heading_level = len(heading_match.group("marks"))
+            parent_candidates = [level for level in heading_stack if level < heading_level]
+            parent_temp_id = heading_stack[max(parent_candidates)] if parent_candidates else "root"
+            content = heading_match.group("title")
+            node_kind = "section"
+            heading_stack = {level: temp_id for level, temp_id in heading_stack.items() if level < heading_level}
+        else:
+            parent_temp_id = heading_stack[max(heading_stack)] if heading_stack else "root"
+            content = _bounded_text(markdown, 180)
+            node_kind = "block"
+        temp_id = f"block-{index + 1}"
+        position = child_counts.get(parent_temp_id, 0)
+        child_counts[parent_temp_id] = position + 1
+        child_counts[temp_id] = 0
+        proposal_nodes.append({
+            "temp_id": temp_id,
+            "parent_temp_id": parent_temp_id,
+            "position": position,
+            "content": content,
+            "node_kind": node_kind,
+            "asset_block_id": block_id,
+            "claim_refs": claim_refs,
+        })
+        if heading_match:
+            heading_stack[heading_level] = temp_id
+
+    workspace_revision = workspace.get("workspace_revision", 0) if isinstance(workspace, dict) else 0
+    document_revision = document.get("revision", 0)
+    return AssetOutlineProposal(
+        asset_id=asset.id,
+        title=f"{asset.title} · Outline",
+        basis_revision=AssetOutlineBasis(
+            workspace_revision=workspace_revision if isinstance(workspace_revision, int) else 0,
+            intent_revision=intent["revision"],
+            asset_document_revision=document_revision if isinstance(document_revision, int) and document_revision >= 0 else 0,
+            base_document_signature=_asset_document_signature(blocks),
+            accepted_claim_ids=sorted(reviewed_claim_ids),
+        ),
+        nodes=proposal_nodes,
+    )
 
 
 def _bounded_text(value: str, max_chars: int) -> str:
@@ -789,6 +919,98 @@ async def create_mind_map(
     return MindMapTreeState(map=mind_map, root_id=root.id, nodes=[root], references=[])
 
 
+async def project_asset_outline_map(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    asset_id: str,
+) -> MindMapTreeState:
+    existing_row = await session.execute(
+        select(MindMap).where(
+            MindMap.user_id == user_id,
+            MindMap.owner_type == "asset",
+            MindMap.owner_id == asset_id,
+            MindMap.purpose == "asset_outline",
+        )
+    )
+    existing = existing_row.scalar_one_or_none()
+    if existing is not None:
+        return await get_mind_map_tree(session, user_id=user_id, map_id=existing.id)
+
+    asset_row = await session.execute(select(Asset).where(Asset.id == asset_id, Asset.user_id == user_id))
+    asset = asset_row.scalar_one_or_none()
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    proposal = build_asset_outline_proposal(asset)
+    now = datetime.now(UTC)
+    mind_map = MindMap(
+        id=make_mind_map_id(),
+        user_id=user_id,
+        title=proposal.title,
+        owner_type="asset",
+        owner_id=asset.id,
+        purpose="asset_outline",
+        layout_mode=proposal.layout_mode,
+        version=1,
+        basis_revision=proposal.basis_revision.model_dump(),
+        generation_status="ready",
+        created_at=now,
+        updated_at=now,
+    )
+    node_ids = {node.temp_id: make_mind_map_node_id() for node in proposal.nodes}
+    nodes = [
+        MindMapNode(
+            id=node_ids[node.temp_id],
+            map_id=mind_map.id,
+            display_id=index + 1,
+            parent_id=node_ids.get(node.parent_temp_id) if node.parent_temp_id else None,
+            content=node.content,
+            note=None,
+            position=node.position,
+            collapsed=False,
+            node_kind=node.node_kind,
+            updated_by="system",
+            created_at=now,
+            updated_at=now,
+        )
+        for index, node in enumerate(proposal.nodes)
+    ]
+    references: list[MindMapNodeReference] = []
+    for proposal_node in proposal.nodes:
+        if proposal_node.asset_block_id is None:
+            continue
+        node_id = node_ids[proposal_node.temp_id]
+        references.append(MindMapNodeReference(
+            id=make_mind_map_reference_id(), map_id=mind_map.id, node_id=node_id,
+            ref_type="asset_block", ref_id=proposal_node.asset_block_id, relation="represents",
+            fragment_selector=None, created_at=now,
+        ))
+        references.extend(
+            MindMapNodeReference(
+                id=make_mind_map_reference_id(), map_id=mind_map.id, node_id=node_id,
+                ref_type="claim", ref_id=claim_id, relation="supports",
+                fragment_selector=None, created_at=now,
+            )
+            for claim_id in proposal_node.claim_refs
+        )
+    session.add(mind_map)
+    for node in nodes:
+        session.add(node)
+    for reference in references:
+        session.add(reference)
+    root_id = node_ids["root"]
+    revision = await _record_revision(
+        session, mind_map=mind_map, root_id=root_id, nodes=nodes, references=references,
+        actor_type="system", actor_ref=None, action="map_created",
+        summary="Projected Asset Blocks into an Outline Map", now=now,
+    )
+    await session.commit()
+    await session.refresh(mind_map)
+    for item in [*nodes, *references, revision]:
+        await session.refresh(item)
+    return MindMapTreeState(map=mind_map, root_id=root_id, nodes=nodes, references=references)
+
+
 async def list_mind_maps(
     session: AsyncSession,
     *,
@@ -912,6 +1134,173 @@ async def check_source_mind_map_staleness(
         reasons=tuple(reasons),
         current_basis=current_basis,
     )
+
+
+async def check_asset_outline_staleness(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    map_id: str,
+) -> MindMapStalenessState:
+    mind_map = await _get_map_for_update(session, user_id=user_id, map_id=map_id)
+    if mind_map.owner_type != "asset" or mind_map.purpose != "asset_outline":
+        raise HTTPException(status_code=422, detail="Asset Outline staleness checks require an Asset Outline Map")
+    asset_row = await session.execute(select(Asset).where(Asset.id == mind_map.owner_id, Asset.user_id == user_id))
+    asset = asset_row.scalar_one_or_none()
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset owner not found")
+    current_basis = build_asset_outline_proposal(asset).basis_revision.model_dump()
+    recorded_basis = mind_map.basis_revision if isinstance(mind_map.basis_revision, dict) else {}
+    keys = ("workspace_revision", "intent_revision", "asset_document_revision", "base_document_signature")
+    reasons = [key for key in keys if recorded_basis.get(key) != current_basis[key]]
+    root_rows = await session.execute(
+        select(MindMapNode.id).where(MindMapNode.map_id == map_id, MindMapNode.parent_id.is_(None))
+    )
+    root_ids = list(root_rows.scalars().all())
+    if len(root_ids) != 1:
+        raise _invalid_tree(map_id, f"Expected exactly one root node, found {len(root_ids)}")
+    if reasons and mind_map.generation_status not in {"stale", "generating", "failed"}:
+        mind_map.generation_status = "stale"
+        mind_map.updated_at = datetime.now(UTC)
+        await session.commit()
+        await session.refresh(mind_map)
+    return MindMapStalenessState(
+        map=mind_map,
+        root_id=root_ids[0],
+        stale=bool(reasons) or mind_map.generation_status == "stale",
+        reasons=tuple(reasons),
+        current_basis=current_basis,
+    )
+
+
+async def build_asset_outline_refresh_proposal(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    map_id: str,
+) -> AssetOutlineRefreshProposalRead:
+    mind_map = await _get_map(session, user_id=user_id, map_id=map_id)
+    if mind_map.owner_type != "asset" or mind_map.purpose != "asset_outline":
+        raise HTTPException(status_code=422, detail="Refresh proposals require an Asset Outline Map")
+    asset_row = await session.execute(select(Asset).where(Asset.id == mind_map.owner_id, Asset.user_id == user_id))
+    asset = asset_row.scalar_one_or_none()
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset owner not found")
+    proposal = build_asset_outline_proposal(asset)
+    return AssetOutlineRefreshProposalRead(
+        map_id=mind_map.id,
+        base_version=mind_map.version,
+        proposal=proposal,
+        node_count=len(proposal.nodes),
+        reference_count=sum(1 + len(node.claim_refs) for node in proposal.nodes if node.asset_block_id is not None),
+    )
+
+
+async def apply_asset_outline_refresh_proposal(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    map_id: str,
+    body: AssetOutlineRefreshApply,
+) -> MindMapTreeState:
+    mind_map = await _get_map_for_update(session, user_id=user_id, map_id=map_id)
+    _validate_version(mind_map, body.base_version)
+    if mind_map.owner_type != "asset" or mind_map.purpose != "asset_outline":
+        raise HTTPException(status_code=422, detail="Refresh proposals require an Asset Outline Map")
+    if body.proposal.asset_id != mind_map.owner_id:
+        raise HTTPException(status_code=422, detail="Refresh proposal does not belong to the target Asset Outline Map")
+
+    asset_row = await session.execute(select(Asset).where(Asset.id == mind_map.owner_id, Asset.user_id == user_id))
+    asset = asset_row.scalar_one_or_none()
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset owner not found")
+    current_proposal = build_asset_outline_proposal(asset)
+    if body.proposal.model_dump() != current_proposal.model_dump():
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "asset_outline_refresh_stale",
+                "message": "The Asset changed after this Refresh Proposal was generated",
+                "map_id": mind_map.id,
+                "expected_basis": body.proposal.basis_revision.model_dump(),
+                "current_basis": current_proposal.basis_revision.model_dump(),
+            },
+        )
+
+    current_nodes = await _load_nodes(session, map_id=map_id, for_update=True)
+    _root_node(map_id, current_nodes)
+    await session.execute(
+        delete(MindMapNode)
+        .where(MindMapNode.map_id == map_id)
+        .execution_options(synchronize_session=False)
+    )
+    await session.flush()
+
+    now = datetime.now(UTC)
+    node_ids = {node.temp_id: make_mind_map_node_id() for node in current_proposal.nodes}
+    nodes = [
+        MindMapNode(
+            id=node_ids[node.temp_id],
+            map_id=mind_map.id,
+            display_id=index + 1,
+            parent_id=node_ids.get(node.parent_temp_id) if node.parent_temp_id else None,
+            content=node.content,
+            note=None,
+            position=node.position,
+            collapsed=False,
+            node_kind=node.node_kind,
+            updated_by="system",
+            created_at=now,
+            updated_at=now,
+        )
+        for index, node in enumerate(current_proposal.nodes)
+    ]
+    references: list[MindMapNodeReference] = []
+    for proposal_node in current_proposal.nodes:
+        if proposal_node.asset_block_id is None:
+            continue
+        node_id = node_ids[proposal_node.temp_id]
+        references.append(MindMapNodeReference(
+            id=make_mind_map_reference_id(), map_id=mind_map.id, node_id=node_id,
+            ref_type="asset_block", ref_id=proposal_node.asset_block_id, relation="represents",
+            fragment_selector=None, created_at=now,
+        ))
+        references.extend(
+            MindMapNodeReference(
+                id=make_mind_map_reference_id(), map_id=mind_map.id, node_id=node_id,
+                ref_type="claim", ref_id=claim_id, relation="supports",
+                fragment_selector=None, created_at=now,
+            )
+            for claim_id in proposal_node.claim_refs
+        )
+    for item in [*nodes, *references]:
+        session.add(item)
+    await session.flush()
+
+    previous_version = mind_map.version
+    mind_map.title = current_proposal.title
+    mind_map.layout_mode = current_proposal.layout_mode
+    mind_map.basis_revision = current_proposal.basis_revision.model_dump()
+    mind_map.generation_status = "ready"
+    mind_map.version = previous_version + 1
+    mind_map.updated_at = now
+    root_id = node_ids["root"]
+    revision = await _record_revision(
+        session,
+        mind_map=mind_map,
+        root_id=root_id,
+        nodes=nodes,
+        references=references,
+        actor_type="human",
+        actor_ref=None,
+        action="asset_outline_refreshed",
+        summary=f"Applied confirmed Asset Outline Refresh Proposal to version {previous_version}",
+        now=now,
+    )
+    await session.commit()
+    await session.refresh(mind_map)
+    await session.refresh(revision)
+    return MindMapTreeState(map=mind_map, root_id=root_id, nodes=nodes, references=references)
 
 
 async def validate_source_mind_map_proposal(
