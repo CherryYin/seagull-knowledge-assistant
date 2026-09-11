@@ -54,6 +54,7 @@ import {
 import type { AssetIntentFormDraft, AssetIntentProposal } from "@/lib/asset-generation";
 import { useReturnNavigation } from "@/hooks/useReturnNavigation";
 import { useRouteScrollRestoration } from "@/hooks/useRouteScrollRestoration";
+import { ProposalActions } from "@/components/interaction/ProposalActions";
 
 type ChatLocationState = {
   promptSeed?: string;
@@ -1029,7 +1030,7 @@ export function ChatPage() {
                         </div>
                         <Button type="button" size="sm" variant="outline" disabled={streaming} onClick={handleRetryIntentProposal}>
                           <Sparkles className="mr-2 h-4 w-4" />
-                          Generate Applyable Proposal
+                          Generate Intent Proposal
                         </Button>
                       </div>
                     )}
@@ -1037,11 +1038,12 @@ export function ChatPage() {
                       <div className="space-y-3 rounded-xl border border-primary/20 bg-primary/5 p-4">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div><p className="font-medium">Agent Intent Proposal</p><p className="text-xs text-muted-foreground">Candidate only · existing form values will not be overwritten</p></div>
-                          <Button
-                            type="button"
-                            size="sm"
-                            onClick={() => navigate("/assets/new", { state: { assetIntentProposal, assetIntentDraft: workflowContext.assetIntentDraft } })}
-                          >Apply to Asset Form</Button>
+                          <ProposalActions
+                            primaryLabel="Apply Intent Proposal to Form"
+                            onPrimary={() => navigate("/assets/new", { state: { assetIntentProposal, assetIntentDraft: workflowContext.assetIntentDraft } })}
+                            onRegenerate={handleRetryIntentProposal}
+                            regenerateDisabled={streaming}
+                          />
                         </div>
                         <div className="grid gap-3 text-sm md:grid-cols-2">
                           <div><p className="text-xs font-semibold uppercase text-muted-foreground">Question</p><p>{assetIntentProposal.question}</p></div>

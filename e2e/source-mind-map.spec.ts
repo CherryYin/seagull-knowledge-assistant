@@ -347,7 +347,9 @@ test("PDF Source confirms an Agent Proposal and persists it in the full Map", as
   await page.getByRole("button", { name: "Generate Agent Proposal" }).click();
 
   await expect(page.getByTestId("source-mind-map-proposal-preview")).toBeVisible();
-  await expect(page.getByText("Validation passed.")).toBeVisible();
+  await expect(page.getByText(/proposal passed validation/)).toBeVisible();
+  await expect(page.locator('[data-agent-run-status="completed"]')).toBeVisible();
+  await expect(page.locator("[data-proposal-actions]")).toBeVisible();
   await expect(page.getByText("2 nodes", { exact: true })).toBeVisible();
   const proposalEdge = page.getByTestId("source-mind-map-proposal-preview").locator(".react-flow__edge-path").first();
   await expect(proposalEdge).toHaveAttribute("d", /.+/);
@@ -362,7 +364,7 @@ test("PDF Source confirms an Agent Proposal and persists it in the full Map", as
   });
 
   page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "Review & Save to Mind Map" }).click();
+  await page.getByRole("button", { name: "Apply Proposal to Mind Map" }).click();
   await expect(page.getByTestId("source-mind-map-proposal-preview")).toHaveCount(0);
   await expect(page.getByText(/Saved 2 nodes to Mind Map v3/)).toBeVisible();
   expect(mock.getAppliedBody()).toMatchObject({
@@ -407,9 +409,12 @@ test("large PDF generation shows bounded coverage and can be cancelled safely", 
   await expect(page.getByText(/Large PDF protection is active/)).toContainText("65 are omitted");
 
   await page.getByRole("button", { name: "Cancel Generation" }).click();
+  await expect(page.getByText("Mind Map proposal failed")).toBeVisible();
+  await expect(page.getByText("No proposal was applied to the saved Mind Map.")).toBeVisible();
+  await page.getByText("Details", { exact: true }).click();
   await expect(page.getByText("Generation cancelled. No Proposal was saved or applied.")).toBeVisible();
   await expect(page.getByTestId("source-mind-map-proposal-preview")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Try Again" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
 });
 
 test("large Agent Proposal starts folded at depth two", async ({ page }) => {
@@ -432,8 +437,11 @@ test("Map version conflict keeps the validated Proposal for retry", async ({ pag
   await page.getByRole("button", { name: "Mind Map" }).click();
   await page.getByRole("button", { name: "Generate Agent Proposal" }).click();
   page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "Review & Save to Mind Map" }).click();
+  await page.getByRole("button", { name: "Apply Proposal to Mind Map" }).click();
 
+  await expect(page.getByText("Mind Map proposal could not be applied")).toBeVisible();
+  await expect(page.getByText("The saved Mind Map was not changed.")).toBeVisible();
+  await page.getByText("Details", { exact: true }).click();
   await expect(page.getByText(/mind_map_version_conflict/)).toBeVisible();
   await expect(page.getByTestId("source-mind-map-proposal-preview")).toBeVisible();
   await expect(page.getByTestId("source-mind-map-preview")).toBeVisible();
@@ -446,10 +454,12 @@ test("invalid Agent Proposal can retry without changing the saved Map", async ({
 
   await page.getByRole("button", { name: "Mind Map" }).click();
   await page.getByRole("button", { name: "Generate Agent Proposal" }).click();
+  await expect(page.getByText("Mind Map proposal failed")).toBeVisible();
+  await page.getByText("Details", { exact: true }).click();
   await expect(page.getByText("proposal.nodes[0] contains unsupported fields: text, category, branches")).toBeVisible();
   await expect(page.getByText("Coordination", { exact: true }).first()).toBeVisible();
 
-  await page.getByRole("button", { name: "Try Again" }).click();
+  await page.getByRole("button", { name: "Retry" }).click();
   await expect(page.getByTestId("source-mind-map-proposal-preview")).toBeVisible();
   await expect(page.getByTestId("source-mind-map-preview")).toBeVisible();
 });
@@ -462,9 +472,12 @@ test("basis conflict blocks Proposal preview and asks for retry", async ({ page 
   await page.getByRole("button", { name: "Mind Map" }).click();
   await page.getByRole("button", { name: "Generate Agent Proposal" }).click();
 
+  await expect(page.getByText("Mind Map proposal failed")).toBeVisible();
+  await expect(page.getByText("No proposal was applied to the saved Mind Map.")).toBeVisible();
+  await page.getByText("Details", { exact: true }).click();
   await expect(page.getByText(/source_mind_map_basis_conflict/)).toBeVisible();
   await expect(page.getByTestId("source-mind-map-proposal-preview")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Try Again" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
 });
 
 test("Mind Map generation failure does not block Full or Slices reading", async ({ page }) => {
@@ -474,8 +487,10 @@ test("Mind Map generation failure does not block Full or Slices reading", async 
 
   await page.getByRole("button", { name: "Mind Map" }).click();
   await page.getByRole("button", { name: "Generate Agent Proposal" }).click();
+  await expect(page.getByText("Mind Map proposal failed")).toBeVisible();
+  await page.getByText("Details", { exact: true }).click();
   await expect(page.getByText(/Mind Map generation context is temporarily unavailable/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "Try Again" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
 
   await page.getByRole("button", { name: "Full" }).click();
   await expect(page.locator("[data-source-content]")).toContainText("Extracted PDF content");
@@ -501,7 +516,7 @@ test("selected Source branch expands through a version-safe confirmed Proposal",
   expect(mock.getValidatedBody()).toMatchObject({ map_id: "map-source-pdf", base_version: 2, target_node_id: "branch" });
 
   page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "Review & Save to Mind Map" }).click();
+  await page.getByRole("button", { name: "Apply Proposal to Mind Map" }).click();
   expect(mock.getAppliedBody()).toMatchObject({
     map_id: "map-source-pdf",
     base_version: 2,
@@ -522,7 +537,7 @@ test("selected Source node hands off provenance to Asset, Note, and Wiki workflo
   };
 
   await selectCoordination();
-  await page.getByTestId("source-mind-map-node-handoff").getByRole("button", { name: "Use in Asset Evidence" }).click();
+  await page.getByTestId("source-mind-map-node-handoff").getByRole("button", { name: "Create Asset from This Branch" }).click();
   await expect(page).toHaveURL(/\/assets\/new$/);
   const assetHandoff = await page.evaluate(() => window.history.state.usr.assetHandoff);
   expect(assetHandoff).toMatchObject({ title: "Coordination", source_refs: ["source-pdf"] });

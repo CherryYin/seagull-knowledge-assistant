@@ -19,6 +19,21 @@ import { answerHarnessQuestion, harnessChat, type HarnessQuestionAnswer, type Ha
 import { useReturnNavigation } from "@/hooks/useReturnNavigation";
 import { useRouteScrollRestoration } from "@/hooks/useRouteScrollRestoration";
 import { assetEditorSignature, clearAssetEditorRecovery, readAssetEditorRecovery, writeAssetEditorRecovery, type AssetEditorRecovery, type AssetEditorSnapshot } from "@/lib/asset-editor-recovery";
+import { ActionError } from "@/components/interaction/ActionError";
+import { AgentRunStatus } from "@/components/interaction/AgentRunStatus";
+import { ProposalActions } from "@/components/interaction/ProposalActions";
+import { UnsavedChangesBanner } from "@/components/interaction/UnsavedChangesBanner";
+import { MindMapCanvas, type MindMapCanvasNode } from "@/components/mind-map/MindMapCanvas";
+import { mindMapsApi, type MindMapNodeRead } from "@/lib/api/mind-maps";
+
+type AssetOutlineRefreshOperation = "add" | "move" | "rename" | "delete";
+
+interface AssetOutlineRefreshChange {
+  operation: AssetOutlineRefreshOperation;
+  assetBlockId: string;
+  label: string;
+  detail: string;
+}
 
 type ProductionEvent = {
   event_type?: string;
@@ -30,8 +45,8 @@ type ProductionEvent = {
   detail?: Record<string, unknown>;
 };
 
-type AssetDetailTab = "intent" | "evidence" | "claims" | "read" | "edit" | "knowledge" | "production";
-const ASSET_DETAIL_TABS: AssetDetailTab[] = ["intent", "evidence", "claims", "read", "edit", "knowledge", "production"];
+type AssetDetailTab = "intent" | "evidence" | "claims" | "read" | "edit" | "map" | "knowledge" | "production";
+const ASSET_DETAIL_TABS: AssetDetailTab[] = ["intent", "evidence", "claims", "read", "edit", "map", "knowledge", "production"];
 
 interface AssetBlockPatch {
   assetId: string;
@@ -77,6 +92,7 @@ interface EvidenceAgentState {
   pendingQuestion?: PendingBlockQuestion;
   proposal?: AgentEvidenceProposal;
   error?: string;
+  diagnostic?: string;
 }
 
 interface AgentClaimProposalItem {
@@ -101,6 +117,7 @@ interface ClaimAgentState {
   sessionId?: string;
   proposal?: AgentClaimProposal;
   error?: string;
+  diagnostic?: string;
 }
 
 interface AgentKnowledgeProposal {
@@ -128,6 +145,7 @@ interface KnowledgeAgentState {
   sessionId?: string;
   proposal?: AgentKnowledgeProposal;
   error?: string;
+  diagnostic?: string;
 }
 
 interface BlockRevisionState {
@@ -141,6 +159,7 @@ interface BlockRevisionState {
   pendingQuestion?: PendingBlockQuestion;
   proposal?: AssetBlockPatch;
   error?: string;
+  diagnostic?: string;
 }
 
 interface AssetDocumentPatchBlock {
@@ -177,6 +196,7 @@ interface DocumentRevisionState {
   pendingQuestion?: PendingBlockQuestion;
   proposal?: AssetDocumentPatch;
   error?: string;
+  diagnostic?: string;
 }
 
 interface AssetOptimizationRoundRecord {
@@ -833,6 +853,144 @@ export function AssetDetailPage() {
     queryFn: () => assetsApi.getQualityAudit(id),
     enabled: Boolean(id),
   });
+  const assetOutlineMapsQuery = useQuery({
+    queryKey: ["asset-outline-maps", id],
+    queryFn: () => mindMapsApi.list({ ownerType: "asset", ownerId: id, purpose: "asset_outline", limit: 1 }),
+    enabled: Boolean(id),
+  });
+  const assetOutlineMap = assetOutlineMapsQuery.data?.items[0] ?? null;
+  const assetOutlineTreeQuery = useQuery({
+    queryKey: ["mind-map-tree", assetOutlineMap?.id],
+    queryFn: () => mindMapsApi.getTree(assetOutlineMap!.id),
+    enabled: Boolean(assetOutlineMap?.id),
+  });
+  const assetOutlineStalenessQuery = useQuery({
+    queryKey: ["asset-outline-staleness", assetOutlineMap?.id],
+    queryFn: () => mindMapsApi.checkAssetOutlineStaleness(assetOutlineMap!.id),
+    enabled: Boolean(assetOutlineMap?.id),
+    refetchOnWindowFocus: false,
+  });
+  const projectAssetOutlineMutation = useMutation({
+    mutationFn: () => mindMapsApi.projectAssetOutline(id),
+    onSuccess: (tree) => {
+      queryClient.setQueryData(["mind-map-tree", tree.map.id], tree);
+      queryClient.setQueryData(["asset-outline-maps", id], { items: [tree.map], total: 1 });
+    },
+  });
+  const [assetMapSelectedId, setAssetMapSelectedId] = useState<string | null>(null);
+  const [assetMapCollapsedIds, setAssetMapCollapsedIds] = useState<Set<string>>(new Set());
+  const [assetOutlineRefreshAppliedVersion, setAssetOutlineRefreshAppliedVersion] = useState<number | null>(null);
+  const assetOutlineRefreshMutation = useMutation({
+    mutationFn: () => mindMapsApi.buildAssetOutlineRefreshProposal(assetOutlineMap!.id),
+    onSuccess: () => setAssetOutlineRefreshAppliedVersion(null),
+  });
+  const assetOutlineRefreshApplyMutation = useMutation({
+    mutationFn: () => mindMapsApi.applyAssetOutlineRefreshProposal(
+      assetOutlineMap!.id,
+      {
+        base_version: assetOutlineRefreshMutation.data!.base_version,
+        proposal: assetOutlineRefreshMutation.data!.proposal,
+        confirm: true,
+      },
+    ),
+    onSuccess: (tree) => {
+      queryClient.setQueryData(["mind-map-tree", tree.map.id], tree);
+      queryClient.setQueryData(["asset-outline-maps", id], { items: [tree.map], total: 1 });
+      queryClient.setQueryData(
+        ["asset-outline-staleness", tree.map.id],
+        (current: typeof assetOutlineStalenessQuery.data) => current ? {
+          ...current,
+          map: tree.map,
+          stale: false,
+          reasons: [],
+          current_basis: tree.map.basis_revision,
+        } : current,
+      );
+      setAssetMapSelectedId(null);
+      setAssetMapCollapsedIds(new Set());
+      setAssetOutlineRefreshAppliedVersion(tree.map.version);
+      assetOutlineRefreshMutation.reset();
+    },
+  });
+  const assetMapCanvasNodes = useMemo<MindMapCanvasNode[]>(() => (
+    assetOutlineTreeQuery.data?.nodes.map((node) => ({
+      id: node.id,
+      parentId: node.parent_id,
+      label: node.content,
+      displayId: node.display_id,
+      kind: node.node_kind,
+      referenceCount: assetOutlineTreeQuery.data.references.filter((reference) => reference.node_id === node.id).length,
+    })) ?? []
+  ), [assetOutlineTreeQuery.data]);
+  const assetRefreshCanvasNodes = useMemo<MindMapCanvasNode[]>(() => (
+    assetOutlineRefreshMutation.data?.proposal.nodes.map((node) => ({
+      id: node.temp_id,
+      parentId: node.parent_temp_id,
+      label: node.content,
+      kind: node.node_kind,
+      referenceCount: (node.asset_block_id ? 1 : 0) + node.claim_refs.length,
+    })) ?? []
+  ), [assetOutlineRefreshMutation.data]);
+  const assetOutlineRefreshChanges = useMemo<AssetOutlineRefreshChange[]>(() => {
+    const tree = assetOutlineTreeQuery.data;
+    const proposal = assetOutlineRefreshMutation.data?.proposal;
+    if (!tree || !proposal) return [];
+
+    const currentNodeById = new Map(tree.nodes.map((node) => [node.id, node]));
+    const currentBlockByNodeId = new Map(
+      tree.references
+        .filter((reference) => reference.ref_type === "asset_block")
+        .map((reference) => [reference.node_id, reference.ref_id]),
+    );
+    const currentNodeByBlockId = new Map<string, MindMapNodeRead>();
+    currentBlockByNodeId.forEach((blockId, nodeId) => {
+      const node = currentNodeById.get(nodeId);
+      if (node) currentNodeByBlockId.set(blockId, node);
+    });
+    const proposedNodeByTempId = new Map(proposal.nodes.map((node) => [node.temp_id, node]));
+    const proposedNodeByBlockId = new Map(
+      proposal.nodes
+        .filter((node) => Boolean(node.asset_block_id))
+        .map((node) => [node.asset_block_id!, node]),
+    );
+    const currentParentIdentity = (parentId: string | null) => {
+      if (parentId === null || parentId === tree.root_id) return null;
+      return currentBlockByNodeId.get(parentId) ?? `node:${parentId}`;
+    };
+    const proposedParentIdentity = (parentTempId: string | null) => {
+      if (parentTempId === null) return null;
+      const parent = proposedNodeByTempId.get(parentTempId);
+      if (!parent || parent.parent_temp_id === null) return null;
+      return parent.asset_block_id ?? `proposal:${parentTempId}`;
+    };
+    const changes: AssetOutlineRefreshChange[] = [];
+
+    proposedNodeByBlockId.forEach((proposedNode, blockId) => {
+      const currentNode = currentNodeByBlockId.get(blockId);
+      if (!currentNode) {
+        changes.push({ operation: "add", assetBlockId: blockId, label: proposedNode.content, detail: "Add this saved Asset Block to the refreshed Map." });
+        return;
+      }
+      if (currentNode.content !== proposedNode.content) {
+        changes.push({ operation: "rename", assetBlockId: blockId, label: proposedNode.content, detail: `Rename “${currentNode.content}” to “${proposedNode.content}”.` });
+      }
+      if (currentParentIdentity(currentNode.parent_id) !== proposedParentIdentity(proposedNode.parent_temp_id) || currentNode.position !== proposedNode.position) {
+        changes.push({ operation: "move", assetBlockId: blockId, label: proposedNode.content, detail: "Move this Block to match the current saved document order." });
+      }
+    });
+    currentNodeByBlockId.forEach((currentNode, blockId) => {
+      if (!proposedNodeByBlockId.has(blockId)) {
+        changes.push({ operation: "delete", assetBlockId: blockId, label: currentNode.content, detail: "Remove this Map node because its Asset Block is no longer present." });
+      }
+    });
+    return changes;
+  }, [assetOutlineRefreshMutation.data, assetOutlineTreeQuery.data]);
+  const assetOutlineRefreshChangeCounts = useMemo(() => (
+    assetOutlineRefreshChanges.reduce<Record<AssetOutlineRefreshOperation, number>>(
+      (counts, change) => ({ ...counts, [change.operation]: counts[change.operation] + 1 }),
+      { add: 0, move: 0, rename: 0, delete: 0 },
+    )
+  ), [assetOutlineRefreshChanges]);
 
   const sourceOptionsQuery = useQuery({
     queryKey: ["asset-detail-sources"],
@@ -1525,7 +1683,7 @@ export function AssetDetailPage() {
               setBlockRevision((current) => current ? { ...current, error: "Agent 返回的 Block 提案与当前修订合同不匹配。" } : current);
             }
           } else {
-            setBlockRevision((current) => current ? { ...current, agentStatus: `Agent 正在调用 ${event.tool || "工具"}…` } : current);
+            setBlockRevision((current) => current ? { ...current, agentStatus: "Agent 正在生成候选修改…", diagnostic: `Tool: ${event.tool || "unknown"}` } : current);
           }
         } else if (event.type === "question" && event.rpc_id && event.session_id && event.questions?.length) {
           const pendingQuestion: PendingBlockQuestion = {
@@ -1722,7 +1880,7 @@ export function AssetDetailPage() {
             documentPatchSeen = true;
             setDocumentRevision((current) => ({ ...current, proposal: undefined, status: "Agent is submitting the rewritten document for validation…" }));
           } else {
-            setDocumentRevision((current) => ({ ...current, status: `Agent is using ${event.tool || "a tool"}…` }));
+            setDocumentRevision((current) => ({ ...current, status: "Agent is rewriting and validating the complete document…", diagnostic: `Tool: ${event.tool || "unknown"}` }));
           }
         } else if (event.type === "tool_result") {
           if (event.tool === "propose_asset_document_patch") {
@@ -1889,7 +2047,7 @@ export function AssetDetailPage() {
               setEvidenceAgent((current) => ({ ...current, error: "Agent Evidence proposal does not match the current Workspace and Intent revisions." }));
             }
           } else {
-            setEvidenceAgent((current) => ({ ...current, status: `Agent is using ${event.tool || "a tool"}…` }));
+            setEvidenceAgent((current) => ({ ...current, status: "Agent is collecting and validating Evidence candidates…", diagnostic: `Tool: ${event.tool || "unknown"}` }));
           }
         } else if (event.type === "question" && event.rpc_id && event.session_id && event.questions?.length) {
           setEvidenceAgent((current) => ({
@@ -1970,7 +2128,7 @@ export function AssetDetailPage() {
               setClaimAgent((current) => ({ ...current, error: "Agent Claim proposal does not match the current Workspace and Intent revisions." }));
             }
           } else {
-            setClaimAgent((current) => ({ ...current, status: `Agent is using ${event.tool || "a tool"}…` }));
+            setClaimAgent((current) => ({ ...current, status: "Agent is drafting and validating Claim candidates…", diagnostic: `Tool: ${event.tool || "unknown"}` }));
           }
         } else if (event.type === "error") {
           setClaimAgent((current) => ({ ...current, error: event.content || "Claim analysis failed." }));
@@ -2104,7 +2262,7 @@ export function AssetDetailPage() {
               setKnowledgeAgent((current) => ({ ...current, error: "Agent Knowledge proposal does not match the current Workspace revision." }));
             }
           } else {
-            setKnowledgeAgent((current) => ({ ...current, status: `Agent is using ${event.tool || "a tool"}…` }));
+            setKnowledgeAgent((current) => ({ ...current, status: "Agent is drafting and validating Knowledge candidates…", diagnostic: `Tool: ${event.tool || "unknown"}` }));
           }
         } else if (event.type === "error") {
           setKnowledgeAgent((current) => ({ ...current, error: event.content || "Knowledge distillation failed." }));
@@ -2363,6 +2521,7 @@ export function AssetDetailPage() {
                 <TabsTrigger value="claims">Claims</TabsTrigger>
                 <TabsTrigger value="read">Read</TabsTrigger>
                 <TabsTrigger value="edit" className="gap-2">Edit{isEditorDirty && <span className="h-2 w-2 rounded-full bg-amber-500" aria-label="Unsaved changes" />}</TabsTrigger>
+                <TabsTrigger value="map">Map</TabsTrigger>
                 <TabsTrigger value="knowledge">Knowledge</TabsTrigger>
                 <TabsTrigger value="production">Production</TabsTrigger>
               </TabsList>
@@ -2626,9 +2785,7 @@ export function AssetDetailPage() {
                         </div>
 
                         {pendingOptimizationRound && (
-                          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                            Round {pendingOptimizationRound.round} is applied locally but not saved. Review the editor, then save before starting the next round.
-                          </div>
+                          <UnsavedChangesBanner message={`Round ${pendingOptimizationRound.round} is applied locally but not saved. Review the editor, then save before starting the next round.`} />
                         )}
 
                         <div className="space-y-2">
@@ -2636,7 +2793,13 @@ export function AssetDetailPage() {
                           <Textarea id="asset-document-agent-instruction" rows={3} value={documentRevision.instruction} onChange={(event) => setDocumentRevision((current) => ({ ...current, instruction: event.target.value }))} placeholder={nextOptimizationRound === 1 ? "For example: make the argument more concise, strengthen transitions, and keep a professional research tone." : "Optional second-round focus. Audit findings and prior-round context are included automatically."} disabled={documentRevision.streaming || Boolean(pendingOptimizationRound)} />
                         </div>
 
-                        {documentRevision.status && <p className="text-sm text-muted-foreground">{documentRevision.status}</p>}
+                        {documentRevision.status && (
+                          <AgentRunStatus
+                            status={documentRevision.error ? "failed" : documentRevision.proposal ? "completed" : documentRevision.pendingQuestion ? "awaiting_input" : documentRevision.streaming ? "running" : "completed"}
+                            message={documentRevision.status}
+                            details={documentRevision.diagnostic}
+                          />
+                        )}
                         {documentRevision.pendingQuestion && (
                           <QuestionCard
                             questions={documentRevision.pendingQuestion.questions}
@@ -2667,15 +2830,17 @@ export function AssetDetailPage() {
                                 </div>
                               ))}
                             </pre>
-                            <div className="flex flex-wrap items-center gap-2">
-                              <Button type="button" size="sm" onClick={applyDocumentRevision}><CheckCircle2 className="mr-2 h-4 w-4" />Apply to Editor</Button>
-                              <Button type="button" variant="outline" size="sm" onClick={() => void startDocumentRevision()} disabled={documentRevision.streaming}>Regenerate</Button>
-                              <Button type="button" variant="ghost" size="sm" onClick={() => setDocumentRevision((current) => ({ ...current, proposal: undefined, status: "Proposal discarded." }))}>Discard</Button>
-                              <span className="text-xs text-muted-foreground">You must still use Save Changes below.</span>
-                            </div>
+                            <ProposalActions
+                              primaryLabel="Apply to Editor"
+                              onPrimary={applyDocumentRevision}
+                              onRegenerate={() => void startDocumentRevision()}
+                              regenerateDisabled={documentRevision.streaming}
+                              onDiscard={() => setDocumentRevision((current) => ({ ...current, proposal: undefined, status: "Proposal discarded." }))}
+                              note="Apply updates the local editor only; Save Changes persists it."
+                            />
                           </div>
                         )}
-                        {documentRevision.error && <p className="text-sm text-destructive">{documentRevision.error}</p>}
+                        {documentRevision.error && <ActionError title="Complete document optimization failed" impact="No proposal was applied to the editor." recovery="Retry with the same draft or narrow the optimization focus." details={documentRevision.error} onRetry={() => void startDocumentRevision()} />}
                       </div>
                     )}
                   </section>
@@ -2756,7 +2921,7 @@ export function AssetDetailPage() {
                                 {revision.streaming && <Button type="button" variant="outline" size="sm" onClick={discardBlockRevision}>停止并丢弃</Button>}
                               </div>
                             </div>
-                            {revision.agentStatus && <p className="whitespace-pre-wrap text-sm text-muted-foreground">{revision.agentStatus}</p>}
+                            {revision.agentStatus && <AgentRunStatus status={revision.error ? "failed" : revision.proposal ? "completed" : revision.pendingQuestion ? "awaiting_input" : revision.streaming ? "running" : "completed"} message={revision.agentStatus} details={revision.diagnostic} />}
                             {revision.pendingQuestion && (
                               <div className="overflow-hidden rounded-lg border">
                                 <QuestionCard
@@ -2794,26 +2959,31 @@ export function AssetDetailPage() {
                                   <div className="space-y-1"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Original</p><pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-md border bg-red-50/50 p-3 text-xs">{revision.originalMarkdown}</pre></div>
                                   <div className="space-y-1"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Proposed</p><pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-md border bg-emerald-50/50 p-3 text-xs">{revision.proposal.replacementMarkdown}</pre></div>
                                 </div>
-                                <div className="flex flex-wrap gap-2">
-                                  <Button type="button" size="sm" onClick={applyBlockRevision}>确认应用</Button>
-                                  <Button type="button" variant="outline" size="sm" onClick={() => void startBlockRevision()} disabled={revision.streaming}>重新生成</Button>
-                                  <Button type="button" variant="ghost" size="sm" onClick={discardBlockRevision}>丢弃</Button>
-                                </div>
+                                <ProposalActions primaryLabel="Apply to Editor" onPrimary={applyBlockRevision} onRegenerate={() => void startBlockRevision()} regenerateDisabled={revision.streaming} onDiscard={discardBlockRevision} note="Apply changes this local Block; Save Changes persists the Asset." />
                               </div>
                             )}
-                            {revision.error && <p className="text-sm text-destructive">{revision.error}</p>}
+                            {revision.error && <ActionError title="Block revision failed" impact="The Block was not changed." recovery="Retry the proposal or discard this revision panel." details={revision.error} onRetry={() => void startBlockRevision()} />}
                           </div>
                         )}
                       </div>
                       );
                     })}
                   </div>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <Button onClick={() => editMutation.mutate()} disabled={!editTitle.trim() || editMutation.isPending}>{editMutation.isPending ? "Saving…" : pendingOptimizationRound ? `Save Round ${pendingOptimizationRound.round} Changes` : "Save Changes"}</Button>
-                    {isEditorDirty && <span className="text-sm font-medium text-amber-700">Unsaved changes · recovery draft stored in this tab.</span>}
-                    {editMutation.isSuccess && !isEditorDirty && <span className="text-sm text-emerald-700">Saved. Open Read to inspect the rendered document.</span>}
-                    {editMutation.isError && <span className="text-sm text-destructive">Could not save Asset changes. Your recovery draft is still available.</span>}
-                  </div>
+                  {isEditorDirty ? (
+                    <UnsavedChangesBanner
+                      message="Unsaved changes · recovery draft stored in this tab."
+                      onSave={() => editMutation.mutate()}
+                      saveLabel={pendingOptimizationRound ? `Save Round ${pendingOptimizationRound.round} Changes` : "Save Changes"}
+                      saving={editMutation.isPending}
+                      saveDisabled={!editTitle.trim()}
+                    />
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Button disabled>Save Changes</Button>
+                      {editMutation.isSuccess && <span className="text-sm text-emerald-700">Saved. Open Read to inspect the rendered document.</span>}
+                    </div>
+                  )}
+                  {editMutation.isError && <ActionError title="Asset changes were not saved" impact="The saved Asset is unchanged." recovery="Your recovery draft is still available in this browser tab; retry Save Changes." details={editMutation.error instanceof Error ? editMutation.error.message : "Unknown save error"} onRetry={() => editMutation.mutate()} retryLabel="Retry Save" />}
                 </CardContent>
               </Card>
             </TabsContent>
@@ -2854,8 +3024,8 @@ export function AssetDetailPage() {
                             {evidenceAgent.streaming ? "Collecting…" : "Ask Agent to Collect Evidence"}
                           </Button>
                           {evidenceAgent.streaming && <Button type="button" variant="outline" onClick={() => evidenceAgentAbortRef.current?.abort()}>Stop</Button>}
-                          {evidenceAgent.status && <span className="text-sm text-muted-foreground">{evidenceAgent.status}</span>}
                         </div>
+                        {evidenceAgent.status && <AgentRunStatus status={evidenceAgent.error ? "failed" : evidenceAgent.proposal ? "completed" : evidenceAgent.pendingQuestion ? "awaiting_input" : evidenceAgent.streaming ? "running" : "completed"} message={evidenceAgent.status} details={evidenceAgent.diagnostic} />}
                       </>
                     )}
                     {evidenceAgent.pendingQuestion && (
@@ -2887,14 +3057,10 @@ export function AssetDetailPage() {
                             </div>
                           ))}
                         </div>
-                        <div className="flex flex-wrap gap-2">
-                          <Button type="button" size="sm" onClick={() => saveEvidenceProposalMutation.mutate()} disabled={saveEvidenceProposalMutation.isPending || evidenceDecisionMutation.isPending}>{saveEvidenceProposalMutation.isPending ? "Saving…" : "Save to Evidence Board"}</Button>
-                          <Button type="button" variant="outline" size="sm" onClick={() => void startEvidenceResearch()} disabled={evidenceAgent.streaming || evidenceDecisionMutation.isPending || saveEvidenceProposalMutation.isPending}>Investigate Again</Button>
-                          <Button type="button" variant="ghost" size="sm" onClick={() => setEvidenceAgent((current) => ({ ...current, proposal: undefined, status: "Proposal discarded." }))}>Discard</Button>
-                        </div>
+                        <ProposalActions primaryLabel="Save Proposal to Evidence Board" pendingLabel="Saving…" primaryPending={saveEvidenceProposalMutation.isPending} primaryDisabled={evidenceDecisionMutation.isPending} onPrimary={() => saveEvidenceProposalMutation.mutate()} onRegenerate={() => void startEvidenceResearch()} regenerateLabel="Investigate Again" regenerateDisabled={evidenceAgent.streaming || evidenceDecisionMutation.isPending} onDiscard={() => setEvidenceAgent((current) => ({ ...current, proposal: undefined, status: "Proposal discarded." }))} />
                       </div>
                     )}
-                    {(evidenceAgent.error || saveEvidenceProposalMutation.isError) && <p className="text-sm text-destructive">{evidenceAgent.error || "Could not save Evidence candidates. Refresh the Workspace and investigate again."}</p>}
+                    {(evidenceAgent.error || saveEvidenceProposalMutation.isError) && <ActionError title="Evidence proposal failed" impact="No new Evidence candidates were saved." recovery="The current Workspace is unchanged; retry collection or saving." details={evidenceAgent.error || (saveEvidenceProposalMutation.error instanceof Error ? saveEvidenceProposalMutation.error.message : "Could not save Evidence candidates.")} onRetry={() => void startEvidenceResearch()} />}
                   </CardContent>
                 </Card>
 
@@ -2993,8 +3159,8 @@ export function AssetDetailPage() {
                             {claimAgent.streaming ? "Analyzing…" : "Ask Agent to Propose Claims"}
                           </Button>
                           {claimAgent.streaming && <Button type="button" variant="outline" onClick={() => claimAgentAbortRef.current?.abort()}>Stop</Button>}
-                          {claimAgent.status && <span className="text-sm text-muted-foreground">{claimAgent.status}</span>}
                         </div>
+                        {claimAgent.status && <AgentRunStatus status={claimAgent.error ? "failed" : claimAgent.proposal ? "completed" : claimAgent.streaming ? "running" : "completed"} message={claimAgent.status} details={claimAgent.diagnostic} />}
                       </>
                     ))}
                     {claimAgent.proposal && (
@@ -3015,14 +3181,10 @@ export function AssetDetailPage() {
                             </div>
                           ))}
                         </div>
-                        <div className="flex flex-wrap gap-2">
-                          <Button type="button" size="sm" onClick={() => saveClaimProposalMutation.mutate()} disabled={saveClaimProposalMutation.isPending}>{saveClaimProposalMutation.isPending ? "Saving…" : "Save to Claim Board"}</Button>
-                          <Button type="button" variant="outline" size="sm" onClick={() => void startClaimAnalysis()} disabled={claimAgent.streaming}>Analyze Again</Button>
-                          <Button type="button" variant="ghost" size="sm" onClick={() => setClaimAgent((current) => ({ ...current, proposal: undefined, status: "Proposal discarded." }))}>Discard</Button>
-                        </div>
+                        <ProposalActions primaryLabel="Save Proposal to Claim Board" pendingLabel="Saving…" primaryPending={saveClaimProposalMutation.isPending} onPrimary={() => saveClaimProposalMutation.mutate()} onRegenerate={() => void startClaimAnalysis()} regenerateLabel="Analyze Again" regenerateDisabled={claimAgent.streaming} onDiscard={() => setClaimAgent((current) => ({ ...current, proposal: undefined, status: "Proposal discarded." }))} />
                       </div>
                     )}
-                    {(claimAgent.error || saveClaimProposalMutation.isError) && <p className="text-sm text-destructive">{claimAgent.error || "Could not save Candidate Claims. Refresh the Workspace and analyze again."}</p>}
+                    {(claimAgent.error || saveClaimProposalMutation.isError) && <ActionError title="Claim proposal failed" impact="No new Claim candidates were saved." recovery="The current Claim Board is unchanged; retry analysis or saving." details={claimAgent.error || (saveClaimProposalMutation.error instanceof Error ? saveClaimProposalMutation.error.message : "Could not save Candidate Claims.")} onRetry={() => void startClaimAnalysis()} />}
                   </CardContent>
                 </Card>
 
@@ -3073,6 +3235,122 @@ export function AssetDetailPage() {
               </div>
             </TabsContent>
 
+            <TabsContent value="map" className="mt-0 space-y-4">
+              <Card>
+                <CardHeader>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <CardTitle>Asset Outline Map</CardTitle>
+                      <CardDescription>Read-only projection of the saved Asset Blocks. Creating or viewing this Map does not change the editor.</CardDescription>
+                    </div>
+                    {assetOutlineMap && <Badge variant="secondary">Version {assetOutlineMap.version}</Badge>}
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {assetOutlineMapsQuery.isLoading && <p className="text-sm text-muted-foreground">Loading Outline Map…</p>}
+                  {!assetOutlineMapsQuery.isLoading && !assetOutlineMap && (
+                    <div className="rounded-xl border border-dashed p-5">
+                      <p className="text-sm font-medium">No Asset Outline Map yet.</p>
+                      <p className="mt-1 text-sm text-muted-foreground">The first projection uses the currently saved Blocks and confirmed Claim links. Later Asset changes will not silently replace it.</p>
+                      <Button className="mt-4" type="button" onClick={() => projectAssetOutlineMutation.mutate()} disabled={projectAssetOutlineMutation.isPending || isEditorDirty}>
+                        {projectAssetOutlineMutation.isPending ? "Creating Outline Map…" : "Create Outline Map from Saved Blocks"}
+                      </Button>
+                      {isEditorDirty && <p className="mt-2 text-xs text-amber-700">Save the current editor changes before creating the Map so every node receives a stable Block reference.</p>}
+                    </div>
+                  )}
+                  {projectAssetOutlineMutation.isError && <ActionError title="Outline Map could not be created" impact="The Asset editor and saved document were not changed." recovery="Confirm Intent, save the Asset Blocks, then try again." details={projectAssetOutlineMutation.error instanceof Error ? projectAssetOutlineMutation.error.message : "Unknown projection error"} onRetry={() => projectAssetOutlineMutation.mutate()} />}
+                  {assetOutlineStalenessQuery.data?.stale && (
+                    <div className="rounded-xl border border-amber-400 bg-amber-50 p-4 text-sm text-amber-950" data-testid="asset-outline-stale-warning">
+                      <p className="font-semibold">This Outline Map is based on an older Asset revision.</p>
+                      <p className="mt-1">The saved Map is preserved. Changed basis: {assetOutlineStalenessQuery.data.reasons.map((reason) => reason.replace(/_/g, " ")).join(", ")}.</p>
+                      <Button className="mt-3" type="button" variant="outline" size="sm" onClick={() => assetOutlineRefreshMutation.mutate()} disabled={assetOutlineRefreshMutation.isPending}>
+                        {assetOutlineRefreshMutation.isPending ? "Preparing Refresh Preview…" : "Preview Refresh Proposal"}
+                      </Button>
+                    </div>
+                  )}
+                  {assetOutlineStalenessQuery.isError && <ActionError title="Outline Map freshness could not be checked" impact="The existing Map remains available and unchanged." recovery="Retry the basis check before generating a Refresh Proposal." details={assetOutlineStalenessQuery.error instanceof Error ? assetOutlineStalenessQuery.error.message : "Unknown staleness error"} onRetry={() => assetOutlineStalenessQuery.refetch()} />}
+                  {assetOutlineTreeQuery.data && (
+                    <>
+                      <MindMapCanvas
+                        nodes={assetMapCanvasNodes}
+                        layoutMode={assetOutlineTreeQuery.data.map.layout_mode}
+                        collapsedIds={assetMapCollapsedIds}
+                        focusId={null}
+                        selectedId={assetMapSelectedId}
+                        onSelectedIdChange={setAssetMapSelectedId}
+                        onCollapsedIdsChange={setAssetMapCollapsedIds}
+                        className="h-[560px] rounded-xl border"
+                        testId="asset-outline-map-preview"
+                      />
+                      {assetMapSelectedId && (() => {
+                        const blockReference = assetOutlineTreeQuery.data.references.find((reference) => reference.node_id === assetMapSelectedId && reference.ref_type === "asset_block");
+                        if (!blockReference) return null;
+                        return <Button type="button" variant="outline" onClick={() => {
+                          setActiveTab("edit");
+                          window.requestAnimationFrame(() => document.querySelector(`[data-asset-block-id="${CSS.escape(blockReference.ref_id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }));
+                        }}>Open selected Block in Editor</Button>;
+                      })()}
+                    </>
+                  )}
+                  {assetOutlineRefreshMutation.data && (
+                    <div className="space-y-3 rounded-xl border border-blue-300 bg-blue-50/40 p-4" data-testid="asset-outline-refresh-proposal">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div><p className="font-semibold">Refresh Proposal Preview</p><p className="text-sm text-muted-foreground">{assetOutlineRefreshMutation.data.node_count} nodes · {assetOutlineRefreshMutation.data.reference_count} references · no Asset or Map changes applied</p></div>
+                      </div>
+                      <MindMapCanvas
+                        nodes={assetRefreshCanvasNodes}
+                        layoutMode={assetOutlineRefreshMutation.data.proposal.layout_mode}
+                        collapsedIds={new Set()}
+                        focusId={null}
+                        selectedId={null}
+                        onSelectedIdChange={() => undefined}
+                        onCollapsedIdsChange={() => undefined}
+                        className="h-[480px] rounded-xl border bg-background"
+                        testId="asset-outline-refresh-preview"
+                      />
+                      <div className="space-y-2 rounded-lg border bg-background/80 p-3" data-testid="asset-outline-refresh-diff">
+                        <div className="flex flex-wrap items-center gap-2 text-xs">
+                          <span className="font-semibold text-foreground">Structural changes</span>
+                          {(["add", "move", "rename", "delete"] as const).map((operation) => (
+                            <Badge key={operation} variant="outline">{assetOutlineRefreshChangeCounts[operation]} {operation}</Badge>
+                          ))}
+                        </div>
+                        {assetOutlineRefreshChanges.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">No Block-level structural changes were detected.</p>
+                        ) : (
+                          <ul className="space-y-2 text-sm">
+                            {assetOutlineRefreshChanges.map((change, index) => (
+                              <li key={`${change.operation}-${change.assetBlockId}-${index}`} className="rounded-md border px-3 py-2">
+                                <span className="font-medium capitalize">{change.operation}</span> · {change.label}
+                                <p className="mt-1 text-xs text-muted-foreground">{change.detail}</p>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                      <ProposalActions
+                        primaryLabel="Apply Refresh to Map"
+                        pendingLabel="Refreshing Map…"
+                        onPrimary={() => assetOutlineRefreshApplyMutation.mutate()}
+                        primaryPending={assetOutlineRefreshApplyMutation.isPending}
+                        onDiscard={() => assetOutlineRefreshMutation.reset()}
+                        discardLabel="Discard Preview"
+                        note="Updates the formal Map only. The Asset Editor and saved Asset document remain unchanged."
+                      />
+                    </div>
+                  )}
+                  {assetOutlineRefreshMutation.isError && <ActionError title="Refresh Proposal could not be generated" impact="The saved Outline Map and Asset editor were not changed." recovery="Save the latest Asset Blocks and retry the preview." details={assetOutlineRefreshMutation.error instanceof Error ? assetOutlineRefreshMutation.error.message : "Unknown refresh error"} onRetry={() => assetOutlineRefreshMutation.mutate()} />}
+                  {assetOutlineRefreshApplyMutation.isError && <ActionError title="Outline Map refresh could not be applied" impact="The existing Map and Asset Editor remain unchanged." recovery="Refresh the proposal to use the latest Map and Asset revisions, then apply again." details={assetOutlineRefreshApplyMutation.error instanceof Error ? assetOutlineRefreshApplyMutation.error.message : "Unknown refresh apply error"} onRetry={() => assetOutlineRefreshMutation.mutate()} />}
+                  {assetOutlineRefreshAppliedVersion !== null && (
+                    <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-sm text-emerald-950" data-testid="asset-outline-refresh-applied">
+                      <p className="font-semibold">Outline Map refreshed to version {assetOutlineRefreshAppliedVersion}.</p>
+                      <p className="mt-1">Only the formal Map changed. The Asset Editor and saved Asset document were not modified.</p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
             <TabsContent value="knowledge" className="mt-0">
               <div className="space-y-6">
                 <Card>
@@ -3101,8 +3379,8 @@ export function AssetDetailPage() {
                       {knowledgeAgent.streaming && <Button type="button" variant="outline" onClick={() => knowledgeAgentAbortRef.current?.abort()}>Stop</Button>}
                       {workspaceQuery.data?.contribution && workspaceQuery.data.contribution.status !== "rejected" && <span className="text-xs text-muted-foreground">Resolve the current Contribution before generating another.</span>}
                     </div>
-                    {knowledgeAgent.status && <p className="text-sm text-muted-foreground">{knowledgeAgent.status}</p>}
-                    {knowledgeAgent.error && <p className="text-sm text-destructive">{knowledgeAgent.error}</p>}
+                    {knowledgeAgent.status && <AgentRunStatus status={knowledgeAgent.error ? "failed" : knowledgeAgent.proposal ? "completed" : knowledgeAgent.streaming ? "running" : "completed"} message={knowledgeAgent.status} details={knowledgeAgent.diagnostic} />}
+                    {knowledgeAgent.error && <ActionError title="Knowledge distillation failed" impact="No Contribution or Knowledge candidates were saved." recovery="The Asset Workspace is unchanged; retry distillation." details={knowledgeAgent.error} onRetry={() => void startKnowledgeDistillation()} />}
                     {knowledgeAgent.proposal && (
                       <div className="space-y-3 rounded-xl border bg-muted/20 p-4">
                         <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{knowledgeAgent.proposal.contribution.kind}</Badge><Badge variant="secondary">Agent proposal</Badge></div>
@@ -3114,11 +3392,8 @@ export function AssetDetailPage() {
                             <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{candidate.content}</p>
                           </div>
                         ))}
-                        <div className="flex flex-wrap gap-2">
-                          <Button type="button" size="sm" onClick={() => saveKnowledgeProposalMutation.mutate()} disabled={saveKnowledgeProposalMutation.isPending}>Save Candidates for Review</Button>
-                          <Button type="button" size="sm" variant="ghost" onClick={() => setKnowledgeAgent((current) => ({ ...current, proposal: undefined, status: "Proposal discarded." }))}>Discard</Button>
-                        </div>
-                        {saveKnowledgeProposalMutation.isError && <p className="text-sm text-destructive">Could not save the proposal. Refresh the Workspace and try again.</p>}
+                        <ProposalActions primaryLabel="Save Candidates for Review" pendingLabel="Saving…" primaryPending={saveKnowledgeProposalMutation.isPending} onPrimary={() => saveKnowledgeProposalMutation.mutate()} onRegenerate={() => void startKnowledgeDistillation()} regenerateDisabled={knowledgeAgent.streaming} onDiscard={() => setKnowledgeAgent((current) => ({ ...current, proposal: undefined, status: "Proposal discarded." }))} />
+                        {saveKnowledgeProposalMutation.isError && <ActionError title="Knowledge candidates were not saved" impact="The Workspace has no new Contribution or Knowledge candidates." recovery="Retry saving this validated proposal." details={saveKnowledgeProposalMutation.error instanceof Error ? saveKnowledgeProposalMutation.error.message : "Unknown save error"} onRetry={() => saveKnowledgeProposalMutation.mutate()} retryLabel="Retry Save" />}
                       </div>
                     )}
                   </CardContent>

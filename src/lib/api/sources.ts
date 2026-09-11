@@ -19,6 +19,11 @@ export interface SourceList {
   total: number;
 }
 
+export interface SourceUploadResult extends Source {
+  created: boolean;
+  duplicate: boolean;
+}
+
 export interface SourceCreate {
   title: string;
   category_id: number;
@@ -60,7 +65,7 @@ export const sourcesApi = {
   create: (body: SourceCreate) =>
     request<Source>("/sources", { method: "POST", body: JSON.stringify(body) }),
   upload: (body: FormData) =>
-    request<Source>("/sources/upload", { method: "POST", body }),
+    request<SourceUploadResult>("/sources/upload", { method: "POST", body }),
   update: (id: string, body: SourceUpdate) =>
     request<Source>(`/sources/${encodeURIComponent(id)}`, {
       method: "PATCH",

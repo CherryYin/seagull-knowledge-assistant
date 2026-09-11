@@ -38,6 +38,9 @@ type MockState = {
   htmlPreviewRequests?: number;
   htmlExportRequests?: number;
   newsletterAutomation?: Record<string, unknown>;
+  newsletterRunMode?: "generated" | "skipped" | "failed";
+  newsletterRunCalls?: number;
+  newsletterSaveFailureOnce?: boolean;
   assetWorkspace?: Record<string, unknown>;
   qualityAudit?: Record<string, unknown>;
   documentOptimizationCalls?: number;
@@ -355,6 +358,7 @@ async function installMockBff(page: Page, state: MockState) {
     }
     if (path === "/api/assets/newsletter/automation" && method === "GET") {
       return json(route, state.newsletterAutomation ?? {
+        config_revision: 0,
         enabled: false,
         name: "Technology Newsletter",
         topics: [],
@@ -369,13 +373,55 @@ async function installMockBff(page: Page, state: MockState) {
         style_notes: "Concise, evidence-led, and easy to scan.",
         last_generated_at: null,
         last_asset_id: null,
+        last_run_at: null,
+        last_run_status: null,
+        last_run_reason: null,
+        last_news_count: 0,
+        last_paper_count: 0,
       });
     }
     if (path === "/api/assets/newsletter/automation" && method === "PUT") {
-      state.newsletterAutomation = { ...(request.postDataJSON() as Record<string, unknown>), last_generated_at: null, last_asset_id: null };
+      if (state.newsletterSaveFailureOnce) {
+        state.newsletterSaveFailureOnce = false;
+        return json(route, { detail: "Newsletter settings could not be saved" }, 503);
+      }
+      const previous = state.newsletterAutomation ?? {};
+      state.newsletterAutomation = {
+        ...(request.postDataJSON() as Record<string, unknown>),
+        config_revision: Number(previous.config_revision ?? 0) + 1,
+        last_generated_at: previous.last_generated_at ?? null,
+        last_asset_id: previous.last_asset_id ?? null,
+        last_run_at: previous.last_run_at ?? null,
+        last_run_status: previous.last_run_status ?? null,
+        last_run_reason: previous.last_run_reason ?? null,
+        last_news_count: previous.last_news_count ?? 0,
+        last_paper_count: previous.last_paper_count ?? 0,
+      };
       return json(route, state.newsletterAutomation);
     }
     if (path === "/api/assets/newsletter/automation/run" && method === "POST") {
+      state.newsletterRunCalls = (state.newsletterRunCalls ?? 0) + 1;
+      if (state.newsletterRunMode === "failed") return json(route, { detail: "Newsletter collection failed" }, 503);
+      const config = state.newsletterAutomation ?? {};
+      const configSnapshot = {
+        config_revision: config.config_revision ?? 0,
+        enabled: config.enabled ?? false,
+        name: config.name ?? "Technology Newsletter",
+        topics: config.topics ?? [],
+        frequency: config.frequency ?? "weekly",
+        hour_utc: config.hour_utc ?? 1,
+        weekday_utc: config.weekday_utc ?? 4,
+        lookback_days: config.lookback_days ?? 7,
+        max_news_items: config.max_news_items ?? 8,
+        max_paper_items: config.max_paper_items ?? 5,
+        delivery_format: config.delivery_format ?? "html",
+        audience: config.audience ?? "Technology readers",
+        style_notes: config.style_notes ?? "",
+      };
+      if (state.newsletterRunMode === "skipped") {
+        state.newsletterAutomation = { ...config, last_run_at: now, last_run_status: "skipped", last_run_reason: "no_matching_items", last_news_count: 0, last_paper_count: 0 };
+        return json(route, { status: "skipped", reason: "no_matching_items", news_count: 0, paper_count: 0, config_revision: config.config_revision ?? 0, config_snapshot: configSnapshot, asset: null });
+      }
       state.savedAssetBody = {
         title: "E2E Tech Weekly · 2026-09-03",
         brief: "Automated technology newsletter.",
@@ -387,11 +433,13 @@ async function installMockBff(page: Page, state: MockState) {
         wiki_refs: [],
         metadata_: { delivery_format: "html", generation_mode: "newsletter_automation" },
       };
-      state.newsletterAutomation = { ...state.newsletterAutomation, last_generated_at: now, last_asset_id: "asset-e2e" };
+      state.newsletterAutomation = { ...config, last_generated_at: now, last_asset_id: "asset-e2e", last_run_at: now, last_run_status: "generated", last_run_reason: null, last_news_count: 1, last_paper_count: 1 };
       return json(route, {
         status: "generated",
         news_count: 1,
         paper_count: 1,
+        config_revision: config.config_revision ?? 0,
+        config_snapshot: configSnapshot,
         asset: { id: "asset-e2e", user_id: "user-e2e", ...state.savedAssetBody, created_at: now, updated_at: now },
       });
     }
@@ -693,7 +741,7 @@ async function advanceAssetToInitialDraftGeneration(page: Page) {
   await page.getByRole("button", { name: "Continue to Claims" }).click();
   await page.getByRole("button", { name: "Ask Agent to Propose Claims" }).click();
   await expect(page.getByText("Candidate Claim Proposal")).toBeVisible();
-  await page.getByRole("button", { name: "Save to Claim Board" }).click();
+  await page.getByRole("button", { name: "Save Proposal to Claim Board" }).click();
   await page.getByRole("button", { name: "Accept", exact: true }).click();
   await page.getByRole("button", { name: "Generate Initial Draft" }).click();
   await expect(page).toHaveURL(/\/chat\?session=/);
@@ -780,12 +828,12 @@ test("Asset Intent Agent starts a fresh session and restores its apply action", 
   const input = page.getByPlaceholder("Ask anything about your knowledge base...");
   await expect(input).toContainText("User working title");
   await input.press("Enter");
-  await expect(page.getByRole("button", { name: "Apply to Asset Form" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Apply Intent Proposal to Form" })).toBeVisible();
   expect(state.harnessSessionIds?.at(-1)).not.toBe("session-old");
 
   await page.reload();
-  await expect(page.getByRole("button", { name: "Apply to Asset Form" })).toBeVisible();
-  await page.getByRole("button", { name: "Apply to Asset Form" }).click();
+  await expect(page.getByRole("button", { name: "Apply Intent Proposal to Form" })).toBeVisible();
+  await page.getByRole("button", { name: "Apply Intent Proposal to Form" }).click();
   await expect(page).toHaveURL(/\/assets\/new$/);
   await expect(page.getByLabel("Asset title")).toHaveValue("User working title");
   await expect(page.getByLabel("Research question")).toHaveValue("A rough question");
@@ -812,9 +860,9 @@ test("Asset Intent Agent restores Apply from a tool-result-only response", async
   await expect(input).toContainText("What should this Asset decide?");
   await input.press("Enter");
 
-  await expect(page.getByRole("button", { name: "Apply to Asset Form" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Apply Intent Proposal to Form" })).toBeVisible();
   await page.reload();
-  await expect(page.getByRole("button", { name: "Apply to Asset Form" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Apply Intent Proposal to Form" })).toBeVisible();
 });
 
 test("Asset Intent Agent offers a retry when prose has no proposal", async ({ page }) => {
@@ -838,8 +886,8 @@ test("Asset Intent Agent offers a retry when prose has no proposal", async ({ pa
   await input.press("Enter");
 
   await expect(page.getByText("Intent Proposal was not generated")).toBeVisible();
-  await page.getByRole("button", { name: "Generate Applyable Proposal" }).click();
-  await expect(page.getByRole("button", { name: "Apply to Asset Form" })).toBeVisible();
+  await page.getByRole("button", { name: "Generate Intent Proposal" }).click();
+  await expect(page.getByRole("button", { name: "Apply Intent Proposal to Form" })).toBeVisible();
   expect(state.chatPrompts?.at(-1)).toContain("call propose_asset_intent exactly once");
 });
 
@@ -862,15 +910,15 @@ test("Asset Intent Proposal survives a later prose-only turn", async ({ page }) 
   const input = page.getByPlaceholder("Ask anything about your knowledge base...");
   await expect(input).toContainText("What should this Asset decide?");
   await input.press("Enter");
-  await expect(page.getByRole("button", { name: "Apply to Asset Form" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Apply Intent Proposal to Form" })).toBeVisible();
 
   await input.fill("Explain the rationale in one sentence.");
   await input.press("Enter");
   await expect(page.getByText("Intent Proposal was not generated")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Apply to Asset Form" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Apply Intent Proposal to Form" })).toBeVisible();
 
   await page.reload();
-  await expect(page.getByRole("button", { name: "Apply to Asset Form" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Apply Intent Proposal to Form" })).toBeVisible();
   await expect(page.getByText("4 messages", { exact: true })).toBeVisible();
 });
 
@@ -1033,6 +1081,7 @@ test("Chat messages keep their own Workflow save actions", async ({ page }) => {
 
   const summaryMessage = page.locator('[data-chat-message-id="contract-assistant-one"]');
   await expect(summaryMessage.getByRole("button", { name: "Save as Personal Note" })).toBeVisible();
+  await expect(summaryMessage.locator('span[data-agent-run-status="completed"]')).toBeVisible();
   await expect(summaryMessage.getByRole("button", { name: "Save as Wiki Draft" })).toHaveCount(0);
   const reviewMessage = page.locator('[data-chat-message-id="contract-assistant-two"]');
   await expect(reviewMessage.getByRole("button", { name: "Save as Review Note" })).toBeVisible();
@@ -1087,7 +1136,7 @@ test("Failed and stopped Chat runs cannot be saved", async ({ page }) => {
   await page.goto("/chat?session=session-stopped-run");
 
   const stoppedMessage = page.locator('[data-chat-message-id="stopped-assistant"]');
-  await expect(stoppedMessage.locator('[data-agent-run-status="stopped"]')).toBeVisible();
+  await expect(stoppedMessage.locator('span[data-agent-run-status="stopped"]')).toBeVisible();
   await expect(stoppedMessage.getByRole("button", { name: /Save|Apply/ })).toHaveCount(0);
   await expect(stoppedMessage.getByRole("button", { name: "Retry run" })).toBeVisible();
 
@@ -1095,8 +1144,11 @@ test("Failed and stopped Chat runs cannot be saved", async ({ page }) => {
   const input = page.getByPlaceholder("Ask anything about your knowledge base...");
   await input.fill("Generate a result that fails validation");
   await input.press("Enter");
-  const failedMessage = page.locator('[data-agent-run-status="failed"]').last();
+  const failedMessage = page.locator('[data-chat-message-id]').filter({ hasText: "Partial output that must not be saved." }).last();
   await expect(failedMessage).toBeVisible();
+  await expect(failedMessage).toContainText("Agent run failed");
+  await expect(failedMessage).toContainText("No valid result is available to apply or save.");
+  await failedMessage.getByText("Details", { exact: true }).click();
   await expect(failedMessage).toContainText("Contract validation failed");
   await expect(failedMessage.getByRole("button", { name: /Save|Apply/ })).toHaveCount(0);
   await expect(failedMessage.getByRole("button", { name: "Retry run" })).toBeVisible();
@@ -1307,6 +1359,8 @@ test("Asset complete optimization records a saved first round before running the
   await expect(page.locator("[data-asset-quality-audit]")).toContainText("PKG-EVIDENCE-004");
   await page.getByRole("button", { name: "Optimize Entire Draft" }).click();
   await expect(page.locator("[data-document-agent-diff-preview]")).toBeVisible();
+  await expect(page.locator('[data-agent-run-status="completed"]')).toBeVisible();
+  await expect(page.locator("[data-proposal-actions]")).toBeVisible();
   await page.getByRole("button", { name: "Apply to Editor" }).click();
   await expect(page.getByText("Unsaved changes · recovery draft stored in this tab.")).toBeVisible();
   expect(((state.savedAssetBody?.metadata as Record<string, unknown>)?.asset_optimization_v1 as Record<string, unknown> | undefined)?.completed_rounds).toBeUndefined();
@@ -1409,7 +1463,7 @@ test("Asset editor preserves dirty changes, recovers after refresh, and clears r
   await expect(page.getByText("Unsaved changes · recovery draft stored in this tab.")).toHaveCount(0);
 });
 
-test("Newsletter Automation saves a schedule and creates a reviewable Asset draft", async ({ page }) => {
+test("Newsletter Automation saves dirty settings before running and keeps the result reviewable", async ({ page }) => {
   const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null };
   await installMockBff(page, state);
   await signIn(page);
@@ -1421,17 +1475,88 @@ test("Newsletter Automation saves a schedule and creates a reviewable Asset draf
   await page.getByLabel("Newsletter topics").fill("AI agents\nrobotics");
   await page.getByLabel("Enable Newsletter automation").check();
   await page.getByLabel("Newsletter frequency").selectOption("daily");
-  await page.getByLabel("Newsletter hour UTC").fill("2");
-  await page.getByRole("button", { name: "Save automation" }).click();
+  await page.getByLabel("Newsletter local hour").fill("10");
+  await expect(page.getByText("Unsaved changes", { exact: true })).toBeVisible();
+  await expect(page.locator("[data-unsaved-changes]")).toBeVisible();
+  await page.getByRole("button", { name: "Save & Run now" }).click();
 
   await expect.poll(() => state.newsletterAutomation?.name).toBe("E2E Tech Weekly");
   expect(state.newsletterAutomation?.topics).toEqual(["AI agents", "robotics"]);
   expect(state.newsletterAutomation?.frequency).toBe("daily");
+  expect(state.newsletterAutomation?.config_revision).toBe(1);
+  await expect.poll(() => state.newsletterRunCalls).toBe(1);
+  await expect(page).toHaveURL(/\/assets\/newsletter-automation$/);
+  await expect(page.locator("[data-newsletter-run-status]")).toContainText("Completed · Newsletter draft created");
+  await expect(page.locator("[data-newsletter-run-status]")).toContainText("Config revision 1");
+  await expect(page.getByRole("link", { name: "Open generated Asset" })).toBeVisible();
+  expect(state.savedAssetBody).toMatchObject({ asset_type: "newsletter_issue", status: "draft" });
 
-  await page.getByRole("button", { name: "Run now" }).click();
+  await page.getByRole("link", { name: "Open generated Asset" }).click();
   await expect(page).toHaveURL(/\/assets\/asset-e2e\?tab=read$/);
   await expect(page.getByRole("heading", { name: "E2E Tech Weekly · 2026-09-03", exact: true }).last()).toBeVisible();
-  expect(state.savedAssetBody).toMatchObject({ asset_type: "newsletter_issue", status: "draft" });
+});
+
+test("Newsletter Automation explains skipped runs without leaving the page", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: null,
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+    newsletterRunMode: "skipped",
+    newsletterAutomation: {
+      config_revision: 2,
+      enabled: false,
+      name: "Technology Newsletter",
+      topics: [],
+      frequency: "weekly",
+      hour_utc: 1,
+      weekday_utc: 4,
+      lookback_days: 7,
+      max_news_items: 8,
+      max_paper_items: 5,
+      delivery_format: "html",
+      audience: "Technology readers",
+      style_notes: "Concise, evidence-led, and easy to scan.",
+      last_generated_at: null,
+      last_asset_id: null,
+      last_run_at: null,
+      last_run_status: null,
+      last_run_reason: null,
+      last_news_count: 0,
+      last_paper_count: 0,
+    },
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/assets/newsletter-automation");
+  await page.getByRole("button", { name: "Run now" }).click();
+  await expect(page.locator("[data-newsletter-run-status]")).toContainText("Skipped · no draft created");
+  await expect(page.locator("[data-newsletter-run-status]")).toContainText("No matching recent news or papers were found.");
+  await expect(page).toHaveURL(/\/assets\/newsletter-automation$/);
+  await expect(page.getByRole("link", { name: "Open generated Asset" })).toHaveCount(0);
+});
+
+test("Newsletter Save and Run failure keeps dirty settings and does not run old configuration", async ({ page }) => {
+  const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null, newsletterSaveFailureOnce: true };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/assets/newsletter-automation");
+  await page.getByLabel("Newsletter name").fill("Retryable Newsletter");
+  await page.getByRole("button", { name: "Save & Run now" }).click();
+  await expect(page.locator("[data-newsletter-run-status]")).toContainText("Newsletter run failed");
+  await expect(page.locator("[data-newsletter-run-status]")).toContainText("visible configuration remains editable");
+  await expect(page.getByLabel("Newsletter name")).toHaveValue("Retryable Newsletter");
+  await expect(page.getByText("Unsaved changes", { exact: true })).toBeVisible();
+  expect(state.newsletterRunCalls ?? 0).toBe(0);
+
+  await page.getByRole("button", { name: "Save & Run now" }).click();
+  await expect(page.locator("[data-newsletter-run-status]")).toContainText("Completed · Newsletter draft created");
+  expect(state.newsletterRunCalls).toBe(1);
+  expect(state.newsletterAutomation?.name).toBe("Retryable Newsletter");
 });
 
 test("agent-assisted Asset generation creates a Workspace after Intent confirmation and saves the Agent draft explicitly", async ({ page }) => {
@@ -1480,7 +1605,7 @@ test("agent-assisted Asset generation creates a Workspace after Intent confirmat
   await expect(page.getByRole("button", { name: "Generate Initial Draft" })).toBeDisabled();
   await page.getByRole("button", { name: "Ask Agent to Propose Claims" }).click();
   await expect(page.getByText("Candidate Claim Proposal")).toBeVisible();
-  await page.getByRole("button", { name: "Save to Claim Board" }).click();
+  await page.getByRole("button", { name: "Save Proposal to Claim Board" }).click();
   await page.getByRole("button", { name: "Accept", exact: true }).click();
   await expect(page.getByText("Claims ready")).toBeVisible();
   await page.getByRole("button", { name: "Generate Initial Draft" }).click();
@@ -1500,8 +1625,8 @@ test("agent-assisted Asset generation creates a Workspace after Intent confirmat
   await expect(page.getByText("E2E answer with a durable result.")).toBeVisible();
   expect(state.savedAssetBody?.draft_content).toBeUndefined();
 
-  await page.getByRole("button", { name: "Apply Draft to Asset" }).click();
-  await expect(page.getByRole("button", { name: "Applied to Asset" })).toBeDisabled();
+  await page.getByRole("button", { name: "Save Draft to Asset" }).click();
+  await expect(page.getByRole("button", { name: "Saved to Asset" })).toBeDisabled();
   await expect.poll(() => state.savedAssetBody?.title).toBe("E2E Research Brief");
   expect(state.savedAssetBody).toMatchObject({
     asset_type: "research_brief",
@@ -1547,7 +1672,7 @@ test("agent-assisted Asset generation creates a Workspace after Intent confirmat
   await page.getByRole("button", { name: "按要求修改" }).click();
   await expect(page.locator("[data-agent-diff-preview]")).toBeVisible();
   await expect(page.getByLabel("Draft block 4")).not.toHaveValue(/Agent revised paragraph/);
-  await page.getByRole("button", { name: "确认应用" }).click();
+  await page.getByRole("button", { name: "Apply to Editor" }).click();
   await expect(page.getByLabel("Draft block 4")).toHaveValue(/Agent revised paragraph/);
   expect(state.savedAssetBody?.draft_content).not.toContain("Agent revised paragraph");
   await page.getByLabel("Draft block 2").fill("## Revised finding");
@@ -1614,7 +1739,7 @@ test("saving a later Evidence collection retries a benign Workspace revision con
     ephemeral_session: true,
   });
   await expect(page.getByText("Evidence Proposal")).toBeVisible();
-  await page.getByRole("button", { name: "Save to Evidence Board" }).click();
+  await page.getByRole("button", { name: "Save Proposal to Evidence Board" }).click();
 
   await expect(page.getByText("1 Evidence candidates saved for review.")).toBeVisible();
   await expect.poll(() => ((state.assetWorkspace?.evidence as unknown[]) ?? []).length).toBe(2);
@@ -1648,6 +1773,54 @@ test("Source Asset handoff opens the generation guide with evidence preselected"
   await expect(page.getByLabel("E2E Source Evidence")).toBeChecked();
   await expect(page.getByText("Intent not confirmed", { exact: false })).toBeVisible();
   await expect.poll(() => state.savedAssetBody).toBeNull();
+});
+
+test("Source upload reports an identical file and opens the existing Source", async ({ page }) => {
+  const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null };
+  await installMockBff(page, state);
+  await page.route(`${apiBase}/api/sources/upload`, async (route) => {
+    return json(route, {
+      id: "source-existing-upload",
+      title: "Existing Upload",
+      source_type: "pdf",
+      category_id: 1,
+      category_name: "Inbox",
+      content_hash: "same-file-hash",
+      file_path: "minio://sources/existing.pdf",
+      ingested_at: now,
+      metadata_: {},
+      created: false,
+      duplicate: true,
+    });
+  });
+  await page.route(`${apiBase}/api/sources/source-existing-upload`, async (route) => {
+    return json(route, {
+      id: "source-existing-upload",
+      title: "Existing Upload",
+      source_type: "pdf",
+      category_id: 1,
+      category_name: "Inbox",
+      raw_content: "Already stored content.",
+      file_path: "minio://sources/existing.pdf",
+      ingested_at: now,
+      metadata_: {},
+    });
+  });
+  await signIn(page);
+
+  await page.goto("/sources");
+  await page.getByRole("button", { name: "New Source" }).click();
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "existing.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("identical upload bytes"),
+  });
+  await page.getByRole("button", { name: "Upload & Create" }).click();
+
+  await expect(page.getByText("This file already exists. No upload was needed.")).toBeVisible();
+  await expect(page.getByText("Existing Source: Existing Upload")).toBeVisible();
+  await page.getByRole("button", { name: "Open existing Source" }).click();
+  await expect(page).toHaveURL(/\/sources\/source-existing-upload$/);
 });
 
 test("Source detail returns to the previous filtered list position without adding a fake back entry", async ({ page }) => {
@@ -1908,6 +2081,109 @@ test("Asset detail and Newsletter return to the filtered library position withou
   await expect(page).not.toHaveURL(/\/assets\/(asset-e2e|newsletter-automation)/);
 });
 
+test("Asset Outline Map projects saved Blocks and navigates to the selected editor Block", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: {
+      title: "Mapped Asset",
+      asset_type: "research_brief",
+      status: "draft",
+      draft_content: "## Executive Summary\n\nCapability-scoped gateways reduce authority.",
+      source_refs: [], note_refs: [], wiki_refs: [],
+      metadata: { asset_document: { schemaVersion: 1, revision: 1, updatedAt: now, blocks: [
+        { id: "block-summary", type: "heading", markdown: "## Executive Summary", revision: 1, claim_refs: [] },
+        { id: "block-finding", type: "paragraph", markdown: "Capability-scoped gateways reduce authority.", revision: 1, claim_refs: [] },
+      ] } },
+    },
+    candidate: null, memory: null, sessionContext: null,
+  };
+  await installMockBff(page, state);
+  const tree = {
+    map: { id: "map-asset-outline", user_id: "user-e2e", owner_type: "asset", owner_id: "asset-e2e", purpose: "asset_outline", title: "Mapped Asset · Outline", root_node_id: "node-root", layout_mode: "right", version: 1, basis_revision: {}, generation_status: "ready", created_at: now, updated_at: now },
+    root_id: "node-root",
+    nodes: [
+      { id: "node-root", map_id: "map-asset-outline", display_id: 1, parent_id: null, content: "Mapped Asset", position: 0, collapsed: false, node_kind: "topic", updated_by: "system", created_at: now, updated_at: now },
+      { id: "node-summary", map_id: "map-asset-outline", display_id: 2, parent_id: "node-root", content: "Executive Summary", position: 0, collapsed: false, node_kind: "section", updated_by: "system", created_at: now, updated_at: now },
+      { id: "node-finding", map_id: "map-asset-outline", display_id: 3, parent_id: "node-summary", content: "Capability-scoped gateways reduce authority.", position: 0, collapsed: false, node_kind: "block", updated_by: "system", created_at: now, updated_at: now },
+    ],
+    references: [
+      { id: "ref-summary", map_id: "map-asset-outline", node_id: "node-summary", ref_type: "asset_block", ref_id: "block-summary", relation: "represents", created_at: now },
+      { id: "ref-finding", map_id: "map-asset-outline", node_id: "node-finding", ref_type: "asset_block", ref_id: "block-finding", relation: "represents", created_at: now },
+    ],
+  };
+  let projected = false;
+  let refreshApplyBody: Record<string, unknown> | null = null;
+  await page.route(`${apiBase}/api/mind-maps**`, async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/api/mind-maps/projections/asset-outline") {
+      projected = true;
+      return json(route, tree);
+    }
+    if (url.pathname === "/api/mind-maps/map-asset-outline/tree") return json(route, tree);
+    if (url.pathname === "/api/mind-maps/map-asset-outline/check-asset-outline-staleness") return json(route, {
+      map: { ...tree.map, generation_status: "stale" },
+      stale: true,
+      reasons: ["base_document_signature"],
+      current_basis: { workspace_revision: 1, intent_revision: 1, asset_document_revision: 2, base_document_signature: "document-new", accepted_claim_ids: [] },
+    });
+    if (url.pathname === "/api/mind-maps/map-asset-outline/proposals/asset-outline/refresh") return json(route, {
+      map_id: "map-asset-outline",
+      base_version: 1,
+      proposal: {
+        asset_id: "asset-e2e",
+        title: "Mapped Asset · Outline",
+        layout_mode: "right",
+        basis_revision: { workspace_revision: 1, intent_revision: 1, asset_document_revision: 2, base_document_signature: "document-new", accepted_claim_ids: [] },
+        nodes: [
+          { temp_id: "root", parent_temp_id: null, position: 0, content: "Mapped Asset", node_kind: "topic", claim_refs: [] },
+          { temp_id: "summary", parent_temp_id: "root", position: 0, content: "Updated Executive Summary", node_kind: "section", asset_block_id: "block-summary", claim_refs: [] },
+        ],
+        requires_user_confirmation: true,
+        writes_asset: false,
+      },
+      node_count: 2,
+      reference_count: 1,
+    });
+    if (url.pathname === "/api/mind-maps/map-asset-outline/proposals/asset-outline/refresh/apply") {
+      refreshApplyBody = route.request().postDataJSON() as Record<string, unknown>;
+      return json(route, {
+        map: { ...tree.map, version: 2, basis_revision: { workspace_revision: 1, intent_revision: 1, asset_document_revision: 2, base_document_signature: "document-new", accepted_claim_ids: [] } },
+        root_id: "node-root-v2",
+        nodes: [
+          { ...tree.nodes[0], id: "node-root-v2", display_id: 1 },
+          { ...tree.nodes[1], id: "node-summary-v2", display_id: 2, parent_id: "node-root-v2", content: "Updated Executive Summary" },
+        ],
+        references: [
+          { ...tree.references[0], id: "ref-summary-v2", node_id: "node-summary-v2" },
+        ],
+      });
+    }
+    if (url.pathname === "/api/mind-maps") return json(route, { items: projected ? [tree.map] : [], total: projected ? 1 : 0 });
+    return route.fallback();
+  });
+  await signIn(page);
+
+  await page.goto("/assets/asset-e2e?tab=map");
+  await page.getByRole("button", { name: "Create Outline Map from Saved Blocks" }).click();
+  await expect(page.getByTestId("asset-outline-map-preview")).toBeVisible();
+  await expect(page.getByTestId("asset-outline-stale-warning")).toBeVisible();
+  await page.getByRole("button", { name: "Preview Refresh Proposal" }).click();
+  await expect(page.getByTestId("asset-outline-refresh-preview")).toContainText("Updated Executive Summary");
+  await expect(page.getByTestId("asset-outline-refresh-diff")).toContainText("1 rename");
+  await expect(page.getByTestId("asset-outline-refresh-diff")).toContainText("Rename “Executive Summary” to “Updated Executive Summary”.");
+  await expect(page.getByRole("button", { name: "Apply to Asset Editor" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Apply Refresh to Map" }).click();
+  await expect(page.getByTestId("asset-outline-refresh-applied")).toContainText("version 2");
+  await expect(page.getByTestId("asset-outline-refresh-applied")).toContainText("Asset Editor and saved Asset document were not modified");
+  expect(refreshApplyBody).toMatchObject({ base_version: 1, confirm: true });
+  await expect(page.getByTestId("asset-outline-map-preview")).toContainText("Updated Executive Summary");
+  await page.getByTestId("asset-outline-map-preview").getByText("Updated Executive Summary", { exact: true }).click();
+  await page.getByRole("button", { name: "Open selected Block in Editor" }).click();
+  await expect(page).toHaveURL(/tab=edit/);
+  await expect(page.locator('[data-asset-block-id="block-summary"]')).toBeVisible();
+});
+
 test("Search restores query, mode, results position, and result return routes", async ({ page }) => {
   const searchResults = Array.from({ length: 24 }, (_, index) => ({
     id: `memory-${index}`,
@@ -2087,7 +2363,7 @@ test("Asset quality issues can be regenerated before the corrected draft is save
   await expect(page.getByText("Asset draft save is blocked")).toBeVisible();
   await expect(page.getByText("Missing required section: Executive Summary.")).toBeVisible();
   await expect(page.getByText("Draft still contains unfinished placeholders or citation-needed markers.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Apply Draft to Asset" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Save Draft to Asset" })).toBeDisabled();
   expect(state.savedAssetBody?.draft_content).toBeUndefined();
 
   state.chatResponse = validResearchBrief.replace("E2E Research Brief", "Incomplete brief");
@@ -2096,7 +2372,7 @@ test("Asset quality issues can be regenerated before the corrected draft is save
   expect(state.chatPrompts?.at(-1)).toContain("Missing required section: Executive Summary.");
   expect(state.chatPrompts?.at(-1)).toContain("Return the full corrected Markdown document");
   await expect(page.getByText("Asset draft quality check passed")).toBeVisible();
-  const saveButton = page.getByRole("button", { name: "Apply Draft to Asset" }).last();
+  const saveButton = page.getByRole("button", { name: "Save Draft to Asset" }).last();
   await expect(saveButton).toBeEnabled();
   await saveButton.click();
   await expect.poll(() => state.savedAssetBody?.title).toBe("Incomplete brief");

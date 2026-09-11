@@ -16,6 +16,9 @@ import {
   type SourceMindMapProposalValidation,
 } from "@/lib/api/mind-maps";
 import type { Source } from "@/lib/api/sources";
+import { ActionError } from "@/components/interaction/ActionError";
+import { AgentRunStatus } from "@/components/interaction/AgentRunStatus";
+import { ProposalActions } from "@/components/interaction/ProposalActions";
 
 interface SourceMindMapPanelProps {
   source: Source;
@@ -417,7 +420,7 @@ export function SourceMindMapPanel({ source, chunkCount }: SourceMindMapPanelPro
                 </Button>
               )}
             </div>
-            {proposalMutation.isPending && <p className="text-sm text-muted-foreground">{proposalPhase}</p>}
+            {proposalMutation.isPending && <AgentRunStatus status={generationContext ? "running" : "preparing"} message={proposalPhase} />}
             {(proposalMutation.isPending || generationContext) && (
               <div className="flex flex-wrap gap-2" data-testid="source-mind-map-generation-metrics">
                 <Badge variant="secondary">{generationContext?.sampling.total_chunk_count ?? chunkCount} source chunks</Badge>
@@ -435,14 +438,7 @@ export function SourceMindMapPanel({ source, chunkCount }: SourceMindMapPanelPro
             )}
           </div>
         )}
-        {proposalMutation.isError && (
-          <div className="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
-            <p>{proposalMutation.error.message}</p>
-            <Button className="mt-3" type="button" variant="outline" size="sm" onClick={() => proposalMutation.mutate(undefined)}>
-              <RefreshCw className="h-4 w-4" />Try Again
-            </Button>
-          </div>
-        )}
+        {proposalMutation.isError && <div className="mt-3"><ActionError title="Mind Map proposal failed" impact="No proposal was applied to the saved Mind Map." recovery="Retry generation; the current Mind Map is unchanged." details={proposalMutation.error.message} onRetry={() => proposalMutation.mutate(undefined)} /></div>}
         {proposal && (
           <div className="space-y-4">
             <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
@@ -469,34 +465,28 @@ export function SourceMindMapPanel({ source, chunkCount }: SourceMindMapPanelPro
               testId="source-mind-map-proposal-preview"
               showMiniMap={proposalCanvasNodes.length > 12}
             />
-            <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-950">
-              Validation passed. This proposal is still separate from the saved Mind Map and has not been applied.
-            </p>
-            <div className="flex flex-wrap items-center gap-3">
-              <Button
-                type="button"
-                disabled={applyProposalMutation.isPending}
-                onClick={() => {
+            <AgentRunStatus status="completed" message="The proposal passed validation and remains separate from the saved Mind Map until you apply it." />
+            <ProposalActions
+              primaryLabel="Apply Proposal to Mind Map"
+              pendingLabel="Applying…"
+              primaryPending={applyProposalMutation.isPending}
+              onPrimary={() => {
                   const action = proposal.target_node_id
                     ? `Expand the selected branch in Mind Map v${proposal.base_version}? Existing nodes and unrelated branches will be preserved.`
                     : mindMap
                     ? `Merge this Proposal into Mind Map v${mindMap.version}? Existing nodes will be preserved.`
                     : "Create a formal Mind Map from this Proposal?";
                   if (window.confirm(action)) applyProposalMutation.mutate();
-                }}
-              >
-                {applyProposalMutation.isPending
-                  ? <RefreshCw className="h-4 w-4 animate-spin" />
-                  : <GitBranch className="h-4 w-4" />}
-                {applyProposalMutation.isPending ? "Saving…" : "Review & Save to Mind Map"}
-              </Button>
-              <p className="text-xs text-muted-foreground">Safe Merge never deletes existing human nodes.</p>
-            </div>
-            {applyProposalMutation.isError && (
-              <p className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-                {applyProposalMutation.error.message}
-              </p>
-            )}
+              }}
+              onRegenerate={() => proposalMutation.mutate(proposal.target_node_id ?? undefined)}
+              regenerateDisabled={proposalMutation.isPending}
+              onDiscard={() => {
+                setProposal(null);
+                proposalMutation.reset();
+              }}
+              note="Safe Merge never deletes existing human nodes."
+            />
+            {applyProposalMutation.isError && <ActionError title="Mind Map proposal could not be applied" impact="The saved Mind Map was not changed." recovery="Refresh the Map basis or regenerate the proposal, then apply again." details={applyProposalMutation.error.message} />}
           </div>
         )}
       </CardContent>
@@ -647,7 +637,7 @@ export function SourceMindMapPanel({ source, chunkCount }: SourceMindMapPanelPro
                         },
                       })}
                     >
-                      <FileText className="h-4 w-4" />Use in Asset Evidence
+                      <FileText className="h-4 w-4" />Create Asset from This Branch
                     </Button>
                     <Button type="button" size="sm" variant="outline" disabled={createNodeNoteMutation.isPending} onClick={() => createNodeNoteMutation.mutate()}>
                       <StickyNote className="h-4 w-4" />{createNodeNoteMutation.isPending ? "Creating…" : "Create Note"}

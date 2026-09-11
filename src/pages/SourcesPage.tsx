@@ -57,6 +57,7 @@ export function SourcesPage() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<SourceCreate>({ title: "", category_id: 1, source_type: "article" });
   const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [duplicateUploadSource, setDuplicateUploadSource] = useState<Source | null>(null);
   const [pdfType, setPdfType] = useState("text");
   const [collapsedCategories, setCollapsedCategories] = useSessionStringSet("sources-collapsed-categories");
   const [paperForm, setPaperForm] = useState({ query: "", author: "", category: "", paperId: "", maxResults: 5, categoryId: 1 });
@@ -147,11 +148,16 @@ export function SourcesPage() {
 
   const uploadMutation = useMutation({
     mutationFn: sourcesApi.upload,
-    onSuccess: () => {
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["sources"] });
+      if (result.duplicate) {
+        setDuplicateUploadSource(result);
+        return;
+      }
       setOpen(false);
       setForm({ title: "", category_id: 1, source_type: "article" });
       setUploadFile(null);
+      setDuplicateUploadSource(null);
       setPdfType("text");
     },
   });
@@ -404,6 +410,7 @@ export function SourcesPage() {
                     onChange={(e) => {
                       const nextFile = e.target.files?.[0] || null;
                       uploadMutation.reset();
+                      setDuplicateUploadSource(null);
                       setUploadFile(nextFile);
                       if (nextFile && !form.title) {
                         setForm({ ...form, title: nextFile.name.replace(/\.[^.]+$/, "") });
@@ -412,6 +419,20 @@ export function SourcesPage() {
                   />
                   {uploadFile && (
                     <p className="text-xs text-muted-foreground">Selected file: {uploadFile.name}</p>
+                  )}
+                  {duplicateUploadSource && (
+                    <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-3 text-sm text-amber-950" role="status">
+                      <p className="font-medium">This file already exists. No upload was needed.</p>
+                      <p className="mt-1 text-xs text-amber-800">Existing Source: {duplicateUploadSource.title}</p>
+                      <Button
+                        className="mt-3"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => navigate(`/sources/${encodeURIComponent(duplicateUploadSource.id)}`)}
+                      >
+                        Open existing Source
+                      </Button>
+                    </div>
                   )}
                   {uploadFile && /\.pdf$/i.test(uploadFile.name) && (
                     <div className="flex items-center gap-2">
@@ -444,7 +465,7 @@ export function SourcesPage() {
                 <Button
                   className="w-full"
                   onClick={submitSource}
-                  disabled={!form.title || createMutation.isPending || uploadMutation.isPending}
+                  disabled={!form.title || createMutation.isPending || uploadMutation.isPending || Boolean(duplicateUploadSource)}
                 >
                   {uploadMutation.isPending
                     ? uploadFile && pdfType === "vlm"
@@ -455,7 +476,9 @@ export function SourcesPage() {
                     : createMutation.isPending
                       ? "Creating..."
                       : uploadFile
-                        ? "Upload & Create"
+                        ? duplicateUploadSource
+                          ? "Already uploaded"
+                          : "Upload & Create"
                         : "Create"}
                 </Button>
                 {(uploadMutation.isError || createMutation.isError) && (

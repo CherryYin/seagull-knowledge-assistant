@@ -132,6 +132,7 @@ export interface AssetFeedbackNoteResult {
 }
 
 export interface NewsletterAutomationConfig {
+  config_revision: number;
   enabled: boolean;
   name: string;
   topics: string[];
@@ -146,15 +147,26 @@ export interface NewsletterAutomationConfig {
   style_notes: string;
   last_generated_at?: string | null;
   last_asset_id?: string | null;
+  last_run_at?: string | null;
+  last_run_status?: "generated" | "skipped" | null;
+  last_run_reason?: string | null;
+  last_news_count: number;
+  last_paper_count: number;
 }
 
-export type NewsletterAutomationUpdate = Omit<NewsletterAutomationConfig, "last_generated_at" | "last_asset_id">;
+export type NewsletterAutomationUpdate = Omit<NewsletterAutomationConfig, "config_revision" | "last_generated_at" | "last_asset_id" | "last_run_at" | "last_run_status" | "last_run_reason" | "last_news_count" | "last_paper_count">;
+
+export interface NewsletterAutomationRunSnapshot extends NewsletterAutomationUpdate {
+  config_revision: number;
+}
 
 export interface NewsletterAutomationRunResult {
   status: "generated" | "skipped";
   reason?: string | null;
   news_count: number;
   paper_count: number;
+  config_revision: number;
+  config_snapshot?: NewsletterAutomationRunSnapshot | null;
   asset?: Asset | null;
 }
 

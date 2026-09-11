@@ -151,6 +151,45 @@ export interface MindMapTreeRead {
   references: MindMapReferenceRead[];
 }
 
+export interface AssetOutlineProposalNode {
+  temp_id: string;
+  parent_temp_id: string | null;
+  position: number;
+  content: string;
+  node_kind: "topic" | "section" | "block";
+  asset_block_id?: string | null;
+  claim_refs: string[];
+}
+
+export interface AssetOutlineRefreshProposal {
+  map_id: string;
+  base_version: number;
+  proposal: {
+    asset_id: string;
+    title: string;
+    layout_mode: MindMapLayoutMode;
+    basis_revision: Record<string, unknown>;
+    nodes: AssetOutlineProposalNode[];
+    requires_user_confirmation: true;
+    writes_asset: false;
+  };
+  node_count: number;
+  reference_count: number;
+}
+
+export interface AssetOutlineRefreshApply {
+  base_version: number;
+  proposal: AssetOutlineRefreshProposal["proposal"];
+  confirm: true;
+}
+
+export interface AssetOutlineStalenessRead {
+  map: MindMapRead;
+  stale: boolean;
+  reasons: Array<"workspace_revision" | "intent_revision" | "asset_document_revision" | "base_document_signature">;
+  current_basis: Record<string, unknown>;
+}
+
 export interface MindMapSnapshotRead {
   map: MindMapRead;
   nodes: MindMapNodeRead[];
@@ -295,6 +334,10 @@ export const mindMapsApi = {
     method: "POST",
     body: JSON.stringify(body),
   }),
+  projectAssetOutline: (assetId: string) => request<MindMapTreeRead>("/mind-maps/projections/asset-outline", {
+    method: "POST",
+    body: JSON.stringify({ asset_id: assetId }),
+  }),
   getSourceGenerationContext: (sourceId: string) => {
     const query = new URLSearchParams({ source_id: sourceId });
     return request<SourceMindMapGenerationContext>(`/mind-maps/proposals/source/context?${query}`);
@@ -310,6 +353,18 @@ export const mindMapsApi = {
   checkStaleness: (mapId: string) => request<MindMapStalenessRead>(
     `/mind-maps/${encodeURIComponent(mapId)}/check-staleness`,
     { method: "POST" },
+  ),
+  checkAssetOutlineStaleness: (mapId: string) => request<AssetOutlineStalenessRead>(
+    `/mind-maps/${encodeURIComponent(mapId)}/check-asset-outline-staleness`,
+    { method: "POST" },
+  ),
+  buildAssetOutlineRefreshProposal: (mapId: string) => request<AssetOutlineRefreshProposal>(
+    `/mind-maps/${encodeURIComponent(mapId)}/proposals/asset-outline/refresh`,
+    { method: "POST" },
+  ),
+  applyAssetOutlineRefreshProposal: (mapId: string, body: AssetOutlineRefreshApply) => request<MindMapTreeRead>(
+    `/mind-maps/${encodeURIComponent(mapId)}/proposals/asset-outline/refresh/apply`,
+    { method: "POST", body: JSON.stringify(body) },
   ),
   getTree: (mapId: string) => request<MindMapTreeRead>(`/mind-maps/${encodeURIComponent(mapId)}/tree`),
   listRevisions: (mapId: string, limit = 20, offset = 0) => {

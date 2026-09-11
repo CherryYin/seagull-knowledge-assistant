@@ -9,6 +9,8 @@ import type { MessageMetadata, ReferenceInfo } from "@/lib/api";
 import { AGENT_WORKFLOW_SAVE_TARGET_LABELS, type WorkflowResultSaveTarget } from "@/lib/agent-workflows";
 import { assessAssetDraft, renderAssetDraftRepairRequest, type AssetGenerationRequest } from "@/lib/asset-generation";
 import { getMessageRunContract } from "@/lib/chat-message-contract";
+import { AgentRunStatus } from "@/components/interaction/AgentRunStatus";
+import { ActionError } from "@/components/interaction/ActionError";
 
 const CITATION_RE = /\[来源[：:]\s*((?:note|src|source)-[^\]]+)\]/g;
 
@@ -61,6 +63,10 @@ export function ChatMessage({
   const isUser = role === "user";
   const navigate = useNavigate();
   const runContract = getMessageRunContract(metadata);
+  const failedRunErrorMarker = "\n\nError:";
+  const failedRunErrorIndex = runContract?.run_status === "failed" ? content.lastIndexOf(failedRunErrorMarker) : -1;
+  const displayedContent = failedRunErrorIndex >= 0 ? content.slice(0, failedRunErrorIndex).trim() : content;
+  const failedRunDetails = failedRunErrorIndex >= 0 ? content.slice(failedRunErrorIndex + failedRunErrorMarker.length).trim() : runContract?.run_status === "failed" ? content : null;
   const [retryLoading, setRetryLoading] = useState(false);
   const [saveState, setSaveState] = useState<Partial<Record<WorkflowResultSaveTarget, "loading" | "done">>>(() => {
     const receipts = metadata?.save_receipts ?? {};
@@ -154,14 +160,7 @@ export function ChatMessage({
       <div className={cn("max-w-[75%]", isUser && "flex flex-col items-end")}>
         {!isUser && runContract && (
           <div className="mb-1 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
-            <span className={cn(
-              "rounded-full border px-2 py-0.5 font-medium",
-              runContract.run_status === "completed" && "border-emerald-500/30 text-emerald-700",
-              runContract.run_status === "failed" && "border-red-500/30 text-red-700",
-              runContract.run_status === "stopped" && "border-amber-500/30 text-amber-700",
-            )}>
-              {runContract.run_status === "awaiting_input" ? "Awaiting input" : runContract.run_status.charAt(0).toUpperCase() + runContract.run_status.slice(1)}
-            </span>
+            <AgentRunStatus status={runContract.run_status} compact />
             <span>{runContract.workflow_id ?? "General Chat"}</span>
             {runContract.object_ref?.title && <span>· {runContract.object_ref.title}</span>}
           </div>
@@ -180,7 +179,7 @@ export function ChatMessage({
             </div>
           ) : (
             <div className="prose prose-sm">
-              <MarkdownRenderer components={markdownComponents}>{linkifyCitations(content)}</MarkdownRenderer>
+              {displayedContent ? <MarkdownRenderer components={markdownComponents}>{linkifyCitations(displayedContent)}</MarkdownRenderer> : <p>The Agent run ended before producing a valid result.</p>}
             </div>
           )}
 
@@ -226,6 +225,12 @@ export function ChatMessage({
             </div>
           )}
         </div>
+
+        {!isUser && runContract?.run_status === "failed" && failedRunDetails && (
+          <div className="mt-2 max-w-xl">
+            <ActionError title="Agent run failed" impact="No valid result is available to apply or save." recovery="Retry the run; saved business data was not changed." details={failedRunDetails} />
+          </div>
+        )}
 
         {assetQuality && (
           <div className={cn(
@@ -286,7 +291,7 @@ export function ChatMessage({
             {!isUser && onSaveTarget && saveTargets.map((target) => {
               const state = saveState[target];
               const appliesToExistingAsset = target === "asset" && Boolean(assetDraft?.assetId);
-              const label = appliesToExistingAsset ? "Apply Draft to Asset" : AGENT_WORKFLOW_SAVE_TARGET_LABELS[target];
+              const label = appliesToExistingAsset ? "Save Draft to Asset" : AGENT_WORKFLOW_SAVE_TARGET_LABELS[target];
               return (
                 <Button
                   key={target}
@@ -297,22 +302,14 @@ export function ChatMessage({
                   disabled={Boolean(state) || (target === "asset" && assetQuality !== null && !assetQuality.ready)}
                 >
                   {saveIcon(target, state)}
-                  {state === "done" ? (appliesToExistingAsset ? "Applied to Asset" : "Saved") : label}
+                  {state === "done" ? (appliesToExistingAsset ? "Saved to Asset" : "Saved") : label}
                 </Button>
               );
             })}
 
           </div>
         )}
-        {actionError && (
-          <div className="mt-2 flex max-w-xl items-start gap-1.5 rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2 text-xs text-red-700">
-            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            <div>
-              <p className="font-medium">Action failed</p>
-              <p>{actionError}</p>
-            </div>
-          </div>
-        )}
+        {actionError && <div className="mt-2 max-w-xl"><ActionError impact="The result was not saved." recovery="Review the details, then retry the same save action." details={actionError} /></div>}
       </div>
     </div>
   );
