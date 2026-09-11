@@ -14,6 +14,8 @@ import { buildAssetHandoffState } from "@/lib/asset-handoff";
 import { NoteAIPanel } from "@/components/NoteAIPanel";
 import { VersionsDialog } from "@/components/VersionsDialog";
 import { buildTitleMessages, buildEnhanceMessages, parseTitleResponse, parseModelSelector, runComplete } from "@/lib/note-ai";
+import { useReturnNavigation } from "@/hooks/useReturnNavigation";
+import { useRouteScrollRestoration } from "@/hooks/useRouteScrollRestoration";
 
 const NOTE_TYPES = ["inbox", "architecture", "case-study", "concept", "how-to", "remember"] as const;
 
@@ -119,11 +121,13 @@ export function NoteDetailPage() {
   const locationState = location.state as { backTo?: string; backLabel?: string } | null;
   const backTo = locationState?.backTo || "/notes";
   const backLabel = locationState?.backLabel || "Back to Notes";
+  const returnToPrevious = useReturnNavigation(backTo, Boolean(locationState?.backTo));
+  const navigationParams = new URLSearchParams(location.search);
+  const requestedView = navigationParams.get("view");
+  const viewMode: ViewMode = requestedView === "slices" ? "slices" : "full";
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<ReturnType<typeof noteToDraft> | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [viewMode, setViewMode] = useState<ViewMode>("full");
-  const [renderMode, setRenderMode] = useState<NoteRenderMode>("markdown");
   const [selectedSection, setSelectedSection] = useState(0);
   const [sourceIdInput, setSourceIdInput] = useState("");
   const [queuedRefreshCount, setQueuedRefreshCount] = useState<number | null>(null);
@@ -153,6 +157,10 @@ export function NoteDetailPage() {
     queryFn: () => notesApi.get(id!),
     enabled: !!id,
   });
+  const { scrollRef, onScroll } = useRouteScrollRestoration<HTMLDivElement>(
+    `note-detail:${id ?? "unknown"}`,
+    Boolean(note),
+  );
 
   const { data: assetLineage } = useQuery({
     queryKey: ["asset-knowledge-lineage", "note", id],
@@ -182,9 +190,29 @@ export function NoteDetailPage() {
     return splitSections(note.content);
   }, [note?.content]);
 
-  useEffect(() => {
-    setRenderMode(inferNoteRenderModeFromTags(note?.tags, note?.content || ""));
-  }, [note?.content, note?.tags]);
+  const requestedRenderMode = navigationParams.get("render");
+  const renderMode: NoteRenderMode = requestedRenderMode === "markdown"
+    || requestedRenderMode === "html"
+    || requestedRenderMode === "raw"
+    ? requestedRenderMode
+    : inferNoteRenderModeFromTags(note?.tags, note?.content || "");
+
+  const updateDetailParams = (updates: { view?: ViewMode; render?: NoteRenderMode }) => {
+    const next = new URLSearchParams(location.search);
+    if (updates.view) {
+      if (updates.view === "full") next.delete("view");
+      else next.set("view", updates.view);
+    }
+    if (updates.render) {
+      const inferredMode = inferNoteRenderModeFromTags(note?.tags, note?.content || "");
+      if (updates.render === inferredMode) next.delete("render");
+      else next.set("render", updates.render);
+    }
+    navigate(
+      { pathname: location.pathname, search: next.toString() ? `?${next.toString()}` : "" },
+      { replace: true, state: location.state },
+    );
+  };
 
   // Highlight range for the selected section in the preview panel
   const highlightRange = useMemo(() => {
@@ -518,7 +546,7 @@ export function NoteDetailPage() {
     mutationFn: () => notesApi.delete(id!),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notes"] });
-      navigate(backTo);
+      navigate(backTo, { replace: true });
     },
   });
 
@@ -558,6 +586,8 @@ export function NoteDetailPage() {
         },
         workflowId: "draft-wiki-refresh",
         promptSeed: `Create a reviewable canonical wiki draft from note "${note.title}" (${note.id}). Use only explicit evidence and preserve note provenance.`,
+        backTo: `${location.pathname}${location.search}`,
+        backLabel: "Back to Note",
       },
     });
   }
@@ -573,6 +603,8 @@ export function NoteDetailPage() {
         },
         workflowId: "summarize-source",
         promptSeed: `Use note "${note.title}" (${note.id}) to help me understand its core claims, extract reusable knowledge, and judge whether it should stay as a note, become a knowledge candidate, or support a wiki draft.`,
+        backTo: `${location.pathname}${location.search}`,
+        backLabel: "Back to Note",
       },
     });
   }
@@ -592,7 +624,7 @@ export function NoteDetailPage() {
   if (error || !note) return <div className="p-8 text-destructive">Note not found.</div>;
 
   const startEdit = () => {
-    setViewMode("full");
+    updateDetailParams({ view: "full" });
     setDraft(noteToDraft(note));
     setEditing(true);
   };
@@ -607,10 +639,15 @@ export function NoteDetailPage() {
   const hasSections = sections.length > 1;
 
   return (
-    <div className="h-full overflow-y-auto">
+    <div
+      ref={scrollRef}
+      onScroll={onScroll}
+      className="h-full overflow-y-auto"
+      data-route-scroll="note-detail"
+    >
       <div className="max-w-7xl mx-auto px-6 py-8">
         <div className="flex flex-wrap items-center gap-2 mb-4">
-          <Button variant="ghost" size="sm" onClick={() => navigate(backTo)}>
+          <Button variant="ghost" size="sm" onClick={returnToPrevious}>
             <ArrowLeft className="h-4 w-4" /> {backLabel}
           </Button>
           {!editing ? (
@@ -701,13 +738,13 @@ export function NoteDetailPage() {
             <div className="ml-auto flex flex-wrap items-center gap-2">
               <div className="flex items-center gap-1 rounded-md border border-border p-0.5">
                 <button
-                  onClick={() => setViewMode("full")}
+                  onClick={() => updateDetailParams({ view: "full" })}
                   className={`px-2.5 py-1 rounded text-xs transition-colors cursor-pointer ${viewMode === "full" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent"}`}
                 >
                   <FileText className="h-3.5 w-3.5 inline-block mr-1" />Full
                 </button>
                 <button
-                  onClick={() => setViewMode("slices")}
+                  onClick={() => updateDetailParams({ view: "slices" })}
                   className={`px-2.5 py-1 rounded text-xs transition-colors cursor-pointer ${viewMode === "slices" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent"}`}
                 >
                   <List className="h-3.5 w-3.5 inline-block mr-1" />Slices
@@ -717,7 +754,7 @@ export function NoteDetailPage() {
                 {(["markdown", "html", "raw"] as NoteRenderMode[]).map((mode) => (
                   <button
                     key={mode}
-                    onClick={() => setRenderMode(mode)}
+                    onClick={() => updateDetailParams({ render: mode })}
                     className={`px-2.5 py-1 rounded text-xs transition-colors cursor-pointer ${renderMode === mode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent"}`}
                   >
                     {mode.toUpperCase()}

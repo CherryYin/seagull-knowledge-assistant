@@ -17,6 +17,9 @@ import { discoveryApi, type DiscoveryItem } from "@/lib/api";
 import { paperDiscoveryApi } from "@/lib/api/paper-discovery";
 import { ModuleSectionNav } from "@/components/SectionNav";
 import { isRssFeedSource, sourcePresentationLabel } from "@/lib/source-presentation";
+import { useRouteScrollRestoration } from "@/hooks/useRouteScrollRestoration";
+import { useRouteFocusRestoration } from "@/hooks/useRouteFocusRestoration";
+import { useSessionStringSet } from "@/hooks/useSessionStringSet";
 
 const SOURCE_TYPES = ["pdf", "article", "conversation", "video", "web", "github"];
 const FEED_VIEWS = [
@@ -44,15 +47,18 @@ export function SourcesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const reviewFilter = searchParams.get("review") === "imported" ? "imported" : "";
-  const [typeFilter, setTypeFilter] = useState("");
-  const [newsOnly, setNewsOnly] = useState(false);
-  const [feedView, setFeedView] = useState("parents");
-  const [categoryFilter, setCategoryFilter] = useState<number | null>(null);
+  const requestedType = searchParams.get("type") ?? "";
+  const typeFilter = SOURCE_TYPES.includes(requestedType) ? requestedType : "";
+  const newsOnly = searchParams.get("news") === "1";
+  const requestedFeedView = searchParams.get("feed") ?? "parents";
+  const feedView = FEED_VIEWS.some((view) => view.value === requestedFeedView) ? requestedFeedView : "parents";
+  const requestedCategory = Number(searchParams.get("category"));
+  const categoryFilter = Number.isInteger(requestedCategory) && requestedCategory > 0 ? requestedCategory : null;
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<SourceCreate>({ title: "", category_id: 1, source_type: "article" });
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [pdfType, setPdfType] = useState("text");
-  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+  const [collapsedCategories, setCollapsedCategories] = useSessionStringSet("sources-collapsed-categories");
   const [paperForm, setPaperForm] = useState({ query: "", author: "", category: "", paperId: "", maxResults: 5, categoryId: 1 });
   const [githubForm, setGithubForm] = useState({ query: "", fullName: "", language: "", topic: "", minStars: "", maxResults: 5, categoryId: 1, fetchReadme: true });
   const [newsForm, setNewsForm] = useState({ query: "", language: "en", fromDate: "", toDate: "", maxResults: 5, categoryId: 1, fetchFullText: true });
@@ -80,6 +86,8 @@ export function SourcesPage() {
       limit: 100,
     }),
   });
+  const { scrollRef, onScroll } = useRouteScrollRestoration<HTMLDivElement>("sources-list", Boolean(data));
+  const { rememberFocus } = useRouteFocusRestoration("sources-list", Boolean(data));
 
   const visibleSources = useMemo(() => {
     const items = data?.items ?? [];
@@ -202,8 +210,7 @@ export function SourcesPage() {
       if (result.item) {
         setPaperDiscoveryItems((items) => items.map((item) => item.id === result.item!.id ? result.item! : item));
       }
-      setTypeFilter("article");
-      setFeedView("parents");
+      updateViewParams({ type: "article", news: null, feed: null, review: null });
       setConnectorMessage(`${result.created ? "Imported" : "Updated"} ${result.source?.title ?? paper.title}`);
     },
   });
@@ -227,8 +234,7 @@ export function SourcesPage() {
     onSuccess: (result, repo) => {
       queryClient.invalidateQueries({ queryKey: ["sources"] });
       setGithubResults((items) => items.map((item) => item.full_name === repo.full_name ? { ...item, cache_status: "saved", cache_expires_at: null, source_id: result.source.id } : item));
-      setTypeFilter("github");
-      setFeedView("parents");
+      updateViewParams({ type: "github", news: null, feed: null, review: null });
       setConnectorMessage(`${result.created ? "Kept" : "Updated"} ${result.source.title}`);
     },
   });
@@ -237,8 +243,7 @@ export function SourcesPage() {
     mutationFn: () => connectorsApi.importGitHub({ full_name: githubForm.fullName, category_id: githubForm.categoryId, fetch_readme: githubForm.fetchReadme }),
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["sources"] });
-      setTypeFilter("github");
-      setFeedView("parents");
+      updateViewParams({ type: "github", news: null, feed: null, review: null });
       setConnectorMessage(`${result.created ? "Kept" : "Updated"} ${result.source.title}`);
     },
   });
@@ -262,8 +267,7 @@ export function SourcesPage() {
     onSuccess: (result, article) => {
       queryClient.invalidateQueries({ queryKey: ["sources"] });
       setNewsResults((items) => items.map((item) => item.url === article.url ? { ...item, cache_status: "saved", cache_expires_at: null, source_id: result.source.id } : item));
-      setTypeFilter("article");
-      setFeedView("parents");
+      updateViewParams({ type: "article", feed: null, review: null });
       setConnectorMessage(`${result.created ? "Kept" : "Updated"} ${result.source.title}`);
     },
   });
@@ -317,6 +321,15 @@ export function SourcesPage() {
     setSearchParams(next, { replace: true });
   };
 
+  const updateViewParams = (updates: Record<string, string | null>) => {
+    const next = new URLSearchParams(searchParams);
+    for (const [key, value] of Object.entries(updates)) {
+      if (value) next.set(key, value);
+      else next.delete(key);
+    }
+    setSearchParams(next, { replace: true });
+  };
+
   const sourceDetailState = useMemo(() => ({
     backTo: `/sources${searchParams.toString() ? `?${searchParams.toString()}` : ""}`,
     backLabel: reviewFilter === "imported" ? "Back to Imported Review" : "Back to Sources",
@@ -324,7 +337,7 @@ export function SourcesPage() {
 
   return (
     <>
-    <div className="h-full overflow-y-auto">
+    <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto" data-route-scroll="sources-list">
       <div className="max-w-5xl mx-auto px-6 py-8">
         <ModuleSectionNav parent="knowledge" active="Sources" />
 
@@ -468,7 +481,7 @@ export function SourcesPage() {
             </div>
           )}
           <button
-            onClick={() => setCategoryFilter(null)}
+            onClick={() => updateViewParams({ category: null })}
             className={`px-3 py-1 rounded-md text-xs cursor-pointer transition-colors ${
               categoryFilter === null ? "bg-emerald-500/20 text-emerald-600 font-medium" : "text-muted-foreground hover:bg-accent"
             }`}
@@ -478,7 +491,7 @@ export function SourcesPage() {
           {categories.map((c) => (
             <button
               key={c.id}
-              onClick={() => setCategoryFilter(c.id)}
+              onClick={() => updateViewParams({ category: String(c.id) })}
               className={`px-3 py-1 rounded-md text-xs cursor-pointer transition-colors ${
                 categoryFilter === c.id ? "bg-emerald-500/20 text-emerald-600 font-medium" : "text-muted-foreground hover:bg-accent"
               }`}
@@ -491,7 +504,7 @@ export function SourcesPage() {
         {/* Type filter */}
         <div className="flex gap-2 mb-2 flex-wrap">
           <button
-            onClick={() => { setTypeFilter(""); clearReviewFilter(); }}
+            onClick={() => updateViewParams({ type: null, news: null, review: null })}
             className={`px-3 py-1 rounded-md text-xs cursor-pointer transition-colors ${
               !typeFilter ? "bg-primary/20 text-primary font-medium" : "text-muted-foreground hover:bg-accent"
             }`}
@@ -501,7 +514,7 @@ export function SourcesPage() {
           {SOURCE_TYPES.map((t) => (
             <button
               key={t}
-              onClick={() => { setTypeFilter(t); clearReviewFilter(); }}
+              onClick={() => updateViewParams({ type: t, news: null, review: null })}
               className={`px-3 py-1 rounded-md text-xs cursor-pointer transition-colors ${
                 typeFilter === t ? "bg-primary/20 text-primary font-medium" : "text-muted-foreground hover:bg-accent"
               }`}
@@ -510,7 +523,7 @@ export function SourcesPage() {
             </button>
           ))}
           <button
-            onClick={() => { setTypeFilter("article"); setNewsOnly((current) => !current); clearReviewFilter(); }}
+            onClick={() => updateViewParams({ type: "article", news: newsOnly ? null : "1", review: null })}
             className={`px-3 py-1 rounded-md text-xs cursor-pointer transition-colors ${
               newsOnly ? "bg-primary/20 text-primary font-medium" : "text-muted-foreground hover:bg-accent"
             }`}
@@ -583,7 +596,7 @@ export function SourcesPage() {
           {FEED_VIEWS.map((view) => (
             <button
               key={view.value}
-              onClick={() => setFeedView(view.value)}
+              onClick={() => updateViewParams({ feed: view.value === "parents" ? null : view.value })}
               className={`px-3 py-1 rounded-md text-xs cursor-pointer transition-colors ${
                 feedView === view.value ? "bg-orange-500/20 text-orange-600 font-medium" : "text-muted-foreground hover:bg-accent"
               }`}
@@ -627,7 +640,7 @@ export function SourcesPage() {
                         <SourceRow
                           key={source.id}
                           source={source}
-                          onClick={() => navigate(`/sources/${encodeURIComponent(source.id)}`, { state: sourceDetailState })}
+                          onClick={() => { rememberFocus(source.id); navigate(`/sources/${encodeURIComponent(source.id)}`, { state: sourceDetailState }); }}
                           reviewMode={reviewFilter === "imported"}
                           onKeep={() => keepImportedMutation.mutate(source.id)}
                           onDelete={() => setDeleteReviewSource(source)}
@@ -647,7 +660,7 @@ export function SourcesPage() {
               <SourceRow
                 key={source.id}
                 source={source}
-                onClick={() => navigate(`/sources/${encodeURIComponent(source.id)}`, { state: sourceDetailState })}
+                onClick={() => { rememberFocus(source.id); navigate(`/sources/${encodeURIComponent(source.id)}`, { state: sourceDetailState }); }}
                 reviewMode={reviewFilter === "imported"}
                 onKeep={() => keepImportedMutation.mutate(source.id)}
                 onDelete={() => setDeleteReviewSource(source)}
@@ -710,8 +723,17 @@ function SourceRow({
   const processing = getSourceProcessingState(source);
   return (
     <div
+      role="link"
+      tabIndex={0}
+      data-route-focus-id={source.id}
       className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-transparent hover:border-border hover:bg-accent/50 cursor-pointer transition-colors"
       onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick();
+        }
+      }}
     >
       <Badge variant="source" className="shrink-0">{label}</Badge>
       {isNews && <Badge variant="secondary" className="shrink-0">news</Badge>}

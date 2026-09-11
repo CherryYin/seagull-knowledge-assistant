@@ -22,12 +22,15 @@ import {
   type MindMapReferenceRead,
 } from "@/lib/api/mind-maps";
 import type { MindMapLayoutMode } from "@/lib/mind-map-layout";
+import type { Viewport } from "@xyflow/react";
+import { useReturnNavigation } from "@/hooks/useReturnNavigation";
 
 export function MindMapPage() {
   const { mapId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+  const locationState = location.state as { backTo?: string; backLabel?: string } | null;
   const treeQuery = useQuery({
     queryKey: ["mind-map-tree", mapId],
     queryFn: () => mindMapsApi.getTree(mapId!),
@@ -37,6 +40,7 @@ export function MindMapPage() {
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
   const [focusId, setFocusId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [viewport, setViewport] = useState<Viewport | null>(null);
   const [initializedMapId, setInitializedMapId] = useState<string | null>(null);
   const [mutationMode, setMutationMode] = useState<MindMapNodeMutationMode | null>(null);
   const [versionConflictMessage, setVersionConflictMessage] = useState<string | null>(null);
@@ -55,6 +59,7 @@ export function MindMapPage() {
       collapsedIds?: string[];
       focusId?: string | null;
       selectedId?: string | null;
+      viewport?: Viewport | null;
     } | null = null;
     try {
       const rawState = sessionStorage.getItem(`mind-map-view:${treeQuery.data.map.id}`);
@@ -77,6 +82,10 @@ export function MindMapPage() {
           ? storedState.selectedId
           : null,
     );
+    const storedViewport = storedState?.viewport;
+    setViewport(storedViewport && Number.isFinite(storedViewport.x) && Number.isFinite(storedViewport.y) && Number.isFinite(storedViewport.zoom)
+      ? storedViewport
+      : null);
     setInitializedMapId(treeQuery.data.map.id);
   }, [initializedMapId, location.search, treeQuery.data]);
 
@@ -87,8 +96,29 @@ export function MindMapPage() {
       collapsedIds: [...collapsedIds],
       focusId,
       selectedId,
+      viewport,
     }));
-  }, [collapsedIds, focusId, initializedMapId, layoutMode, mapId, selectedId]);
+  }, [collapsedIds, focusId, initializedMapId, layoutMode, mapId, selectedId, viewport]);
+
+  const ownerPath = treeQuery.data?.map.owner_type === "source"
+    ? `/sources/${encodeURIComponent(treeQuery.data.map.owner_id)}`
+    : treeQuery.data?.map.owner_type === "asset"
+      ? `/assets/${encodeURIComponent(treeQuery.data.map.owner_id)}`
+      : "/";
+  const backTo = locationState?.backTo || ownerPath;
+  const backLabel = locationState?.backLabel || `Back to ${treeQuery.data?.map.owner_type || "owner"}`;
+  const returnToPrevious = useReturnNavigation(backTo, false);
+
+  const updateSelectedId = (nextSelectedId: string | null) => {
+    setSelectedId(nextSelectedId);
+    const next = new URLSearchParams(location.search);
+    if (nextSelectedId) next.set("selected", nextSelectedId);
+    else next.delete("selected");
+    navigate(
+      { pathname: location.pathname, search: next.toString() ? `?${next.toString()}` : "" },
+      { replace: true, state: location.state },
+    );
+  };
 
   const referencesByNode = useMemo(() => {
     const result = new Map<string, MindMapReferenceRead[]>();
@@ -209,11 +239,11 @@ export function MindMapPage() {
       setMutationMode(null);
       setVersionConflictMessage(null);
       if (command.type === "delete") {
-        setSelectedId(null);
+        updateSelectedId(null);
         if (focusId && result.deleted_node_ids.includes(focusId)) setFocusId(null);
         setCollapsedIds((current) => new Set([...current].filter((nodeId) => !result.deleted_node_ids.includes(nodeId))));
       } else if (result.node?.id) {
-        setSelectedId(result.node.id);
+        updateSelectedId(result.node.id);
       }
       await refreshMindMap();
     },
@@ -244,9 +274,6 @@ export function MindMapPage() {
   }
 
   const { map } = treeQuery.data;
-  const ownerPath = map.owner_type === "source"
-    ? `/sources/${encodeURIComponent(map.owner_id)}`
-    : `/assets/${encodeURIComponent(map.owner_id)}`;
   const openSourceChunk = (reference: MindMapReferenceRead) => {
     if (map.owner_type !== "source" || reference.ref_type !== "source_chunk" || !selectedNode) return;
     const query = new URLSearchParams({ view: "slices", chunk_id: reference.ref_id });
@@ -264,15 +291,16 @@ export function MindMapPage() {
   const resetView = () => {
     setCollapsedIds(new Set());
     setFocusId(null);
-    setSelectedId(null);
+    updateSelectedId(null);
+    setViewport(null);
   };
 
   return (
     <div className="space-y-6" data-testid="mind-map-page">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <Button type="button" variant="ghost" size="sm" className="mb-2 -ml-3" onClick={() => navigate(-1)}>
-            <ArrowLeft className="h-4 w-4" /> Back
+          <Button type="button" variant="ghost" size="sm" className="mb-2 -ml-3" onClick={returnToPrevious}>
+            <ArrowLeft className="h-4 w-4" /> {backLabel}
           </Button>
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-2xl font-semibold tracking-tight">{map.title}</h1>
@@ -309,7 +337,7 @@ export function MindMapPage() {
           ) : breadcrumbs.map((node, index) => (
             <span key={node.id} className="text-sm">
               {index > 0 && <span className="mr-2 text-muted-foreground">/</span>}
-              <button type="button" className="hover:text-primary" onClick={() => setSelectedId(node.id)}>{node.content}</button>
+              <button type="button" className="hover:text-primary" onClick={() => updateSelectedId(node.id)}>{node.content}</button>
             </span>
           ))}
           <span className="ml-auto flex gap-2">
@@ -344,9 +372,11 @@ export function MindMapPage() {
               collapsedIds={collapsedIds}
               focusId={focusId}
               selectedId={selectedId}
-              onSelectedIdChange={setSelectedId}
+              onSelectedIdChange={updateSelectedId}
               onCollapsedIdsChange={setCollapsedIds}
               onMetricsChange={setMetrics}
+              initialViewport={viewport}
+              onViewportChange={setViewport}
             />
           </CardContent>
         </Card>

@@ -6,6 +6,7 @@ import {
   ReactFlow,
   type Edge,
   type NodeTypes,
+  type Viewport,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { MindMapTreeNode, type MindMapFlowNode } from "@/components/mind-map/MindMapTreeNode";
@@ -41,6 +42,8 @@ interface MindMapCanvasProps {
   className?: string;
   testId?: string;
   showMiniMap?: boolean;
+  initialViewport?: Viewport | null;
+  onViewportChange?: (viewport: Viewport) => void;
 }
 
 const nodeTypes: NodeTypes = { mindMapTreeNode: MindMapTreeNode };
@@ -57,6 +60,8 @@ export function MindMapCanvas({
   className,
   testId = "mind-map-canvas",
   showMiniMap = true,
+  initialViewport = null,
+  onViewportChange,
 }: MindMapCanvasProps) {
   const childrenByParent = useMemo(() => {
     const result = new Map<string, number>();
@@ -151,7 +156,8 @@ export function MindMapCanvas({
         nodes={flowNodes}
         edges={flowEdges}
         nodeTypes={nodeTypes}
-        fitView
+        fitView={!initialViewport}
+        defaultViewport={initialViewport ?? { x: 0, y: 0, zoom: 1 }}
         fitViewOptions={{ padding: 0.18, maxZoom: 1.1 }}
         minZoom={0.08}
         maxZoom={1.8}
@@ -160,6 +166,7 @@ export function MindMapCanvas({
         elementsSelectable
         onPaneClick={() => onSelectedIdChange(null)}
         onNodeClick={(_, node) => onSelectedIdChange(node.id)}
+        onMoveEnd={(_, viewport) => onViewportChange?.(viewport)}
         proOptions={{ hideAttribution: true }}
       >
         <Background gap={24} size={1} />

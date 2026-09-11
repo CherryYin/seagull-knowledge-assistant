@@ -44,6 +44,8 @@ import {
 } from "@/lib/agent-workflows";
 import { saveWorkflowResult } from "@/lib/workflow-result-save";
 import type { AssetIntentFormDraft, AssetIntentProposal } from "@/lib/asset-generation";
+import { useReturnNavigation } from "@/hooks/useReturnNavigation";
+import { useRouteScrollRestoration } from "@/hooks/useRouteScrollRestoration";
 
 type ChatLocationState = {
   promptSeed?: string;
@@ -51,6 +53,8 @@ type ChatLocationState = {
   objectRef?: AgentWorkflowContext["objectRef"];
   assetDraft?: AgentWorkflowContext["assetDraft"];
   assetIntentDraft?: AssetIntentFormDraft;
+  backTo?: string;
+  backLabel?: string;
 } | null;
 
 const CHAT_INPUT_HEIGHT_KEY = "seagull.chat.input-height";
@@ -122,10 +126,12 @@ function parseAssetIntentDraft(value: unknown): AssetIntentFormDraft | undefined
 export function ChatPage() {
   const location = useLocation();
   const navigate = useNavigate();
+  const initialNavigationParams = useRef(new URLSearchParams(location.search));
+  const initialTab = initialNavigationParams.current.get("tab") === "history" ? "history" : "chat";
   const [sessions, setSessions] = useState<ChatSessionRecord[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [selectedHistorySessionId, setSelectedHistorySessionId] = useState<string | null>(null);
-  const [tab, setTab] = useState<"chat" | "history">("chat");
+  const [tab, setTab] = useState<"chat" | "history">(initialTab);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [steps, setSteps] = useState<StepInfo[]>([]);
@@ -152,6 +158,10 @@ export function ChatPage() {
   const sessionSaveQueuesRef = useRef(new Map<string, Promise<void>>());
   const launchStateRef = useRef<ChatLocationState>(location.state as ChatLocationState);
   const launchContextPersistedRef = useRef(false);
+  const launchState = launchStateRef.current;
+  const backTo = launchState?.backTo || "/";
+  const backLabel = launchState?.backLabel || "Back";
+  const returnToPrevious = useReturnNavigation(backTo, Boolean(launchState?.backTo));
 
   useEffect(() => {
     return () => {
@@ -169,6 +179,8 @@ export function ChatPage() {
         if (cancelled) return;
         const resumableSessions = loaded.filter((session) => session.messages.length > 0);
         const launchState = launchStateRef.current;
+        const requestedSessionId = initialNavigationParams.current.get("session");
+        const requestedHistorySessionId = initialNavigationParams.current.get("history_session");
         const startsWorkflow = Boolean(launchState?.promptSeed || launchState?.workflowId);
         if (startsWorkflow) {
           const fresh = await createEmptySession();
@@ -180,10 +192,12 @@ export function ChatPage() {
           setSelectedHistorySessionId(fresh.id);
           setTab("chat");
         } else if (resumableSessions.length > 0) {
+          const requestedSession = resumableSessions.find((session) => session.id === requestedSessionId) ?? resumableSessions[0];
+          const requestedHistorySession = resumableSessions.find((session) => session.id === requestedHistorySessionId) ?? requestedSession;
           sessionsRef.current = resumableSessions;
           setSessions(resumableSessions);
-          setActiveSessionId(resumableSessions[0].id);
-          setSelectedHistorySessionId(resumableSessions[0].id);
+          setActiveSessionId(requestedSession.id);
+          setSelectedHistorySessionId(requestedHistorySession.id);
         } else {
           const fresh = await createEmptySession();
           if (cancelled) return;
@@ -235,7 +249,13 @@ export function ChatPage() {
     }
     setTab("chat");
     setSeedApplied(true);
-    navigate(location.pathname, { replace: true, state: null });
+    navigate(
+      { pathname: location.pathname, search: location.search },
+      {
+        replace: true,
+        state: state.backTo ? { backTo: state.backTo, backLabel: state.backLabel } : null,
+      },
+    );
     setTimeout(() => textareaRef.current?.focus(), 0);
   }, [location.pathname, navigate, seedApplied]);
 
@@ -250,6 +270,31 @@ export function ChatPage() {
     null;
   const selectedWorkflow = findAgentWorkflowTemplate(selectedWorkflowId);
   const workflowSections = groupAgentWorkflowTemplates();
+  const requestedMessageId = new URLSearchParams(location.search).get("message");
+  const {
+    scrollRef: messageScrollRef,
+    onScroll: onMessageScroll,
+    hasStoredScroll: hasStoredMessageScroll,
+  } = useRouteScrollRestoration<HTMLDivElement>(
+    `chat-session:${currentSession?.id ?? "none"}`,
+    Boolean(currentSession),
+  );
+
+  useEffect(() => {
+    if (loading || !activeSessionId) return;
+    const next = new URLSearchParams(location.search);
+    if (tab === "history") next.set("tab", "history");
+    else next.delete("tab");
+    next.set("session", activeSessionId);
+    if (tab === "history" && selectedHistorySessionId) next.set("history_session", selectedHistorySessionId);
+    else next.delete("history_session");
+    const nextSearch = next.toString();
+    if (nextSearch === new URLSearchParams(location.search).toString()) return;
+    navigate(
+      { pathname: location.pathname, search: `?${nextSearch}` },
+      { replace: true, state: location.state },
+    );
+  }, [activeSessionId, loading, location.pathname, location.search, location.state, navigate, selectedHistorySessionId, tab]);
 
   useEffect(() => {
     if (!currentSession) return;
@@ -271,11 +316,38 @@ export function ChatPage() {
     setAssetIntentProposalIssue(null);
   }, [currentSession]);
 
-  const scrollToBottom = useCallback(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    bottomRef.current?.scrollIntoView({ behavior });
   }, []);
 
-  useEffect(scrollToBottom, [currentSession?.messages, scrollToBottom]);
+  useEffect(() => {
+    if (!currentSession) return;
+    if (requestedMessageId) {
+      let secondFrame = 0;
+      const firstFrame = window.requestAnimationFrame(() => {
+        secondFrame = window.requestAnimationFrame(() => {
+          const scrollContainer = messageScrollRef.current;
+          const message = scrollContainer?.querySelector<HTMLElement>(
+            `[data-chat-message-id="${CSS.escape(requestedMessageId)}"]`,
+          );
+          if (!scrollContainer || !message) return;
+          const containerRect = scrollContainer.getBoundingClientRect();
+          const messageRect = message.getBoundingClientRect();
+          const centeredTop = scrollContainer.scrollTop
+            + messageRect.top
+            - containerRect.top
+            - Math.max(0, (scrollContainer.clientHeight - messageRect.height) / 2);
+          scrollContainer.scrollTo({ top: Math.max(0, centeredTop), behavior: "auto" });
+        });
+      });
+      return () => {
+        window.cancelAnimationFrame(firstFrame);
+        if (secondFrame) window.cancelAnimationFrame(secondFrame);
+      };
+    }
+    if (streaming) scrollToBottom();
+    else if (!hasStoredMessageScroll) window.requestAnimationFrame(() => scrollToBottom("auto"));
+  }, [currentSession, hasStoredMessageScroll, messageScrollRef, requestedMessageId, scrollToBottom, streaming]);
 
   useEffect(() => {
     if (loading || !currentSession) return;
@@ -699,7 +771,12 @@ export function ChatPage() {
       <div className="mx-auto flex h-full w-full max-w-6xl flex-col">
         <div className="mb-4 flex items-center justify-between gap-4">
           <div>
-					<h1 className="text-2xl font-bold">Agent Chat</h1>
+						{launchState?.backTo && (
+              <button type="button" onClick={returnToPrevious} className="mb-1 text-sm text-primary hover:underline">
+                {backLabel}
+              </button>
+            )}
+						<h1 className="text-2xl font-bold">Agent Chat</h1>
 					<p className="text-sm text-muted-foreground">
 						Ask the knowledge task assistant to search, reason, write, and save useful outputs back into the system.
 					</p>
@@ -730,7 +807,12 @@ export function ChatPage() {
                 </p>
               </div>
 
-              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6">
+              <div
+                ref={messageScrollRef}
+                onScroll={onMessageScroll}
+                className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6"
+                data-route-scroll="chat-messages"
+              >
                 {!currentSession || currentSession.messages.length === 0 ? (
                   <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
                     <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
@@ -797,8 +879,8 @@ export function ChatPage() {
                 ) : (
                   <div className="mx-auto max-w-3xl py-6">
                     {currentSession.messages.map((msg, idx) => (
+                      <div key={msg.id} data-chat-message-id={msg.id}>
                       <ChatMessage
-                        key={msg.id}
                         role={msg.role as "user" | "assistant"}
                         content={msg.content}
                         metadata={msg.metadata}
@@ -848,6 +930,7 @@ export function ChatPage() {
                         }
                         assetDraft={msg.role === "assistant" ? workflowContext.assetDraft : undefined}
                       />
+                      </div>
                     ))}
                     {streaming && steps.length > 0 && (
                       <ResearchSteps steps={steps} />

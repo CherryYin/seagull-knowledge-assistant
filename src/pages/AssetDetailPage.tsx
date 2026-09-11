@@ -16,6 +16,8 @@ import { QuestionCard } from "@/components/QuestionCard";
 import { splitAssetContent } from "@/lib/asset-content";
 import { createAssetBlock, createAssetDocument, loadAssetBlocks, serializeAssetBlocks, updateAssetBlock, updateAssetBlockClaimRefs, type AssetBlock } from "@/lib/asset-blocks";
 import { answerHarnessQuestion, harnessChat, type HarnessQuestionAnswer, type HarnessQuestionItem } from "@/lib/api";
+import { useReturnNavigation } from "@/hooks/useReturnNavigation";
+import { useRouteScrollRestoration } from "@/hooks/useRouteScrollRestoration";
 
 type ProductionEvent = {
   event_type?: string;
@@ -28,6 +30,7 @@ type ProductionEvent = {
 };
 
 type AssetDetailTab = "intent" | "evidence" | "claims" | "read" | "edit" | "knowledge" | "production";
+const ASSET_DETAIL_TABS: AssetDetailTab[] = ["intent", "evidence", "claims", "read", "edit", "knowledge", "production"];
 
 interface AssetBlockPatch {
   assetId: string;
@@ -799,6 +802,20 @@ export function AssetDetailPage() {
   const locationState = location.state as { backTo?: string; backLabel?: string; initialTab?: AssetDetailTab; stageNotice?: string } | null;
   const backTo = locationState?.backTo || "/assets";
   const backLabel = locationState?.backLabel || "Back to Assets";
+  const returnToPrevious = useReturnNavigation(backTo, Boolean(locationState?.backTo));
+  const requestedTab = new URLSearchParams(location.search).get("tab");
+  const routeTab = requestedTab && ASSET_DETAIL_TABS.includes(requestedTab as AssetDetailTab)
+    ? requestedTab as AssetDetailTab
+    : null;
+
+  const setActiveTab = (tab: AssetDetailTab) => {
+    const next = new URLSearchParams(location.search);
+    next.set("tab", tab);
+    navigate(
+      { pathname: location.pathname, search: `?${next.toString()}` },
+      { replace: true, state: location.state },
+    );
+  };
 
   const assetQuery = useQuery({
     queryKey: ["asset", id],
@@ -827,6 +844,10 @@ export function AssetDetailPage() {
   });
 
   const asset = assetQuery.data;
+  const { scrollRef, onScroll } = useRouteScrollRestoration<HTMLDivElement>(
+    `asset-detail:${id || "unknown"}`,
+    Boolean(asset),
+  );
   const optimizationMetadata = useMemo(() => readAssetOptimizationMetadata(asset?.metadata_), [asset?.metadata_]);
   const nextOptimizationRound = optimizationMetadata.completed_rounds + 1;
   const publishingSettingsQuery = useQuery({ queryKey: ["publishing-settings"], queryFn: () => authApi.getMyPublishingSettings() });
@@ -841,7 +862,6 @@ export function AssetDetailPage() {
   const [htmlPreview, setHtmlPreview] = useState("");
   const [htmlPreviewOpen, setHtmlPreviewOpen] = useState(false);
   const [htmlCopied, setHtmlCopied] = useState(false);
-  const [activeTab, setActiveTab] = useState<AssetDetailTab | null>(() => locationState?.initialTab ?? null);
   const [editTitle, setEditTitle] = useState("");
   const [editBrief, setEditBrief] = useState("");
   const [editOutline, setEditOutline] = useState("");
@@ -1835,6 +1855,8 @@ export function AssetDetailPage() {
     navigate("/chat", {
       state: {
         workflowId: "draft-asset",
+        backTo: `${location.pathname}${location.search}`,
+        backLabel: "Back to Asset",
         assetDraft: {
           assetId: asset.id,
           assetType: asset.asset_type,
@@ -1995,7 +2017,7 @@ export function AssetDetailPage() {
     mutationFn: () => assetsApi.delete(id),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["assets"] });
-      navigate("/assets");
+      navigate(backTo, { replace: true });
     },
   });
 
@@ -2070,7 +2092,9 @@ export function AssetDetailPage() {
   const isExporting = exportMutation.isPending || exportHtmlMutation.isPending;
   const isBusy = statusMutation.isPending || isExporting || publishMutation.isPending || savePublishFeedbackMutation.isPending || attachReferencesMutation.isPending;
   const primaryAction = useMemo(() => (asset ? buildPrimaryAction(asset, readinessQuery.data) : null), [asset, readinessQuery.data]);
-  const resolvedActiveTab = activeTab ?? (asset?.draft_content?.trim() ? "read" : workspaceQuery.data?.intent ? "intent" : "read");
+  const resolvedActiveTab = routeTab
+    ?? locationState?.initialTab
+    ?? (asset?.draft_content?.trim() ? "read" : workspaceQuery.data?.intent ? "intent" : "read");
   const contentPresentation = useMemo(() => splitAssetContent(asset?.draft_content), [asset?.draft_content]);
   const headings = useMemo(() => markdownHeadings(contentPresentation.readerMarkdown), [contentPresentation.readerMarkdown]);
   const audience = typeof asset?.metadata_?.audience === "string" ? asset.metadata_.audience : null;
@@ -2085,11 +2109,16 @@ export function AssetDetailPage() {
   }, [documentRevision.proposal, editBlocks]);
 
   return (
-    <div className="h-full overflow-y-auto">
+    <div
+      ref={scrollRef}
+      onScroll={onScroll}
+      className="h-full overflow-y-auto"
+      data-route-scroll="asset-detail"
+    >
       <div className="mx-auto max-w-6xl space-y-6 px-6 py-8">
         <div className="flex items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-2">
-            <Link to={backTo} className="text-sm text-primary hover:underline">{backLabel}</Link>
+            <button type="button" onClick={returnToPrevious} className="text-sm text-primary hover:underline">{backLabel}</button>
             {asset && <><span className="text-muted-foreground">/</span><Badge variant="outline">{assetTypeLabel(asset.asset_type)}</Badge><Badge variant="secondary">{STATUS_LABELS[asset.status]}</Badge></>}
             {!asset && <span className="text-sm text-muted-foreground">Loading Asset…</span>}
           </div>
@@ -2122,7 +2151,7 @@ export function AssetDetailPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="flex gap-2">
-              <Button variant="outline" onClick={() => navigate(backTo)}>
+              <Button variant="outline" onClick={returnToPrevious}>
                 {backLabel}
               </Button>
               {fallbackAsset && (

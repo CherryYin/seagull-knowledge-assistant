@@ -13,6 +13,7 @@ import { wikiApi, type WikiPage, type WikiPageCreate } from "@/lib/api";
 import { getWikiOrigin, getWikiRole } from "@/lib/wikiLifecycle";
 import { buildWikiTemplate, wikiTemplates } from "@/lib/wikiTemplates";
 import { ModuleSectionNav } from "@/components/SectionNav";
+import { useRouteScrollRestoration } from "@/hooks/useRouteScrollRestoration";
 
 const PAGE_TYPES = ["topic", "entity", "concept", "project", "comparison"];
 
@@ -28,13 +29,13 @@ function summarizePage(page: WikiPage) {
   return page.stale_reason || page.summary || page.content || "No summary yet.";
 }
 
-function WikiPageCard({ page }: { page: WikiPage }) {
+function WikiPageCard({ page, detailState }: { page: WikiPage; detailState: { backTo: string; backLabel: string } }) {
   const role = getWikiRole(page);
   const origin = getWikiOrigin(page);
   const tagPreview = (page.tags ?? []).filter((tag) => !tag.startsWith("wiki-")).slice(0, 3);
 
   return (
-    <Link key={page.id} to={`/wiki/${encodeURIComponent(page.id)}`}>
+    <Link key={page.id} to={`/wiki/${encodeURIComponent(page.id)}`} state={detailState}>
       <div className="group h-full rounded-2xl border border-border/70 bg-card/90 p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md">
         <div className="flex items-start justify-between gap-3">
           <div className="space-y-2">
@@ -109,6 +110,7 @@ export function WikiPage() {
     queryKey: ["wiki-pages"],
     queryFn: () => wikiApi.list({ limit: 100 }),
   });
+  const { scrollRef, onScroll } = useRouteScrollRestoration<HTMLDivElement>("wiki-list", Boolean(data));
 
   const createMutation = useMutation({
     mutationFn: wikiApi.create,
@@ -118,7 +120,9 @@ export function WikiPage() {
       setForm({ title: "", page_type: "topic", summary: "", content: "", domains: [], tags: [] });
       setDomainsCsv("");
       setTagsCsv("");
-      navigate(`/wiki/${encodeURIComponent(page.id)}`);
+      navigate(`/wiki/${encodeURIComponent(page.id)}`, {
+        state: { backTo: "/wiki", backLabel: "Back to Wiki" },
+      });
     },
   });
 
@@ -135,9 +139,18 @@ export function WikiPage() {
   const stablePages = useMemo(() => pages.filter((page) => getWikiRole(page) === "stable"), [pages]);
   const draftPages = useMemo(() => pages.filter((page) => getWikiRole(page) === "draft"), [pages]);
   const stalePages = useMemo(() => pages.filter((page) => Boolean(page.stale_triggered_at)), [pages]);
+  const wikiDetailState = useMemo(() => ({
+    backTo: `${location.pathname}${location.search}`,
+    backLabel: "Back to Wiki",
+  }), [location.pathname, location.search]);
 
   return (
-    <div className="h-full overflow-y-auto bg-gradient-to-b from-background via-background to-muted/20 p-6">
+    <div
+      ref={scrollRef}
+      onScroll={onScroll}
+      className="h-full overflow-y-auto bg-gradient-to-b from-background via-background to-muted/20 p-6"
+      data-route-scroll="wiki-list"
+    >
       <div className="mx-auto max-w-6xl space-y-6">
         <ModuleSectionNav parent="knowledge" active="Wiki" />
 
@@ -277,7 +290,7 @@ export function WikiPage() {
               />
             ) : (
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {pages.map((page) => <WikiPageCard key={page.id} page={page} />)}
+                {pages.map((page) => <WikiPageCard key={page.id} page={page} detailState={wikiDetailState} />)}
               </div>
             )}
           </CardContent>

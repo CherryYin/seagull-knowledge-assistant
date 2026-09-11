@@ -10,6 +10,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { MarkdownRenderer } from "@/components/markdown";
 import { assetsApi, wikiApi, type ReferenceRead, type WikiArticleDraft, type WikiPage, type WikiPageSourceCreate, type WikiPageUpdate } from "@/lib/api";
+import { useReturnNavigation } from "@/hooks/useReturnNavigation";
+import { useRouteScrollRestoration } from "@/hooks/useRouteScrollRestoration";
 import { getWikiOrigin, getWikiRole } from "@/lib/wikiLifecycle";
 import { buildAssetHandoffState } from "@/lib/asset-handoff";
 
@@ -112,6 +114,7 @@ export function WikiDetailPage() {
   const backTo = locationState?.backTo || "/wiki";
   const backLabel = locationState?.backLabel || "Back to Wiki";
   const flashMessage = locationState?.flashMessage || null;
+  const returnToPrevious = useReturnNavigation(backTo, Boolean(locationState?.backTo));
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<ReturnType<typeof wikiToDraft> | null>(null);
   const [activeUpdateDraftId, setActiveUpdateDraftId] = useState<number | null>(null);
@@ -131,6 +134,10 @@ export function WikiDetailPage() {
     queryFn: () => wikiApi.get(id!),
     enabled: !!id,
   });
+  const { scrollRef, onScroll } = useRouteScrollRestoration<HTMLDivElement>(
+    `wiki-detail:${id ?? "unknown"}`,
+    Boolean(page),
+  );
 
   const { data: assetLineage } = useQuery({
     queryKey: ["asset-knowledge-lineage", "wiki", id],
@@ -184,7 +191,7 @@ export function WikiDetailPage() {
     mutationFn: () => wikiApi.delete(id!),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["wiki-pages"] });
-      navigate(backTo);
+      navigate(backTo, { replace: true });
     },
   });
 
@@ -324,7 +331,7 @@ export function WikiDetailPage() {
   if (error || !page) {
     return (
       <div className="p-6">
-        <Button variant="ghost" size="sm" onClick={() => navigate(backTo)}>
+        <Button variant="ghost" size="sm" onClick={returnToPrevious}>
           <ArrowLeft className="h-4 w-4" /> {backLabel}
         </Button>
         <p className="mt-6 text-sm text-destructive">Wiki page not found or failed to load.</p>
@@ -333,10 +340,15 @@ export function WikiDetailPage() {
   }
 
   return (
-    <div className="h-full overflow-y-auto bg-[#f8f9fa] text-foreground dark:bg-background">
+    <div
+      ref={scrollRef}
+      onScroll={onScroll}
+      className="h-full overflow-y-auto bg-[#f8f9fa] text-foreground dark:bg-background"
+      data-route-scroll="wiki-detail"
+    >
       <div className="mx-auto max-w-7xl px-6 py-8">
         <div className="mb-6 flex flex-wrap items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={() => navigate(backTo)}>
+          <Button variant="ghost" size="sm" onClick={returnToPrevious}>
             <ArrowLeft className="h-4 w-4" /> {backLabel}
           </Button>
           {!editing ? (
@@ -355,6 +367,8 @@ export function WikiDetailPage() {
                     objectRef: { object_type: "wiki", object_id: page.id, title: page.title },
                     workflowId: "draft-wiki-refresh",
                     promptSeed: `Use wiki page "${page.title}" (${page.id}) to help me review its current canonical knowledge, inspect gaps, and propose the next draft/update/action without auto-applying changes.`,
+                    backTo: `${location.pathname}${location.search}`,
+                    backLabel: "Back to Wiki Page",
                   },
                 })}
               >

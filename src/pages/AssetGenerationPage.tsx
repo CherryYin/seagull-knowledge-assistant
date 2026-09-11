@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { useReturnNavigation } from "@/hooks/useReturnNavigation";
+import { useRouteScrollRestoration } from "@/hooks/useRouteScrollRestoration";
 
 function toggle(values: string[], id: string) {
   return values.includes(id) ? values.filter((value) => value !== id) : [...values, id];
@@ -30,7 +32,13 @@ export function AssetGenerationPage() {
     assetHandoff?: AssetHandoffState;
     assetIntentDraft?: AssetIntentFormDraft;
     assetIntentProposal?: AssetIntentProposal;
+    backTo?: string;
+    backLabel?: string;
   } | null;
+  const backTo = navigationState?.backTo || "/assets";
+  const backLabel = navigationState?.backLabel || "Back to Assets";
+  const returnToPrevious = useReturnNavigation(backTo, Boolean(navigationState));
+  const { scrollRef, onScroll } = useRouteScrollRestoration<HTMLDivElement>("asset-generation");
   const initialSeed = useMemo(() => buildAssetGenerationSeed(
     navigationState?.assetHandoff,
   ), [location.state]);
@@ -94,6 +102,8 @@ export function AssetGenerationPage() {
         workflowId: "clarify-asset-intent",
         promptSeed: `The Asset Intent is not confirmed yet. Help me clarify it without creating an Asset or treating Agent recommendations as my decisions.\n\n${partialIntent}`,
         assetIntentDraft,
+        backTo: `${location.pathname}${location.search}`,
+        backLabel: "Back to Asset Generation",
       },
     });
   }
@@ -158,9 +168,10 @@ export function AssetGenerationPage() {
           proposals: evidenceSeeds,
         });
       }
-      navigate(`/assets/${encodeURIComponent(asset.id)}`, {
+      navigate(`/assets/${encodeURIComponent(asset.id)}?tab=evidence`, {
         state: {
-          initialTab: "evidence",
+          backTo,
+          backLabel,
           stageNotice: evidenceSeeds.length > 0
             ? "The selected records are now Evidence candidates. Review them before generating Claims."
             : "Intent confirmed. Collect and accept Evidence before generating Claims.",
@@ -174,11 +185,16 @@ export function AssetGenerationPage() {
   }
 
   return (
-    <div className="h-full overflow-y-auto">
+    <div
+      ref={scrollRef}
+      onScroll={onScroll}
+      className="h-full overflow-y-auto"
+      data-route-scroll="asset-generation"
+    >
       <div className="mx-auto max-w-5xl space-y-6 px-6 py-8">
         <div>
-          <Button variant="ghost" size="sm" className="mb-3 -ml-2" onClick={() => navigate("/assets")}>
-            <ArrowLeft className="mr-2 h-4 w-4" />Back to Assets
+          <Button variant="ghost" size="sm" className="mb-3 -ml-2" onClick={returnToPrevious}>
+            <ArrowLeft className="mr-2 h-4 w-4" />{backLabel}
           </Button>
           <div className="flex items-start gap-4">
             <div className="rounded-2xl bg-primary/10 p-3 text-primary"><Sparkles className="h-6 w-6" /></div>

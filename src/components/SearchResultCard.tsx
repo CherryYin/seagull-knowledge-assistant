@@ -22,6 +22,8 @@ export function SearchResultCard({ result }: Props) {
       navigate(`/notes/${encodeURIComponent(result.id)}`, { state: backState });
     } else if (result.type === "wiki") {
       navigate(`/wiki/${encodeURIComponent(result.id)}`, { state: backState });
+    } else if (result.type === "asset") {
+      navigate(`/assets/${encodeURIComponent(result.id)}`, { state: backState });
     } else if (result.type === "memory") {
       return;
     } else {
@@ -50,6 +52,7 @@ export function SearchResultCard({ result }: Props) {
         objectRef: { object_type: result.type, object_id: result.id, title: result.title },
         workflowId,
         promptSeed: `Use this ${resultType} search result to answer my question or connect it to my knowledge base.\n\nTitle: ${result.title}\nID: ${result.id}\nMatch reason: ${matchReason}`,
+        ...backState,
       },
     });
   };
@@ -65,6 +68,7 @@ export function SearchResultCard({ result }: Props) {
           note_refs: result.type === "note" ? [result.id] : [],
           wiki_refs: result.type === "wiki" ? [result.id] : [],
         }),
+        ...backState,
       },
     });
   };

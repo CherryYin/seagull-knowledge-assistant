@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowRight, BookOpen, FileText, GitBranch, Map as MapIcon, RefreshCw, Sparkles, StickyNote, X } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { MindMapCanvas, type MindMapCanvasNode } from "@/components/mind-map/MindMapCanvas";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -83,6 +83,7 @@ function parseAgentProposal(value: string | undefined): SourceMindMapProposalVal
 
 export function SourceMindMapPanel({ source, chunkCount }: SourceMindMapPanelProps) {
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -105,6 +106,16 @@ export function SourceMindMapPanel({ source, chunkCount }: SourceMindMapPanelPro
       limit: 1,
     }),
   });
+  const updateSavedSelection = (nodeId: string | null) => {
+    setSelectedId(nodeId);
+    const next = new URLSearchParams(location.search);
+    if (nodeId) next.set("map_node", nodeId);
+    else next.delete("map_node");
+    navigate(
+      { pathname: location.pathname, search: next.toString() ? `?${next.toString()}` : "" },
+      { replace: true, state: location.state },
+    );
+  };
   const mindMap = mapsQuery.data?.items[0] ?? null;
   const stalenessQuery = useQuery({
     queryKey: ["mind-map-staleness", mindMap?.id],
@@ -317,6 +328,11 @@ export function SourceMindMapPanel({ source, chunkCount }: SourceMindMapPanelPro
   const selectedChunkIds = selectedNodeReferences
     .filter((reference) => reference.ref_type === "source_chunk")
     .map((reference) => reference.ref_id);
+  useEffect(() => {
+    const requestedNodeId = new URLSearchParams(location.search).get("map_node");
+    if (!requestedNodeId || !treeQuery.data?.nodes.some((node) => node.id === requestedNodeId)) return;
+    setSelectedId(requestedNodeId);
+  }, [location.search, treeQuery.data?.nodes]);
   const selectedNodeContext = selectedNode
     ? `Mind Map node #${selectedNode.display_id}: ${selectedNode.content}${selectedChunkIds.length ? `\nReferenced Source Chunks: ${selectedChunkIds.join(", ")}` : ""}`
     : "";
@@ -551,7 +567,15 @@ export function SourceMindMapPanel({ source, chunkCount }: SourceMindMapPanelPro
               Based on {String(displayedMap.basis_revision.chunk_count ?? chunkCount)} chunks · Updated {new Date(displayedMap.updated_at).toLocaleString()}
             </p>
           </div>
-          <Button type="button" onClick={() => navigate(`/mind-maps/${encodeURIComponent(mindMap.id)}`)}>
+          <Button type="button" onClick={() => navigate(
+            `/mind-maps/${encodeURIComponent(mindMap.id)}${selectedId ? `?selected=${encodeURIComponent(selectedId)}` : ""}`,
+            {
+              state: {
+                backTo: `${location.pathname}${location.search}`,
+                backLabel: "Back to Source",
+              },
+            },
+          )}>
             Open Full Map<ArrowRight className="h-4 w-4" />
           </Button>
         </CardHeader>
@@ -593,7 +617,7 @@ export function SourceMindMapPanel({ source, chunkCount }: SourceMindMapPanelPro
               collapsedIds={collapsedIds}
               focusId={null}
               selectedId={selectedId}
-              onSelectedIdChange={setSelectedId}
+              onSelectedIdChange={updateSavedSelection}
               onCollapsedIdsChange={setCollapsedIds}
               className="h-[520px]"
               testId="source-mind-map-preview"
@@ -637,6 +661,8 @@ export function SourceMindMapPanel({ source, chunkCount }: SourceMindMapPanelPro
                           objectRef: { object_type: "source", object_id: source.id, title: source.title, url: source.url ?? null },
                           workflowId: "draft-wiki-refresh",
                           promptSeed: `Create a reviewable canonical Wiki Draft from this selected Source Mind Map node. Preserve Source and Chunk provenance.\n\n${selectedNodeContext}`,
+                          backTo: `${location.pathname}${location.search}`,
+                          backLabel: "Back to Source Mind Map",
                         },
                       })}
                     >

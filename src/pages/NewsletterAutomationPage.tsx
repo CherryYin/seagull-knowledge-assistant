@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, CalendarClock, ExternalLink, Newspaper, Play, Save } from "lucide-react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { assetsApi, type NewsletterAutomationUpdate } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { useReturnNavigation } from "@/hooks/useReturnNavigation";
+import { useRouteScrollRestoration } from "@/hooks/useRouteScrollRestoration";
 
 const DEFAULT_FORM: NewsletterAutomationUpdate = {
   enabled: false,
@@ -34,8 +36,14 @@ function errorMessage(error: unknown) {
 
 export function NewsletterAutomationPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
+  const locationState = location.state as { backTo?: string; backLabel?: string } | null;
+  const backTo = locationState?.backTo || "/assets";
+  const backLabel = locationState?.backLabel || "Back to Assets";
+  const returnToPrevious = useReturnNavigation(backTo, Boolean(locationState?.backTo));
   const configQuery = useQuery({ queryKey: ["newsletter-automation"], queryFn: assetsApi.getNewsletterAutomation });
+  const { scrollRef, onScroll } = useRouteScrollRestoration<HTMLDivElement>("newsletter-automation", Boolean(configQuery.data));
   const [form, setForm] = useState<NewsletterAutomationUpdate>(DEFAULT_FORM);
   const [topicsText, setTopicsText] = useState("");
 
@@ -57,7 +65,12 @@ export function NewsletterAutomationPage() {
     onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["newsletter-automation"] });
       await queryClient.invalidateQueries({ queryKey: ["assets"] });
-      if (result.asset) navigate(`/assets/${encodeURIComponent(result.asset.id)}`);
+      if (result.asset) navigate(`/assets/${encodeURIComponent(result.asset.id)}?tab=read`, {
+        state: {
+          backTo: `${location.pathname}${location.search}`,
+          backLabel: "Back to Newsletter Automation",
+        },
+      });
     },
   });
 
@@ -78,9 +91,14 @@ export function NewsletterAutomationPage() {
   }
 
   return (
-    <div className="h-full overflow-y-auto">
+    <div
+      ref={scrollRef}
+      onScroll={onScroll}
+      className="h-full overflow-y-auto"
+      data-route-scroll="newsletter-automation"
+    >
       <div className="mx-auto max-w-5xl space-y-6 px-6 py-8">
-        <Button variant="ghost" size="sm" className="-ml-2" onClick={() => navigate("/assets")}><ArrowLeft className="mr-2 h-4 w-4" />Back to Assets</Button>
+        <Button variant="ghost" size="sm" className="-ml-2" onClick={returnToPrevious}><ArrowLeft className="mr-2 h-4 w-4" />{backLabel}</Button>
 
         <header className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div className="flex items-start gap-4">

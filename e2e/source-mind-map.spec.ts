@@ -146,10 +146,24 @@ async function installMockBff(page: Page, options?: {
         : json(route, { detail: "Unauthorized" }, 401);
     }
     if (path === "/api/auth/me/settings") return json(route, { settings: { modules: { onboarding_completed: true, enabled: [] } }, updated_at: now });
+    if (path === "/api/harness/models") return json(route, { models: [], failures: [] });
     if (path === "/api/sources/source-pdf") return json(route, source);
     if (path === "/api/sources/source-pdf/chunk-count") return json(route, { count: chunkCount });
     if (path === "/api/sources/source-pdf/chunks") return json(route, chunks);
     if (path === "/api/categories") return json(route, { items: [{ id: 1, name: "Research" }], total: 1 });
+    if (path === "/api/chat-sessions" && request.method() === "GET") {
+      return json(route, { items: [], total: 0 });
+    }
+    if (path === "/api/chat-sessions" && request.method() === "POST") {
+      const body = request.postDataJSON() as { id?: string };
+      return json(route, {
+        id: body.id ?? "session-source-map",
+        title: "New Session",
+        messages: [],
+        created_at: now,
+        updated_at: now,
+      }, 201);
+    }
     if (path === "/api/notes" && request.method() === "POST") {
       noteBody = request.postDataJSON() as Record<string, unknown>;
       return json(route, { id: "note-from-map", ...noteBody, domains: [], created_at: now, updated_at: now }, 201);
@@ -311,11 +325,17 @@ test("PDF Source previews an existing Mind Map and opens the full editor", async
   await expect(page.getByTestId("source-mind-map-ready")).toContainText("Ready");
   await expect(page.getByTestId("source-mind-map-preview")).toBeVisible();
   await expect(page.getByText("Coordination", { exact: true }).first()).toBeVisible();
+  await page.getByTestId("source-mind-map-preview").getByText("Coordination", { exact: true }).click();
+  await expect(page).toHaveURL(/\/sources\/source-pdf\?view=mind-map&map_node=branch$/);
   const savedMapEdge = page.getByTestId("source-mind-map-preview").locator(".react-flow__edge-path").first();
   await expect(savedMapEdge).toHaveAttribute("d", /.+/);
   await expect.poll(() => savedMapEdge.evaluate((element) => getComputedStyle(element).stroke)).not.toBe("none");
   await page.getByRole("button", { name: "Open Full Map" }).click();
-  await expect(page).toHaveURL(/\/mind-maps\/map-source-pdf$/);
+  await expect(page).toHaveURL(/\/mind-maps\/map-source-pdf\?selected=branch$/);
+  await expect(page.getByTestId("mind-map-page")).toBeVisible();
+  await page.getByRole("button", { name: "Back to Source", exact: true }).click();
+  await expect(page).toHaveURL(/\/sources\/source-pdf\?view=mind-map&map_node=branch$/);
+  await expect(page.getByTestId("source-mind-map-node-handoff")).toContainText("Coordination");
 });
 
 test("PDF Source confirms an Agent Proposal and persists it in the full Map", async ({ page }) => {
@@ -511,10 +531,12 @@ test("selected Source node hands off provenance to Asset, Note, and Wiki workflo
   await page.goBack();
   await selectCoordination();
   await page.getByTestId("source-mind-map-node-handoff").getByRole("button", { name: "Draft Wiki", exact: true }).click();
-  await expect(page).toHaveURL(/\/chat$/);
+  await expect(page.getByRole("heading", { name: "Agent Chat" })).toBeVisible({ timeout: 15_000 });
+  await expect(page).toHaveURL(/\/chat\?session=/, { timeout: 10_000 });
   const wikiHandoff = await page.evaluate(() => window.history.state.usr);
-  expect(wikiHandoff.workflowId).toBe("draft-wiki-refresh");
-  expect(String(wikiHandoff.promptSeed)).toContain("Referenced Source Chunks: 11");
+  expect(wikiHandoff.backLabel).toBe("Back to Source Mind Map");
+  await expect(page.getByPlaceholder("Ask anything about your knowledge base...")).toHaveValue(/Referenced Source Chunks: 11/);
+  await expect(page.getByRole("button", { name: "Back to Source Mind Map" })).toBeVisible();
 
   await page.goBack();
   await selectCoordination();

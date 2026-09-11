@@ -13,6 +13,8 @@ import { buildAssetHandoffState } from "@/lib/asset-handoff";
 import { getSourceProcessingState, getSourceProcessingSteps } from "@/lib/sourceProcessingStatus";
 import { isRssFeedSource, sourcePresentationLabel } from "@/lib/source-presentation";
 import { SourceMindMapPanel } from "@/components/mind-map";
+import { useReturnNavigation } from "@/hooks/useReturnNavigation";
+import { useRouteScrollRestoration } from "@/hooks/useRouteScrollRestoration";
 
 type ViewMode = "full" | "slices" | "mind-map";
 type SourceEditDraft = {
@@ -36,18 +38,20 @@ export function SourceDetailPage() {
   const requestedPage = navigationParams.get("page");
   const requestedQuote = navigationParams.get("quote");
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [viewMode, setViewMode] = useState<ViewMode>(() => navigationParams.get("view") === "slices" ? "slices" : "full");
+  const requestedView = navigationParams.get("view");
+  const viewMode: ViewMode = requestedView === "slices" || requestedView === "mind-map" ? requestedView : "full";
   const [selectedChunk, setSelectedChunk] = useState(0);
   const previewRef = useRef<HTMLDivElement>(null);
-  const handledChunkTargetRef = useRef<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<SourceEditDraft | null>(null);
+  const returnToPrevious = useReturnNavigation(backTo, Boolean(locationState?.backTo));
 
   const { data: source, isLoading, error } = useQuery({
     queryKey: ["source", id],
     queryFn: () => sourcesApi.get(id!),
     enabled: !!id,
   });
+  const { scrollRef, onScroll } = useRouteScrollRestoration<HTMLDivElement>(`source-detail:${id ?? "unknown"}`, Boolean(source));
 
   const { data: chunks } = useQuery({
     queryKey: ["source-chunks", id],
@@ -56,16 +60,29 @@ export function SourceDetailPage() {
   });
 
   useEffect(() => {
-    handledChunkTargetRef.current = null;
-    if (navigationParams.get("view") === "slices") setViewMode("slices");
-  }, [location.search, navigationParams]);
-
-  useEffect(() => {
-    if (!requestedChunkId || !chunks || handledChunkTargetRef.current === requestedChunkId) return;
+    if (!requestedChunkId || !chunks) return;
     const targetIndex = chunks.findIndex((chunk) => String(chunk.id) === requestedChunkId);
     if (targetIndex >= 0) setSelectedChunk(targetIndex);
-    handledChunkTargetRef.current = requestedChunkId;
   }, [chunks, requestedChunkId]);
+
+  const updateViewMode = (nextView: ViewMode) => {
+    const next = new URLSearchParams(location.search);
+    if (nextView === "full") next.delete("view");
+    else next.set("view", nextView);
+    if (nextView !== "slices") next.delete("chunk_id");
+    navigate({ pathname: location.pathname, search: next.toString() ? `?${next.toString()}` : "" }, { replace: true, state: location.state });
+  };
+
+  const selectChunk = (index: number) => {
+    setSelectedChunk(index);
+    const next = new URLSearchParams(location.search);
+    next.set("view", "slices");
+    const chunkId = chunks?.[index]?.id;
+    if (chunkId !== undefined && chunkId !== null) next.set("chunk_id", String(chunkId));
+    next.delete("page");
+    next.delete("quote");
+    navigate({ pathname: location.pathname, search: `?${next.toString()}` }, { replace: true, state: location.state });
+  };
 
   const { data: chunkCountData } = useQuery({
     queryKey: ["source-chunk-count", id],
@@ -230,6 +247,8 @@ export function SourceDetailPage() {
         },
         workflowId: "draft-wiki-refresh",
         promptSeed: `Create a reviewable canonical wiki draft from source "${source.title}" (${source.id}). Use only explicit evidence and preserve source provenance.`,
+        backTo: `${location.pathname}${location.search}`,
+        backLabel: "Back to Source",
       },
     });
   }
@@ -249,6 +268,8 @@ export function SourceDetailPage() {
         promptSeed: chunk
           ? `Use source "${source.title}" (${source.id}) and this selected chunk to help me:\n\n${chunk.content.slice(0, 2000)}`
           : `Use source "${source.title}" (${source.id}) to help me summarize, analyze, or turn it into a Note, Wiki Draft, or Asset proposal.`,
+        backTo: `${location.pathname}${location.search}`,
+        backLabel: "Back to Source",
       },
     });
   }
@@ -314,7 +335,7 @@ export function SourceDetailPage() {
         <p className="text-sm text-muted-foreground">
           This source may have been deleted, or the list may still contain stale cached data.
         </p>
-        <Button variant="outline" size="sm" onClick={() => navigate(backTo)}>
+        <Button variant="outline" size="sm" onClick={returnToPrevious}>
           <ArrowLeft className="h-4 w-4" /> {backLabel}
         </Button>
       </div>
@@ -330,11 +351,11 @@ export function SourceDetailPage() {
   const processingSteps = getSourceProcessingSteps(source, { chunkCount });
 
   return (
-    <div className="h-full overflow-y-auto">
+    <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto" data-route-scroll="source-detail">
       <div className="max-w-7xl mx-auto px-6 py-8">
         {/* Header */}
         <div className="flex flex-wrap items-center gap-2 mb-4">
-          <Button variant="ghost" size="sm" onClick={() => navigate(backTo)}>
+          <Button variant="ghost" size="sm" onClick={returnToPrevious}>
             <ArrowLeft className="h-4 w-4" /> {backLabel}
           </Button>
           {!editing && (
@@ -357,20 +378,20 @@ export function SourceDetailPage() {
           </Button>
           <div className="ml-auto flex items-center gap-1 rounded-md border border-border p-0.5">
             <button
-              onClick={() => setViewMode("full")}
+              onClick={() => updateViewMode("full")}
               className={`px-2.5 py-1 rounded text-xs transition-colors cursor-pointer ${viewMode === "full" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent"}`}
             >
               <FileText className="h-3.5 w-3.5 inline-block mr-1" />Full
             </button>
             <button
-              onClick={() => setViewMode("slices")}
+              onClick={() => updateViewMode("slices")}
               className={`px-2.5 py-1 rounded text-xs transition-colors cursor-pointer ${viewMode === "slices" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent"}`}
             >
               <List className="h-3.5 w-3.5 inline-block mr-1" />Slices
             </button>
             {source.source_type === "pdf" && (
               <button
-                onClick={() => setViewMode("mind-map")}
+                onClick={() => updateViewMode("mind-map")}
                 className={`px-2.5 py-1 rounded text-xs transition-colors cursor-pointer ${viewMode === "mind-map" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent"}`}
               >
                 <Network className="h-3.5 w-3.5 inline-block mr-1" />Mind Map
@@ -861,7 +882,7 @@ export function SourceDetailPage() {
                 <button
                   key={chunk.id}
                   type="button"
-                  onClick={() => setSelectedChunk(idx)}
+                  onClick={() => selectChunk(idx)}
                   data-testid={`source-chunk-${chunk.id}`}
                   aria-current={selectedChunk === idx ? "true" : undefined}
                   className={`w-full text-left px-3 py-2 border-b border-border/50 transition-colors cursor-pointer ${

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Search as SearchIcon, SlidersHorizontal } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -8,28 +8,56 @@ import { SearchResultCard } from "@/components/SearchResultCard";
 import { StateMessage } from "@/components/StateMessage";
 import { searchApi, type SearchResult } from "@/lib/api";
 import { ModuleSectionNav } from "@/components/SectionNav";
+import { useRouteScrollRestoration } from "@/hooks/useRouteScrollRestoration";
 
 const MODES = ["auto", "vector", "sql", "hybrid"] as const;
 
 export function SearchPage() {
   const navigate = useNavigate();
-  const [query, setQuery] = useState("");
-  const [mode, setMode] = useState<string>("auto");
-  const [submitted, setSubmitted] = useState("");
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const submitted = searchParams.get("q")?.trim() ?? "";
+  const requestedMode = searchParams.get("mode");
+  const mode = requestedMode && MODES.includes(requestedMode as typeof MODES[number]) ? requestedMode : "auto";
+  const [query, setQuery] = useState(submitted);
+
+  useEffect(() => {
+    setQuery(submitted);
+  }, [submitted]);
 
   const { data: results, isLoading, isError, refetch } = useQuery({
     queryKey: ["search", submitted, mode],
     queryFn: () => searchApi.search({ query: submitted, mode, top_k: 20 }),
     enabled: !!submitted,
   });
+  const { scrollRef, onScroll } = useRouteScrollRestoration<HTMLDivElement>(
+    "search-results",
+    !submitted || results !== undefined || isError,
+  );
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (query.trim()) setSubmitted(query.trim());
+    const nextQuery = query.trim();
+    if (!nextQuery) return;
+    const next = new URLSearchParams(searchParams);
+    next.set("q", nextQuery);
+    setSearchParams(next, { replace: true });
+  };
+
+  const updateMode = (nextMode: typeof MODES[number]) => {
+    const next = new URLSearchParams(searchParams);
+    if (nextMode === "auto") next.delete("mode");
+    else next.set("mode", nextMode);
+    setSearchParams(next, { replace: true });
   };
 
 	return (
-		<div className="h-full overflow-y-auto">
+			<div
+          ref={scrollRef}
+          onScroll={onScroll}
+          className="h-full overflow-y-auto"
+          data-route-scroll="search-results"
+        >
 			<div className="max-w-3xl mx-auto px-6 py-8 space-y-6">
 				<ModuleSectionNav parent="knowledge" active="Search" />
 				<div>
@@ -61,7 +89,7 @@ export function SearchPage() {
               <button
                 key={m}
                 type="button"
-                onClick={() => setMode(m)}
+                onClick={() => updateMode(m)}
                 className={`px-2.5 py-1 rounded-md text-xs transition-colors cursor-pointer ${
                   mode === m
                     ? "bg-primary/20 text-primary font-medium"
@@ -95,7 +123,7 @@ export function SearchPage() {
               title="No results found"
               description="Try a broader query, switch to hybrid mode, or ask Agent to research the topic using your existing knowledge first."
               actionLabel="Open Research Agent"
-              onAction={() => navigate("/chat", { state: { workflowId: "research-topic", promptSeed: `Research this topic: ${submitted}` } })}
+              onAction={() => navigate("/chat", { state: { workflowId: "research-topic", promptSeed: `Research this topic: ${submitted}`, backTo: `${location.pathname}${location.search}`, backLabel: "Back to Search" } })}
             />
           )}
 

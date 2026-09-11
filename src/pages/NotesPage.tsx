@@ -11,6 +11,9 @@ import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle } from 
 import { CategorySelect } from "@/components/CategorySelect";
 import { notesApi, categoriesApi, type NoteCreate, type Note } from "@/lib/api";
 import { ModuleSectionNav } from "@/components/SectionNav";
+import { useRouteScrollRestoration } from "@/hooks/useRouteScrollRestoration";
+import { useRouteFocusRestoration } from "@/hooks/useRouteFocusRestoration";
+import { useSessionStringSet } from "@/hooks/useSessionStringSet";
 
 const NOTE_TYPES = ["inbox", "architecture", "case-study", "concept", "how-to", "remember"];
 
@@ -18,15 +21,16 @@ export function NotesPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
-  const [typeFilter, setTypeFilter] = useState(searchParams.get("type") || "");
-  const [categoryFilter, setCategoryFilter] = useState<number | null>(() => {
-    const raw = searchParams.get("category");
-    return raw ? Number(raw) : null;
-  });
+  const requestedType = searchParams.get("type") ?? "";
+  const typeFilter = NOTE_TYPES.includes(requestedType) ? requestedType : "";
+  const requestedCategory = Number(searchParams.get("category"));
+  const categoryFilter = Number.isInteger(requestedCategory) && requestedCategory > 0
+    ? requestedCategory
+    : null;
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<NoteCreate>({ title: "", category_id: 1, note_type: "inbox", content: "", domains: [], tags: [] });
   const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+  const [collapsedCategories, setCollapsedCategories] = useSessionStringSet("notes-collapsed-categories");
 
   const { data: categoriesData } = useQuery({
     queryKey: ["categories"],
@@ -38,6 +42,8 @@ export function NotesPage() {
     queryKey: ["notes", typeFilter, categoryFilter],
     queryFn: () => notesApi.list({ note_type: typeFilter || undefined, category_id: categoryFilter ?? undefined, limit: 100 }),
   });
+  const { scrollRef, onScroll } = useRouteScrollRestoration<HTMLDivElement>("notes-list", Boolean(data));
+  const { rememberFocus } = useRouteFocusRestoration("notes-list", Boolean(data));
 
   // Group notes by category
   const groupedNotes = useMemo(() => {
@@ -97,7 +103,6 @@ export function NotesPage() {
   }), [searchParams]);
 
   const updateTypeFilter = (value: string) => {
-    setTypeFilter(value);
     const next = new URLSearchParams(searchParams);
     if (value) next.set("type", value);
     else next.delete("type");
@@ -105,7 +110,6 @@ export function NotesPage() {
   };
 
   const updateCategoryFilter = (value: number | null) => {
-    setCategoryFilter(value);
     const next = new URLSearchParams(searchParams);
     if (value !== null) next.set("category", String(value));
     else next.delete("category");
@@ -162,7 +166,12 @@ export function NotesPage() {
   const showGrouped = categoryFilter === null && groupedNotes.length > 1;
 
   return (
-    <div className="h-full overflow-y-auto">
+    <div
+      ref={scrollRef}
+      onScroll={onScroll}
+      className="h-full overflow-y-auto"
+      data-route-scroll="notes-list"
+    >
       <div className="max-w-5xl mx-auto px-6 py-8">
         <ModuleSectionNav parent="knowledge" active="Notes" />
 
@@ -282,7 +291,7 @@ export function NotesPage() {
           {categories.map((c) => (
             <button
               key={c.id}
-              onClick={() => setCategoryFilter(c.id)}
+              onClick={() => updateCategoryFilter(c.id)}
               className={`px-3 py-1 rounded-md text-xs cursor-pointer transition-colors ${
                 categoryFilter === c.id ? "bg-emerald-500/20 text-emerald-600 font-medium" : "text-muted-foreground hover:bg-accent"
               }`}
@@ -333,7 +342,7 @@ export function NotesPage() {
             </div>
             <div className="grid gap-3 md:grid-cols-2">
               {pinnedNotes.map((note) => (
-                <NoteCard key={note.id} note={note} onClick={() => navigate(`/notes/${encodeURIComponent(note.id)}`, { state: noteDetailState })} onPinToggle={(e) => handlePinToggle(note.id, e)} />
+                <NoteCard key={note.id} note={note} onClick={() => { rememberFocus(note.id); navigate(`/notes/${encodeURIComponent(note.id)}`, { state: noteDetailState }); }} onPinToggle={(e) => handlePinToggle(note.id, e)} />
               ))}
             </div>
           </div>
@@ -362,7 +371,7 @@ export function NotesPage() {
                   {!isCollapsed && (
                     <div className="grid gap-3 md:grid-cols-2">
                       {group.notes.filter((note) => !note.is_pinned).map((note) => (
-                        <NoteCard key={note.id} note={note} onClick={() => navigate(`/notes/${encodeURIComponent(note.id)}`, { state: noteDetailState })} onPinToggle={(e) => handlePinToggle(note.id, e)} />
+                        <NoteCard key={note.id} note={note} onClick={() => { rememberFocus(note.id); navigate(`/notes/${encodeURIComponent(note.id)}`, { state: noteDetailState }); }} onPinToggle={(e) => handlePinToggle(note.id, e)} />
                       ))}
                     </div>
                   )}
@@ -374,7 +383,7 @@ export function NotesPage() {
           /* Flat list (filtered by category or only one category) */
           <div className="grid gap-3 md:grid-cols-2">
             {data?.items.filter((note) => !note.is_pinned).map((note) => (
-              <NoteCard key={note.id} note={note} onClick={() => navigate(`/notes/${encodeURIComponent(note.id)}`, { state: noteDetailState })} onPinToggle={(e) => handlePinToggle(note.id, e)} />
+              <NoteCard key={note.id} note={note} onClick={() => { rememberFocus(note.id); navigate(`/notes/${encodeURIComponent(note.id)}`, { state: noteDetailState }); }} onPinToggle={(e) => handlePinToggle(note.id, e)} />
             ))}
           </div>
         )}
@@ -387,7 +396,19 @@ function NoteCard({ note, onClick, onPinToggle }: { note: Note; onClick: () => v
   const preview = buildNotePreview(note);
 
   return (
-    <Card className={`cursor-pointer hover:border-primary/40 transition-colors ${note.is_pinned ? "border-primary/50" : ""}`} onClick={onClick}>
+    <Card
+      role="link"
+      tabIndex={0}
+      data-route-focus-id={note.id}
+      className={`cursor-pointer hover:border-primary/40 transition-colors ${note.is_pinned ? "border-primary/50" : ""}`}
+      onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick();
+        }
+      }}
+    >
       <CardHeader className="pb-2">
         <div className="flex items-center gap-2 mb-1">
           <Badge variant="note">{note.note_type}</Badge>

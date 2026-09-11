@@ -42,6 +42,11 @@ type MockState = {
   documentOptimizationCalls?: number;
   intentResponseModes?: Array<"tool-call" | "tool-result" | "text-only">;
   evidenceProposalConflictOnce?: boolean;
+  noteItems?: Array<Record<string, unknown>>;
+  wikiItems?: Array<Record<string, unknown>>;
+  assetItems?: Array<Record<string, unknown>>;
+  searchResults?: Array<Record<string, unknown>>;
+  searchRequests?: Array<Record<string, unknown>>;
 };
 
 const intentProposal = {
@@ -296,6 +301,14 @@ async function installMockBff(page: Page, state: MockState) {
       state.savedAssetBody = request.postDataJSON() as Record<string, unknown>;
       return json(route, { id: "asset-e2e", ...state.savedAssetBody, created_at: now, updated_at: now });
     }
+    if (path === "/api/assets" && method === "GET") {
+      const items = state.assetItems ?? (state.savedAssetBody ? [{ id: "asset-e2e", user_id: "user-e2e", ...state.savedAssetBody, source_refs: state.savedAssetBody.source_refs ?? [], note_refs: state.savedAssetBody.note_refs ?? [], wiki_refs: state.savedAssetBody.wiki_refs ?? [], created_at: now, updated_at: now }] : []);
+      return json(route, { items, total: items.length });
+    }
+    if (path === "/api/search" && method === "POST") {
+      state.searchRequests = [...(state.searchRequests ?? []), request.postDataJSON() as Record<string, unknown>];
+      return json(route, state.searchResults ?? []);
+    }
     if (path === "/api/assets/knowledge-lineage" && method === "GET") {
       const targetType = url.searchParams.get("target_type") as "note" | "wiki";
       const targetId = url.searchParams.get("target_id") ?? "";
@@ -540,7 +553,8 @@ async function installMockBff(page: Page, state: MockState) {
     }
     if (path === "/api/notes" && method === "GET") {
       if (url.searchParams.get("note_type") === "digest") return json(route, { items: [], total: 0 });
-      return json(route, { items: [{ id: "note-input", title: "E2E Knowledge Note", note_type: "inbox", status: "kept", category_id: 1, domains: [], tags: [], confidence: "medium", source_ids: [], created_at: now, updated_at: now }], total: 1 });
+      const items = state.noteItems ?? [{ id: "note-input", title: "E2E Knowledge Note", note_type: "inbox", status: "kept", category_id: 1, domains: [], tags: [], confidence: "medium", source_ids: [], created_at: now, updated_at: now }];
+      return json(route, { items, total: items.length });
     }
     if (path === "/api/notes/note-input" && method === "GET") {
       return json(route, { id: "note-input", title: "E2E Knowledge Note", note_type: "concept", status: "seed", category_id: 1, category_name: "Inbox", abstract: "A distilled note.", content: "# Distilled Note\n\nReusable knowledge.", project: null, domains: [], tags: ["asset-promotion"], confidence: "medium", source_ids: [], file_path: null, word_count: 4, is_pinned: false, created_at: now, updated_at: now });
@@ -562,6 +576,10 @@ async function installMockBff(page: Page, state: MockState) {
       });
     }
     if (path === "/api/sources/source-input/chunk-count") return json(route, { count: 1 });
+    if (path === "/api/sources/source-input/chunks") return json(route, [
+      { id: 1, source_id: "source-input", chunk_index: 0, content: "First Source slice." },
+      { id: 2, source_id: "source-input", chunk_index: 1, content: "Second Source slice." },
+    ]);
     if (path === "/api/sources/source-input/articles") return json(route, { items: [], total: 0 });
     if (path === "/api/sources/source-rss") {
       return json(route, {
@@ -611,7 +629,10 @@ async function installMockBff(page: Page, state: MockState) {
     }
     if (path === "/api/wiki/wiki-input/sources" && method === "GET") return json(route, []);
     if (path === "/api/wiki/update-drafts" && method === "GET") return json(route, []);
-    if (path === "/api/wiki") return json(route, { items: [{ id: "wiki-input", title: "E2E Stable Wiki", page_type: "topic", content: "Stable knowledge", domains: [], tags: [], derived_from_notes: [], derived_from_sources: [], open_questions: [], needs_recompile: false, created_at: now, updated_at: now }], total: 1 });
+    if (path === "/api/wiki") {
+      const items = state.wikiItems ?? [{ id: "wiki-input", title: "E2E Stable Wiki", page_type: "topic", content: "Stable knowledge", domains: [], tags: [], derived_from_notes: [], derived_from_sources: [], open_questions: [], needs_recompile: false, created_at: now, updated_at: now }];
+      return json(route, { items, total: items.length });
+    }
     if (path === "/api/review/suggestions") return json(route, { items: [], total: 0 });
 
     return json(route, {});
@@ -635,7 +656,7 @@ async function advanceAssetToInitialDraftGeneration(page: Page) {
   await page.getByRole("button", { name: "Save to Claim Board" }).click();
   await page.getByRole("button", { name: "Accept", exact: true }).click();
   await page.getByRole("button", { name: "Generate Initial Draft" }).click();
-  await expect(page).toHaveURL(/\/chat$/);
+  await expect(page).toHaveURL(/\/chat\?session=/);
 }
 
 test("critical knowledge journey: login, chat, explicit save, decisions, and Agent Memory", async ({ page }) => {
@@ -713,7 +734,7 @@ test("Asset Intent Agent starts a fresh session and restores its apply action", 
   await page.getByLabel("Asset title").fill("User working title");
   await page.getByLabel("Research question").fill("A rough question");
   await page.getByRole("button", { name: "Discuss Intent with Agent" }).click();
-  await expect(page).toHaveURL(/\/chat$/);
+  await expect(page).toHaveURL(/\/chat\?session=/);
   await expect(page.getByRole("tab", { name: "Chat", exact: true })).toHaveAttribute("data-state", "active");
 
   const input = page.getByPlaceholder("Ask anything about your knowledge base...");
@@ -864,6 +885,60 @@ test("Chat ignores legacy empty workflow sessions before starting a general conv
 
   await expect.poll(() => state.harnessSessionIds?.at(-1)).not.toBe("session-distill-legacy");
   expect(state.chatRequests?.at(-1)).toMatchObject({ preset: "knowledge-lab", create_session: true });
+});
+
+test("Chat restores session, History selection, message anchor, and business return", async ({ page }) => {
+  const sessionOne = {
+    id: "session-one",
+    title: "First persisted session",
+    messages: [{ id: "msg-one", role: "user", content: "First session message", created_at: now }],
+    created_at: now,
+    updated_at: now,
+  };
+  const sessionTwo = {
+    id: "session-two",
+    title: "Second persisted session",
+    messages: Array.from({ length: 24 }, (_, index) => ({
+      id: `msg-two-${index}`,
+      role: index % 2 === 0 ? "user" : "assistant",
+      content: `Persisted session message ${index + 1}. ${"Navigation context ".repeat(8)}`,
+      created_at: now,
+    })),
+    created_at: now,
+    updated_at: "2026-09-11T09:00:00.000Z",
+  };
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: null,
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+    chatSessions: [sessionOne, sessionTwo],
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/chat?tab=history&session=session-one&history_session=session-two&message=msg-two-18");
+  await expect(page.getByRole("tab", { name: "History" })).toHaveAttribute("data-state", "active");
+  await expect(page.getByRole("heading", { name: "Second persisted session" })).toBeVisible();
+  await page.getByRole("button", { name: "Open In Chat" }).click();
+  await expect.poll(() => {
+    const url = new URL(page.url());
+    return { tab: url.searchParams.get("tab"), session: url.searchParams.get("session"), message: url.searchParams.get("message") };
+  }).toEqual({ tab: null, session: "session-two", message: "msg-two-18" });
+  await expect(page.getByRole("heading", { name: "Second persisted session" })).toBeVisible();
+  await expect.poll(async () => page.locator('[data-route-scroll="chat-messages"]').evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Second persisted session" })).toBeVisible();
+
+  await page.goto("/sources/source-input");
+  await page.getByRole("button", { name: "Ask Agent" }).click();
+  await expect(page).toHaveURL(/\/chat\?session=/);
+  await expect(page.getByRole("button", { name: "Back to Source" })).toBeVisible();
+  await page.getByRole("button", { name: "Back to Source" }).click();
+  await expect(page).toHaveURL(/\/sources\/source-input$/);
 });
 
 test("Asset creation stores HTML delivery preference while preserving Markdown authoring", async ({ page }) => {
@@ -1019,7 +1094,7 @@ test("Newsletter Automation saves a schedule and creates a reviewable Asset draf
   expect(state.newsletterAutomation?.frequency).toBe("daily");
 
   await page.getByRole("button", { name: "Run now" }).click();
-  await expect(page).toHaveURL(/\/assets\/asset-e2e$/);
+  await expect(page).toHaveURL(/\/assets\/asset-e2e\?tab=read$/);
   await expect(page.getByRole("heading", { name: "E2E Tech Weekly · 2026-09-03", exact: true }).last()).toBeVisible();
   expect(state.savedAssetBody).toMatchObject({ asset_type: "newsletter_issue", status: "draft" });
 });
@@ -1057,7 +1132,7 @@ test("agent-assisted Asset generation creates a Workspace after Intent confirmat
   await page.getByRole("button", { name: "Confirm Intent & Review Evidence" }).click();
   await expect.poll(() => state.savedAssetBody?.title).toBe("E2E Research Brief");
   expect(state.savedAssetBody?.draft_content).toBeUndefined();
-  await expect(page).toHaveURL(/\/assets\/asset-e2e$/);
+  await expect(page).toHaveURL(/\/assets\/asset-e2e\?tab=evidence$/);
   await expect(page.getByRole("tab", { name: "Evidence" })).toHaveAttribute("data-state", "active");
   await expect(page.getByText("The selected records are now Evidence candidates.")).toBeVisible();
   await expect(page.getByText("Evidence review required")).toBeVisible();
@@ -1074,7 +1149,7 @@ test("agent-assisted Asset generation creates a Workspace after Intent confirmat
   await page.getByRole("button", { name: "Accept", exact: true }).click();
   await expect(page.getByText("Claims ready")).toBeVisible();
   await page.getByRole("button", { name: "Generate Initial Draft" }).click();
-  await expect(page).toHaveURL(/\/chat$/);
+  await expect(page).toHaveURL(/\/chat\?session=/);
   let input = page.getByPlaceholder("Ask anything about your knowledge base...");
   await expect(input).toContainText("The Intent, Evidence Gate, and Claim Gate are complete");
   await expect(input).toContainText("The selected evidence supports a focused architecture decision.");
@@ -1238,6 +1313,347 @@ test("Source Asset handoff opens the generation guide with evidence preselected"
   await expect(page.getByLabel("E2E Source Evidence")).toBeChecked();
   await expect(page.getByText("Intent not confirmed", { exact: false })).toBeVisible();
   await expect.poll(() => state.savedAssetBody).toBeNull();
+});
+
+test("Source detail returns to the previous filtered list position without adding a fake back entry", async ({ page }) => {
+  const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/sources?type=article&news=1&feed=all");
+  const sourceScroller = page.locator('[data-route-scroll="sources-list"]');
+  await expect(sourceScroller).toBeVisible();
+  await expect(page).toHaveURL(/\/sources\?type=article&news=1&feed=all$/);
+
+  await page.getByText("E2E Source Evidence", { exact: true }).scrollIntoViewIfNeeded();
+  const scrollTopBeforeOpen = await sourceScroller.evaluate((element) => {
+    element.scrollTop = Math.min(element.scrollHeight - element.clientHeight, Math.max(element.scrollTop, 320));
+    element.dispatchEvent(new Event("scroll"));
+    return element.scrollTop;
+  });
+  expect(scrollTopBeforeOpen).toBeGreaterThan(0);
+
+  await page.getByText("E2E Source Evidence", { exact: true }).click();
+  await expect(page).toHaveURL(/\/sources\/source-input$/);
+  await page.getByRole("button", { name: "Slices" }).click();
+  await expect(page).toHaveURL(/\/sources\/source-input\?view=slices$/);
+  await page.getByTestId("source-chunk-2").click();
+  await expect(page).toHaveURL(/\/sources\/source-input\?view=slices&chunk_id=2$/);
+  await page.getByRole("button", { name: "Full" }).click();
+  await expect(page).toHaveURL(/\/sources\/source-input$/);
+  await page.getByRole("button", { name: "Back to Sources" }).click();
+
+  await expect(page).toHaveURL(/\/sources\?type=article&news=1&feed=all$/);
+  await expect.poll(async () => page.locator('[data-route-scroll="sources-list"]').evaluate((element) => element.scrollTop)).toBe(scrollTopBeforeOpen);
+  await expect.poll(async () => page.evaluate(() => document.activeElement?.getAttribute("data-route-focus-id"))).toBe("source-input");
+
+  await page.goBack();
+  await expect(page).not.toHaveURL(/\/sources\/source-input$/);
+});
+
+test("Note detail returns to the previous filtered list position without adding a fake back entry", async ({ page }) => {
+  const fillerNotes = Array.from({ length: 24 }, (_, index) => ({
+    id: `note-${index}`,
+    title: `Navigation Memory Note ${String(index + 1).padStart(2, "0")}`,
+    note_type: "concept",
+    status: "kept",
+    category_id: 1,
+    category_name: "Inbox",
+    domains: [],
+    tags: [],
+    confidence: "medium",
+    source_ids: [],
+    is_pinned: false,
+    created_at: now,
+    updated_at: now,
+  }));
+  fillerNotes.splice(18, 0, {
+    id: "note-input",
+    title: "E2E Knowledge Note",
+    note_type: "concept",
+    status: "kept",
+    category_id: 1,
+    category_name: "Inbox",
+    domains: [],
+    tags: [],
+    confidence: "medium",
+    source_ids: [],
+    is_pinned: false,
+    created_at: now,
+    updated_at: now,
+  });
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: null,
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+    noteItems: fillerNotes,
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/notes?type=concept&category=1");
+  const notesScroller = page.locator('[data-route-scroll="notes-list"]');
+  await expect(notesScroller).toBeVisible();
+  await expect(page).toHaveURL(/\/notes\?type=concept&category=1$/);
+
+  await page.getByText("E2E Knowledge Note", { exact: true }).scrollIntoViewIfNeeded();
+  const scrollTopBeforeOpen = await notesScroller.evaluate((element) => {
+    element.scrollTop = Math.min(element.scrollHeight - element.clientHeight, Math.max(element.scrollTop, 320));
+    element.dispatchEvent(new Event("scroll"));
+    return element.scrollTop;
+  });
+  expect(scrollTopBeforeOpen).toBeGreaterThan(0);
+
+  await page.getByText("E2E Knowledge Note", { exact: true }).click();
+  await expect(page).toHaveURL(/\/notes\/note-input$/);
+  await page.getByRole("button", { name: "Slices" }).click();
+  await expect(page).toHaveURL(/\/notes\/note-input\?view=slices$/);
+  await page.getByRole("button", { name: "RAW" }).click();
+  await expect(page).toHaveURL(/\/notes\/note-input\?view=slices&render=raw$/);
+  await page.getByRole("button", { name: "Back to Notes" }).click();
+
+  await expect(page).toHaveURL(/\/notes\?type=concept&category=1$/);
+  await expect.poll(async () => page.locator('[data-route-scroll="notes-list"]').evaluate((element) => element.scrollTop)).toBe(scrollTopBeforeOpen);
+  await expect.poll(async () => page.evaluate(() => document.activeElement?.getAttribute("data-route-focus-id"))).toBe("note-input");
+
+  await page.goBack();
+  await expect(page).not.toHaveURL(/\/notes\/note-input/);
+});
+
+test("Wiki detail returns to the previous list position without adding a fake back entry", async ({ page }) => {
+  const wikiItems = Array.from({ length: 30 }, (_, index) => ({
+    id: `wiki-${index}`,
+    title: `Navigation Memory Wiki ${String(index + 1).padStart(2, "0")}`,
+    page_type: "topic",
+    summary: `Canonical navigation test page ${index + 1}.`,
+    content: "Stable knowledge",
+    domains: [],
+    tags: [],
+    derived_from_notes: [],
+    derived_from_sources: [],
+    open_questions: [],
+    needs_recompile: false,
+    stale_reason: null,
+    stale_triggered_at: null,
+    created_at: now,
+    updated_at: now,
+  }));
+  wikiItems.splice(22, 0, {
+    id: "wiki-input",
+    title: "E2E Stable Wiki",
+    page_type: "topic",
+    summary: "A distilled wiki.",
+    content: "Stable knowledge",
+    domains: [],
+    tags: [],
+    derived_from_notes: [],
+    derived_from_sources: [],
+    open_questions: [],
+    needs_recompile: false,
+    stale_reason: null,
+    stale_triggered_at: null,
+    created_at: now,
+    updated_at: now,
+  });
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: null,
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+    wikiItems,
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/wiki");
+  const wikiScroller = page.locator('[data-route-scroll="wiki-list"]');
+  await expect(wikiScroller).toBeVisible();
+
+  await page.getByText("E2E Stable Wiki", { exact: true }).scrollIntoViewIfNeeded();
+  const scrollTopBeforeOpen = await wikiScroller.evaluate((element) => {
+    element.scrollTop = Math.min(element.scrollHeight - element.clientHeight, Math.max(element.scrollTop, 420));
+    element.dispatchEvent(new Event("scroll"));
+    return element.scrollTop;
+  });
+  expect(scrollTopBeforeOpen).toBeGreaterThan(0);
+
+  await page.getByText("E2E Stable Wiki", { exact: true }).click();
+  await expect(page).toHaveURL(/\/wiki\/wiki-input$/);
+  await page.getByRole("button", { name: "Back to Wiki" }).click();
+
+  await expect(page).toHaveURL(/\/wiki$/);
+  await expect.poll(async () => page.locator('[data-route-scroll="wiki-list"]').evaluate((element) => element.scrollTop)).toBe(scrollTopBeforeOpen);
+
+  await page.goBack();
+  await expect(page).not.toHaveURL(/\/wiki\/wiki-input$/);
+});
+
+test("Asset detail and Newsletter return to the filtered library position without fake back entries", async ({ page }) => {
+  const assetItems = Array.from({ length: 27 }, (_, index) => ({
+    id: `asset-${index}`,
+    user_id: "user-e2e",
+    title: `Navigation Asset ${String(index + 1).padStart(2, "0")}`,
+    brief: `Navigation memory regression asset ${index + 1}.`,
+    asset_type: "research_brief",
+    status: "draft",
+    draft_content: `# Navigation Asset ${index + 1}\n\nDraft content.`,
+    source_refs: [],
+    note_refs: [],
+    wiki_refs: [],
+    metadata_: {},
+    created_at: now,
+    updated_at: now,
+  }));
+  const targetAsset = {
+    id: "asset-e2e",
+    user_id: "user-e2e",
+    title: "Navigation Asset Target",
+    brief: "Asset used to verify filtered navigation memory.",
+    asset_type: "research_brief",
+    status: "draft",
+    draft_content: "# Navigation Asset Target\n\nReviewable content.",
+    source_refs: [],
+    note_refs: [],
+    wiki_refs: [],
+    metadata_: {},
+    created_at: now,
+    updated_at: now,
+  };
+  assetItems.splice(21, 0, targetAsset);
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: targetAsset,
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+    assetItems,
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/assets?q=Navigation&type=research_brief&status=draft");
+  const assetsScroller = page.locator('[data-route-scroll="assets-list"]');
+  await expect(assetsScroller).toBeVisible();
+  await expect(page.getByLabel("Search Assets")).toHaveValue("Navigation");
+  await expect(page.getByLabel("Asset type filter")).toHaveValue("research_brief");
+  await expect(page.getByLabel("Asset status filter")).toHaveValue("draft");
+
+  await page.getByText("Navigation Asset Target", { exact: true }).scrollIntoViewIfNeeded();
+  const scrollTopBeforeOpen = await assetsScroller.evaluate((element) => {
+    element.scrollTop = Math.min(element.scrollHeight - element.clientHeight, Math.max(element.scrollTop, 520));
+    element.dispatchEvent(new Event("scroll"));
+    return element.scrollTop;
+  });
+  expect(scrollTopBeforeOpen).toBeGreaterThan(0);
+
+  await page.getByText("Navigation Asset Target", { exact: true }).click();
+  await expect(page).toHaveURL(/\/assets\/asset-e2e$/);
+  await page.getByRole("tab", { name: "Evidence" }).click();
+  await expect(page).toHaveURL(/\/assets\/asset-e2e\?tab=evidence$/);
+  await page.getByRole("button", { name: "Back to Assets" }).click();
+
+  await expect(page).toHaveURL(/\/assets\?q=Navigation&type=research_brief&status=draft$/);
+  await expect.poll(async () => page.locator('[data-route-scroll="assets-list"]').evaluate((element) => element.scrollTop)).toBe(scrollTopBeforeOpen);
+
+  await page.getByRole("button", { name: "Newsletter Automation" }).click();
+  await expect(page).toHaveURL(/\/assets\/newsletter-automation$/);
+  await page.getByRole("button", { name: "Back to Assets" }).click();
+  await expect(page).toHaveURL(/\/assets\?q=Navigation&type=research_brief&status=draft$/);
+  await expect(page.getByLabel("Search Assets")).toHaveValue("Navigation");
+  await expect(page.getByLabel("Asset type filter")).toHaveValue("research_brief");
+  await expect(page.getByLabel("Asset status filter")).toHaveValue("draft");
+
+  await page.goBack();
+  await expect(page).not.toHaveURL(/\/assets\/(asset-e2e|newsletter-automation)/);
+});
+
+test("Search restores query, mode, results position, and result return routes", async ({ page }) => {
+  const searchResults = Array.from({ length: 24 }, (_, index) => ({
+    id: `memory-${index}`,
+    title: `Navigation Search Result ${String(index + 1).padStart(2, "0")}`,
+    type: "memory",
+    layer: "knowledge_tree",
+    score: 0.6,
+    content_preview: `Search navigation filler result ${index + 1}.`,
+    match_reason: "Matched the navigation regression query.",
+  }));
+  searchResults.splice(19, 0, {
+    id: "source-input",
+    title: "Search Navigation Source",
+    type: "source",
+    layer: "raw_evidence",
+    score: 0.92,
+    content_preview: "Source result used to verify returning to Search.",
+    match_reason: "Strong source match.",
+  });
+  searchResults.splice(21, 0, {
+    id: "asset-e2e",
+    title: "Search Navigation Asset",
+    type: "asset",
+    layer: "asset",
+    score: 0.88,
+    content_preview: "Asset result must open Asset Detail, not Source Detail.",
+    match_reason: "Strong asset match.",
+  });
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: {
+      title: "Search Navigation Asset",
+      brief: "Asset result from Search.",
+      asset_type: "research_brief",
+      status: "draft",
+      draft_content: "# Search Navigation Asset\n\nReviewable content.",
+      source_refs: [],
+      note_refs: [],
+      wiki_refs: [],
+      metadata_: {},
+    },
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+    searchResults,
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/search");
+  await page.getByPlaceholder("Search notes and sources...").fill("navigation");
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await expect(page).toHaveURL(/\/search\?q=navigation$/);
+  await page.getByRole("button", { name: "hybrid", exact: true }).click();
+  await expect(page).toHaveURL(/\/search\?q=navigation&mode=hybrid$/);
+  await expect.poll(() => state.searchRequests?.at(-1)).toMatchObject({ query: "navigation", mode: "hybrid", top_k: 20 });
+
+  const searchScroller = page.locator('[data-route-scroll="search-results"]');
+  await page.getByText("Search Navigation Source", { exact: true }).scrollIntoViewIfNeeded();
+  const scrollTopBeforeOpen = await searchScroller.evaluate((element) => {
+    element.scrollTop = Math.min(element.scrollHeight - element.clientHeight, Math.max(element.scrollTop, 480));
+    element.dispatchEvent(new Event("scroll"));
+    return element.scrollTop;
+  });
+  expect(scrollTopBeforeOpen).toBeGreaterThan(0);
+
+  await page.getByText("Search Navigation Source", { exact: true }).click();
+  await expect(page).toHaveURL(/\/sources\/source-input$/);
+  await page.getByRole("button", { name: "Back to Search" }).click();
+  await expect(page).toHaveURL(/\/search\?q=navigation&mode=hybrid$/);
+  await expect(page.getByPlaceholder("Search notes and sources...")).toHaveValue("navigation");
+  await expect.poll(async () => page.locator('[data-route-scroll="search-results"]').evaluate((element) => element.scrollTop)).toBe(scrollTopBeforeOpen);
+
+  await page.getByText("Search Navigation Asset", { exact: true }).click();
+  await expect(page).toHaveURL(/\/assets\/asset-e2e$/);
+  await page.getByRole("button", { name: "Back to Search" }).click();
+  await expect(page).toHaveURL(/\/search\?q=navigation&mode=hybrid$/);
+
+  await page.goBack();
+  await expect(page).not.toHaveURL(/\/(sources\/source-input|assets\/asset-e2e)/);
 });
 
 test("distilled Notes and Wiki pages link back to their originating Asset", async ({ page }) => {
