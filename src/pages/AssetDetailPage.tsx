@@ -912,6 +912,9 @@ export function AssetDetailPage() {
       assetOutlineRefreshMutation.reset();
     },
   });
+  const assetOutlineDocumentPatchMutation = useMutation({
+    mutationFn: () => mindMapsApi.buildAssetOutlineDocumentPatch(assetOutlineMap!.id),
+  });
   const assetMapCanvasNodes = useMemo<MindMapCanvasNode[]>(() => (
     assetOutlineTreeQuery.data?.nodes.map((node) => ({
       id: node.id,
@@ -3290,6 +3293,11 @@ export function AssetDetailPage() {
                           window.requestAnimationFrame(() => document.querySelector(`[data-asset-block-id="${CSS.escape(blockReference.ref_id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }));
                         }}>Open selected Block in Editor</Button>;
                       })()}
+                      {!assetOutlineStalenessQuery.data?.stale && (
+                        <Button type="button" variant="outline" onClick={() => assetOutlineDocumentPatchMutation.mutate()} disabled={assetOutlineDocumentPatchMutation.isPending}>
+                          {assetOutlineDocumentPatchMutation.isPending ? "Preparing Document Patch…" : "Preview Asset Document Patch"}
+                        </Button>
+                      )}
                     </>
                   )}
                   {assetOutlineRefreshMutation.data && (
@@ -3347,6 +3355,45 @@ export function AssetDetailPage() {
                       <p className="mt-1">Only the formal Map changed. The Asset Editor and saved Asset document were not modified.</p>
                     </div>
                   )}
+                  {assetOutlineDocumentPatchMutation.data && (
+                    <div className="space-y-3 rounded-xl border border-violet-300 bg-violet-50/40 p-4" data-testid="asset-outline-document-patch">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="font-semibold">Asset Document Patch Preview</p>
+                          <p className="text-sm text-muted-foreground">Generated from Map version {assetOutlineDocumentPatchMutation.data.base_map_version}. No Editor changes have been applied.</p>
+                        </div>
+                        <Button type="button" variant="ghost" size="sm" onClick={() => assetOutlineDocumentPatchMutation.reset()}>Discard Preview</Button>
+                      </div>
+                      <div className="flex flex-wrap gap-2 text-xs">
+                        {(["add", "move", "rename", "delete"] as const).map((operation) => (
+                          <Badge key={operation} variant="outline">{assetOutlineDocumentPatchMutation.data.operation_counts[operation]} {operation}</Badge>
+                        ))}
+                      </div>
+                      {assetOutlineDocumentPatchMutation.data.warnings.length > 0 && (
+                        <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+                          <p className="font-semibold">Safety notes</p>
+                          <ul className="mt-1 space-y-1">{assetOutlineDocumentPatchMutation.data.warnings.map((warning) => <li key={warning}>• {warning}</li>)}</ul>
+                        </div>
+                      )}
+                      {assetOutlineDocumentPatchMutation.data.no_changes ? (
+                        <p className="rounded-lg border bg-background p-3 text-sm text-muted-foreground">The formal Map already matches the current Asset Block structure.</p>
+                      ) : (
+                        <ul className="space-y-2 text-sm">
+                          {assetOutlineDocumentPatchMutation.data.patch?.operations.map((operation, index) => (
+                            <li key={`${operation.operation}-${index}`} className="rounded-lg border bg-background p-3">
+                              <span className="font-semibold capitalize">{operation.operation}</span>
+                              {operation.operation === "add" && <p className="mt-1">Add <code>{operation.temp_block_id}</code> after <code>{operation.after_block_id ?? "document start"}</code>: {operation.markdown}</p>}
+                              {operation.operation === "move" && <p className="mt-1">Move <code>{operation.block_id}</code> after <code>{operation.after_block_id ?? "document start"}</code>.</p>}
+                              {operation.operation === "rename" && <p className="mt-1">Update <code>{operation.block_id}</code> to: {operation.replacement_markdown}</p>}
+                              {operation.operation === "delete" && <p className="mt-1">Delete <code>{operation.block_id}</code>{operation.affected_claim_refs.length > 0 ? `; affects Claims: ${operation.affected_claim_refs.join(", ")}` : "."}</p>}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      <p className="text-xs text-muted-foreground">Apply to Asset Editor is intentionally unavailable in this phase. Saving remains a separate explicit Asset action.</p>
+                    </div>
+                  )}
+                  {assetOutlineDocumentPatchMutation.isError && <ActionError title="Asset Document Patch could not be generated" impact="The Map and Asset Editor remain unchanged." recovery="Refresh a stale Map first, then retry from the latest Map version." details={assetOutlineDocumentPatchMutation.error instanceof Error ? assetOutlineDocumentPatchMutation.error.message : "Unknown document patch error"} onRetry={() => assetOutlineDocumentPatchMutation.mutate()} />}
                 </CardContent>
               </Card>
             </TabsContent>

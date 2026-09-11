@@ -183,6 +183,31 @@ export interface AssetOutlineRefreshApply {
   confirm: true;
 }
 
+export type AssetOutlinePatchOperation =
+  | { operation: "add"; temp_block_id: string; after_block_id?: string | null; markdown: string; claim_refs: string[] }
+  | { operation: "move"; block_id: string; base_block_revision: number; after_block_id?: string | null }
+  | { operation: "rename"; block_id: string; base_block_revision: number; replacement_markdown: string }
+  | { operation: "delete"; block_id: string; base_block_revision: number; affected_claim_refs: string[] };
+
+export interface AssetOutlineDocumentPatchProposal {
+  map_id: string;
+  base_map_version: number;
+  basis_revision: Record<string, unknown>;
+  patch: {
+    asset_id: string;
+    map_id: string;
+    base_map_version: number;
+    basis_revision: Record<string, unknown>;
+    operations: AssetOutlinePatchOperation[];
+    explanation?: string | null;
+    requires_user_confirmation: true;
+    writes_asset: false;
+  } | null;
+  operation_counts: Record<"add" | "move" | "rename" | "delete", number>;
+  warnings: string[];
+  no_changes: boolean;
+}
+
 export interface AssetOutlineStalenessRead {
   map: MindMapRead;
   stale: boolean;
@@ -365,6 +390,10 @@ export const mindMapsApi = {
   applyAssetOutlineRefreshProposal: (mapId: string, body: AssetOutlineRefreshApply) => request<MindMapTreeRead>(
     `/mind-maps/${encodeURIComponent(mapId)}/proposals/asset-outline/refresh/apply`,
     { method: "POST", body: JSON.stringify(body) },
+  ),
+  buildAssetOutlineDocumentPatch: (mapId: string) => request<AssetOutlineDocumentPatchProposal>(
+    `/mind-maps/${encodeURIComponent(mapId)}/proposals/asset-outline/document-patch`,
+    { method: "POST" },
   ),
   getTree: (mapId: string) => request<MindMapTreeRead>(`/mind-maps/${encodeURIComponent(mapId)}/tree`),
   listRevisions: (mapId: string, limit = 20, offset = 0) => {

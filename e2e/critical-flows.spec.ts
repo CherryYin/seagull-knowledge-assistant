@@ -2159,6 +2159,28 @@ test("Asset Outline Map projects saved Blocks and navigates to the selected edit
         ],
       });
     }
+    if (url.pathname === "/api/mind-maps/map-asset-outline/proposals/asset-outline/document-patch") return json(route, {
+      map_id: "map-asset-outline",
+      base_map_version: 2,
+      basis_revision: { workspace_revision: 1, intent_revision: 1, asset_document_revision: 2, base_document_signature: "document-new", accepted_claim_ids: [] },
+      patch: {
+        asset_id: "asset-e2e",
+        map_id: "map-asset-outline",
+        base_map_version: 2,
+        basis_revision: { workspace_revision: 1, intent_revision: 1, asset_document_revision: 2, base_document_signature: "document-new", accepted_claim_ids: [] },
+        operations: [
+          { operation: "move", block_id: "block-finding", base_block_revision: 1, after_block_id: null },
+          { operation: "rename", block_id: "block-summary", base_block_revision: 1, replacement_markdown: "## Updated Executive Summary" },
+          { operation: "delete", block_id: "block-obsolete", base_block_revision: 1, affected_claim_refs: ["claim-risk"] },
+        ],
+        explanation: "Match the Asset Block structure to the formal Map.",
+        requires_user_confirmation: true,
+        writes_asset: false,
+      },
+      operation_counts: { add: 0, move: 1, rename: 1, delete: 1 },
+      warnings: ["Block block-finding text differs in the Map; paragraph content is not overwritten from a summary label"],
+      no_changes: false,
+    });
     if (url.pathname === "/api/mind-maps") return json(route, { items: projected ? [tree.map] : [], total: projected ? 1 : 0 });
     return route.fallback();
   });
@@ -2178,6 +2200,11 @@ test("Asset Outline Map projects saved Blocks and navigates to the selected edit
   await expect(page.getByTestId("asset-outline-refresh-applied")).toContainText("Asset Editor and saved Asset document were not modified");
   expect(refreshApplyBody).toMatchObject({ base_version: 1, confirm: true });
   await expect(page.getByTestId("asset-outline-map-preview")).toContainText("Updated Executive Summary");
+  await page.getByRole("button", { name: "Preview Asset Document Patch" }).click();
+  await expect(page.getByTestId("asset-outline-document-patch")).toContainText("1 move");
+  await expect(page.getByTestId("asset-outline-document-patch")).toContainText("affects Claims: claim-risk");
+  await expect(page.getByTestId("asset-outline-document-patch")).toContainText("paragraph content is not overwritten");
+  await expect(page.getByRole("button", { name: "Apply to Asset Editor" })).toHaveCount(0);
   await page.getByTestId("asset-outline-map-preview").getByText("Updated Executive Summary", { exact: true }).click();
   await page.getByRole("button", { name: "Open selected Block in Editor" }).click();
   await expect(page).toHaveURL(/tab=edit/);
