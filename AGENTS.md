@@ -15,12 +15,14 @@ The core product goal is a durable personal knowledge graph with deterministic r
 - Search knowledge using SQL filters, vector embeddings, full-text style search, and hybrid retrieval.
 - Expose authenticated REST APIs that Harness tools use to search, read, and write user knowledge.
 - Delegate interactive Agent Chat and workflow execution to DeepSeek Harness through the shared gateway.
+- Persist a per-message Agent Run contract in Chat sessions so Workflow/Owner context, terminal status, allowed save actions, and saved receipts survive Workflow changes, reloads, and History review.
 - Import or discover external knowledge from RSS, web pages, GitHub repositories, arXiv papers, and news providers.
 - Create `web` sources from a direct URL by fetching and extracting readable page text when content is left empty.
 - Discover article links from a `web` directory source such as a blog index and import each article as a child web source.
 - Manage review suggestions, discovery items, wiki pages, summaries, and temporary/permanent knowledge artifacts while delegating interactive Wiki/Asset drafting to Harness workflows.
 - Preserve terminal discovery decisions (`saved`, `kept`, and `dismissed`) as durable deduplication history so reviewed connector items are not recommended again.
 - Create Assets through an Intent → Evidence → Claims → Draft workflow: selected records begin as reviewable Evidence candidates, and initial drafting stays locked until the current Evidence and Claim gates are complete.
+- Preserve unsaved Asset Editor changes with a deterministic saved/editor signature, tab-scoped recovery draft, refresh and navigation warnings, and save-time cleanup; query refreshes must not overwrite a dirty editor.
 - Trace promoted or referenced Notes and Wiki pages back to their related Assets, including the originating Knowledge Candidate and Claim references when the record was distilled from an Asset.
 - Generate PDF Source Mind Map proposals from bounded section/Chunk summaries in ephemeral Harness sessions, validate Source basis and references in PKG, and require explicit version-safe confirmation before creating or safely merging the formal Map.
 - Create and edit newsletter assets through PKG CRUD, then develop their content in Harness Agent Chat and explicitly save the reviewed result back to the Asset.
