@@ -575,6 +575,22 @@ class AssetOutlinePatch(BaseModel):
         return self
 
 
+class AssetOutlinePatchProposalRead(BaseModel):
+    map_id: str
+    base_map_version: int = Field(ge=1)
+    basis_revision: AssetOutlineBasis
+    patch: AssetOutlinePatch | None = None
+    operation_counts: dict[AssetOutlinePatchOperationType, int]
+    warnings: list[str] = Field(default_factory=list)
+    no_changes: bool
+
+    @model_validator(mode="after")
+    def validate_patch_presence(self):
+        if self.no_changes == (self.patch is not None):
+            raise ValueError("no_changes must match Patch presence")
+        return self
+
+
 class MindMapCreate(BaseModel):
     owner_type: MindMapOwnerType
     owner_id: str = Field(min_length=1, max_length=200)

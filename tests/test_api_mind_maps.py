@@ -11,6 +11,7 @@ from pkg.api.mind_maps import (
     apply_source_mind_map_proposal_route,
     apply_mind_map_outline_route,
     build_asset_outline_refresh_proposal_route,
+    build_asset_outline_document_patch_route,
     check_asset_outline_staleness_route,
     check_mind_map_staleness_route,
     create_mind_map_reference_route,
@@ -29,6 +30,7 @@ from pkg.models.application.mind_map import (
 )
 from pkg.schemas.application.mind_map import (
     AssetOutlineRefreshApply,
+    AssetOutlinePatchProposalRead,
     AssetOutlineRefreshProposalRead,
     MindMapCreate,
     MindMapDelete,
@@ -166,6 +168,7 @@ def test_core_mind_map_routes_are_registered() -> None:
     assert "POST" in methods_by_path["/mind-maps/{map_id}/check-asset-outline-staleness"]
     assert "POST" in methods_by_path["/mind-maps/{map_id}/proposals/asset-outline/refresh"]
     assert "POST" in methods_by_path["/mind-maps/{map_id}/proposals/asset-outline/refresh/apply"]
+    assert "POST" in methods_by_path["/mind-maps/{map_id}/proposals/asset-outline/document-patch"]
     assert "POST" in methods_by_path["/mind-maps/projections/asset-outline"]
     assert "POST" in methods_by_path["/mind-maps/proposals/source/validate"]
     assert "POST" in methods_by_path["/mind-maps/{map_id}/nodes"]
@@ -530,6 +533,56 @@ async def test_asset_outline_refresh_apply_route_delegates_confirmed_proposal() 
         map_id="map-1",
         body=body,
     )
+
+
+@pytest.mark.asyncio
+async def test_asset_outline_document_patch_route_returns_read_only_proposal() -> None:
+    result = AssetOutlinePatchProposalRead.model_validate({
+        "map_id": "map-1",
+        "base_map_version": 6,
+        "basis_revision": {
+            "workspace_revision": 4,
+            "intent_revision": 2,
+            "asset_document_revision": 6,
+            "base_document_signature": "document-current",
+            "accepted_claim_ids": ["claim-1"],
+        },
+        "patch": {
+            "asset_id": "asset-1",
+            "map_id": "map-1",
+            "base_map_version": 6,
+            "basis_revision": {
+                "workspace_revision": 4,
+                "intent_revision": 2,
+                "asset_document_revision": 6,
+                "base_document_signature": "document-current",
+                "accepted_claim_ids": ["claim-1"],
+            },
+            "operations": [
+                {"operation": "rename", "block_id": "block-1", "base_block_revision": 1, "replacement_markdown": "## Updated Summary"},
+            ],
+            "requires_user_confirmation": True,
+            "writes_asset": False,
+        },
+        "operation_counts": {"add": 0, "move": 0, "rename": 1, "delete": 0},
+        "warnings": [],
+        "no_changes": False,
+    })
+    session = AsyncMock()
+
+    with patch(
+        "pkg.api.mind_maps.build_asset_outline_document_patch",
+        new=AsyncMock(return_value=result),
+    ) as mock:
+        response = await build_asset_outline_document_patch_route(
+            map_id="map-1",
+            user=make_user(),
+            session=session,
+        )
+
+    assert response.patch is not None
+    assert response.patch.writes_asset is False
+    mock.assert_awaited_once_with(session, user_id="user-1", map_id="map-1")
 
 
 @pytest.mark.asyncio

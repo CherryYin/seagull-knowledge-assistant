@@ -36,6 +36,7 @@ from pkg.services.application.mind_maps import (
     apply_asset_outline_refresh_proposal,
     apply_source_mind_map_proposal,
     build_asset_outline_proposal,
+    build_asset_outline_document_patch,
     build_asset_outline_refresh_proposal,
     build_source_mind_map_generation_context,
     check_asset_outline_staleness,
@@ -478,6 +479,71 @@ async def test_asset_outline_operations_reject_wrong_map_purpose(operation) -> N
         await operation(session, user_id="user-1", map_id="map-1")
 
     assert exc_info.value.status_code == 422
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_asset_outline_document_patch_projects_add_move_rename_and_delete() -> None:
+    asset = make_asset()
+    asset.metadata_["asset_document"]["blocks"].append({
+        "id": "block-obsolete",
+        "revision": 2,
+        "markdown": "Obsolete paragraph",
+        "claim_refs": ["claim-1"],
+    })
+    mind_map = make_asset_map(asset=asset, version=9)
+    root = make_node("map-root", 1, None, 0)
+    finding = make_node("map-finding", 2, root.id, 0)
+    finding.content = "The gateway owns the external boundary."
+    finding.node_kind = "block"
+    summary = make_node("map-summary", 3, root.id, 1)
+    summary.content = "Updated Executive Summary"
+    summary.node_kind = "section"
+    added = make_node("map-added", 4, root.id, 2)
+    added.content = "Recommendations"
+    added.node_kind = "section"
+    for node in [root, finding, summary, added]:
+        node.map_id = mind_map.id
+    references = [
+        MindMapNodeReference(id="ref-finding", map_id=mind_map.id, node_id=finding.id, ref_type="asset_block", ref_id="block-2", relation="represents", fragment_selector=None, created_at=NOW),
+        MindMapNodeReference(id="ref-summary", map_id=mind_map.id, node_id=summary.id, ref_type="asset_block", ref_id="block-1", relation="represents", fragment_selector=None, created_at=NOW),
+        MindMapNodeReference(id="ref-claim", map_id=mind_map.id, node_id=added.id, ref_type="claim", ref_id="claim-1", relation="supports", fragment_selector=None, created_at=NOW),
+    ]
+    session = make_session(
+        QueryResult(scalar=mind_map),
+        QueryResult(scalar=asset),
+        QueryResult(items=[root, finding, summary, added]),
+        QueryResult(items=references),
+    )
+
+    result = await build_asset_outline_document_patch(session, user_id="user-1", map_id=mind_map.id)
+
+    assert result.no_changes is False
+    assert result.operation_counts == {"add": 1, "move": 1, "rename": 1, "delete": 1}
+    assert result.patch is not None
+    operations = {operation.operation: operation for operation in result.patch.operations}
+    assert operations["delete"].block_id == "block-obsolete"
+    assert operations["delete"].affected_claim_refs == ["claim-1"]
+    assert operations["move"].block_id == "block-2"
+    assert operations["move"].after_block_id is None
+    assert operations["rename"].replacement_markdown == "# Updated Executive Summary"
+    assert operations["add"].markdown == "## Recommendations"
+    assert operations["add"].after_block_id == "block-1"
+    assert operations["add"].claim_refs == ["claim-1"]
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_asset_outline_document_patch_rejects_stale_map_basis() -> None:
+    asset = make_asset(document_revision=6)
+    mind_map = make_asset_map(asset=make_asset(), version=9)
+    session = make_session(QueryResult(scalar=mind_map), QueryResult(scalar=asset))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await build_asset_outline_document_patch(session, user_id="user-1", map_id=mind_map.id)
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "asset_outline_map_stale"
     session.commit.assert_not_awaited()
 
 

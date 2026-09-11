@@ -22,6 +22,8 @@ from pkg.models.foundation.source import Source, SourceChunk
 from pkg.models.foundation.wiki import WikiPage
 from pkg.schemas.application.mind_map import (
     AssetOutlineBasis,
+    AssetOutlinePatch,
+    AssetOutlinePatchProposalRead,
     AssetOutlineProposal,
     AssetOutlineRefreshApply,
     AssetOutlineRefreshProposalRead,
@@ -1301,6 +1303,197 @@ async def apply_asset_outline_refresh_proposal(
     await session.refresh(mind_map)
     await session.refresh(revision)
     return MindMapTreeState(map=mind_map, root_id=root_id, nodes=nodes, references=references)
+
+
+def _asset_outline_tree_order(root: MindMapNode, nodes: list[MindMapNode]) -> list[MindMapNode]:
+    children: dict[str, list[MindMapNode]] = {}
+    for node in nodes:
+        if node.parent_id is not None:
+            children.setdefault(node.parent_id, []).append(node)
+    for siblings in children.values():
+        siblings.sort(key=lambda node: (node.position, node.display_id, node.id))
+    ordered: list[MindMapNode] = []
+
+    def visit(parent_id: str) -> None:
+        for child in children.get(parent_id, []):
+            ordered.append(child)
+            visit(child.id)
+
+    visit(root.id)
+    return ordered
+
+
+def _asset_outline_added_markdown(node: MindMapNode, parent_by_id: dict[str, MindMapNode]) -> str:
+    if node.node_kind != "section":
+        return node.content
+    depth = 1
+    parent_id = node.parent_id
+    while parent_id is not None and parent_id in parent_by_id:
+        depth += 1
+        parent_id = parent_by_id[parent_id].parent_id
+    return f"{'#' * min(depth, 6)} {node.content}"
+
+
+async def build_asset_outline_document_patch(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    map_id: str,
+) -> AssetOutlinePatchProposalRead:
+    mind_map = await _get_map(session, user_id=user_id, map_id=map_id)
+    if mind_map.owner_type != "asset" or mind_map.purpose != "asset_outline":
+        raise HTTPException(status_code=422, detail="Document Patch proposals require an Asset Outline Map")
+    asset_row = await session.execute(select(Asset).where(Asset.id == mind_map.owner_id, Asset.user_id == user_id))
+    asset = asset_row.scalar_one_or_none()
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset owner not found")
+    baseline = build_asset_outline_proposal(asset)
+    current_basis = baseline.basis_revision.model_dump()
+    if mind_map.basis_revision != current_basis:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "asset_outline_map_stale",
+                "message": "Refresh the Outline Map before generating an Asset Document Patch",
+                "map_id": mind_map.id,
+                "map_basis": mind_map.basis_revision,
+                "current_basis": current_basis,
+            },
+        )
+
+    nodes = await _load_nodes(session, map_id=map_id)
+    references = await _load_references(session, map_id=map_id)
+    root = _root_node(map_id, nodes)
+    node_by_id = {node.id: node for node in nodes}
+    block_refs_by_node: dict[str, list[str]] = {}
+    claim_refs_by_node: dict[str, list[str]] = {}
+    for reference in references:
+        if reference.ref_type == "asset_block":
+            block_refs_by_node.setdefault(reference.node_id, []).append(reference.ref_id)
+        elif reference.ref_type == "claim":
+            claim_refs_by_node.setdefault(reference.node_id, []).append(reference.ref_id)
+    if any(len(block_ids) > 1 for block_ids in block_refs_by_node.values()):
+        raise HTTPException(status_code=409, detail="An Outline Map node cannot represent multiple Asset Blocks")
+    represented_block_ids = [block_ids[0] for block_ids in block_refs_by_node.values()]
+    if len(set(represented_block_ids)) != len(represented_block_ids):
+        raise HTTPException(status_code=409, detail="An Asset Block cannot be represented by multiple Outline Map nodes")
+
+    metadata = asset.metadata_ or {}
+    document = metadata["asset_document"]
+    blocks = document["blocks"]
+    block_by_id = {block["id"]: block for block in blocks}
+    baseline_node_by_block = {
+        node.asset_block_id: node
+        for node in baseline.nodes
+        if node.asset_block_id is not None
+    }
+    ordered_nodes = _asset_outline_tree_order(root, nodes)
+    desired_ids: list[str] = []
+    add_operations: list[dict] = []
+    move_operations: list[dict] = []
+    rename_operations: list[dict] = []
+    warnings: list[str] = []
+    temp_id_by_node: dict[str, str] = {}
+
+    for node in ordered_nodes:
+        block_ids = block_refs_by_node.get(node.id, [])
+        if block_ids:
+            block_id = block_ids[0]
+            if block_id not in block_by_id:
+                raise HTTPException(status_code=409, detail=f"Outline Map references unknown Asset Block {block_id}")
+            desired_ids.append(block_id)
+            block = block_by_id[block_id]
+            baseline_node = baseline_node_by_block[block_id]
+            if node.content != baseline_node.content:
+                markdown = block["markdown"]
+                heading_match = ASSET_HEADING_PATTERN.match(markdown.strip().splitlines()[0])
+                if heading_match:
+                    lines = markdown.splitlines()
+                    lines[0] = f"{heading_match.group('marks')} {node.content}"
+                    rename_operations.append({
+                        "operation": "rename",
+                        "block_id": block_id,
+                        "base_block_revision": block["revision"],
+                        "replacement_markdown": "\n".join(lines),
+                    })
+                else:
+                    warnings.append(f"Block {block_id} text differs in the Map; paragraph content is not overwritten from a summary label")
+            map_claim_refs = sorted(set(claim_refs_by_node.get(node.id, [])))
+            block_claim_refs = sorted(set(block.get("claim_refs", block.get("claimRefs", []))))
+            if map_claim_refs != block_claim_refs:
+                warnings.append(f"Block {block_id} Claim references differ; this Patch does not change Claim links")
+            continue
+        temp_block_id = f"map-node-{node.display_id}"
+        temp_id_by_node[node.id] = temp_block_id
+        desired_ids.append(temp_block_id)
+
+    current_ids = [block["id"] for block in blocks]
+    desired_existing_ids = {item for item in desired_ids if item in block_by_id}
+    delete_operations = [
+        {
+            "operation": "delete",
+            "block_id": block_id,
+            "base_block_revision": block_by_id[block_id]["revision"],
+            "affected_claim_refs": block_by_id[block_id].get("claim_refs", block_by_id[block_id].get("claimRefs", [])),
+        }
+        for block_id in current_ids
+        if block_id not in desired_existing_ids
+    ]
+    working_ids = [block_id for block_id in current_ids if block_id in desired_existing_ids]
+    previous_id: str | None = None
+    node_by_desired_id = {
+        (block_refs_by_node[node.id][0] if block_refs_by_node.get(node.id) else temp_id_by_node[node.id]): node
+        for node in ordered_nodes
+    }
+    for desired_id in desired_ids:
+        node = node_by_desired_id[desired_id]
+        if desired_id not in block_by_id:
+            add_operations.append({
+                "operation": "add",
+                "temp_block_id": desired_id,
+                "after_block_id": previous_id,
+                "markdown": _asset_outline_added_markdown(node, node_by_id),
+                "claim_refs": sorted(set(claim_refs_by_node.get(node.id, []))),
+            })
+            insertion_index = 0 if previous_id is None else working_ids.index(previous_id) + 1
+            working_ids.insert(insertion_index, desired_id)
+        else:
+            current_index = working_ids.index(desired_id)
+            current_previous = working_ids[current_index - 1] if current_index > 0 else None
+            if current_previous != previous_id:
+                move_operations.append({
+                    "operation": "move",
+                    "block_id": desired_id,
+                    "base_block_revision": block_by_id[desired_id]["revision"],
+                    "after_block_id": previous_id,
+                })
+                working_ids.pop(current_index)
+                insertion_index = 0 if previous_id is None else working_ids.index(previous_id) + 1
+                working_ids.insert(insertion_index, desired_id)
+        previous_id = desired_id
+
+    operations = [*delete_operations, *add_operations, *move_operations, *rename_operations]
+    counts = {
+        operation: sum(1 for item in operations if item["operation"] == operation)
+        for operation in ("add", "move", "rename", "delete")
+    }
+    patch = AssetOutlinePatch(
+        asset_id=asset.id,
+        map_id=mind_map.id,
+        base_map_version=mind_map.version,
+        basis_revision=baseline.basis_revision,
+        operations=operations,
+        explanation="Transform the saved Asset Block order and headings to match the confirmed Outline Map.",
+    ) if operations else None
+    return AssetOutlinePatchProposalRead(
+        map_id=mind_map.id,
+        base_map_version=mind_map.version,
+        basis_revision=baseline.basis_revision,
+        patch=patch,
+        operation_counts=counts,
+        warnings=warnings,
+        no_changes=patch is None,
+    )
 
 
 async def validate_source_mind_map_proposal(

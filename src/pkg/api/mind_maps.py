@@ -12,6 +12,7 @@ from pkg.models.application.mind_map import (
 from pkg.models.user import User
 from pkg.schemas.application.mind_map import (
     AssetOutlineProjectionRequest,
+    AssetOutlinePatchProposalRead,
     AssetOutlineRefreshApply,
     AssetOutlineRefreshProposalRead,
     AssetOutlineStalenessRead,
@@ -56,6 +57,7 @@ from pkg.services.application.mind_maps import (
     apply_mind_map_outline,
     apply_source_mind_map_proposal,
     build_asset_outline_refresh_proposal,
+    build_asset_outline_document_patch,
     build_source_mind_map_generation_context,
     check_asset_outline_staleness,
     check_source_mind_map_staleness,
@@ -355,6 +357,18 @@ async def apply_asset_outline_refresh_proposal_route(
         body=body,
     )
     return _tree_read(tree)
+
+
+@router.post(
+    "/{map_id}/proposals/asset-outline/document-patch",
+    response_model=AssetOutlinePatchProposalRead,
+)
+async def build_asset_outline_document_patch_route(
+    map_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> AssetOutlinePatchProposalRead:
+    return await build_asset_outline_document_patch(session, user_id=user.id, map_id=map_id)
 
 
 @router.patch(
