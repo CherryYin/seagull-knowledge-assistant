@@ -6,6 +6,16 @@ import { assetsApi, notesApi, sourcesApi, wikiApi } from "@/lib/api";
 import { reviseAssetIntent } from "@/lib/api/assets";
 import { buildAssetGenerationSeed, type AssetHandoffState } from "@/lib/asset-handoff";
 import { MANUAL_ASSET_TYPES, type AssetGenerationRequest, type AssetIntentFormDraft, type AssetIntentProposal } from "@/lib/asset-generation";
+import {
+  clearAssetIntakeRecovery,
+  createAssetIntakeOperationId,
+  findAssetForIntakeOperation,
+  hasCurrentEvidenceTarget,
+  intentMatchesDraft,
+  readAssetIntakeRecovery,
+  writeAssetIntakeRecovery,
+  type AssetIntakeRecovery,
+} from "@/lib/asset-intake-recovery";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -39,10 +49,15 @@ export function AssetGenerationPage() {
   const backLabel = navigationState?.backLabel || "Back to Assets";
   const returnToPrevious = useReturnNavigation(backTo, Boolean(navigationState));
   const { scrollRef, onScroll } = useRouteScrollRestoration<HTMLDivElement>("asset-generation");
+  const recoveredIntake = useMemo(() => (
+    navigationState?.assetHandoff || navigationState?.assetIntentDraft || navigationState?.assetIntentProposal
+      ? null
+      : readAssetIntakeRecovery()
+  ), [navigationState]);
   const initialSeed = useMemo(() => buildAssetGenerationSeed(
     navigationState?.assetHandoff,
   ), [location.state]);
-  const priorDraft = navigationState?.assetIntentDraft;
+  const priorDraft = navigationState?.assetIntentDraft ?? recoveredIntake?.form;
   const intentProposal = navigationState?.assetIntentProposal;
   const [assetType, setAssetType] = useState(priorDraft?.assetType ?? initialSeed.assetType);
   const [title, setTitle] = useState(fillBlank(priorDraft?.title ?? initialSeed.title, intentProposal?.workingTitle));
@@ -60,6 +75,7 @@ export function AssetGenerationPage() {
   const [deliveryFormat, setDeliveryFormat] = useState<"markdown" | "html">(priorDraft?.deliveryFormat ?? "markdown");
   const [isStarting, setIsStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
+  const [intakeRecovery, setIntakeRecovery] = useState<AssetIntakeRecovery | null>(recoveredIntake);
 
   const sources = useQuery({ queryKey: ["asset-wizard-sources"], queryFn: () => sourcesApi.list({ limit: 50 }) });
   const notes = useQuery({ queryKey: ["asset-wizard-notes"], queryFn: () => notesApi.list({ status: "kept", limit: 50 }) });
@@ -68,8 +84,8 @@ export function AssetGenerationPage() {
   const selectedType = useMemo(() => MANUAL_ASSET_TYPES.find((item) => item.value === assetType), [assetType]);
   const canContinue = Boolean(question.trim() && goal.trim());
 
-  function discussIntentWithAgent() {
-    const assetIntentDraft: AssetIntentFormDraft = {
+  function currentDraft(): AssetIntentFormDraft {
+    return {
       assetType,
       title,
       audience,
@@ -85,6 +101,16 @@ export function AssetGenerationPage() {
       allowWebResearch,
       deliveryFormat,
     };
+  }
+
+  function persistIntakeRecovery(recovery: Omit<AssetIntakeRecovery, "version" | "updatedAt">) {
+    const stored = writeAssetIntakeRecovery(recovery);
+    setIntakeRecovery(stored);
+    return stored;
+  }
+
+  function discussIntentWithAgent() {
+    const assetIntentDraft = currentDraft();
     const partialIntent = [
       `Asset type: ${selectedType?.label ?? assetType}`,
       title.trim() ? `Working title: ${title.trim()}` : "Working title: not provided",
@@ -112,36 +138,58 @@ export function AssetGenerationPage() {
     if (!canContinue) return;
     setIsStarting(true);
     setStartError(null);
+    let progress: "prepared" | "asset_saved" | "intent_saved" = "prepared";
+    const isRetry = Boolean(intakeRecovery);
+    let recovery = persistIntakeRecovery({
+      operationId: intakeRecovery?.operationId ?? createAssetIntakeOperationId(),
+      assetId: intakeRecovery?.assetId,
+      form: currentDraft(),
+    });
     try {
       const confirmedQuestion = question.trim();
       const confirmedGoal = goal.trim();
       const workingTitle = title.trim() || confirmedQuestion.slice(0, 100);
-      const asset = await assetsApi.create({
-        title: workingTitle,
-        brief: confirmedGoal,
-        asset_type: assetType,
-        status: "draft",
-        source_refs: sourceRefs,
-        note_refs: noteRefs,
-        wiki_refs: wikiRefs,
-        style_notes: styleNotes.trim() || undefined,
-        metadata: {
-          audience: audience.trim() || null,
-          generation_mode: "agent_assisted",
-          research_mode: allowWebResearch ? "local_then_web" : "local_only",
-          delivery_format: deliveryFormat,
-        },
-        provenance: { origin_type: "user", action: "save" },
-      });
-      const workspace = await reviseAssetIntent(asset.id, {
-        base_workspace_revision: 0,
+      let asset = recovery.assetId ? await assetsApi.get(recovery.assetId) : null;
+      if (!asset && isRetry) {
+        const existingAssets = await assetsApi.list({ limit: 200 });
+        asset = findAssetForIntakeOperation(existingAssets.items, recovery.operationId);
+      }
+      if (!asset) {
+        asset = await assetsApi.create({
+          title: workingTitle,
+          brief: confirmedGoal,
+          asset_type: assetType,
+          status: "draft",
+          source_refs: sourceRefs,
+          note_refs: noteRefs,
+          wiki_refs: wikiRefs,
+          style_notes: styleNotes.trim() || undefined,
+          metadata: {
+            audience: audience.trim() || null,
+            generation_mode: "agent_assisted",
+            research_mode: allowWebResearch ? "local_then_web" : "local_only",
+            delivery_format: deliveryFormat,
+            intake_operation_id: recovery.operationId,
+          },
+          provenance: { origin_type: "user", action: "save" },
+        });
+      }
+      progress = "asset_saved";
+      recovery = persistIntakeRecovery({ ...recovery, assetId: asset.id, form: currentDraft() });
+      let workspace = await assetsApi.getWorkspace(asset.id);
+      const intentDraft = {
+        base_workspace_revision: workspace.workspace_revision,
         question: confirmedQuestion,
         goal: confirmedGoal,
         audience: audience.trim() || null,
         creation_mode: creationMode,
         scope: parseLines(scope),
         constraints: parseLines(constraints),
-      });
+      };
+      if (!isRetry || !intentMatchesDraft(workspace.intent, intentDraft)) {
+        workspace = await reviseAssetIntent(asset.id, intentDraft);
+      }
+      progress = "intent_saved";
       const evidenceSeeds = [
         ...sourceRefs.map((targetId) => ({
           target_type: "source" as const,
@@ -162,12 +210,17 @@ export function AssetGenerationPage() {
           summary: `Selected during Asset intake: ${wiki.data?.items.find((item) => item.id === targetId)?.title ?? targetId}. Review its relevance to the confirmed Intent.`,
         })),
       ];
-      if (evidenceSeeds.length > 0) {
-        await assetsApi.proposeEvidence(asset.id, {
+      const missingEvidenceSeeds = isRetry
+        ? evidenceSeeds.filter((proposal) => !hasCurrentEvidenceTarget(workspace, proposal))
+        : evidenceSeeds;
+      if (missingEvidenceSeeds.length > 0) {
+        workspace = await assetsApi.proposeEvidence(asset.id, {
           base_workspace_revision: workspace.workspace_revision,
-          proposals: evidenceSeeds,
+          proposals: missingEvidenceSeeds,
         });
       }
+      clearAssetIntakeRecovery();
+      setIntakeRecovery(null);
       navigate(`/assets/${encodeURIComponent(asset.id)}?tab=evidence`, {
         state: {
           backTo,
@@ -178,7 +231,12 @@ export function AssetGenerationPage() {
         },
       });
     } catch (error) {
-      setStartError(error instanceof Error ? error.message : "Could not initialize the Asset workspace.");
+      const detail = error instanceof Error ? error.message : "Could not initialize the Asset workspace.";
+      setStartError(progress === "prepared"
+        ? `Asset creation was not confirmed. Retry will look for the same operation before creating anything. ${detail}`
+        : progress === "asset_saved"
+          ? `The Asset draft is saved${recovery.assetId ? ` as ${recovery.assetId}` : ""}, but its Intent is not confirmed yet. Retry continues this Asset. ${detail}`
+          : `The Asset and Intent are saved${recovery.assetId ? ` as ${recovery.assetId}` : ""}, but Evidence candidates were not fully confirmed. Retry only adds missing candidates. ${detail}`);
     } finally {
       setIsStarting(false);
     }
@@ -217,6 +275,29 @@ export function AssetGenerationPage() {
             ))}
           </CardContent>
         </Card>
+
+        {intakeRecovery && (
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm">
+            <p className="font-medium">Unfinished Asset setup recovered</p>
+            <p className="mt-1 text-muted-foreground">
+              Retry continues the same operation{intakeRecovery.assetId ? ` and Asset ${intakeRecovery.assetId}` : ""}; it does not intentionally create a duplicate.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {intakeRecovery.assetId && (
+                <Button type="button" size="sm" variant="outline" onClick={() => navigate(`/assets/${encodeURIComponent(intakeRecovery.assetId!)}?tab=evidence`)}>
+                  Open saved Asset
+                </Button>
+              )}
+              <Button type="button" size="sm" variant="ghost" onClick={() => {
+                clearAssetIntakeRecovery();
+                setIntakeRecovery(null);
+                setStartError(null);
+              }}>
+                Dismiss recovery
+              </Button>
+            </div>
+          </div>
+        )}
 
         <Card>
           <CardHeader><CardTitle>2. Confirm the Intent</CardTitle><CardDescription>Question and goal are required because they anchor later Evidence and Claims.</CardDescription></CardHeader>
@@ -261,7 +342,7 @@ export function AssetGenerationPage() {
           <div><p className="font-medium">{selectedType?.label}</p><p className="text-sm text-muted-foreground">{canContinue ? `Intent ready to confirm · ${evidenceCount} optional seed records` : "Intent not confirmed · you can ask the Agent for help before filling these fields"}</p>{startError && <p className="mt-1 text-sm text-destructive">{startError}</p>}</div>
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="outline" onClick={discussIntentWithAgent} disabled={isStarting}>Discuss Intent with Agent</Button>
-            <Button onClick={() => void startGeneration()} disabled={!canContinue || isStarting}>{isStarting ? "Creating Workspace…" : "Confirm Intent & Review Evidence"}<ArrowRight className="ml-2 h-4 w-4" /></Button>
+            <Button onClick={() => void startGeneration()} disabled={!canContinue || isStarting}>{isStarting ? "Creating Workspace…" : intakeRecovery || startError ? "Retry Asset setup" : "Confirm Intent & Review Evidence"}<ArrowRight className="ml-2 h-4 w-4" /></Button>
           </div>
         </div>
       </div>

@@ -42,6 +42,10 @@ type MockState = {
   documentOptimizationCalls?: number;
   intentResponseModes?: Array<"tool-call" | "tool-result" | "text-only">;
   evidenceProposalConflictOnce?: boolean;
+  assetCreateFailureOnce?: "before-save" | "after-save";
+  intentSaveFailureOnce?: boolean;
+  evidenceSaveFailureOnce?: boolean;
+  assetCreateCalls?: number;
   noteItems?: Array<Record<string, unknown>>;
   wikiItems?: Array<Record<string, unknown>>;
   assetItems?: Array<Record<string, unknown>>;
@@ -298,11 +302,20 @@ async function installMockBff(page: Page, state: MockState) {
       return json(route, { id: "note-e2e", ...state.savedNoteBody, created_at: now, updated_at: now });
     }
     if (path === "/api/assets" && method === "POST") {
+      state.assetCreateCalls = (state.assetCreateCalls ?? 0) + 1;
+      if (state.assetCreateFailureOnce === "before-save") {
+        state.assetCreateFailureOnce = undefined;
+        return json(route, { detail: "Asset creation temporarily unavailable" }, 503);
+      }
       state.savedAssetBody = request.postDataJSON() as Record<string, unknown>;
+      if (state.assetCreateFailureOnce === "after-save") {
+        state.assetCreateFailureOnce = undefined;
+        return json(route, { detail: "Asset was saved but the response was interrupted" }, 503);
+      }
       return json(route, { id: "asset-e2e", ...state.savedAssetBody, created_at: now, updated_at: now });
     }
     if (path === "/api/assets" && method === "GET") {
-      const items = state.assetItems ?? (state.savedAssetBody ? [{ id: "asset-e2e", user_id: "user-e2e", ...state.savedAssetBody, source_refs: state.savedAssetBody.source_refs ?? [], note_refs: state.savedAssetBody.note_refs ?? [], wiki_refs: state.savedAssetBody.wiki_refs ?? [], created_at: now, updated_at: now }] : []);
+      const items = state.assetItems ?? (state.savedAssetBody ? [{ id: "asset-e2e", user_id: "user-e2e", ...state.savedAssetBody, metadata_: state.savedAssetBody.metadata ?? state.savedAssetBody.metadata_ ?? null, source_refs: state.savedAssetBody.source_refs ?? [], note_refs: state.savedAssetBody.note_refs ?? [], wiki_refs: state.savedAssetBody.wiki_refs ?? [], created_at: now, updated_at: now }] : []);
       return json(route, { items, total: items.length });
     }
     if (path === "/api/search" && method === "POST") {
@@ -380,6 +393,10 @@ async function installMockBff(page: Page, state: MockState) {
       return json(route, { id: "asset-e2e", user_id: "user-e2e", ...state.savedAssetBody, metadata_: state.savedAssetBody?.metadata ?? state.savedAssetBody?.metadata_ ?? null, source_refs: state.savedAssetBody?.source_refs ?? [], note_refs: state.savedAssetBody?.note_refs ?? [], wiki_refs: state.savedAssetBody?.wiki_refs ?? [], created_at: now, updated_at: now });
     }
     if (path === "/api/assets/asset-e2e/workspace/intent" && method === "POST") {
+      if (state.intentSaveFailureOnce) {
+        state.intentSaveFailureOnce = false;
+        return json(route, { detail: "Intent storage temporarily unavailable" }, 503);
+      }
       const body = request.postDataJSON() as Record<string, unknown>;
       state.assetWorkspace = {
         asset_id: "asset-e2e",
@@ -425,6 +442,10 @@ async function installMockBff(page: Page, state: MockState) {
         created_at: now,
       }));
       state.assetWorkspace = { ...workspace, workspace_revision: Number(workspace.workspace_revision ?? 0) + 1, evidence: [...((workspace.evidence as unknown[]) ?? []), ...evidence] };
+      if (state.evidenceSaveFailureOnce) {
+        state.evidenceSaveFailureOnce = false;
+        return json(route, { detail: "Evidence was saved but the response was interrupted" }, 503);
+      }
       return json(route, state.assetWorkspace);
     }
     const evidenceDecisionMatch = path.match(/^\/api\/assets\/asset-e2e\/workspace\/evidence\/([^/]+)\/decision$/);
@@ -645,6 +666,15 @@ async function signIn(page: Page) {
   await page.getByLabel("Password").fill("not-a-real-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page).toHaveURL(/\/$/);
+}
+
+async function fillAssetIntake(page: Page, title: string) {
+  await page.goto("/assets/new");
+  await page.getByLabel("Asset title").fill(title);
+  await page.getByLabel("Target audience").fill("Architecture reviewers");
+  await page.getByLabel("Research question").fill("What does the selected evidence establish?");
+  await page.getByLabel("Asset goal").fill("Produce a grounded, reusable recommendation.");
+  await page.getByText("E2E Source Evidence").click();
 }
 
 async function advanceAssetToInitialDraftGeneration(page: Page) {
@@ -958,6 +988,83 @@ test("Asset creation stores HTML delivery preference while preserving Markdown a
   const input = page.getByPlaceholder("Ask anything about your knowledge base...");
   await expect(input).toContainText("Delivery format: HTML export generated deterministically from the Markdown Asset");
   await expect(input).toContainText("Always author and return Markdown; never return raw HTML");
+});
+
+test("Asset intake recovers a saved Asset when the create response is interrupted", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: null,
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+    assetCreateFailureOnce: "after-save",
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+  await fillAssetIntake(page, "Recovered create response");
+
+  await page.getByRole("button", { name: "Confirm Intent & Review Evidence" }).click();
+  await expect(page.getByText(/Asset creation was not confirmed/)).toBeVisible();
+  expect(state.assetCreateCalls).toBe(1);
+  expect(state.savedAssetBody).not.toBeNull();
+
+  await page.getByRole("button", { name: "Retry Asset setup" }).click();
+  await expect(page).toHaveURL(/\/assets\/asset-e2e\?tab=evidence$/);
+  expect(state.assetCreateCalls).toBe(1);
+  await expect.poll(() => ((state.assetWorkspace?.evidence as unknown[]) ?? []).length).toBe(1);
+});
+
+test("Asset intake resumes the same Asset after Intent storage fails", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: null,
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+    intentSaveFailureOnce: true,
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+  await fillAssetIntake(page, "Recovered Intent setup");
+
+  await page.getByRole("button", { name: "Confirm Intent & Review Evidence" }).click();
+  await expect(page.getByText(/Asset draft is saved as asset-e2e, but its Intent is not confirmed yet/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open saved Asset" })).toBeVisible();
+  expect(state.assetCreateCalls).toBe(1);
+
+  await page.reload();
+  await expect(page.getByText("Unfinished Asset setup recovered")).toBeVisible();
+  await expect(page.getByLabel("Asset title")).toHaveValue("Recovered Intent setup");
+  await page.getByRole("button", { name: "Retry Asset setup" }).click();
+  await expect(page).toHaveURL(/\/assets\/asset-e2e\?tab=evidence$/);
+  expect(state.assetCreateCalls).toBe(1);
+  expect((state.assetWorkspace?.intent as Record<string, unknown> | undefined)?.status).toBe("confirmed");
+});
+
+test("Asset intake retry does not duplicate Evidence after a lost save response", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: null,
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+    evidenceSaveFailureOnce: true,
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+  await fillAssetIntake(page, "Recovered Evidence setup");
+
+  await page.getByRole("button", { name: "Confirm Intent & Review Evidence" }).click();
+  await expect(page.getByText(/Asset and Intent are saved as asset-e2e, but Evidence candidates were not fully confirmed/)).toBeVisible();
+  await expect.poll(() => ((state.assetWorkspace?.evidence as unknown[]) ?? []).length).toBe(1);
+
+  await page.getByRole("button", { name: "Retry Asset setup" }).click();
+  await expect(page).toHaveURL(/\/assets\/asset-e2e\?tab=evidence$/);
+  expect(state.assetCreateCalls).toBe(1);
+  expect(((state.assetWorkspace?.evidence as unknown[]) ?? []).length).toBe(1);
 });
 
 test("Asset Production previews and downloads the preferred HTML delivery", async ({ page }) => {
@@ -1690,6 +1797,7 @@ test("Web Source presentation distinguishes RSS Feed from Web Directory", async 
 });
 
 test("Asset types produce distinct agent-assisted deliverable contracts before generation", async ({ page }) => {
+  test.setTimeout(60_000);
   const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null };
   await installMockBff(page, state);
   await signIn(page);
