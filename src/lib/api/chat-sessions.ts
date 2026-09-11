@@ -12,6 +12,37 @@ export interface ReferenceInfo {
   title: string;
 }
 
+export type ChatMessageSaveTarget = "note" | "asset" | "wiki_draft" | "review_note";
+export type ChatMessageRunStatus = "running" | "awaiting_input" | "completed" | "failed" | "stopped";
+
+export interface ChatMessageObjectRef {
+  title?: string;
+  object_type?: string;
+  object_id?: string;
+  url?: string | null;
+}
+
+export interface ChatMessageRunContract {
+  version: 1;
+  workflow_id: string | null;
+  object_ref?: ChatMessageObjectRef;
+  run_status: ChatMessageRunStatus;
+  save_targets: ChatMessageSaveTarget[];
+  result_validated: boolean;
+  asset_draft?: Record<string, unknown>;
+  started_at: string;
+  completed_at?: string;
+  error?: string;
+}
+
+export interface ChatMessageSaveReceipt {
+  target: ChatMessageSaveTarget;
+  object_type: string;
+  object_id: string;
+  title?: string | null;
+  saved_at: string;
+}
+
 export interface MessageMetadata {
   documents?: DocumentMetadata[];
   references?: ReferenceInfo[];
@@ -21,6 +52,8 @@ export interface MessageMetadata {
   writing_note_id?: string;
   asset_intent_proposal?: Record<string, unknown>;
   asset_intent_draft?: Record<string, unknown>;
+  agent_run?: ChatMessageRunContract;
+  save_receipts?: Partial<Record<ChatMessageSaveTarget, ChatMessageSaveReceipt>>;
 }
 
 export interface ChatSessionMessage {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, Link, useNavigate, useLocation } from "react-router-dom";
 import { BookOpen, CalendarDays, ChartNoAxesCombined, CheckCircle2, CircleAlert, Clock3, Copy, Download, Eye, FileSearch, LibraryBig, MailOpen, PenLine, Quote, Sparkles, Square, WandSparkles } from "lucide-react";
@@ -18,6 +18,7 @@ import { createAssetBlock, createAssetDocument, loadAssetBlocks, serializeAssetB
 import { answerHarnessQuestion, harnessChat, type HarnessQuestionAnswer, type HarnessQuestionItem } from "@/lib/api";
 import { useReturnNavigation } from "@/hooks/useReturnNavigation";
 import { useRouteScrollRestoration } from "@/hooks/useRouteScrollRestoration";
+import { assetEditorSignature, clearAssetEditorRecovery, readAssetEditorRecovery, writeAssetEditorRecovery, type AssetEditorRecovery, type AssetEditorSnapshot } from "@/lib/asset-editor-recovery";
 
 type ProductionEvent = {
   event_type?: string;
@@ -872,6 +873,13 @@ export function AssetDetailPage() {
   const blockRevisionAbortRef = useRef<AbortController | null>(null);
   const [documentRevision, setDocumentRevision] = useState<DocumentRevisionState>({ instruction: "", streaming: false, status: "" });
   const [pendingOptimizationRound, setPendingOptimizationRound] = useState<PendingOptimizationRound | null>(null);
+  const [baseEditorSignature, setBaseEditorSignature] = useState("");
+  const [recoveryCandidate, setRecoveryCandidate] = useState<AssetEditorRecovery | null>(null);
+  const hydratedAssetIdRef = useRef("");
+  const baseEditorSignatureRef = useRef("");
+  const editorSignatureRef = useRef("");
+  const editorSnapshotRef = useRef<AssetEditorSnapshot | null>(null);
+  const allowNextHistoryPopRef = useRef(false);
   const documentRevisionAbortRef = useRef<AbortController | null>(null);
   const [evidenceAgent, setEvidenceAgent] = useState<EvidenceAgentState>({ instruction: "", streaming: false, status: "" });
   const evidenceAgentAbortRef = useRef<AbortController | null>(null);
@@ -897,12 +905,50 @@ export function AssetDetailPage() {
     setHtmlCopied(false);
   }, [asset?.id, asset?.metadata_?.delivery_format]);
 
-  useEffect(() => {
-    setEditTitle(asset?.title ?? "");
-    setEditBrief(asset?.brief ?? "");
-    setEditOutline(asset?.outline ?? "");
-    setEditBlocks(loadAssetBlocks(asset?.metadata_, asset?.draft_content));
-    setEditStyle(asset?.style_notes ?? "");
+  const serverEditorSnapshot = useMemo<AssetEditorSnapshot | null>(() => asset ? ({
+    title: asset.title,
+    brief: asset.brief ?? "",
+    outline: asset.outline ?? "",
+    style: asset.style_notes ?? "",
+    blocks: loadAssetBlocks(asset.metadata_, asset.draft_content),
+    pendingOptimizationRound: null,
+  }) : null, [asset]);
+  const serverEditorSignature = useMemo(
+    () => serverEditorSnapshot ? assetEditorSignature(serverEditorSnapshot) : "",
+    [serverEditorSnapshot],
+  );
+  const editorSnapshot = useMemo<AssetEditorSnapshot>(() => ({
+    title: editTitle,
+    brief: editBrief,
+    outline: editOutline,
+    style: editStyle,
+    blocks: editBlocks,
+    pendingOptimizationRound,
+  }), [editTitle, editBrief, editOutline, editStyle, editBlocks, pendingOptimizationRound]);
+  const editorSignature = useMemo(() => assetEditorSignature(editorSnapshot), [editorSnapshot]);
+  const isEditorDirty = Boolean(asset && baseEditorSignature && editorSignature !== baseEditorSignature);
+
+  baseEditorSignatureRef.current = baseEditorSignature;
+  editorSignatureRef.current = editorSignature;
+  editorSnapshotRef.current = editorSnapshot;
+
+  const persistEditorRecovery = useCallback(() => {
+    if (!asset || !editorSnapshotRef.current || editorSignatureRef.current === baseEditorSignatureRef.current) return;
+    writeAssetEditorRecovery(
+      asset.id,
+      workspaceQuery.data?.workspace_revision ?? 0,
+      baseEditorSignatureRef.current,
+      editorSnapshotRef.current,
+    );
+  }, [asset, workspaceQuery.data?.workspace_revision]);
+
+  const loadEditorSnapshot = useCallback((snapshot: AssetEditorSnapshot) => {
+    setEditTitle(snapshot.title);
+    setEditBrief(snapshot.brief);
+    setEditOutline(snapshot.outline);
+    setEditBlocks(snapshot.blocks);
+    setEditStyle(snapshot.style);
+    setPendingOptimizationRound(snapshot.pendingOptimizationRound);
     setPreviewBlockIds(new Set());
     blockRevisionAbortRef.current?.abort();
     blockRevisionAbortRef.current = null;
@@ -910,8 +956,115 @@ export function AssetDetailPage() {
     documentRevisionAbortRef.current?.abort();
     documentRevisionAbortRef.current = null;
     setDocumentRevision({ instruction: "", streaming: false, status: "" });
-    setPendingOptimizationRound(null);
-  }, [asset]);
+  }, []);
+
+  useEffect(() => {
+    if (!asset || !serverEditorSnapshot || !serverEditorSignature) return;
+    const assetChanged = hydratedAssetIdRef.current !== asset.id;
+    if (assetChanged) {
+      hydratedAssetIdRef.current = asset.id;
+      loadEditorSnapshot(serverEditorSnapshot);
+      baseEditorSignatureRef.current = serverEditorSignature;
+      setBaseEditorSignature(serverEditorSignature);
+      const recovery = readAssetEditorRecovery(asset.id);
+      if (recovery && assetEditorSignature(recovery.snapshot) !== serverEditorSignature) {
+        setRecoveryCandidate(recovery);
+      } else {
+        clearAssetEditorRecovery(asset.id);
+        setRecoveryCandidate(null);
+      }
+      return;
+    }
+    if (serverEditorSignature === baseEditorSignatureRef.current) return;
+    if (editorSignatureRef.current !== baseEditorSignatureRef.current) return;
+    loadEditorSnapshot(serverEditorSnapshot);
+    baseEditorSignatureRef.current = serverEditorSignature;
+    setBaseEditorSignature(serverEditorSignature);
+  }, [asset, loadEditorSnapshot, serverEditorSignature, serverEditorSnapshot]);
+
+  useEffect(() => {
+    if (!asset || !isEditorDirty || recoveryCandidate) return;
+    const timeout = window.setTimeout(persistEditorRecovery, 250);
+    return () => window.clearTimeout(timeout);
+  }, [asset, editorSnapshot, isEditorDirty, persistEditorRecovery, recoveryCandidate]);
+
+  useEffect(() => {
+    if (!isEditorDirty) return;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      persistEditorRecovery();
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isEditorDirty, persistEditorRecovery]);
+
+  useEffect(() => {
+    if (!isEditorDirty) return;
+    const handleHistoryPop = () => {
+      if (allowNextHistoryPopRef.current) {
+        allowNextHistoryPopRef.current = false;
+        return;
+      }
+      persistEditorRecovery();
+      if (!window.confirm("Leave this Asset with unsaved changes? Your recovery draft will remain available in this browser tab.")) {
+        allowNextHistoryPopRef.current = true;
+        window.history.go(1);
+      }
+    };
+    window.addEventListener("popstate", handleHistoryPop);
+    return () => window.removeEventListener("popstate", handleHistoryPop);
+  }, [isEditorDirty, persistEditorRecovery]);
+
+  useEffect(() => {
+    if (!isEditorDirty) return;
+    const handleDocumentClick = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target.closest("a[href]") : null;
+      if (!(target instanceof HTMLAnchorElement) || target.target === "_blank" || event.defaultPrevented) return;
+      const destination = new URL(target.href, window.location.href);
+      const current = new URL(window.location.href);
+      if (destination.origin !== current.origin || (destination.pathname === current.pathname && destination.search === current.search)) return;
+      persistEditorRecovery();
+      if (!window.confirm("Leave this Asset with unsaved changes? Your recovery draft will remain available in this browser tab.")) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+    document.addEventListener("click", handleDocumentClick, true);
+    return () => document.removeEventListener("click", handleDocumentClick, true);
+  }, [isEditorDirty, persistEditorRecovery]);
+
+  const confirmEditorNavigation = useCallback(() => {
+    if (!isEditorDirty) return true;
+    persistEditorRecovery();
+    return window.confirm("Leave this Asset with unsaved changes? Your recovery draft will remain available in this browser tab.");
+  }, [isEditorDirty, persistEditorRecovery]);
+
+  const returnFromAsset = useCallback(() => {
+    if (!confirmEditorNavigation()) return;
+    allowNextHistoryPopRef.current = true;
+    window.setTimeout(() => {
+      allowNextHistoryPopRef.current = false;
+    }, 500);
+    returnToPrevious();
+  }, [confirmEditorNavigation, returnToPrevious]);
+
+  const restoreRecoveryDraft = () => {
+    if (!recoveryCandidate || !serverEditorSignature) return;
+    loadEditorSnapshot(recoveryCandidate.snapshot);
+    baseEditorSignatureRef.current = serverEditorSignature;
+    setBaseEditorSignature(serverEditorSignature);
+    setRecoveryCandidate(null);
+  };
+
+  const discardRecoveryDraft = () => {
+    if (!asset || !serverEditorSnapshot || !serverEditorSignature) return;
+    clearAssetEditorRecovery(asset.id);
+    loadEditorSnapshot(serverEditorSnapshot);
+    baseEditorSignatureRef.current = serverEditorSignature;
+    setBaseEditorSignature(serverEditorSignature);
+    setRecoveryCandidate(null);
+  };
 
   useEffect(() => {
     setContributionEdit(workspaceQuery.data?.contribution?.summary ?? "");
@@ -1201,7 +1354,20 @@ export function AssetDetailPage() {
       });
     },
     onSuccess: async () => {
+      const savedOptimizationRound = pendingOptimizationRound?.round;
+      const savedEditorSignature = editorSnapshotRef.current
+        ? assetEditorSignature(editorSnapshotRef.current)
+        : editorSignature;
+      baseEditorSignatureRef.current = savedEditorSignature;
+      setBaseEditorSignature(savedEditorSignature);
+      clearAssetEditorRecovery(id);
+      setRecoveryCandidate(null);
       setPendingOptimizationRound(null);
+      setDocumentRevision({
+        instruction: "",
+        streaming: false,
+        status: savedOptimizationRound ? `Optimization round ${savedOptimizationRound} saved.` : "",
+      });
       await refreshAsset();
     },
   });
@@ -1852,6 +2018,7 @@ export function AssetDetailPage() {
       supportingEvidence: item.supporting_evidence,
       contradictingEvidence: item.contradicting_evidence,
     }));
+    if (!confirmEditorNavigation()) return;
     navigate("/chat", {
       state: {
         workflowId: "draft-asset",
@@ -2115,10 +2282,29 @@ export function AssetDetailPage() {
       className="h-full overflow-y-auto"
       data-route-scroll="asset-detail"
     >
+      <Dialog open={Boolean(recoveryCandidate)}>
+        <DialogContent className="max-w-xl" onEscapeKeyDown={(event) => event.preventDefault()} onPointerDownOutside={(event) => event.preventDefault()}>
+          <DialogHeader>
+            <DialogTitle>Recover unsaved Asset changes?</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              This browser tab contains an unsaved editor draft from {recoveryCandidate ? new Date(recoveryCandidate.updatedAt).toLocaleString() : "an earlier edit"}.
+              {recoveryCandidate && recoveryCandidate.baseEditorSignature !== serverEditorSignature
+                ? " The saved Asset changed after that draft began, so review restored content carefully before saving."
+                : " Restore it to continue, or discard it and use the saved Asset."}
+            </p>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button type="button" variant="outline" onClick={discardRecoveryDraft}>Discard Recovery</Button>
+              <Button type="button" onClick={restoreRecoveryDraft}>Restore Draft</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
       <div className="mx-auto max-w-6xl space-y-6 px-6 py-8">
         <div className="flex items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={returnToPrevious} className="text-sm text-primary hover:underline">{backLabel}</button>
+            <button type="button" onClick={returnFromAsset} className="text-sm text-primary hover:underline">{backLabel}</button>
             {asset && <><span className="text-muted-foreground">/</span><Badge variant="outline">{assetTypeLabel(asset.asset_type)}</Badge><Badge variant="secondary">{STATUS_LABELS[asset.status]}</Badge></>}
             {!asset && <span className="text-sm text-muted-foreground">Loading Asset…</span>}
           </div>
@@ -2176,7 +2362,7 @@ export function AssetDetailPage() {
                 <TabsTrigger value="evidence">Evidence</TabsTrigger>
                 <TabsTrigger value="claims">Claims</TabsTrigger>
                 <TabsTrigger value="read">Read</TabsTrigger>
-                <TabsTrigger value="edit">Edit</TabsTrigger>
+                <TabsTrigger value="edit" className="gap-2">Edit{isEditorDirty && <span className="h-2 w-2 rounded-full bg-amber-500" aria-label="Unsaved changes" />}</TabsTrigger>
                 <TabsTrigger value="knowledge">Knowledge</TabsTrigger>
                 <TabsTrigger value="production">Production</TabsTrigger>
               </TabsList>
@@ -2622,7 +2808,12 @@ export function AssetDetailPage() {
                       );
                     })}
                   </div>
-                  <div className="flex items-center gap-3"><Button onClick={() => editMutation.mutate()} disabled={!editTitle.trim() || editMutation.isPending}>{editMutation.isPending ? "Saving…" : pendingOptimizationRound ? `Save Round ${pendingOptimizationRound.round} Changes` : "Save Changes"}</Button>{editMutation.isSuccess && <span className="text-sm text-emerald-700">Saved. Open Read to inspect the rendered document.</span>}{editMutation.isError && <span className="text-sm text-destructive">Could not save Asset changes.</span>}</div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Button onClick={() => editMutation.mutate()} disabled={!editTitle.trim() || editMutation.isPending}>{editMutation.isPending ? "Saving…" : pendingOptimizationRound ? `Save Round ${pendingOptimizationRound.round} Changes` : "Save Changes"}</Button>
+                    {isEditorDirty && <span className="text-sm font-medium text-amber-700">Unsaved changes · recovery draft stored in this tab.</span>}
+                    {editMutation.isSuccess && !isEditorDirty && <span className="text-sm text-emerald-700">Saved. Open Read to inspect the rendered document.</span>}
+                    {editMutation.isError && <span className="text-sm text-destructive">Could not save Asset changes. Your recovery draft is still available.</span>}
+                  </div>
                 </CardContent>
               </Card>
             </TabsContent>

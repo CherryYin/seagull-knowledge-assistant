@@ -8,6 +8,7 @@ import { MarkdownRenderer } from "@/components/markdown";
 import type { MessageMetadata, ReferenceInfo } from "@/lib/api";
 import { AGENT_WORKFLOW_SAVE_TARGET_LABELS, type WorkflowResultSaveTarget } from "@/lib/agent-workflows";
 import { assessAssetDraft, renderAssetDraftRepairRequest, type AssetGenerationRequest } from "@/lib/asset-generation";
+import { getMessageRunContract } from "@/lib/chat-message-contract";
 
 const CITATION_RE = /\[来源[：:]\s*((?:note|src|source)-[^\]]+)\]/g;
 
@@ -59,8 +60,12 @@ export function ChatMessage({
 }: Props) {
   const isUser = role === "user";
   const navigate = useNavigate();
+  const runContract = getMessageRunContract(metadata);
   const [retryLoading, setRetryLoading] = useState(false);
-  const [saveState, setSaveState] = useState<Partial<Record<WorkflowResultSaveTarget, "loading" | "done">>>({});
+  const [saveState, setSaveState] = useState<Partial<Record<WorkflowResultSaveTarget, "loading" | "done">>>(() => {
+    const receipts = metadata?.save_receipts ?? {};
+    return Object.fromEntries(Object.keys(receipts).map((target) => [target, "done"])) as Partial<Record<WorkflowResultSaveTarget, "done">>;
+  });
   const [actionError, setActionError] = useState<string | null>(null);
   const assetQuality = !isUser && assetDraft && saveTargets.includes("asset")
     ? assessAssetDraft(metadata?.document_content || content, assetDraft)
@@ -126,7 +131,11 @@ export function ChatMessage({
   };
 
   return (
-    <div className={cn("group flex gap-3 py-4", isUser && "flex-row-reverse")}>
+    <div
+      className={cn("group flex gap-3 py-4", isUser && "flex-row-reverse")}
+      data-agent-run-status={runContract?.run_status}
+      data-agent-workflow-id={runContract?.workflow_id ?? undefined}
+    >
       {/* Avatar */}
       <div
         className={cn(
@@ -143,6 +152,20 @@ export function ChatMessage({
 
       {/* Message bubble + actions */}
       <div className={cn("max-w-[75%]", isUser && "flex flex-col items-end")}>
+        {!isUser && runContract && (
+          <div className="mb-1 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+            <span className={cn(
+              "rounded-full border px-2 py-0.5 font-medium",
+              runContract.run_status === "completed" && "border-emerald-500/30 text-emerald-700",
+              runContract.run_status === "failed" && "border-red-500/30 text-red-700",
+              runContract.run_status === "stopped" && "border-amber-500/30 text-amber-700",
+            )}>
+              {runContract.run_status === "awaiting_input" ? "Awaiting input" : runContract.run_status.charAt(0).toUpperCase() + runContract.run_status.slice(1)}
+            </span>
+            <span>{runContract.workflow_id ?? "General Chat"}</span>
+            {runContract.object_ref?.title && <span>· {runContract.object_ref.title}</span>}
+          </div>
+        )}
         <div
           className={cn(
             "rounded-xl px-4 py-3 text-sm",
@@ -229,7 +252,7 @@ export function ChatMessage({
         {!streaming && content && (
           <div className="mt-1 flex items-center gap-1">
             {/* Retry button — on user messages */}
-            {isUser && onRetry && (
+            {onRetry && (isUser || runContract?.run_status === "failed" || runContract?.run_status === "stopped") && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -238,7 +261,7 @@ export function ChatMessage({
                 disabled={retryLoading}
               >
                 <RotateCw className={cn("h-3 w-3", retryLoading && "animate-spin")} />
-                Retry
+                {isUser ? "Retry" : "Retry run"}
               </Button>
             )}
 

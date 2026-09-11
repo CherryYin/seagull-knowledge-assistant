@@ -33,6 +33,7 @@ type MockState = {
   chatPrompts?: string[];
   chatRequests?: Array<Record<string, unknown>>;
   chatSessions?: Array<Record<string, unknown>>;
+  nextChatEvents?: Array<Record<string, unknown>>;
   harnessSessionIds?: string[];
   htmlPreviewRequests?: number;
   htmlExportRequests?: number;
@@ -126,6 +127,15 @@ async function installMockBff(page: Page, state: MockState) {
       state.chatPrompts = [...(state.chatPrompts ?? []), body.prompt ?? ""];
       state.chatRequests = [...(state.chatRequests ?? []), body as Record<string, unknown>];
       state.harnessSessionIds = [...(state.harnessSessionIds ?? []), body.session_id ?? ""];
+      if (state.nextChatEvents) {
+        const events = state.nextChatEvents;
+        state.nextChatEvents = undefined;
+        return route.fulfill({
+          status: 200,
+          contentType: "text/event-stream",
+          body: events.flatMap((event) => [`data: ${JSON.stringify(event)}`, ""]).join("\n"),
+        });
+      }
       if (body.preset === "clarify-asset-intent") {
         const responseMode = state.intentResponseModes?.shift() ?? "tool-call";
         const proposalEvent = responseMode === "tool-result"
@@ -709,7 +719,7 @@ test("critical knowledge journey: login, chat, explicit save, decisions, and Age
   await expect(page.getByRole("button", { name: "Save as Asset Draft" })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Save as Personal Note" }).click();
-  await expect(page.getByRole("button", { name: "Saved" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Saved", exact: true })).toBeVisible();
   expect(state.savedNoteBody).not.toBeNull();
   expect(state.savedNoteBody?.tags).toEqual(expect.arrayContaining([
     "from-agent",
@@ -971,6 +981,145 @@ test("Chat restores session, History selection, message anchor, and business ret
   await expect(page).toHaveURL(/\/sources\/source-input$/);
 });
 
+test("Chat messages keep their own Workflow save actions", async ({ page }) => {
+  const persistedSession = {
+    id: "session-message-contracts",
+    title: "Message contract history",
+    messages: [
+      { id: "contract-user-one", role: "user", content: "Summarize this source", created_at: now },
+      {
+        id: "contract-assistant-one",
+        role: "assistant",
+        content: "A reusable source summary.",
+        created_at: now,
+        metadata: {
+          agent_run: {
+            version: 1,
+            workflow_id: "summarize-source",
+            run_status: "completed",
+            save_targets: ["note"],
+            result_validated: true,
+            started_at: now,
+            completed_at: now,
+          },
+        },
+      },
+      { id: "contract-user-two", role: "user", content: "Review this candidate", created_at: now },
+      {
+        id: "contract-assistant-two",
+        role: "assistant",
+        content: "A reviewable wiki recommendation.",
+        created_at: now,
+        metadata: {
+          agent_run: {
+            version: 1,
+            workflow_id: "review-candidate-article",
+            run_status: "completed",
+            save_targets: ["review_note", "wiki_draft"],
+            result_validated: true,
+            started_at: now,
+            completed_at: now,
+          },
+        },
+      },
+    ],
+    created_at: now,
+    updated_at: now,
+  };
+  const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null, chatSessions: [persistedSession] };
+  await installMockBff(page, state);
+  await signIn(page);
+  await page.goto("/chat?session=session-message-contracts");
+
+  const summaryMessage = page.locator('[data-chat-message-id="contract-assistant-one"]');
+  await expect(summaryMessage.getByRole("button", { name: "Save as Personal Note" })).toBeVisible();
+  await expect(summaryMessage.getByRole("button", { name: "Save as Wiki Draft" })).toHaveCount(0);
+  const reviewMessage = page.locator('[data-chat-message-id="contract-assistant-two"]');
+  await expect(reviewMessage.getByRole("button", { name: "Save as Review Note" })).toBeVisible();
+  await expect(reviewMessage.getByRole("button", { name: "Save as Wiki Draft" })).toBeVisible();
+  await expect(reviewMessage.getByRole("button", { name: "Save as Personal Note" })).toHaveCount(0);
+});
+
+test("Failed and stopped Chat runs cannot be saved", async ({ page }) => {
+  const stoppedSession = {
+    id: "session-stopped-run",
+    title: "Stopped run",
+    messages: [
+      { id: "stopped-user", role: "user", content: "Stop this run", created_at: now },
+      {
+        id: "stopped-assistant",
+        role: "assistant",
+        content: "Stopped.",
+        created_at: now,
+        metadata: {
+          agent_run: {
+            version: 1,
+            workflow_id: "draft-blog-asset",
+            run_status: "stopped",
+            save_targets: ["asset"],
+            result_validated: false,
+            started_at: now,
+            completed_at: now,
+          },
+        },
+      },
+    ],
+    created_at: now,
+    updated_at: now,
+  };
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: null,
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+    chatSessions: [stoppedSession],
+    nextChatEvents: [
+      { type: "session", session_id: "session-failed-run" },
+      { type: "text", content: "Partial output that must not be saved." },
+      { type: "error", content: "Contract validation failed" },
+      { type: "done", session_id: "session-failed-run" },
+    ],
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+  await page.goto("/chat?session=session-stopped-run");
+
+  const stoppedMessage = page.locator('[data-chat-message-id="stopped-assistant"]');
+  await expect(stoppedMessage.locator('[data-agent-run-status="stopped"]')).toBeVisible();
+  await expect(stoppedMessage.getByRole("button", { name: /Save|Apply/ })).toHaveCount(0);
+  await expect(stoppedMessage.getByRole("button", { name: "Retry run" })).toBeVisible();
+
+  await page.getByRole("button", { name: "New Session" }).click();
+  const input = page.getByPlaceholder("Ask anything about your knowledge base...");
+  await input.fill("Generate a result that fails validation");
+  await input.press("Enter");
+  const failedMessage = page.locator('[data-agent-run-status="failed"]').last();
+  await expect(failedMessage).toBeVisible();
+  await expect(failedMessage).toContainText("Contract validation failed");
+  await expect(failedMessage.getByRole("button", { name: /Save|Apply/ })).toHaveCount(0);
+  await expect(failedMessage.getByRole("button", { name: "Retry run" })).toBeVisible();
+});
+
+test("Chat save receipts survive reload and History", async ({ page }) => {
+  const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null };
+  await installMockBff(page, state);
+  await signIn(page);
+  await page.goto("/chat");
+
+  const input = page.getByPlaceholder("Ask anything about your knowledge base...");
+  await input.fill("Create a durable saved result");
+  await input.press("Enter");
+  await page.getByRole("button", { name: "Save as Personal Note" }).click();
+  await expect(page.getByRole("button", { name: "Saved" })).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Saved", exact: true })).toBeVisible();
+  await page.getByRole("tab", { name: "History" }).click();
+  await expect(page.getByRole("button", { name: "Saved", exact: true })).toBeVisible();
+});
+
 test("Asset creation stores HTML delivery preference while preserving Markdown authoring", async ({ page }) => {
   const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null };
   await installMockBff(page, state);
@@ -1159,6 +1308,8 @@ test("Asset complete optimization records a saved first round before running the
   await page.getByRole("button", { name: "Optimize Entire Draft" }).click();
   await expect(page.locator("[data-document-agent-diff-preview]")).toBeVisible();
   await page.getByRole("button", { name: "Apply to Editor" }).click();
+  await expect(page.getByText("Unsaved changes · recovery draft stored in this tab.")).toBeVisible();
+  expect(((state.savedAssetBody?.metadata as Record<string, unknown>)?.asset_optimization_v1 as Record<string, unknown> | undefined)?.completed_rounds).toBeUndefined();
   await page.getByRole("button", { name: "Save Round 1 Changes" }).click();
 
   await expect.poll(() => ((state.savedAssetBody?.metadata as Record<string, unknown>)?.asset_optimization_v1 as Record<string, unknown>)?.completed_rounds).toBe(1);
@@ -1179,6 +1330,83 @@ test("Asset complete optimization records a saved first round before running the
   expect(optimization.history).toHaveLength(2);
   expect(optimization.history?.[1]).toMatchObject({ round: 2, workspace_revision: 7, audit_verdict: "warn", finding_ids: ["PKG-EVIDENCE-004"] });
   expect(state.documentOptimizationCalls).toBe(2);
+});
+
+test("Asset editor preserves dirty changes, recovers after refresh, and clears recovery after save", async ({ page }) => {
+  const initialBlocks = [
+    { id: "block-title", type: "heading", markdown: "# Recovery Asset", revision: 1, claim_refs: [] },
+    { id: "block-body", type: "paragraph", markdown: "Saved server content.", revision: 1, claim_refs: [] },
+  ];
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: {
+      title: "Recovery Asset",
+      brief: "Saved brief",
+      outline: "Saved outline",
+      style_notes: "Saved style",
+      asset_type: "research_brief",
+      status: "draft",
+      draft_content: "# Recovery Asset\n\nSaved server content.",
+      source_refs: [],
+      note_refs: [],
+      wiki_refs: [],
+      metadata_: { asset_document: { schemaVersion: 1, blocks: initialBlocks, updatedAt: now } },
+      metadata: { asset_document: { schemaVersion: 1, blocks: initialBlocks, updatedAt: now } },
+    },
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/assets/asset-e2e?tab=edit");
+  await page.locator("#asset-edit-title").fill("Recovered local title");
+  await expect(page.getByText("Unsaved changes · recovery draft stored in this tab.")).toBeVisible();
+
+  await page.getByRole("tab", { name: "Production" }).click();
+  await page.getByLabel("Asset delivery format").selectOption("html");
+  await page.getByRole("button", { name: "Save Preference" }).click();
+  await expect(page.getByText("Delivery preference saved.")).toBeVisible();
+  await page.getByRole("tab", { name: /Edit/ }).click();
+  await expect(page.locator("#asset-edit-title")).toHaveValue("Recovered local title");
+
+  const leaveDialogMessage = new Promise<string>((resolve) => {
+    page.once("dialog", async (dialog) => {
+      resolve(dialog.message());
+      await dialog.dismiss();
+    });
+  });
+  await page.locator("aside").getByRole("link", { name: "Assets", exact: true }).click();
+  expect(await leaveDialogMessage).toContain("unsaved changes");
+  await expect(page).toHaveURL(/\/assets\/asset-e2e/);
+
+  const acceptBeforeUnload = (beforeUnloadDialog: import("@playwright/test").Dialog) => void beforeUnloadDialog.accept();
+  page.on("dialog", acceptBeforeUnload);
+  await page.reload();
+  page.off("dialog", acceptBeforeUnload);
+  await expect(page.getByRole("heading", { name: "Recover unsaved Asset changes?" })).toBeVisible();
+  await page.getByRole("button", { name: "Restore Draft" }).click();
+  await expect(page.locator("#asset-edit-title")).toHaveValue("Recovered local title");
+  await expect(page.getByText("Unsaved changes · recovery draft stored in this tab.")).toBeVisible();
+
+  await page.getByRole("button", { name: "Save Changes" }).click();
+  await expect(page.getByText("Saved. Open Read to inspect the rendered document.")).toBeVisible();
+  await expect(page.getByText("Unsaved changes · recovery draft stored in this tab.")).toHaveCount(0);
+  await expect.poll(() => state.savedAssetBody?.title).toBe("Recovered local title");
+  expect(await page.evaluate(() => Object.keys(sessionStorage).filter((key) => key.includes("asset-editor-recovery")))).toHaveLength(0);
+
+  await page.locator("#asset-edit-brief").fill("Temporary unsaved brief");
+  await expect(page.getByText("Unsaved changes · recovery draft stored in this tab.")).toBeVisible();
+  page.on("dialog", acceptBeforeUnload);
+  await page.reload();
+  page.off("dialog", acceptBeforeUnload);
+  await expect(page.getByRole("heading", { name: "Recover unsaved Asset changes?" })).toBeVisible();
+  await page.getByRole("button", { name: "Discard Recovery" }).click();
+  await expect(page.locator("#asset-edit-title")).toHaveValue("Recovered local title");
+  await expect(page.locator("#asset-edit-brief")).toHaveValue("Saved brief");
+  await expect(page.getByText("Unsaved changes · recovery draft stored in this tab.")).toHaveCount(0);
 });
 
 test("Newsletter Automation saves a schedule and creates a reviewable Asset draft", async ({ page }) => {

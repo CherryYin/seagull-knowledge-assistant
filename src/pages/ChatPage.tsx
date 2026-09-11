@@ -43,6 +43,14 @@ import {
   type WorkflowResultSaveTarget,
 } from "@/lib/agent-workflows";
 import { saveWorkflowResult } from "@/lib/workflow-result-save";
+import {
+  completeChatRunContract,
+  createChatRunContract,
+  createSaveReceipt,
+  getMessageAssetDraft,
+  getMessageRunContract,
+  getMessageSaveTargets,
+} from "@/lib/chat-message-contract";
 import type { AssetIntentFormDraft, AssetIntentProposal } from "@/lib/asset-generation";
 import { useReturnNavigation } from "@/hooks/useReturnNavigation";
 import { useRouteScrollRestoration } from "@/hooks/useRouteScrollRestoration";
@@ -323,26 +331,31 @@ export function ChatPage() {
   useEffect(() => {
     if (!currentSession) return;
     if (requestedMessageId) {
-      let secondFrame = 0;
-      const firstFrame = window.requestAnimationFrame(() => {
-        secondFrame = window.requestAnimationFrame(() => {
-          const scrollContainer = messageScrollRef.current;
-          const message = scrollContainer?.querySelector<HTMLElement>(
-            `[data-chat-message-id="${CSS.escape(requestedMessageId)}"]`,
-          );
-          if (!scrollContainer || !message) return;
-          const containerRect = scrollContainer.getBoundingClientRect();
-          const messageRect = message.getBoundingClientRect();
-          const centeredTop = scrollContainer.scrollTop
-            + messageRect.top
-            - containerRect.top
-            - Math.max(0, (scrollContainer.clientHeight - messageRect.height) / 2);
-          scrollContainer.scrollTo({ top: Math.max(0, centeredTop), behavior: "auto" });
-        });
-      });
+      let frame = 0;
+      let attempts = 0;
+      const scrollWhenReady = () => {
+        const scrollContainer = messageScrollRef.current;
+        const message = scrollContainer?.querySelector<HTMLElement>(
+          `[data-chat-message-id="${CSS.escape(requestedMessageId)}"]`,
+        );
+        if (!scrollContainer || !message || scrollContainer.clientHeight === 0) {
+          if (attempts++ < 12) frame = window.requestAnimationFrame(scrollWhenReady);
+          return;
+        }
+        const containerRect = scrollContainer.getBoundingClientRect();
+        const messageRect = message.getBoundingClientRect();
+        const centeredTop = scrollContainer.scrollTop
+          + messageRect.top
+          - containerRect.top
+          - Math.max(0, (scrollContainer.clientHeight - messageRect.height) / 2);
+        scrollContainer.scrollTo({ top: Math.max(0, centeredTop), behavior: "auto" });
+      };
+      const timeout = window.setTimeout(() => {
+        frame = window.requestAnimationFrame(scrollWhenReady);
+      }, 0);
       return () => {
-        window.cancelAnimationFrame(firstFrame);
-        if (secondFrame) window.cancelAnimationFrame(secondFrame);
+        window.clearTimeout(timeout);
+        if (frame) window.cancelAnimationFrame(frame);
       };
     }
     if (streaming) scrollToBottom();
@@ -453,6 +466,23 @@ export function ChatPage() {
       const sessionId = sessionAtStart.id;
       const createHarnessSession = sessionAtStart.messages.length === 0;
       const harnessPreset = selectedWorkflowId ?? "knowledge-lab";
+      const workflowAtStart = findAgentWorkflowTemplate(selectedWorkflowId);
+      const contextAtStart: AgentWorkflowContext = {
+        ...workflowContext,
+        objectRef: workflowContext.objectRef ? { ...workflowContext.objectRef } : undefined,
+        assetDraft: workflowContext.assetDraft
+          ? JSON.parse(JSON.stringify(workflowContext.assetDraft)) as AgentWorkflowContext["assetDraft"]
+          : undefined,
+        assetIntentDraft: workflowContext.assetIntentDraft
+          ? JSON.parse(JSON.stringify(workflowContext.assetIntentDraft)) as AgentWorkflowContext["assetIntentDraft"]
+          : undefined,
+      };
+      const runContract = createChatRunContract({
+        workflowId: workflowAtStart?.id ?? null,
+        objectRef: contextAtStart.objectRef,
+        saveTargets: workflowAtStart?.saveTargets ?? ["note"],
+        assetDraft: contextAtStart.assetDraft,
+      });
       const expectsIntentProposal = harnessPreset === "clarify-asset-intent";
       if (expectsIntentProposal) setAssetIntentProposalIssue(null);
       const baseMessages = truncateAfterIndex !== undefined
@@ -468,7 +498,7 @@ export function ChatPage() {
       }
 
       const userMsg = createMessage("user", task);
-      const assistantMsg = createMessage("assistant", "");
+      const assistantMsg = createMessage("assistant", "", { agent_run: runContract });
 
       updateSessionLocal(sessionId, (s) => {
         const nextMessages = [...baseMessages, userMsg, assistantMsg];
@@ -485,6 +515,10 @@ export function ChatPage() {
 
       let fullResponse = "";
       let stopped = false;
+      let runFailed = false;
+      let runError: string | undefined;
+      let awaitingInput = false;
+      let sawDone = false;
       let generatedIntentProposal: AssetIntentProposal | null = null;
       const abortController = new AbortController();
       abortRef.current = abortController;
@@ -502,7 +536,7 @@ export function ChatPage() {
             metadata: {
               ...(message.metadata ?? {}),
               asset_intent_proposal: proposal as unknown as Record<string, unknown>,
-              ...(workflowContext.assetIntentDraft ? { asset_intent_draft: workflowContext.assetIntentDraft as unknown as Record<string, unknown> } : {}),
+              ...(contextAtStart.assetIntentDraft ? { asset_intent_draft: contextAtStart.assetIntentDraft as unknown as Record<string, unknown> } : {}),
             },
           } : message),
         }));
@@ -563,6 +597,7 @@ export function ChatPage() {
               break;
             case "question":
               if (event.rpc_id && event.session_id && event.questions?.length) {
+                awaitingInput = true;
                 setPendingQuestion({
                   rpcId: event.rpc_id,
                   sessionId: event.session_id,
@@ -571,7 +606,9 @@ export function ChatPage() {
               }
               break;
             case "error": {
-              const errorText = `\n\nError: ${event.content ?? "Harness error"}`;
+              runFailed = true;
+              runError = event.content ?? "Harness error";
+              const errorText = `\n\nError: ${runError}`;
               fullResponse += errorText;
               updateSessionLocal(sessionId, (s) => {
                 const nextMessages = s.messages.map((m) =>
@@ -584,11 +621,15 @@ export function ChatPage() {
               break;
             }
             case "done":
+              sawDone = true;
+              awaitingInput = false;
               break;
           }
         }
       } catch (err) {
         stopped = stopRequestedRef.current || (err instanceof Error && err.name === "AbortError");
+        runFailed = !stopped;
+        runError = stopped ? undefined : err instanceof Error ? err.message : "Unknown error";
         if (!fullResponse) {
           fullResponse = stopped
             ? "Stopped."
@@ -619,16 +660,24 @@ export function ChatPage() {
         setStreaming(false);
         setSteps([]);
         const latestSession = sessionsRef.current.find((session) => session.id === sessionId) ?? sessionAtStart;
+        const finalRunStatus = stopped
+          ? "stopped"
+          : runFailed
+            ? "failed"
+            : awaitingInput && !sawDone
+              ? "awaiting_input"
+              : "completed";
         const finalMessages = latestSession.messages.map((message) => message.id === assistantMsg.id ? {
           ...message,
           content: fullResponse,
-          ...(generatedIntentProposal ? {
-            metadata: {
-              ...(message.metadata ?? {}),
+          metadata: {
+            ...(message.metadata ?? {}),
+            agent_run: completeChatRunContract(runContract, finalRunStatus, runError),
+            ...(generatedIntentProposal ? {
               asset_intent_proposal: generatedIntentProposal as unknown as Record<string, unknown>,
-              ...(workflowContext.assetIntentDraft ? { asset_intent_draft: workflowContext.assetIntentDraft as unknown as Record<string, unknown> } : {}),
-            },
-          } : {}),
+              ...(contextAtStart.assetIntentDraft ? { asset_intent_draft: contextAtStart.assetIntentDraft as unknown as Record<string, unknown> } : {}),
+            } : {}),
+          },
         } : message);
         const finalSession = {
           ...latestSession,
@@ -650,7 +699,7 @@ export function ChatPage() {
         stopRequestedRef.current = false;
       }
     },
-    [activeSessionId, currentSession, persistSessionInOrder, selectedWorkflowId, streaming, updateSessionLocal, workflowContext.assetIntentDraft]
+    [activeModel, activeSessionId, currentSession, persistSessionInOrder, selectedWorkflowId, streaming, updateSessionLocal, workflowContext]
   );
 
   const handleSubmit = async () => {
@@ -688,8 +737,6 @@ export function ChatPage() {
   const handleStop = useCallback(() => {
     stopRequestedRef.current = true;
     abortRef.current?.abort();
-    setStreaming(false);
-    setSteps([]);
   }, []);
 
   const handleRetry = useCallback(
@@ -700,21 +747,42 @@ export function ChatPage() {
   );
 
   const handleSaveTarget = useCallback(
-    async (assistantMsg: ChatSessionMessage, target: WorkflowResultSaveTarget) => {
-      if (!currentSession) throw new Error("No active Harness session is available.");
-      await saveWorkflowResult({
+    async (session: ChatSessionRecord, assistantMsg: ChatSessionMessage, target: WorkflowResultSaveTarget) => {
+      const runContract = getMessageRunContract(assistantMsg.metadata);
+      const allowedTargets = getMessageSaveTargets(assistantMsg.metadata, assistantMsg.content);
+      if (!allowedTargets.includes(target)) {
+        throw new Error("This message is not a completed, validated result for that save action.");
+      }
+      const result = await saveWorkflowResult({
         target,
-        sessionId: currentSession.id,
-        workflowId: selectedWorkflow?.id,
+        sessionId: session.id,
+        workflowId: runContract?.workflow_id,
         content: assistantMsg.metadata?.document_content || assistantMsg.content,
         title: assistantMsg.metadata?.document_title,
         categoryId: defaultCategoryId,
-        objectRef: workflowContext.objectRef,
+        objectRef: runContract?.object_ref,
         references: assistantMsg.metadata?.references,
-        assetDraft: workflowContext.assetDraft,
+        assetDraft: getMessageAssetDraft(assistantMsg.metadata),
       });
+      const receipt = createSaveReceipt(target, result);
+      let updatedSession: ChatSessionRecord | null = null;
+      updateSessionLocal(session.id, (current) => {
+        const messages = current.messages.map((message) => message.id === assistantMsg.id ? {
+          ...message,
+          metadata: {
+            ...(message.metadata ?? {}),
+            save_receipts: {
+              ...(message.metadata?.save_receipts ?? {}),
+              [target]: receipt,
+            },
+          },
+        } : message);
+        updatedSession = { ...current, messages, updated_at: new Date().toISOString() };
+        return updatedSession;
+      });
+      if (updatedSession) await persistSessionInOrder(updatedSession);
     },
-    [currentSession, defaultCategoryId, selectedWorkflow?.id, workflowContext]
+    [defaultCategoryId, persistSessionInOrder, updateSessionLocal]
   );
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -878,7 +946,18 @@ export function ChatPage() {
                   </div>
                 ) : (
                   <div className="mx-auto max-w-3xl py-6">
-                    {currentSession.messages.map((msg, idx) => (
+                    {currentSession.messages.map((msg, idx) => {
+                      const runContract = getMessageRunContract(msg.metadata);
+                      const messageSaveTargets = msg.role === "assistant" && !streaming
+                        ? getMessageSaveTargets(msg.metadata, msg.content)
+                        : [];
+                      const previousUserMessage = idx > 0 && currentSession.messages[idx - 1]?.role === "user"
+                        ? currentSession.messages[idx - 1]
+                        : null;
+                      const canRetryAssistant = msg.role === "assistant"
+                        && (runContract?.run_status === "failed" || runContract?.run_status === "stopped")
+                        && previousUserMessage;
+                      return (
                       <div key={msg.id} data-chat-message-id={msg.id}>
                       <ChatMessage
                         role={msg.role as "user" | "assistant"}
@@ -890,7 +969,9 @@ export function ChatPage() {
                         onRetry={
                           msg.role === "user" && !streaming
                             ? () => handleRetry(msg, idx)
-                            : undefined
+                            : canRetryAssistant
+                              ? () => handleRetry(previousUserMessage, idx - 1)
+                              : undefined
                         }
                         onRemember={
                           msg.role === "user" && !streaming
@@ -913,14 +994,10 @@ export function ChatPage() {
                               }
                             : undefined
                         }
-                        saveTargets={
-                          msg.role === "assistant" && !streaming
-                            ? selectedWorkflow?.saveTargets || ["note"]
-                            : []
-                        }
+                        saveTargets={messageSaveTargets}
                         onSaveTarget={
-                          msg.role === "assistant" && !streaming
-                            ? (target) => handleSaveTarget(msg, target)
+                          msg.role === "assistant" && !streaming && messageSaveTargets.length > 0
+                            ? (target) => handleSaveTarget(currentSession, msg, target)
                             : undefined
                         }
                         onRepairAssetDraft={
@@ -928,10 +1005,11 @@ export function ChatPage() {
                             ? (prompt) => void sendMessage(prompt)
                             : undefined
                         }
-                        assetDraft={msg.role === "assistant" ? workflowContext.assetDraft : undefined}
+                        assetDraft={msg.role === "assistant" ? getMessageAssetDraft(msg.metadata) : undefined}
                       />
                       </div>
-                    ))}
+                      );
+                    })}
                     {streaming && steps.length > 0 && (
                       <ResearchSteps steps={steps} />
                     )}
@@ -1177,14 +1255,24 @@ export function ChatPage() {
                       </div>
                     </div>
                     <div className="mx-auto w-full max-w-3xl flex-1 px-6 py-6">
-                      {selectedHistorySession.messages.map((message) => (
+                      {selectedHistorySession.messages.map((message) => {
+                        const messageSaveTargets = message.role === "assistant"
+                          ? getMessageSaveTargets(message.metadata, message.content)
+                          : [];
+                        return (
                         <ChatMessage
                           key={message.id}
                           role={message.role as "user" | "assistant"}
                           content={message.content}
                           metadata={message.metadata}
+                          saveTargets={messageSaveTargets}
+                          onSaveTarget={message.role === "assistant" && messageSaveTargets.length > 0
+                            ? (target) => handleSaveTarget(selectedHistorySession, message, target)
+                            : undefined}
+                          assetDraft={message.role === "assistant" ? getMessageAssetDraft(message.metadata) : undefined}
                         />
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 ) : (
