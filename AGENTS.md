@@ -10,7 +10,8 @@ The core product goal is a durable personal knowledge graph with deterministic r
 
 ## Core Capabilities
 
-- Ingest and manage sources, notes, categories, files, and user-owned chat sessions.
+- Ingest and manage sources, notes, categories, files, and user-owned chat sessions; image and video files are first-class Sources stored in MinIO with SHA-256 deduplication and a user-reviewed searchable description.
+- Generate image/video Source description proposals with the configured multimodal LLM; image proposals inspect a normalized image and video proposals inspect sampled representative frames, while saving remains an explicit user action.
 - Treat `pdf` and `article` sources as permanent user knowledge: automated retention jobs must never delete them; deletion requires an explicit user action.
 - Search knowledge using SQL filters, vector embeddings, full-text style search, and hybrid retrieval.
 - Expose authenticated REST APIs that Harness tools use to search, read, and write user knowledge.

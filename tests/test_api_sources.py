@@ -101,6 +101,100 @@ async def test_upload_duplicate_returns_existing_source_without_extracting_or_st
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source_type", "filename", "content_type"),
+    [
+        ("image", "diagram.png", "image/png"),
+        ("video", "demo.mp4", "video/mp4"),
+    ],
+)
+async def test_upload_media_stores_original_without_document_extraction(
+    mock_session,
+    fake_user,
+    source_type,
+    filename,
+    content_type,
+):
+    from pkg.api.sources import upload_source
+
+    category = MagicMock()
+    category.name = "General"
+    mock_session.get.return_value = category
+    uploaded = _make_source("src-media", fake_user.id)
+    uploaded.source_type = source_type
+    uploaded.description = "A searchable description"
+    captured = {}
+
+    async def fake_persist_source(*, body, **_kwargs):
+        captured["body"] = body
+        uploaded.metadata_ = body.metadata
+        return uploaded
+
+    storage = MagicMock()
+    storage.build_object_key.return_value = f"sources/{filename}"
+    storage.upload_bytes = AsyncMock(return_value=f"minio://sources/{filename}")
+    file = MagicMock()
+    file.filename = filename
+    file.content_type = content_type
+    file.read = AsyncMock(return_value=b"media bytes")
+
+    with (
+        patch("pkg.api.sources.extract_text_content", new=AsyncMock()) as extract_text,
+        patch("pkg.api.sources.find_owned_uploaded_source_by_hash", new=AsyncMock(return_value=None)),
+        patch("pkg.api.sources.get_storage_service", return_value=storage),
+        patch("pkg.api.sources.persist_source", new=AsyncMock(side_effect=fake_persist_source)),
+    ):
+        result = await upload_source(
+            response=MagicMock(),
+            file=file,
+            title="Saved media",
+            source_type=source_type,
+            category_id=1,
+            url=None,
+            description="A searchable description",
+            pdf_type=None,
+            user=fake_user,
+            session=mock_session,
+        )
+
+    extract_text.assert_not_awaited()
+    assert result.created is True
+    assert captured["body"].description == "A searchable description"
+    assert captured["body"].raw_content is None
+    assert captured["body"].metadata["extraction_status"] == "not_applicable"
+    assert captured["body"].metadata["description_status"] == "completed"
+    assert captured["body"].metadata["original_filename"] == filename
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_file_that_does_not_match_media_type(mock_session, fake_user):
+    from fastapi import HTTPException
+
+    from pkg.api.sources import upload_source
+
+    file = MagicMock()
+    file.filename = "notes.txt"
+    file.content_type = "text/plain"
+    file.read = AsyncMock(return_value=b"not an image")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await upload_source(
+            response=MagicMock(),
+            file=file,
+            title="Wrong file",
+            source_type="image",
+            category_id=1,
+            url=None,
+            description=None,
+            pdf_type=None,
+            user=fake_user,
+            session=mock_session,
+        )
+
+    assert exc_info.value.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_persist_source_records_index_status(mock_session, fake_user):
     from pkg.api.sources import persist_source
     from pkg.schemas.source import SourceCreate
@@ -285,6 +379,85 @@ class TestUpdateSource:
         assert result.id == "src-1"
         mock_session.commit.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_update_media_description_rebuilds_search_index(self, mock_session, fake_user):
+        from pkg.api.sources import update_source
+        from pkg.schemas.source import SourceUpdate
+
+        source = _make_source("src-image", fake_user.id)
+        source.source_type = "image"
+        category = MagicMock()
+        category.name = "General"
+        mock_session.get.side_effect = [source, category]
+
+        with patch("pkg.api.sources.upsert_source_embeddings", new=AsyncMock(return_value=True)) as reindex:
+            result = await update_source(
+                "src-image",
+                SourceUpdate(description="Architecture diagram for the retrieval pipeline"),
+                user=fake_user,
+                session=mock_session,
+            )
+
+        assert result.description == "Architecture diagram for the retrieval pipeline"
+        assert source.metadata_["description_status"] == "completed"
+        assert source.metadata_["index_status"] == "completed"
+        reindex.assert_awaited_once_with(mock_session, source)
+
+
+@pytest.mark.asyncio
+async def test_generate_media_description_returns_unsaved_proposal(mock_session, fake_user):
+    from pkg.api.sources import generate_source_description
+
+    source = _make_source(
+        "src-image",
+        fake_user.id,
+        file_path="minio://sources/image.png",
+    )
+    source.source_type = "image"
+    source.metadata_ = {"original_filename": "image.png"}
+    mock_session.get.return_value = source
+    storage = MagicMock()
+    storage.get_object = AsyncMock(return_value=b"image bytes")
+
+    with (
+        patch("pkg.api.sources.get_storage_service", return_value=storage),
+        patch(
+            "pkg.api.sources.generate_media_description",
+            new=AsyncMock(return_value=("A generated image description", "vision-model")),
+        ),
+    ):
+        proposal = await generate_source_description(
+            "src-image",
+            user=fake_user,
+            session=mock_session,
+        )
+
+    assert proposal.description == "A generated image description"
+    assert proposal.model == "vision-model"
+    assert source.description is None
+    mock_session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_media_file_url_returns_owned_presigned_url(mock_session, fake_user):
+    from pkg.api.sources import get_source_file_url
+
+    source = _make_source(
+        "src-video",
+        fake_user.id,
+        file_path="minio://sources/video.mp4",
+    )
+    source.source_type = "video"
+    mock_session.get.return_value = source
+    storage = MagicMock()
+    storage.generate_download_url = AsyncMock(return_value="https://storage.example/video.mp4")
+
+    with patch("pkg.api.sources.get_storage_service", return_value=storage):
+        access = await get_source_file_url("src-video", user=fake_user, session=mock_session)
+
+    assert access.url == "https://storage.example/video.mp4"
+    assert access.expires_in_seconds
+
 
 # ---------------------------------------------------------------------------
 # POST /sources
@@ -299,6 +472,22 @@ class TestCreateSource:
         assert ":" not in source_id
         assert "/" not in source_id
         assert "claude-com-blog-introducing" in source_id
+
+    @pytest.mark.asyncio
+    async def test_media_source_requires_original_upload(self, mock_session, fake_user):
+        from fastapi import HTTPException
+
+        from pkg.api.sources import create_source
+        from pkg.schemas.source import SourceCreate
+
+        with pytest.raises(HTTPException) as exc_info:
+            await create_source(
+                SourceCreate(title="Loose image", source_type="image", description="No file"),
+                user=fake_user,
+                session=mock_session,
+            )
+
+        assert exc_info.value.status_code == 422
 
     @pytest.mark.asyncio
     async def test_web_url_without_content_fetches_page(self, mock_session, fake_user):
@@ -471,6 +660,7 @@ def _make_source(source_id: str, user_id: str, is_shared: bool = False, file_pat
     source.raw_content = "Content"
     source.file_path = file_path
     source.content_hash = "abc123"
+    source.description = None
     source.metadata_ = {}
     source.is_shared = is_shared
     source.ingested_at = datetime(2026, 1, 1, tzinfo=timezone.utc)

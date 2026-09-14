@@ -20,11 +20,21 @@ from pkg.db import get_session
 from pkg.models.category import Category
 from pkg.models.foundation.source import Source, SourceChunk, SourceEmbedding
 from pkg.models.user import User
-from pkg.schemas.source import ChunkRead, SourceCreate, SourceList, SourceRead, SourceUpdate, SourceUploadResult
+from pkg.schemas.source import (
+    ChunkRead,
+    SourceCreate,
+    SourceDescriptionProposal,
+    SourceFileAccess,
+    SourceList,
+    SourceRead,
+    SourceUpdate,
+    SourceUploadResult,
+)
 from pkg.services.cross_cutting.embedding import get_embedding_service
 from pkg.services.cross_cutting.storage import get_storage_service
 from pkg.services.foundation.chunking import chunk_text
 from pkg.services.foundation.discovery_review import sync_discovery_review_for_source
+from pkg.services.foundation.media_description import generate_media_description
 from pkg.services.foundation.source_retention import apply_source_retention
 from pkg.services.foundation.web_extractor import WebPageFetchError, fetch_web_page
 
@@ -48,6 +58,21 @@ TEXT_FILE_SUFFIXES = {
     ".yml",
     ".yaml",
 }
+
+IMAGE_FILE_SUFFIXES = {
+    ".avif",
+    ".bmp",
+    ".gif",
+    ".heic",
+    ".heif",
+    ".jpeg",
+    ".jpg",
+    ".png",
+    ".tif",
+    ".tiff",
+    ".webp",
+}
+VIDEO_FILE_SUFFIXES = {".avi", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".webm"}
 
 RSS_CANDIDATE_SUFFIXES = (".rss", ".xml", ".atom", "/feed")
 RSS_DISCOVERY_HEADERS = {
@@ -222,6 +247,7 @@ async def persist_source(
         raw_content=raw_content,
         file_path=file_path or body.file_path,
         content_hash=content_hash,
+        description=body.description,
         metadata_=apply_source_retention(body.source_type, body.metadata),
     )
     session.add(source)
@@ -262,7 +288,23 @@ def source_embedding_text(source: Source) -> str:
     embedding_text = metadata.get("embedding_text")
     if isinstance(embedding_text, str) and embedding_text.strip():
         return embedding_text.strip()
-    return (source.raw_content or source.title or "").strip()
+    parts = [source.description, source.raw_content]
+    searchable = "\n\n".join(part.strip() for part in parts if isinstance(part, str) and part.strip())
+    return searchable or (source.title or "").strip()
+
+
+def _validate_media_upload(source_type: str, filename: str, content_type: str | None) -> None:
+    if source_type not in {"image", "video"}:
+        return
+    suffix = Path(filename).suffix.lower()
+    mime = (content_type or "").lower()
+    suffixes = IMAGE_FILE_SUFFIXES if source_type == "image" else VIDEO_FILE_SUFFIXES
+    expected_mime_prefix = f"{source_type}/"
+    if suffix not in suffixes and not mime.startswith(expected_mime_prefix):
+        raise HTTPException(
+            status_code=422,
+            detail=f"The selected file is not recognized as a supported {source_type} file",
+        )
 
 
 async def upsert_source_embeddings(session: AsyncSession, source: Source) -> bool:
@@ -302,6 +344,11 @@ async def create_source(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
+    if body.source_type in {"image", "video"} and not body.file_path:
+        raise HTTPException(
+            status_code=422,
+            detail="Image and video Sources must be created by uploading the original file",
+        )
     if _looks_like_user_authored_note(body):
         raise HTTPException(
             status_code=422,
@@ -412,6 +459,7 @@ async def upload_source(
     source_type: str = Form("article"),
     category_id: int = Form(1),
     url: str | None = Form(None),
+    description: str | None = Form(None),
     pdf_type: str | None = Form(None),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
@@ -419,6 +467,9 @@ async def upload_source(
     payload = await file.read()
     if not payload:
         raise HTTPException(status_code=400, detail="Uploaded source file is empty")
+
+    filename = file.filename or "source"
+    _validate_media_upload(source_type, filename, file.content_type)
 
     content_hash = hashlib.sha256(payload).hexdigest()
     existing = await find_owned_uploaded_source_by_hash(
@@ -434,10 +485,23 @@ async def upload_source(
             duplicate=True,
         )
 
-    inferred_title = title or Path(file.filename or "source").stem
-    extracted_text = await extract_text_content(file.filename, file.content_type, payload, pdf_type=pdf_type)
-    suffix = Path(file.filename or "").suffix.lower()
+    inferred_title = title or Path(filename).stem
+    is_media = source_type in {"image", "video"}
+    description_value = description.strip() if isinstance(description, str) else ""
+    extracted_text = (
+        None
+        if is_media
+        else await extract_text_content(
+            filename,
+            file.content_type,
+            payload,
+            pdf_type=pdf_type,
+        )
+    )
+    suffix = Path(filename).suffix.lower()
     extraction_mode = (
+        "media_description" if is_media
+        else
         "pymupdf" if suffix == ".pdf" and pdf_type == "text"
         else "vlm" if suffix == ".pdf" and pdf_type == "vlm"
         else "docling_ocr" if suffix == ".pdf" and pdf_type == "ocr"
@@ -449,11 +513,16 @@ async def upload_source(
         source_type=source_type,
         category_id=category_id,
         url=url,
+        description=description_value or None,
         raw_content=extracted_text,
         metadata={
-            "extraction_status": "completed" if extracted_text else "missing_text",
+            "extraction_status": "not_applicable" if is_media else "completed" if extracted_text else "missing_text",
             "extraction_mode": extraction_mode,
             "extracted_at": datetime.now(timezone.utc).isoformat(),
+            "original_filename": filename,
+            "content_type": file.content_type or "application/octet-stream",
+            "byte_size": len(payload),
+            "description_status": "completed" if description_value else "missing",
         },
     )
 
@@ -461,7 +530,7 @@ async def upload_source(
     category = await session.get(Category, category_id)
     category_name = category.name if category else None
     storage = get_storage_service()
-    object_key = storage.build_object_key("sources", source_id, file.filename, category_name=category_name)
+    object_key = storage.build_object_key("sources", source_id, filename, category_name=category_name)
     storage_uri = await storage.upload_bytes(
         object_key=object_key,
         data=payload,
@@ -598,16 +667,19 @@ async def update_source(
 
     source.metadata_ = apply_source_retention(source.source_type, source.metadata_)
 
-    # Re-embed if title changed
-    if "title" in patch:
-        emb_svc = get_embedding_service()
-        emb_row = await session.get(SourceEmbedding, source_id)
-        title_vec = await emb_svc.embed_text(source.title)
-        if emb_row:
-            emb_row.title_vec = title_vec
-        else:
-            summary_vec = await emb_svc.embed_text(source.title)
-            session.add(SourceEmbedding(source_id=source_id, title_vec=title_vec, summary_vec=summary_vec))
+    if "description" in patch:
+        source.description = (source.description or "").strip() or None
+        metadata = dict(source.metadata_ or {})
+        metadata["description_status"] = "completed" if source.description else "missing"
+        metadata["description_updated_at"] = datetime.now(timezone.utc).isoformat()
+        source.metadata_ = metadata
+
+    if "title" in patch or "description" in patch:
+        index_succeeded = await upsert_source_embeddings(session, source)
+        metadata = dict(source.metadata_ or {})
+        metadata["index_status"] = "completed" if index_succeeded else "failed"
+        metadata["indexed_at"] = datetime.now(timezone.utc).isoformat()
+        source.metadata_ = metadata
 
     await session.commit()
     await session.refresh(source)
@@ -743,6 +815,71 @@ async def get_source_file(
     if not local_path.exists():
         raise HTTPException(status_code=404, detail="Source file not found")
     return FileResponse(local_path)
+
+
+@router.get("/{source_id}/file-url", response_model=SourceFileAccess)
+async def get_source_file_url(
+    source_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    source = await session.get(Source, source_id)
+    if not source or (source.user_id != user.id and not source.is_shared) or not source.file_path:
+        raise HTTPException(status_code=404, detail="Source file not found")
+    if not source.file_path.startswith("minio://"):
+        raise HTTPException(status_code=422, detail="A direct media URL is unavailable for this legacy local Source")
+    return SourceFileAccess(
+        url=await get_storage_service().generate_download_url(source.file_path),
+        expires_in_seconds=settings.MINIO_PRESIGNED_EXPIRY_SECONDS,
+    )
+
+
+@router.post("/{source_id}/description/generate", response_model=SourceDescriptionProposal)
+async def generate_source_description(
+    source_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    source = await session.get(Source, source_id)
+    if not source or source.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Source not found")
+    if source.source_type not in {"image", "video"}:
+        raise HTTPException(status_code=422, detail="Description generation is available only for image and video Sources")
+    if not source.file_path:
+        raise HTTPException(status_code=422, detail="Source has no stored media file")
+
+    try:
+        if source.file_path.startswith("minio://"):
+            payload = await get_storage_service().get_object(source.file_path)
+        else:
+            local_path = Path(source.file_path).resolve()
+            allowed_root = Path(settings.DATA_DIR).resolve()
+            if not local_path.is_relative_to(allowed_root):
+                raise HTTPException(status_code=403, detail="Access denied")
+            payload = await asyncio.to_thread(local_path.read_bytes)
+        metadata = source.metadata_ or {}
+        filename = str(metadata.get("original_filename") or Path(source.file_path).name)
+        description, model = await generate_media_description(
+            payload,
+            source_type=source.source_type,
+            filename=filename,
+            title=source.title,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Media description generation failed for source %s", source_id, exc_info=True)
+        raise HTTPException(
+            status_code=502,
+            detail="Could not generate a media description. Check the configured vision model and retry.",
+        ) from exc
+
+    return SourceDescriptionProposal(
+        description=description,
+        model=model,
+        basis_content_hash=source.content_hash,
+        generated_at=datetime.now(timezone.utc),
+    )
 
 
 @router.post("/{source_id}/retry-extraction", response_model=SourceRead)

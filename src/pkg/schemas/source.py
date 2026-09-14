@@ -13,8 +13,9 @@ class SourceCreate(BaseModel):
     id: str | None = None
     title: str
     category_id: int = 1
-    source_type: str = Field(pattern=r"^(pdf|article|conversation|video|web|github|code)$")
+    source_type: str = Field(pattern=r"^(pdf|article|conversation|image|video|web|github|code)$")
     url: str | None = None
+    description: str | None = Field(default=None, max_length=8000)
     raw_content: str | None = None
     file_path: str | None = None
     metadata: dict | None = None
@@ -27,9 +28,10 @@ class SourceUpdate(BaseModel):
     category_id: int | None = None
     source_type: str | None = Field(
         default=None,
-        pattern=r"^(pdf|article|conversation|video|web|github|code)$",
+        pattern=r"^(pdf|article|conversation|image|video|web|github|code)$",
     )
     url: str | None = None
+    description: str | None = Field(default=None, max_length=8000)
     metadata: dict | None = None
 
 
@@ -45,6 +47,7 @@ class SourceRead(BaseModel):
     source_type: str
     url: str | None = None
     content_hash: str | None = None
+    description: str | None = None
     raw_content: str | None = None
     file_path: str | None = None
     ingested_at: datetime
@@ -59,6 +62,18 @@ class SourceList(BaseModel):
 class SourceUploadResult(SourceRead):
     created: bool
     duplicate: bool
+
+
+class SourceDescriptionProposal(BaseModel):
+    description: str
+    model: str
+    basis_content_hash: str | None = None
+    generated_at: datetime
+
+
+class SourceFileAccess(BaseModel):
+    url: str
+    expires_in_seconds: int | None = None
 
 
 class ChunkRead(BaseModel):

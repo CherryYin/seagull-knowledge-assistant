@@ -142,7 +142,13 @@ class RetrieverAgent:
             src_stmt = src_stmt.where(or_(Source.user_id == self.user_id, Source.is_shared))
         if query:
             like_pattern = f"%{_escape_like(query)}%"
-            src_stmt = src_stmt.where(Source.title.ilike(like_pattern))
+            src_stmt = src_stmt.where(
+                or_(
+                    Source.title.ilike(like_pattern),
+                    Source.description.ilike(like_pattern),
+                    Source.raw_content.ilike(like_pattern),
+                )
+            )
         if filters and "source_type" in filters:
             src_stmt = src_stmt.where(Source.source_type == filters["source_type"])
         src_stmt = src_stmt.limit(top_k)
@@ -155,7 +161,9 @@ class RetrieverAgent:
                 type="source",
                 layer=_result_layer("source"),
                 score=1.0,
-                content_preview=(src.raw_content or "")[:200],
+                abstract=src.description,
+                content_preview=(src.description or src.raw_content or "")[:200],
+                source_type=src.source_type,
             ))
 
         return results[:top_k]
@@ -257,7 +265,7 @@ class RetrieverAgent:
 
         # Search source embeddings (document-level)
         src_stmt = text(f"""
-            SELECT se.source_id, s.title, s.raw_content,
+            SELECT se.source_id, s.title, s.description, s.raw_content, s.source_type,
                    1 - (se.summary_vec <=> CAST(:query_vec AS vector)) AS score
             FROM source_embeddings se
             JOIN sources s ON s.id = se.source_id
@@ -275,12 +283,14 @@ class RetrieverAgent:
                 type="source",
                 layer=_result_layer("source"),
                 score=float(row.score),
-                content_preview=(row.raw_content or "")[:200],
+                abstract=row.description,
+                content_preview=(row.description or row.raw_content or "")[:200],
+                source_type=row.source_type,
             ))
 
         # Search source chunks (fine-grained, within long documents)
         chunk_stmt = text(f"""
-            SELECT sc.source_id, s.title, sc.content,
+            SELECT sc.source_id, s.title, s.description, s.source_type, sc.content,
                    1 - (sc.embedding <=> CAST(:query_vec AS vector)) AS score
             FROM source_chunks sc
             JOIN sources s ON s.id = sc.source_id
@@ -298,7 +308,9 @@ class RetrieverAgent:
                 type="source_chunk",
                 layer=_result_layer("source_chunk"),
                 score=float(row.score),
+                abstract=row.description,
                 content_preview=row.content[:200],
+                source_type=row.source_type,
             ))
 
         results.sort(key=lambda r: r.score, reverse=True)

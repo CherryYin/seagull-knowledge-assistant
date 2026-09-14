@@ -107,6 +107,7 @@ class SearchResult(BaseModel):
     score: float
     abstract: str | None = None
     content_preview: str | None = None
+    source_type: str | None = None
 
 
 class NoteImageResponse(BaseModel):
