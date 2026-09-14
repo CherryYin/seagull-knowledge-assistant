@@ -30,6 +30,7 @@ The core product goal is a durable personal knowledge graph with deterministic r
 - Create and edit newsletter assets through PKG CRUD, then develop their content in Harness Agent Chat and explicitly save the reviewed result back to the Asset.
 - Run Newsletter automation only from a saved configuration revision: dirty UI settings must save before Run, each result carries a configuration snapshot, skipped runs are recorded, and generated Assets retain the revision used.
 - Pin notes for quick access, keep content version history (snapshots captured on content/title edits, restorable), and attach inline images to notes via drag-and-drop upload.
+- Link Calendar Todos to Notes before or after creation, return lightweight linked Note context without N+1 queries, and let Note Detail create or navigate its open Todos; deleting a Note clears the Todo link without deleting the Todo.
 - Mine recent knowledge materials for reusable concept/entity candidates and recommend concept wiki drafts with evidence.
 - Support persistent conversations, model/provider selection, observable background jobs, and user profiling.
 
@@ -47,6 +48,15 @@ The core product goal is a durable personal knowledge graph with deterministic r
 - `web/src/components/`: reusable UI components.
 - `scripts/`: operational/backfill/import helper scripts.
 - `docs/`: all project documentation. Do not add new top-level `architectures/` documents; organize docs under `docs/` by topic folder, such as `docs/architecture/<topic>/`, `docs/plans/<topic>/`, `docs/roadmaps/<topic>/`, and `docs/reference/<topic>/`. Within a topic folder, prefer stable filenames like `architecture.md`, `plan.md`, `implementation-plan.md`, `progress.md`, and `roadmap.md`.
+
+## Planning Source of Truth
+
+- Use `docs/plans/product-priorities/roadmap.md` for the current cross-product execution order outside the dedicated Mind Map roadmap.
+- In active checklists, `[x]` means completed, `[ ]` means active pending work, and `[-]` means closed, superseded, or explicitly deferred.
+- Do not report unchecked tasks from historical or ignored documents as current work without verifying the current Roadmap and implementation first.
+- `docs/plans/agent-guided-knowledge-flow/implementation-plan.md` retains historical design context, but only its remaining `[ ]` items are active.
+- `docs/plans/wiki-system/implementation-plan.md` is historical and partially superseded; the active Draft → Stable lifecycle work lives in the Product Priorities roadmap.
+- Mind Map M4/M5 work remains governed by `docs/plans/mind-map/roadmap.md`; optional M3.1 work is not an active Exit Gate.
 
 ## Important Backend Areas
 
