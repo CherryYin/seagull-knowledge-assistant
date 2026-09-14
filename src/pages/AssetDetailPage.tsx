@@ -24,7 +24,7 @@ import { AgentRunStatus } from "@/components/interaction/AgentRunStatus";
 import { ProposalActions } from "@/components/interaction/ProposalActions";
 import { UnsavedChangesBanner } from "@/components/interaction/UnsavedChangesBanner";
 import { MindMapCanvas, type MindMapCanvasNode } from "@/components/mind-map/MindMapCanvas";
-import { mindMapsApi, type MindMapNodeRead } from "@/lib/api/mind-maps";
+import { mindMapsApi, type AssetOutlineDocumentPatchProposal, type AssetOutlinePatchOperation, type MindMapNodeRead } from "@/lib/api/mind-maps";
 
 type AssetOutlineRefreshOperation = "add" | "move" | "rename" | "delete";
 
@@ -245,6 +245,57 @@ function assetDocumentSignature(blocks: AssetBlock[]) {
     hash = Math.imul(hash, 16777619);
   }
   return `document-${(hash >>> 0).toString(36)}`;
+}
+
+function applyAssetOutlineOperations(blocks: AssetBlock[], operations: AssetOutlinePatchOperation[]) {
+  const originalById = new Map(blocks.map((block) => [block.id, block]));
+  for (const operation of operations) {
+    if (operation.operation === "add") continue;
+    const block = originalById.get(operation.block_id);
+    if (!block) throw new Error(`Asset Block ${operation.block_id} is no longer available in the editor.`);
+    if (block.revision !== operation.base_block_revision) {
+      throw new Error(`Asset Block ${operation.block_id} changed from revision ${operation.base_block_revision} to ${block.revision}.`);
+    }
+  }
+
+  const nextBlocks = blocks.map((block) => ({ ...block, claimRefs: [...block.claimRefs] }));
+  const tempBlockIds = new Map<string, string>();
+  const resolveDestination = (destinationId: string | null | undefined) => destinationId ? (tempBlockIds.get(destinationId) ?? destinationId) : null;
+  const insertAfter = (block: AssetBlock, destinationId: string | null) => {
+    if (destinationId === null) {
+      nextBlocks.unshift(block);
+      return;
+    }
+    const destinationIndex = nextBlocks.findIndex((candidate) => candidate.id === destinationId);
+    if (destinationIndex < 0) throw new Error(`Patch destination ${destinationId} is no longer available.`);
+    nextBlocks.splice(destinationIndex + 1, 0, block);
+  };
+
+  for (const operation of operations) {
+    if (operation.operation === "delete") {
+      const index = nextBlocks.findIndex((block) => block.id === operation.block_id);
+      if (index < 0) throw new Error(`Asset Block ${operation.block_id} could not be deleted because it is missing.`);
+      nextBlocks.splice(index, 1);
+      continue;
+    }
+    if (operation.operation === "add") {
+      const block = { ...createAssetBlock(operation.markdown), claimRefs: [...operation.claim_refs] };
+      tempBlockIds.set(operation.temp_block_id, block.id);
+      insertAfter(block, resolveDestination(operation.after_block_id));
+      continue;
+    }
+    if (operation.operation === "move") {
+      const index = nextBlocks.findIndex((block) => block.id === operation.block_id);
+      if (index < 0) throw new Error(`Asset Block ${operation.block_id} could not be moved because it is missing.`);
+      const [block] = nextBlocks.splice(index, 1);
+      insertAfter(block, resolveDestination(operation.after_block_id));
+      continue;
+    }
+    const index = nextBlocks.findIndex((block) => block.id === operation.block_id);
+    if (index < 0) throw new Error(`Asset Block ${operation.block_id} could not be updated because it is missing.`);
+    nextBlocks[index] = updateAssetBlock(nextBlocks[index], operation.replacement_markdown);
+  }
+  return nextBlocks;
 }
 
 function buildLineDiff(original: string, proposed: string): DiffLine[] {
@@ -858,7 +909,7 @@ export function AssetDetailPage() {
     queryFn: () => mindMapsApi.list({ ownerType: "asset", ownerId: id, purpose: "asset_outline", limit: 1 }),
     enabled: Boolean(id),
   });
-  const assetOutlineMap = assetOutlineMapsQuery.data?.items[0] ?? null;
+  const assetOutlineMap = assetOutlineMapsQuery.data?.items?.[0] ?? null;
   const assetOutlineTreeQuery = useQuery({
     queryKey: ["mind-map-tree", assetOutlineMap?.id],
     queryFn: () => mindMapsApi.getTree(assetOutlineMap!.id),
@@ -914,7 +965,14 @@ export function AssetDetailPage() {
   });
   const assetOutlineDocumentPatchMutation = useMutation({
     mutationFn: () => mindMapsApi.buildAssetOutlineDocumentPatch(assetOutlineMap!.id),
+    onSuccess: (proposal) => {
+      setAssetOutlineDocumentPatchPreview(proposal);
+      setAssetOutlinePatchReviewNotice(null);
+    },
   });
+  const [assetOutlineDocumentPatchPreview, setAssetOutlineDocumentPatchPreview] = useState<AssetOutlineDocumentPatchProposal | null>(null);
+  const [assetOutlinePatchReviewNotice, setAssetOutlinePatchReviewNotice] = useState<string | null>(null);
+  const [assetOutlineEditorApplyNotice, setAssetOutlineEditorApplyNotice] = useState<string | null>(null);
   const assetMapCanvasNodes = useMemo<MindMapCanvasNode[]>(() => (
     assetOutlineTreeQuery.data?.nodes.map((node) => ({
       id: node.id,
@@ -1088,6 +1146,58 @@ export function AssetDetailPage() {
   }), [editTitle, editBrief, editOutline, editStyle, editBlocks, pendingOptimizationRound]);
   const editorSignature = useMemo(() => assetEditorSignature(editorSnapshot), [editorSnapshot]);
   const isEditorDirty = Boolean(asset && baseEditorSignature && editorSignature !== baseEditorSignature);
+  const assetOutlineDocumentPatchApplyMutation = useMutation({
+    mutationFn: async () => {
+      const preview = assetOutlineDocumentPatchPreview;
+      if (!preview?.patch || !asset || !assetOutlineTreeQuery.data || !workspaceQuery.data) {
+        throw new Error("Generate and review a current Asset Document Patch before applying it.");
+      }
+      if (isEditorDirty) {
+        throw new Error("Save or discard the current Editor changes before applying a Map Patch.");
+      }
+      const latest = await mindMapsApi.buildAssetOutlineDocumentPatch(preview.map_id);
+      if (JSON.stringify(latest) !== JSON.stringify(preview)) {
+        return { status: "review" as const, proposal: latest };
+      }
+      if (!latest.patch) {
+        return { status: "review" as const, proposal: latest };
+      }
+      if (latest.base_map_version !== assetOutlineTreeQuery.data.map.version) {
+        throw new Error(`Mind Map changed from version ${latest.base_map_version} to ${assetOutlineTreeQuery.data.map.version}.`);
+      }
+      const workspaceRevision = latest.basis_revision.workspace_revision;
+      if (workspaceRevision !== workspaceQuery.data.workspace_revision) {
+        throw new Error(`Asset Workspace changed from revision ${String(workspaceRevision)} to ${workspaceQuery.data.workspace_revision}.`);
+      }
+      const document = asset.metadata_?.asset_document;
+      const documentRevision = document && typeof document === "object" && typeof (document as Record<string, unknown>).revision === "number"
+        ? (document as Record<string, unknown>).revision
+        : 0;
+      if (latest.basis_revision.asset_document_revision !== documentRevision) {
+        throw new Error(`Asset Document changed from revision ${String(latest.basis_revision.asset_document_revision)} to ${documentRevision}.`);
+      }
+      if (latest.basis_revision.base_document_signature !== assetDocumentSignature(editBlocks)) {
+        throw new Error("The local Editor Blocks no longer match the Document basis used by this Patch.");
+      }
+      return {
+        status: "applied" as const,
+        blocks: applyAssetOutlineOperations(editBlocks, latest.patch.operations),
+        operationCount: latest.patch.operations.length,
+      };
+    },
+    onSuccess: (result) => {
+      if (result.status === "review") {
+        setAssetOutlineDocumentPatchPreview(result.proposal);
+        setAssetOutlinePatchReviewNotice("The Map or Asset changed during confirmation. Review the refreshed Patch before applying it.");
+        return;
+      }
+      setEditBlocks(result.blocks);
+      setAssetOutlineDocumentPatchPreview(null);
+      setAssetOutlinePatchReviewNotice(null);
+      setAssetOutlineEditorApplyNotice(`${result.operationCount} Map Patch operation${result.operationCount === 1 ? "" : "s"} applied to the local Editor. Save Changes is still required.`);
+      setActiveTab("edit");
+    },
+  });
 
   baseEditorSignatureRef.current = baseEditorSignature;
   editorSignatureRef.current = editorSignature;
@@ -1524,6 +1634,7 @@ export function AssetDetailPage() {
       clearAssetEditorRecovery(id);
       setRecoveryCandidate(null);
       setPendingOptimizationRound(null);
+      setAssetOutlineEditorApplyNotice(null);
       setDocumentRevision({
         instruction: "",
         streaming: false,
@@ -2721,6 +2832,12 @@ export function AssetDetailPage() {
               <Card>
                 <CardHeader><CardTitle>Edit Asset</CardTitle><CardDescription>Edit the draft block by block. Reorder, insert, or remove blocks, then save the complete working document.</CardDescription></CardHeader>
                 <CardContent className="space-y-5">
+                  {assetOutlineEditorApplyNotice && (
+                    <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-sm text-emerald-950" data-testid="asset-outline-editor-applied">
+                      <p className="font-semibold">Map Patch applied to the local Editor.</p>
+                      <p className="mt-1">{assetOutlineEditorApplyNotice}</p>
+                    </div>
+                  )}
                   <section className={`overflow-hidden rounded-2xl border ${documentOptimizationGate.ready ? "border-violet-200 bg-violet-50/40" : "bg-muted/10"}`}>
                     <div className="flex flex-col gap-4 p-5 lg:flex-row lg:items-start lg:justify-between">
                       <div className="flex gap-3">
@@ -3355,31 +3472,31 @@ export function AssetDetailPage() {
                       <p className="mt-1">Only the formal Map changed. The Asset Editor and saved Asset document were not modified.</p>
                     </div>
                   )}
-                  {assetOutlineDocumentPatchMutation.data && (
+                  {assetOutlineDocumentPatchPreview && (
                     <div className="space-y-3 rounded-xl border border-violet-300 bg-violet-50/40 p-4" data-testid="asset-outline-document-patch">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div>
                           <p className="font-semibold">Asset Document Patch Preview</p>
-                          <p className="text-sm text-muted-foreground">Generated from Map version {assetOutlineDocumentPatchMutation.data.base_map_version}. No Editor changes have been applied.</p>
+                          <p className="text-sm text-muted-foreground">Generated from Map version {assetOutlineDocumentPatchPreview.base_map_version}. No Editor changes have been applied.</p>
                         </div>
-                        <Button type="button" variant="ghost" size="sm" onClick={() => assetOutlineDocumentPatchMutation.reset()}>Discard Preview</Button>
                       </div>
+                      {assetOutlinePatchReviewNotice && <p className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">{assetOutlinePatchReviewNotice}</p>}
                       <div className="flex flex-wrap gap-2 text-xs">
                         {(["add", "move", "rename", "delete"] as const).map((operation) => (
-                          <Badge key={operation} variant="outline">{assetOutlineDocumentPatchMutation.data.operation_counts[operation]} {operation}</Badge>
+                          <Badge key={operation} variant="outline">{assetOutlineDocumentPatchPreview.operation_counts[operation]} {operation}</Badge>
                         ))}
                       </div>
-                      {assetOutlineDocumentPatchMutation.data.warnings.length > 0 && (
+                      {assetOutlineDocumentPatchPreview.warnings.length > 0 && (
                         <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
                           <p className="font-semibold">Safety notes</p>
-                          <ul className="mt-1 space-y-1">{assetOutlineDocumentPatchMutation.data.warnings.map((warning) => <li key={warning}>• {warning}</li>)}</ul>
+                          <ul className="mt-1 space-y-1">{assetOutlineDocumentPatchPreview.warnings.map((warning) => <li key={warning}>• {warning}</li>)}</ul>
                         </div>
                       )}
-                      {assetOutlineDocumentPatchMutation.data.no_changes ? (
+                      {assetOutlineDocumentPatchPreview.no_changes ? (
                         <p className="rounded-lg border bg-background p-3 text-sm text-muted-foreground">The formal Map already matches the current Asset Block structure.</p>
                       ) : (
                         <ul className="space-y-2 text-sm">
-                          {assetOutlineDocumentPatchMutation.data.patch?.operations.map((operation, index) => (
+                          {assetOutlineDocumentPatchPreview.patch?.operations.map((operation, index) => (
                             <li key={`${operation.operation}-${index}`} className="rounded-lg border bg-background p-3">
                               <span className="font-semibold capitalize">{operation.operation}</span>
                               {operation.operation === "add" && <p className="mt-1">Add <code>{operation.temp_block_id}</code> after <code>{operation.after_block_id ?? "document start"}</code>: {operation.markdown}</p>}
@@ -3390,10 +3507,28 @@ export function AssetDetailPage() {
                           ))}
                         </ul>
                       )}
-                      <p className="text-xs text-muted-foreground">Apply to Asset Editor is intentionally unavailable in this phase. Saving remains a separate explicit Asset action.</p>
+                      {assetOutlineDocumentPatchPreview.patch && (
+                        <ProposalActions
+                          primaryLabel="Apply to Asset Editor"
+                          pendingLabel="Rechecking Patch…"
+                          onPrimary={() => assetOutlineDocumentPatchApplyMutation.mutate()}
+                          primaryPending={assetOutlineDocumentPatchApplyMutation.isPending}
+                          primaryDisabled={isEditorDirty}
+                          onRegenerate={() => assetOutlineDocumentPatchMutation.mutate()}
+                          regenerateLabel="Refresh Preview"
+                          regenerateDisabled={assetOutlineDocumentPatchMutation.isPending}
+                          onDiscard={() => {
+                            setAssetOutlineDocumentPatchPreview(null);
+                            setAssetOutlinePatchReviewNotice(null);
+                          }}
+                          discardLabel="Discard Preview"
+                          note={isEditorDirty ? "Save or discard current Editor changes before applying this Patch." : "Applies to local Editor state only; Save Changes remains required."}
+                        />
+                      )}
                     </div>
                   )}
                   {assetOutlineDocumentPatchMutation.isError && <ActionError title="Asset Document Patch could not be generated" impact="The Map and Asset Editor remain unchanged." recovery="Refresh a stale Map first, then retry from the latest Map version." details={assetOutlineDocumentPatchMutation.error instanceof Error ? assetOutlineDocumentPatchMutation.error.message : "Unknown document patch error"} onRetry={() => assetOutlineDocumentPatchMutation.mutate()} />}
+                  {assetOutlineDocumentPatchApplyMutation.isError && <ActionError title="Asset Document Patch could not be applied" impact="The local Editor and saved Asset remain unchanged." recovery="Refresh the Patch, resolve any current Editor changes, and apply again." details={assetOutlineDocumentPatchApplyMutation.error instanceof Error ? assetOutlineDocumentPatchApplyMutation.error.message : "Unknown Patch apply error"} onRetry={() => assetOutlineDocumentPatchMutation.mutate()} />}
                 </CardContent>
               </Card>
             </TabsContent>

@@ -2082,6 +2082,23 @@ test("Asset detail and Newsletter return to the filtered library position withou
 });
 
 test("Asset Outline Map projects saved Blocks and navigates to the selected editor Block", async ({ page }) => {
+  const savedBlocks = [
+    { id: "block-summary", type: "heading", markdown: "## Executive Summary", revision: 1, claim_refs: [] as string[] },
+    { id: "block-finding", type: "paragraph", markdown: "Capability-scoped gateways reduce authority.", revision: 1, claim_refs: [] as string[] },
+    { id: "block-obsolete", type: "heading", markdown: "## Obsolete", revision: 1, claim_refs: ["claim-risk"] },
+  ];
+  const signatureValue = JSON.stringify(savedBlocks.map((block) => ({
+    id: block.id,
+    revision: block.revision,
+    markdown: block.markdown,
+    claimRefs: block.claim_refs,
+  })));
+  let signatureHash = 2166136261;
+  for (let index = 0; index < signatureValue.length; index += 1) {
+    signatureHash ^= signatureValue.charCodeAt(index);
+    signatureHash = Math.imul(signatureHash, 16777619);
+  }
+  const currentDocumentSignature = `document-${(signatureHash >>> 0).toString(36)}`;
   const state: MockState = {
     loggedIn: false,
     savedNoteBody: null,
@@ -2089,12 +2106,9 @@ test("Asset Outline Map projects saved Blocks and navigates to the selected edit
       title: "Mapped Asset",
       asset_type: "research_brief",
       status: "draft",
-      draft_content: "## Executive Summary\n\nCapability-scoped gateways reduce authority.",
+      draft_content: "## Executive Summary\n\nCapability-scoped gateways reduce authority.\n\n## Obsolete",
       source_refs: [], note_refs: [], wiki_refs: [],
-      metadata: { asset_document: { schemaVersion: 1, revision: 1, updatedAt: now, blocks: [
-        { id: "block-summary", type: "heading", markdown: "## Executive Summary", revision: 1, claim_refs: [] },
-        { id: "block-finding", type: "paragraph", markdown: "Capability-scoped gateways reduce authority.", revision: 1, claim_refs: [] },
-      ] } },
+      metadata: { asset_document: { schemaVersion: 1, revision: 1, updatedAt: now, blocks: savedBlocks } },
     },
     candidate: null, memory: null, sessionContext: null,
   };
@@ -2114,6 +2128,7 @@ test("Asset Outline Map projects saved Blocks and navigates to the selected edit
   };
   let projected = false;
   let refreshApplyBody: Record<string, unknown> | null = null;
+  let documentPatchRequestCount = 0;
   await page.route(`${apiBase}/api/mind-maps**`, async (route) => {
     const url = new URL(route.request().url());
     if (url.pathname === "/api/mind-maps/projections/asset-outline") {
@@ -2125,7 +2140,7 @@ test("Asset Outline Map projects saved Blocks and navigates to the selected edit
       map: { ...tree.map, generation_status: "stale" },
       stale: true,
       reasons: ["base_document_signature"],
-      current_basis: { workspace_revision: 1, intent_revision: 1, asset_document_revision: 2, base_document_signature: "document-new", accepted_claim_ids: [] },
+      current_basis: { workspace_revision: 0, intent_revision: 1, asset_document_revision: 1, base_document_signature: currentDocumentSignature, accepted_claim_ids: [] },
     });
     if (url.pathname === "/api/mind-maps/map-asset-outline/proposals/asset-outline/refresh") return json(route, {
       map_id: "map-asset-outline",
@@ -2134,7 +2149,7 @@ test("Asset Outline Map projects saved Blocks and navigates to the selected edit
         asset_id: "asset-e2e",
         title: "Mapped Asset · Outline",
         layout_mode: "right",
-        basis_revision: { workspace_revision: 1, intent_revision: 1, asset_document_revision: 2, base_document_signature: "document-new", accepted_claim_ids: [] },
+        basis_revision: { workspace_revision: 0, intent_revision: 1, asset_document_revision: 1, base_document_signature: currentDocumentSignature, accepted_claim_ids: [] },
         nodes: [
           { temp_id: "root", parent_temp_id: null, position: 0, content: "Mapped Asset", node_kind: "topic", claim_refs: [] },
           { temp_id: "summary", parent_temp_id: "root", position: 0, content: "Updated Executive Summary", node_kind: "section", asset_block_id: "block-summary", claim_refs: [] },
@@ -2148,26 +2163,36 @@ test("Asset Outline Map projects saved Blocks and navigates to the selected edit
     if (url.pathname === "/api/mind-maps/map-asset-outline/proposals/asset-outline/refresh/apply") {
       refreshApplyBody = route.request().postDataJSON() as Record<string, unknown>;
       return json(route, {
-        map: { ...tree.map, version: 2, basis_revision: { workspace_revision: 1, intent_revision: 1, asset_document_revision: 2, base_document_signature: "document-new", accepted_claim_ids: [] } },
+        map: { ...tree.map, version: 2, basis_revision: { workspace_revision: 0, intent_revision: 1, asset_document_revision: 1, base_document_signature: currentDocumentSignature, accepted_claim_ids: [] } },
         root_id: "node-root-v2",
         nodes: [
           { ...tree.nodes[0], id: "node-root-v2", display_id: 1 },
-          { ...tree.nodes[1], id: "node-summary-v2", display_id: 2, parent_id: "node-root-v2", content: "Updated Executive Summary" },
+          { ...tree.nodes[2], id: "node-finding-v2", display_id: 2, parent_id: "node-root-v2", position: 0 },
+          { ...tree.nodes[1], id: "node-summary-v2", display_id: 3, parent_id: "node-root-v2", position: 1, content: "Updated Executive Summary" },
         ],
         references: [
+          { ...tree.references[1], id: "ref-finding-v2", node_id: "node-finding-v2" },
           { ...tree.references[0], id: "ref-summary-v2", node_id: "node-summary-v2" },
         ],
       });
     }
-    if (url.pathname === "/api/mind-maps/map-asset-outline/proposals/asset-outline/document-patch") return json(route, {
+    if (url.pathname === "/api/mind-maps/map-asset-outline/proposals/asset-outline/document-patch") {
+      documentPatchRequestCount += 1;
+      const recheckedWarnings = documentPatchRequestCount >= 2
+        ? [
+            "Block block-finding text differs in the Map; paragraph content is not overwritten from a summary label",
+            "The Patch was regenerated during confirmation; review this current proposal before applying.",
+          ]
+        : ["Block block-finding text differs in the Map; paragraph content is not overwritten from a summary label"];
+      return json(route, {
       map_id: "map-asset-outline",
       base_map_version: 2,
-      basis_revision: { workspace_revision: 1, intent_revision: 1, asset_document_revision: 2, base_document_signature: "document-new", accepted_claim_ids: [] },
+      basis_revision: { workspace_revision: 0, intent_revision: 1, asset_document_revision: 1, base_document_signature: currentDocumentSignature, accepted_claim_ids: [] },
       patch: {
         asset_id: "asset-e2e",
         map_id: "map-asset-outline",
         base_map_version: 2,
-        basis_revision: { workspace_revision: 1, intent_revision: 1, asset_document_revision: 2, base_document_signature: "document-new", accepted_claim_ids: [] },
+        basis_revision: { workspace_revision: 0, intent_revision: 1, asset_document_revision: 1, base_document_signature: currentDocumentSignature, accepted_claim_ids: [] },
         operations: [
           { operation: "move", block_id: "block-finding", base_block_revision: 1, after_block_id: null },
           { operation: "rename", block_id: "block-summary", base_block_revision: 1, replacement_markdown: "## Updated Executive Summary" },
@@ -2178,9 +2203,10 @@ test("Asset Outline Map projects saved Blocks and navigates to the selected edit
         writes_asset: false,
       },
       operation_counts: { add: 0, move: 1, rename: 1, delete: 1 },
-      warnings: ["Block block-finding text differs in the Map; paragraph content is not overwritten from a summary label"],
+      warnings: recheckedWarnings,
       no_changes: false,
-    });
+      });
+    }
     if (url.pathname === "/api/mind-maps") return json(route, { items: projected ? [tree.map] : [], total: projected ? 1 : 0 });
     return route.fallback();
   });
@@ -2204,7 +2230,28 @@ test("Asset Outline Map projects saved Blocks and navigates to the selected edit
   await expect(page.getByTestId("asset-outline-document-patch")).toContainText("1 move");
   await expect(page.getByTestId("asset-outline-document-patch")).toContainText("affects Claims: claim-risk");
   await expect(page.getByTestId("asset-outline-document-patch")).toContainText("paragraph content is not overwritten");
-  await expect(page.getByRole("button", { name: "Apply to Asset Editor" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Apply to Asset Editor" }).click();
+  expect(documentPatchRequestCount).toBe(2);
+  await expect(page).toHaveURL(/tab=map/);
+  await expect(page.getByTestId("asset-outline-document-patch")).toContainText("Map or Asset changed during confirmation");
+  await expect(page.getByTestId("asset-outline-document-patch")).toContainText("Patch was regenerated during confirmation");
+  await expect(page.locator('[data-asset-block-id="block-obsolete"]')).toHaveCount(0);
+  expect(state.savedAssetBody?.draft_content).toContain("## Obsolete");
+  await page.getByRole("button", { name: "Apply to Asset Editor" }).click();
+  expect(documentPatchRequestCount).toBe(3);
+  await expect(page).toHaveURL(/tab=edit/);
+  await expect(page.getByTestId("asset-outline-editor-applied")).toContainText("Save Changes is still required");
+  const editorBlocks = page.locator("[data-asset-block-id]");
+  await expect(editorBlocks).toHaveCount(2);
+  await expect(editorBlocks.nth(0)).toHaveAttribute("data-asset-block-id", "block-finding");
+  await expect(editorBlocks.nth(1)).toHaveAttribute("data-asset-block-id", "block-summary");
+  await expect(page.getByLabel("Draft block 2")).toHaveValue("## Updated Executive Summary");
+  await expect(page.getByText("Unsaved changes · recovery draft stored in this tab.")).toBeVisible();
+  expect(state.savedAssetBody?.draft_content).toContain("## Obsolete");
+  await page.getByRole("button", { name: "Save Changes" }).click();
+  await expect(page.getByText("Unsaved changes · recovery draft stored in this tab.")).toHaveCount(0);
+  expect(state.savedAssetBody?.draft_content).toBe("Capability-scoped gateways reduce authority.\n\n## Updated Executive Summary");
+  await page.getByRole("tab", { name: "Map" }).click();
   await page.getByTestId("asset-outline-map-preview").getByText("Updated Executive Summary", { exact: true }).click();
   await page.getByRole("button", { name: "Open selected Block in Editor" }).click();
   await expect(page).toHaveURL(/tab=edit/);
