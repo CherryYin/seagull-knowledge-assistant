@@ -209,9 +209,23 @@ export interface AssetWorkspace {
   intent_history: AssetIntent[];
   evidence: AssetEvidence[];
   claims: AssetClaim[];
+  missing_evidence_requests?: AssetMissingEvidenceRequest[];
   contribution?: AssetContribution | null;
   knowledge_candidates: AssetKnowledgeCandidate[];
   decision_items: Record<string, unknown>[];
+}
+
+export interface AssetMissingEvidenceRequest {
+  id: string;
+  claim_id: string;
+  question: string;
+  scope: string[];
+  requested_relations: AssetEvidenceRelation[];
+  status: "open" | "stale" | "resolved";
+  intent_revision: number;
+  source_session_id?: string | null;
+  created_by: string;
+  created_at: string;
 }
 
 export interface AssetIntentRevisionRequest {
@@ -335,6 +349,7 @@ export const assetsApi = {
   getWorkspace: (id: string) => request<AssetWorkspace>(`/assets/${encodeURIComponent(id)}/workspace`),
   getQualityAudit: (id: string) => request<AssetQualityAuditResult>(`/assets/${encodeURIComponent(id)}/quality-audit`),
   create: (body: AssetCreate) => request<Asset>("/assets", { method: "POST", body: JSON.stringify(body) }),
+  fork: (id: string, body: { title: string; brief?: string | null }) => request<Asset>(`/assets/${encodeURIComponent(id)}/fork`, { method: "POST", body: JSON.stringify(body) }),
   getNewsletterAutomation: () => request<NewsletterAutomationConfig>("/assets/newsletter/automation"),
   updateNewsletterAutomation: (body: NewsletterAutomationUpdate) => request<NewsletterAutomationConfig>("/assets/newsletter/automation", { method: "PUT", body: JSON.stringify(body) }),
   runNewsletterAutomation: () => request<NewsletterAutomationRunResult>("/assets/newsletter/automation/run", { method: "POST" }),

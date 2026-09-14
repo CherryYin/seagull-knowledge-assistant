@@ -21,8 +21,10 @@ function splitCsv(value: string) {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
-function roleTone(role: "draft" | "stable") {
-  return role === "stable" ? "source" : "note";
+function roleTone(role: "draft" | "stable" | "archived") {
+  if (role === "stable") return "source";
+  if (role === "archived") return "outline";
+  return "note";
 }
 
 function summarizePage(page: WikiPage) {
@@ -87,6 +89,10 @@ export function WikiPage() {
   });
   const [domainsCsv, setDomainsCsv] = useState("");
   const [tagsCsv, setTagsCsv] = useState("");
+  const lifecycleParam = new URLSearchParams(location.search).get("lifecycle");
+  const lifecycleFilter = lifecycleParam === "draft" || lifecycleParam === "stable" || lifecycleParam === "archived"
+    ? lifecycleParam
+    : "all";
 
   useEffect(() => {
     const state = location.state as { wikiPrefill?: Partial<WikiPageCreate> } | null;
@@ -136,6 +142,9 @@ export function WikiPage() {
   }
 
   const pages = data?.items ?? [];
+  const visiblePages = lifecycleFilter === "all"
+    ? pages
+    : pages.filter((page) => getWikiRole(page) === lifecycleFilter);
   const stablePages = useMemo(() => pages.filter((page) => getWikiRole(page) === "stable"), [pages]);
   const draftPages = useMemo(() => pages.filter((page) => getWikiRole(page) === "draft"), [pages]);
   const stalePages = useMemo(() => pages.filter((page) => Boolean(page.stale_triggered_at)), [pages]);
@@ -143,6 +152,14 @@ export function WikiPage() {
     backTo: `${location.pathname}${location.search}`,
     backLabel: "Back to Wiki",
   }), [location.pathname, location.search]);
+
+  function setLifecycleFilter(next: "all" | "draft" | "stable" | "archived") {
+    const params = new URLSearchParams(location.search);
+    if (next === "all") params.delete("lifecycle");
+    else params.set("lifecycle", next);
+    const search = params.toString();
+    navigate(`${location.pathname}${search ? `?${search}` : ""}`, { replace: true });
+  }
 
   return (
     <div
@@ -271,9 +288,25 @@ export function WikiPage() {
 
         <Card className="border-border/70 shadow-sm">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <BookOpen className="h-5 w-5 text-primary" /> Canonical Pages
-            </CardTitle>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <BookOpen className="h-5 w-5 text-primary" /> Canonical Pages
+              </CardTitle>
+              <div className="flex flex-wrap gap-1 rounded-lg border border-border/70 bg-muted/30 p-1" aria-label="Filter wiki pages by lifecycle">
+                {(["all", "draft", "stable", "archived"] as const).map((filter) => (
+                  <Button
+                    key={filter}
+                    type="button"
+                    size="sm"
+                    variant={lifecycleFilter === filter ? "default" : "ghost"}
+                    onClick={() => setLifecycleFilter(filter)}
+                    className="capitalize"
+                  >
+                    {filter}
+                  </Button>
+                ))}
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
             {isLoading ? (
@@ -288,9 +321,17 @@ export function WikiPage() {
                 actionLabel="Create page"
                 onAction={() => setOpen(true)}
               />
+            ) : visiblePages.length === 0 ? (
+              <StateMessage
+                tone="empty"
+                title={`No ${lifecycleFilter} wiki pages`}
+                description="Choose another lifecycle filter or create a new page."
+                actionLabel="Show all"
+                onAction={() => setLifecycleFilter("all")}
+              />
             ) : (
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {pages.map((page) => <WikiPageCard key={page.id} page={page} detailState={wikiDetailState} />)}
+                {visiblePages.map((page) => <WikiPageCard key={page.id} page={page} detailState={wikiDetailState} />)}
               </div>
             )}
           </CardContent>

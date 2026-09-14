@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Bot, Copy, ExternalLink, Pencil, Plus, Save, Trash2, X } from "lucide-react";
+import { ArrowLeft, Bot, CheckCircle2, Copy, ExternalLink, Pencil, Plus, Save, Trash2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -120,6 +120,7 @@ export function WikiDetailPage() {
   const [activeUpdateDraftId, setActiveUpdateDraftId] = useState<number | null>(null);
   const [showAppliedUpdateDrafts, setShowAppliedUpdateDrafts] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
   const [sourceForm, setSourceForm] = useState({
     source_id: "",
@@ -200,6 +201,20 @@ export function WikiDetailPage() {
     onSuccess: (draftPage) => {
       queryClient.invalidateQueries({ queryKey: ["wiki-pages"] });
       navigate(`/wiki/${encodeURIComponent(draftPage.id)}`, { state: { backTo: `/wiki/${encodeURIComponent(page?.id || id!)}`, backLabel: "Back to Wiki" } });
+    },
+  });
+
+  const publishMutation = useMutation({
+    mutationFn: ({ confirm, acknowledgeWarnings }: { confirm: boolean; acknowledgeWarnings: boolean }) => wikiApi.publish(id!, {
+      base_revision: page!.content_revision,
+      confirm,
+      acknowledge_warnings: acknowledgeWarnings,
+    }),
+    onSuccess: (result) => {
+      if (!result.published) return;
+      queryClient.setQueryData(["wiki-page", id], result.page);
+      queryClient.invalidateQueries({ queryKey: ["wiki-pages"] });
+      setPublishOpen(false);
     },
   });
 
@@ -324,6 +339,12 @@ export function WikiDetailPage() {
     });
   }
 
+  function openPublishPreview() {
+    publishMutation.reset();
+    setPublishOpen(true);
+    publishMutation.mutate({ confirm: false, acknowledgeWarnings: false });
+  }
+
   if (isLoading) {
     return <div className="p-6 text-sm text-muted-foreground">Loading wiki page…</div>;
   }
@@ -357,6 +378,11 @@ export function WikiDetailPage() {
               {role === "stable" && (
                 <Button variant="outline" size="sm" onClick={() => cloneDraftMutation.mutate()} disabled={cloneDraftMutation.isPending}>
                   <Copy className="h-4 w-4" /> {cloneDraftMutation.isPending ? "Cloning…" : "Clone as Draft"}
+                </Button>
+              )}
+              {role === "draft" && (
+                <Button size="sm" onClick={openPublishPreview} disabled={publishMutation.isPending}>
+                  <CheckCircle2 className="h-4 w-4" /> Publish to Stable
                 </Button>
               )}
               <Button
@@ -467,6 +493,11 @@ export function WikiDetailPage() {
               <CardTitle>Edit Wiki Page</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              {role === "stable" && (
+                <div className="rounded-md border border-amber-300/60 bg-amber-50 p-3 text-sm leading-6 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-200">
+                  You are editing canonical Stable knowledge directly. Saving keeps the page Stable, advances its content revision, and marks it as edited; prefer Clone as Draft for substantial changes.
+                </div>
+              )}
               <div>
                 <label className="text-xs font-medium text-muted-foreground">Title</label>
                 <Input value={draft.title} onChange={(event) => setDraft((prev) => prev && { ...prev, title: event.target.value })} className="mt-1" />
@@ -812,6 +843,60 @@ export function WikiDetailPage() {
             </aside>
           </div>
         )}
+
+        <Dialog
+          open={publishOpen}
+          onOpenChange={(open) => {
+            setPublishOpen(open);
+            if (!open) publishMutation.reset();
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Publish Wiki Draft to Stable</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 text-sm">
+              <p className="leading-6 text-muted-foreground">
+                This promotes revision {page.content_revision} into your internal canonical knowledge layer. It does not publish externally or create an Asset.
+              </p>
+              {publishMutation.isPending && <p className="text-muted-foreground">Checking the latest Draft revision…</p>}
+              {publishMutation.error && (
+                <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-destructive">
+                  {publishMutation.error.message}
+                </div>
+              )}
+              {publishMutation.data && !publishMutation.data.published && (
+                <div className="space-y-3">
+                  <div className="rounded-md border border-emerald-300/60 bg-emerald-50 p-3 text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/20 dark:text-emerald-200">
+                    Revision {publishMutation.data.content_revision} passed the blocking checks.
+                  </div>
+                  {publishMutation.data.warnings.length > 0 ? (
+                    <div className="rounded-md border border-amber-300/60 bg-amber-50 p-3 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-200">
+                      <p className="font-medium">Review these warnings before confirming:</p>
+                      <ul className="mt-2 list-disc space-y-1 pl-5">
+                        {publishMutation.data.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+                      </ul>
+                    </div>
+                  ) : (
+                    <p className="text-muted-foreground">No evidence, open-question, or confidence warnings were found.</p>
+                  )}
+                </div>
+              )}
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setPublishOpen(false)}>Cancel</Button>
+                <Button
+                  onClick={() => publishMutation.mutate({
+                    confirm: true,
+                    acknowledgeWarnings: Boolean(publishMutation.data?.warnings.length),
+                  })}
+                  disabled={publishMutation.isPending || !publishMutation.data || publishMutation.data.published}
+                >
+                  {publishMutation.isPending ? "Publishing…" : "Confirm Publish"}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
 
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>

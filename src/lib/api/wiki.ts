@@ -12,6 +12,10 @@ export interface WikiPage {
   derived_from_sources: string[];
   open_questions: string[];
   confidence_score?: number | null;
+  lifecycle_status: "draft" | "stable" | "archived" | string;
+  content_revision: number;
+  stable_at?: string | null;
+  stable_revision?: number | null;
   needs_recompile: boolean;
   stale_reason?: string | null;
   stale_triggered_at?: string | null;
@@ -103,6 +107,22 @@ export interface WikiRecompileSuggestion {
 
 export interface WikiCloneDraftRequest {
   title?: string;
+}
+
+export interface WikiPublishRequest {
+  base_revision: number;
+  confirm?: boolean;
+  acknowledge_warnings?: boolean;
+}
+
+export interface WikiPublishResult {
+  wiki_id: string;
+  lifecycle_status: string;
+  content_revision: number;
+  warnings: string[];
+  confirmation_required: boolean;
+  published: boolean;
+  page: WikiPage;
 }
 
 export interface WikiRecompileSuggestionList {
@@ -207,6 +227,7 @@ export const wikiApi = {
     page_type?: string;
     domain?: string;
     tag?: string;
+    lifecycle_status?: "draft" | "stable" | "archived";
     needs_recompile?: boolean;
     limit?: number;
     offset?: number;
@@ -215,6 +236,7 @@ export const wikiApi = {
     if (params?.page_type) q.set("page_type", params.page_type);
     if (params?.domain) q.set("domain", params.domain);
     if (params?.tag) q.set("tag", params.tag);
+    if (params?.lifecycle_status) q.set("lifecycle_status", params.lifecycle_status);
     if (params?.needs_recompile !== undefined) q.set("needs_recompile", String(params.needs_recompile));
     if (params?.limit) q.set("limit", String(params.limit));
     if (params?.offset) q.set("offset", String(params.offset));
@@ -232,6 +254,11 @@ export const wikiApi = {
     request<WikiPage>(`/wiki/${encodeURIComponent(id)}/clone-draft`, {
       method: "POST",
       body: JSON.stringify(body ?? {}),
+    }),
+  publish: (id: string, body: WikiPublishRequest) =>
+    request<WikiPublishResult>(`/wiki/${encodeURIComponent(id)}/publish`, {
+      method: "POST",
+      body: JSON.stringify(body),
     }),
   delete: (id: string) =>
     request<void>(`/wiki/${encodeURIComponent(id)}`, { method: "DELETE" }),

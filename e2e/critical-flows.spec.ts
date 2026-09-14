@@ -50,8 +50,10 @@ type MockState = {
   intentSaveFailureOnce?: boolean;
   evidenceSaveFailureOnce?: boolean;
   assetCreateCalls?: number;
+  forkAssetBody?: Record<string, unknown>;
   noteItems?: Array<Record<string, unknown>>;
   wikiItems?: Array<Record<string, unknown>>;
+  wikiDraftPublished?: boolean;
   assetItems?: Array<Record<string, unknown>>;
   searchResults?: Array<Record<string, unknown>>;
   searchRequests?: Array<Record<string, unknown>>;
@@ -461,6 +463,10 @@ async function installMockBff(page: Page, state: MockState) {
       state.savedAssetBody = { ...state.savedAssetBody, ...(request.postDataJSON() as Record<string, unknown>) };
       return json(route, { id: "asset-e2e", user_id: "user-e2e", ...state.savedAssetBody, metadata_: state.savedAssetBody?.metadata ?? state.savedAssetBody?.metadata_ ?? null, source_refs: state.savedAssetBody?.source_refs ?? [], note_refs: state.savedAssetBody?.note_refs ?? [], wiki_refs: state.savedAssetBody?.wiki_refs ?? [], created_at: now, updated_at: now });
     }
+    if (path === "/api/assets/asset-e2e/fork" && method === "POST") {
+      state.forkAssetBody = request.postDataJSON() as Record<string, unknown>;
+      return json(route, { id: "asset-forked-e2e", user_id: "user-e2e", asset_type: state.savedAssetBody?.asset_type ?? "research_brief", status: "draft", title: state.forkAssetBody.title, brief: state.forkAssetBody.brief, source_refs: state.savedAssetBody?.source_refs ?? [], note_refs: state.savedAssetBody?.note_refs ?? [], wiki_refs: state.savedAssetBody?.wiki_refs ?? [], metadata_: { forked_from: { asset_id: "asset-e2e" } }, created_at: now, updated_at: now }, 201);
+    }
     if (path === "/api/assets/asset-e2e/workspace/intent" && method === "POST") {
       if (state.intentSaveFailureOnce) {
         state.intentSaveFailureOnce = false;
@@ -492,7 +498,7 @@ async function installMockBff(page: Page, state: MockState) {
       return json(route, state.assetWorkspace);
     }
     if (path === "/api/assets/asset-e2e/workspace/evidence/proposals" && method === "POST") {
-      const body = request.postDataJSON() as { base_workspace_revision?: number; proposals?: Array<Record<string, unknown>> };
+      const body = request.postDataJSON() as { base_workspace_revision?: number; session_id?: string; proposals?: Array<Record<string, unknown>> };
       const workspace = state.assetWorkspace as Record<string, unknown>;
       if (state.evidenceProposalConflictOnce) {
         state.evidenceProposalConflictOnce = false;
@@ -508,6 +514,7 @@ async function installMockBff(page: Page, state: MockState) {
         status: "proposed",
         authorship: "agent",
         intent_revision: 1,
+        source_session_id: body.session_id,
         created_at: now,
       }));
       state.assetWorkspace = { ...workspace, workspace_revision: Number(workspace.workspace_revision ?? 0) + 1, evidence: [...((workspace.evidence as unknown[]) ?? []), ...evidence] };
@@ -550,7 +557,21 @@ async function installMockBff(page: Page, state: MockState) {
       const claims = ((workspace.claims as Array<Record<string, unknown>>) ?? []).map((item) => item.id === claimDecisionMatch[1]
         ? { ...item, status: statuses[body.decision ?? ""] ?? item.status, decided_by: "user-e2e", decided_at: now }
         : item);
-      state.assetWorkspace = { ...workspace, workspace_revision: Number(workspace.workspace_revision ?? 0) + 1, claims };
+      const missingEvidenceRequests = body.decision === "need_more_evidence"
+        ? [...((workspace.missing_evidence_requests as unknown[]) ?? []), {
+            id: "missing-evidence-1",
+            claim_id: claimDecisionMatch[1],
+            question: "Find evidence that can validate or challenge this Claim: The current recommendation needs stronger support.",
+            scope: ["Runtime architecture"],
+            requested_relations: ["supports", "contradicts"],
+            status: "open",
+            intent_revision: 1,
+            source_session_id: "evidence-session-original",
+            created_by: "user-e2e",
+            created_at: now,
+          }]
+        : ((workspace.missing_evidence_requests as unknown[]) ?? []);
+      state.assetWorkspace = { ...workspace, workspace_revision: Number(workspace.workspace_revision ?? 0) + 1, claims, missing_evidence_requests: missingEvidenceRequests };
       return json(route, state.assetWorkspace);
     }
     if (path === "/api/assets/asset-e2e/workspace" && method === "GET") {
@@ -762,9 +783,30 @@ async function installMockBff(page: Page, state: MockState) {
       });
     }
     if (path === "/api/wiki/wiki-input" && method === "GET") {
-      return json(route, { id: "wiki-input", title: "E2E Stable Wiki", page_type: "topic", summary: "A distilled wiki.", content: "# Stable Wiki\n\nCanonical knowledge.", domains: [], tags: ["asset-promotion"], derived_from_notes: [], derived_from_sources: [], open_questions: [], confidence_score: null, needs_recompile: false, stale_reason: null, stale_triggered_at: null, last_compiled_at: now, created_at: now, updated_at: now });
+      return json(route, { id: "wiki-input", title: "E2E Stable Wiki", page_type: "topic", summary: "A distilled wiki.", content: "# Stable Wiki\n\nCanonical knowledge.", domains: [], tags: ["wiki-stable", "asset-promotion"], derived_from_notes: [], derived_from_sources: [], open_questions: [], confidence_score: null, lifecycle_status: "stable", content_revision: 1, stable_at: now, stable_revision: 1, needs_recompile: false, stale_reason: null, stale_triggered_at: null, last_compiled_at: now, created_at: now, updated_at: now });
     }
     if (path === "/api/wiki/wiki-input/sources" && method === "GET") return json(route, []);
+    if (path === "/api/wiki/wiki-draft-publish" && method === "GET") {
+      const published = Boolean(state.wikiDraftPublished);
+      return json(route, { id: "wiki-draft-publish", title: "E2E Publish Draft", page_type: "topic", summary: "A reviewable draft.", content: "# Publish Draft\n\nCanonical candidate.", domains: [], tags: [published ? "wiki-stable" : "wiki-draft"], derived_from_notes: [], derived_from_sources: [], open_questions: ["Confirm scope"], confidence_score: 0.5, lifecycle_status: published ? "stable" : "draft", content_revision: 2, stable_at: published ? now : null, stable_revision: published ? 2 : null, needs_recompile: false, stale_reason: null, stale_triggered_at: null, last_compiled_at: now, created_at: now, updated_at: now });
+    }
+    if (path === "/api/wiki/wiki-draft-publish/sources" && method === "GET") return json(route, []);
+    if (path === "/api/wiki/wiki-draft-publish/publish" && method === "POST") {
+      const body = request.postDataJSON() as { base_revision?: number; confirm?: boolean; acknowledge_warnings?: boolean };
+      const warnings = ["No Source evidence is linked to this Wiki Draft.", "1 open question(s) remain unresolved.", "Confidence is below 0.6."];
+      if (body.base_revision !== 2) return json(route, { detail: { message: "Revision changed", current_revision: 2 } }, 409);
+      if (body.confirm) state.wikiDraftPublished = true;
+      const published = Boolean(body.confirm);
+      return json(route, {
+        wiki_id: "wiki-draft-publish",
+        lifecycle_status: published ? "stable" : "draft",
+        content_revision: 2,
+        warnings,
+        confirmation_required: !published,
+        published,
+        page: { id: "wiki-draft-publish", title: "E2E Publish Draft", page_type: "topic", summary: "A reviewable draft.", content: "# Publish Draft\n\nCanonical candidate.", domains: [], tags: [published ? "wiki-stable" : "wiki-draft"], derived_from_notes: [], derived_from_sources: [], open_questions: ["Confirm scope"], confidence_score: 0.5, lifecycle_status: published ? "stable" : "draft", content_revision: 2, stable_at: published ? now : null, stable_revision: published ? 2 : null, needs_recompile: false, stale_reason: null, stale_triggered_at: null, last_compiled_at: now, created_at: now, updated_at: now },
+      });
+    }
     if (path === "/api/wiki/update-drafts" && method === "GET") return json(route, []);
     if (path === "/api/wiki") {
       const items = state.wikiItems ?? [{ id: "wiki-input", title: "E2E Stable Wiki", page_type: "topic", content: "Stable knowledge", domains: [], tags: [], derived_from_notes: [], derived_from_sources: [], open_questions: [], needs_recompile: false, created_at: now, updated_at: now }];
@@ -1794,7 +1836,7 @@ test("saving a later Evidence collection retries a benign Workspace revision con
   expect(state.chatRequests?.at(-1)).toMatchObject({
     preset: "collect-asset-evidence",
     create_session: true,
-    ephemeral_session: true,
+    ephemeral_session: false,
   });
   await expect(page.getByText("Evidence Proposal")).toBeVisible();
   await page.getByRole("button", { name: "Save Proposal to Evidence Board" }).click();
@@ -1802,6 +1844,87 @@ test("saving a later Evidence collection retries a benign Workspace revision con
   await expect(page.getByText("1 Evidence candidates saved for review.")).toBeVisible();
   await expect.poll(() => ((state.assetWorkspace?.evidence as unknown[]) ?? []).length).toBe(2);
   expect(state.assetWorkspace?.workspace_revision).toBe(7);
+});
+
+test("Need More Evidence restores the original Evidence session and Intent Scope", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: {
+      title: "Evidence continuity Asset",
+      brief: "Keep evidence investigation context.",
+      asset_type: "research_brief",
+      status: "draft",
+      source_refs: ["source-input"],
+      note_refs: [],
+      wiki_refs: [],
+    },
+    assetWorkspace: {
+      asset_id: "asset-e2e",
+      workspace_revision: 4,
+      intent: { revision: 1, question: "Which runtime boundary is safe?", goal: "Make an architecture decision.", audience: "Architecture reviewers", creation_mode: "make_decision", scope: ["Runtime architecture"], constraints: ["Use accepted evidence"], status: "confirmed", confirmed_by: "user-e2e", confirmed_at: now },
+      intent_history: [],
+      evidence: [{ id: "evidence-1", target_type: "source", target_id: "source-input", relation: "context", summary: "Background only.", status: "accepted", authorship: "agent", intent_revision: 1, source_session_id: "evidence-session-original", created_at: now }],
+      claims: [{ id: "claim-1", content: "The current recommendation needs stronger support.", kind: "recommendation", supporting_evidence: [], contradicting_evidence: [], agent_confidence: "low", status: "proposed", authorship: "agent", intent_revision: 1, source_session_id: "claim-session-1", created_at: now, user_edited: false }],
+      missing_evidence_requests: [],
+      contribution: null,
+      knowledge_candidates: [],
+      decision_items: [],
+    },
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/assets/asset-e2e?tab=claims");
+  await page.getByRole("button", { name: "Need More Evidence" }).click();
+
+  await expect(page).toHaveURL(/tab=evidence/);
+  await expect(page.getByText("Missing Evidence Requests")).toBeVisible();
+  await expect(page.getByText("Original Scope: Runtime architecture")).toBeVisible();
+  await page.getByRole("button", { name: "Resume Evidence Investigation" }).click();
+
+  await expect.poll(() => state.chatRequests?.at(-1)).toMatchObject({
+    preset: "collect-asset-evidence",
+    session_id: "evidence-session-original",
+    create_session: false,
+    ephemeral_session: false,
+  });
+  expect(String(state.chatRequests?.at(-1)?.prompt)).toContain('"scope": [\n      "Runtime architecture"');
+});
+
+test("Fork New Asset copies references without sharing Workspace state", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: {
+      title: "Original Asset",
+      brief: "Original decision question.",
+      asset_type: "research_brief",
+      status: "in_review",
+      source_refs: ["source-input"],
+      note_refs: ["note-input"],
+      wiki_refs: ["wiki-input"],
+    },
+    assetWorkspace: { asset_id: "asset-e2e", workspace_revision: 8, intent: null, intent_history: [], evidence: [], claims: [], missing_evidence_requests: [], contribution: null, knowledge_candidates: [], decision_items: [] },
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/assets/asset-e2e");
+  await page.getByRole("button", { name: "Fork New Asset" }).click();
+  await expect(page.getByText("does not copy this Asset's Workspace")).toBeVisible();
+  await page.getByLabel("New Asset title").fill("Independent runtime investigation");
+  await page.getByLabel("Independent question or brief").fill("Investigate the separate runtime boundary.");
+  await page.getByRole("button", { name: "Create Independent Asset" }).click();
+
+  await expect(page).toHaveURL(/\/assets\/asset-forked-e2e\?tab=intent$/);
+  expect(state.forkAssetBody).toEqual({ title: "Independent runtime investigation", brief: "Investigate the separate runtime boundary." });
 });
 
 test("Source Asset handoff opens the generation guide with evidence preselected", async ({ page }) => {
@@ -2043,6 +2166,23 @@ test("Todo can change its linked Note and Note detail can create a linked Todo",
   await expect(page.getByRole("link", { name: /Follow up from Note/ })).toBeVisible();
   await page.getByRole("link", { name: /Follow up from Note/ }).click();
   await expect(page).toHaveURL(/\/calendar\?date=2026-09-15$/);
+});
+
+test("Wiki Draft requires preview and confirmation before publishing to Stable", async ({ page }) => {
+  const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/wiki/wiki-draft-publish");
+  await page.getByRole("button", { name: "Publish to Stable" }).click();
+
+  await expect(page.getByRole("dialog")).toContainText("passed the blocking checks");
+  await expect(page.getByRole("dialog")).toContainText("No Source evidence");
+  await page.getByRole("button", { name: "Confirm Publish" }).click();
+
+  await expect(page.getByRole("button", { name: "Clone as Draft" })).toBeVisible();
+  await expect(page.getByText("stable", { exact: true }).first()).toBeVisible();
+  expect(state.wikiDraftPublished).toBe(true);
 });
 
 test("Wiki detail returns to the previous list position without adding a fake back entry", async ({ page }) => {

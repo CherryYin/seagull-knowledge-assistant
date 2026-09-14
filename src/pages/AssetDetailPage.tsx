@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, Link, useNavigate, useLocation } from "react-router-dom";
 import { BookOpen, CalendarDays, ChartNoAxesCombined, CheckCircle2, CircleAlert, Clock3, Copy, Download, Eye, FileSearch, LibraryBig, MailOpen, PenLine, Quote, Sparkles, Square, WandSparkles } from "lucide-react";
-import { assetsApi, authApi, notesApi, sourcesApi, wikiApi, type Asset, type AssetClaimProposalInput, type AssetContributionKind, type AssetEvidenceProposalInput, type AssetKnowledgeProposalInput, type AssetQualityAuditResult, type AssetStatus, type AssetType, type ReadinessCheckResult } from "@/lib/api";
+import { assetsApi, authApi, notesApi, sourcesApi, wikiApi, type Asset, type AssetClaimProposalInput, type AssetContributionKind, type AssetEvidenceProposalInput, type AssetEvidenceRelation, type AssetKnowledgeProposalInput, type AssetMissingEvidenceRequest, type AssetQualityAuditResult, type AssetStatus, type AssetType, type ReadinessCheckResult } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -94,6 +94,13 @@ interface EvidenceAgentState {
   error?: string;
   diagnostic?: string;
 }
+
+const EVIDENCE_RELATION_PRESENTATION: Record<AssetEvidenceRelation, { label: string; description: string; className: string }> = {
+  supports: { label: "Supports", description: "Directly strengthens a Claim or the confirmed Intent.", className: "border-emerald-200 bg-emerald-50/60 text-emerald-900" },
+  contradicts: { label: "Contradicts", description: "Challenges an assumption or conclusion and must stay visible.", className: "border-rose-200 bg-rose-50/60 text-rose-900" },
+  context: { label: "Context", description: "Explains background without proving the conclusion.", className: "border-sky-200 bg-sky-50/60 text-sky-900" },
+  unverified: { label: "Unverified", description: "Potentially useful, but its reliability or relevance is not confirmed.", className: "border-amber-200 bg-amber-50/60 text-amber-900" },
+};
 
 interface AgentClaimProposalItem {
   content: string;
@@ -1101,6 +1108,9 @@ export function AssetDetailPage() {
   const allowNextHistoryPopRef = useRef(false);
   const documentRevisionAbortRef = useRef<AbortController | null>(null);
   const [evidenceAgent, setEvidenceAgent] = useState<EvidenceAgentState>({ instruction: "", streaming: false, status: "" });
+  const [forkOpen, setForkOpen] = useState(false);
+  const [forkTitle, setForkTitle] = useState("");
+  const [forkBrief, setForkBrief] = useState("");
   const evidenceAgentAbortRef = useRef<AbortController | null>(null);
   const [claimAgent, setClaimAgent] = useState<ClaimAgentState>({ instruction: "", streaming: false, status: "" });
   const [claimEdits, setClaimEdits] = useState<Record<string, string>>({});
@@ -1519,7 +1529,28 @@ export function AssetDetailPage() {
       decision,
       ...(editedContent ? { edited_content: editedContent } : {}),
     }),
-    onSuccess: refreshAsset,
+    onSuccess: async (workspace, variables) => {
+      queryClient.setQueryData(["asset-workspace", id], workspace);
+      if (variables.decision === "need_more_evidence") {
+        const request = [...(workspace.missing_evidence_requests ?? [])]
+          .reverse()
+          .find((item) => item.claim_id === variables.claimId && item.status === "open");
+        if (request) {
+          setEvidenceAgent((current) => ({
+            ...current,
+            instruction: request.question,
+            sessionId: request.source_session_id ?? current.sessionId,
+            proposal: undefined,
+            error: undefined,
+            status: request.source_session_id
+              ? "Missing Evidence Request created. The original Evidence Agent session and Intent Scope are ready to resume."
+              : "Missing Evidence Request created. The next investigation will start within the original Intent Scope.",
+          }));
+          setActiveTab("evidence");
+        }
+      }
+      await refreshAsset();
+    },
   });
 
   const saveKnowledgeProposalMutation = useMutation({
@@ -2092,10 +2123,16 @@ export function AssetDetailPage() {
     setDocumentRevision((current) => ({ ...current, proposal: undefined, status: `Optimization round ${current.round ?? nextOptimizationRound} applied to the editor. Review the Blocks, then save explicitly.` }));
   };
 
-  const startEvidenceResearch = async () => {
+  const startEvidenceResearch = async (requestOverride?: Pick<AssetMissingEvidenceRequest, "question" | "source_session_id">) => {
     const workspace = workspaceQuery.data;
     const intent = workspace?.intent;
     if (!asset || !workspace || !intent || evidenceAgent.streaming || evidenceDecisionMutation.isPending || saveEvidenceProposalMutation.isPending) return;
+    const instruction = requestOverride?.question ?? (evidenceAgent.instruction.trim() || "Find the strongest missing evidence and any credible contradiction for this Intent.");
+    const latestEvidenceSessionId = [...workspace.evidence]
+      .reverse()
+      .find((item) => item.intent_revision === intent.revision && item.source_session_id)
+      ?.source_session_id;
+    const resumeSessionId = requestOverride?.source_session_id ?? evidenceAgent.sessionId ?? latestEvidenceSessionId;
     const request = {
       assetId: asset.id,
       baseWorkspaceRevision: workspace.workspace_revision,
@@ -2108,7 +2145,7 @@ export function AssetDetailPage() {
         scope: intent.scope,
         constraints: intent.constraints,
       },
-      instruction: evidenceAgent.instruction.trim() || "Find the strongest missing evidence and any credible contradiction for this Intent.",
+      instruction,
       existingEvidence: workspace.evidence.map((item) => ({
         targetType: item.target_type,
         targetId: item.target_id,
@@ -2126,8 +2163,10 @@ export function AssetDetailPage() {
     evidenceAgentAbortRef.current = abortController;
     setEvidenceAgent((current) => ({
       ...current,
+      instruction,
+      sessionId: resumeSessionId ?? current.sessionId,
       streaming: true,
-      status: "Agent is searching within the confirmed Intent…",
+      status: resumeSessionId ? "Agent is resuming the original Evidence session within the confirmed Intent Scope…" : "Agent is searching within the confirmed Intent…",
       pendingQuestion: undefined,
       proposal: undefined,
       error: undefined,
@@ -2137,8 +2176,9 @@ export function AssetDetailPage() {
         `请按 collect-asset-evidence 工作流处理以下 JSON 合同：\n\n${JSON.stringify(request, null, 2)}`,
         {
           preset: "collect-asset-evidence",
-          createSession: true,
-          ephemeralSession: true,
+          sessionId: resumeSessionId ?? undefined,
+          createSession: !resumeSessionId,
+          ephemeralSession: false,
           clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           signal: abortController.signal,
         },
@@ -2460,6 +2500,25 @@ export function AssetDetailPage() {
     },
   });
 
+  const forkMutation = useMutation({
+    mutationFn: () => assetsApi.fork(id, { title: forkTitle.trim(), brief: forkBrief.trim() || null }),
+    onSuccess: (forkedAsset) => {
+      queryClient.invalidateQueries({ queryKey: ["assets"] });
+      setForkOpen(false);
+      navigate(`/assets/${encodeURIComponent(forkedAsset.id)}?tab=intent`, {
+        state: { backTo: `${location.pathname}${location.search}`, backLabel: "Back to Original Asset" },
+      });
+    },
+  });
+
+  const openForkDialog = () => {
+    if (!asset) return;
+    setForkTitle(`${asset.title} — New Question`);
+    setForkBrief(asset.brief ?? "");
+    forkMutation.reset();
+    setForkOpen(true);
+  };
+
   const sourceRefItems: ReferenceItem[] = (asset?.source_refs ?? []).map((sourceId) => {
     const source = sourceMap.get(sourceId);
     return {
@@ -2573,6 +2632,31 @@ export function AssetDetailPage() {
           </div>
         </DialogContent>
       </Dialog>
+      <Dialog open={forkOpen} onOpenChange={setForkOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader><DialogTitle>Fork New Asset</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm leading-6 text-muted-foreground">
+              The new Asset copies Source, Note, and Wiki references plus basic delivery context. It does not copy this Asset&apos;s Workspace, Evidence decisions, Claims, draft content, or revisions.
+            </p>
+            <div>
+              <label className="text-sm font-medium" htmlFor="fork-asset-title">New Asset title</label>
+              <Input id="fork-asset-title" className="mt-1" value={forkTitle} onChange={(event) => setForkTitle(event.target.value)} />
+            </div>
+            <div>
+              <label className="text-sm font-medium" htmlFor="fork-asset-brief">Independent question or brief</label>
+              <Textarea id="fork-asset-brief" className="mt-1" rows={4} value={forkBrief} onChange={(event) => setForkBrief(event.target.value)} />
+            </div>
+            {forkMutation.isError && <ActionError title="Asset fork failed" impact="No new Asset was created." recovery="Review the title and references, then retry." details={forkMutation.error instanceof Error ? forkMutation.error.message : "Unknown fork error"} />}
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setForkOpen(false)}>Cancel</Button>
+              <Button type="button" onClick={() => forkMutation.mutate()} disabled={!forkTitle.trim() || forkMutation.isPending}>
+                {forkMutation.isPending ? "Creating…" : "Create Independent Asset"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
       <div className="mx-auto max-w-6xl space-y-6 px-6 py-8">
         <div className="flex items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-2">
@@ -2581,6 +2665,9 @@ export function AssetDetailPage() {
             {!asset && <span className="text-sm text-muted-foreground">Loading Asset…</span>}
           </div>
           <div className="flex flex-wrap justify-end gap-2">
+            <Button variant="outline" onClick={openForkDialog} disabled={!asset || forkMutation.isPending}>
+              <Copy className="h-4 w-4" /> Fork New Asset
+            </Button>
             <Button variant="outline" onClick={exportPreferred} disabled={!asset || isBusy || asset.status !== "ready_to_export"}>
               {isExporting ? "Exporting…" : deliveryFormat === "html" ? "Export HTML" : "Export Markdown"}
             </Button>
@@ -3120,6 +3207,46 @@ export function AssetDetailPage() {
                     <Button type="button" onClick={() => setActiveTab("claims")} disabled={!workflowStage.evidenceReady}>Continue to Claims</Button>
                   </CardContent>
                 </Card>
+
+                {(workspaceQuery.data?.missing_evidence_requests ?? []).some((item) => item.status === "open" && item.intent_revision === workspaceQuery.data?.intent?.revision) && (
+                  <Card className="border-amber-200 bg-amber-50/30">
+                    <CardHeader>
+                      <CardTitle>Missing Evidence Requests</CardTitle>
+                      <CardDescription>Investigation gaps are tracked separately from Source references and keep the original Intent Scope.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {(workspaceQuery.data?.missing_evidence_requests ?? [])
+                        .filter((item) => item.status === "open" && item.intent_revision === workspaceQuery.data?.intent?.revision)
+                        .map((request) => (
+                          <div key={request.id} className="rounded-xl border border-amber-200 bg-background p-4">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge variant="outline">Claim {request.claim_id}</Badge>
+                              {request.requested_relations.map((relation) => <Badge key={relation} variant="secondary">{EVIDENCE_RELATION_PRESENTATION[relation].label}</Badge>)}
+                              <Badge variant="outline">{request.source_session_id ? "Session recoverable" : "New session required"}</Badge>
+                            </div>
+                            <p className="mt-3 text-sm leading-6">{request.question}</p>
+                            <p className="mt-2 text-xs text-muted-foreground">Original Scope: {request.scope.length ? request.scope.join(" · ") : "No additional scope constraints"}</p>
+                            <Button className="mt-3" size="sm" type="button" onClick={() => void startEvidenceResearch(request)} disabled={evidenceAgent.streaming}>
+                              {request.source_session_id ? "Resume Evidence Investigation" : "Start Evidence Investigation"}
+                            </Button>
+                          </div>
+                        ))}
+                    </CardContent>
+                  </Card>
+                )}
+
+                <Card>
+                  <CardHeader><CardTitle>Evidence Relationship Guide</CardTitle><CardDescription>Every candidate must state how it relates to the Intent or a Claim.</CardDescription></CardHeader>
+                  <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    {(Object.entries(EVIDENCE_RELATION_PRESENTATION) as Array<[AssetEvidenceRelation, (typeof EVIDENCE_RELATION_PRESENTATION)[AssetEvidenceRelation]]>).map(([relation, presentation]) => (
+                      <div key={relation} className={`rounded-lg border p-3 ${presentation.className}`}>
+                        <p className="text-sm font-semibold">{presentation.label}</p>
+                        <p className="mt-1 text-xs leading-5 opacity-80">{presentation.description}</p>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+
                 <Card>
                   <CardHeader>
                     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -3170,7 +3297,7 @@ export function AssetDetailPage() {
                         <div className="grid gap-3 md:grid-cols-2">
                           {evidenceAgent.proposal.proposals.map((item, index) => (
                             <div key={`${item.targetType}-${item.targetId}-${index}`} className="rounded-lg border bg-background p-3">
-                              <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{item.relation}</Badge><Badge variant="secondary">{item.targetType}</Badge></div>
+                              <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{EVIDENCE_RELATION_PRESENTATION[item.relation].label}</Badge><Badge variant="secondary">{item.targetType}</Badge></div>
                               <p className="mt-2 break-all text-xs text-muted-foreground">{item.targetId}</p>
                               <p className="mt-2 text-sm leading-6">{item.summary}</p>
                               {typeof item.fragmentSelector?.exact === "string" && <blockquote className="mt-2 border-l-2 pl-3 text-xs text-muted-foreground">{item.fragmentSelector.exact}</blockquote>}
@@ -3195,7 +3322,7 @@ export function AssetDetailPage() {
                         <div key={item.id} className="rounded-xl border p-4">
                           <div className="flex flex-wrap items-start justify-between gap-3">
                             <div className="min-w-0 flex-1">
-                              <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{item.relation}</Badge><Badge variant="secondary">{item.status}</Badge><span className="text-xs text-muted-foreground">Intent r{item.intent_revision}</span></div>
+                              <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{EVIDENCE_RELATION_PRESENTATION[item.relation].label}</Badge><Badge variant="secondary">{item.status}</Badge><span className="text-xs text-muted-foreground">Intent r{item.intent_revision}</span></div>
                               {item.target_type === "web" ? <a className="mt-2 block break-all text-sm font-medium text-primary hover:underline" href={href} target="_blank" rel="noreferrer">{item.target_id}</a> : <Link className="mt-2 block break-all text-sm font-medium text-primary hover:underline" to={href}>{item.target_id}</Link>}
                               <p className="mt-2 text-sm leading-6">{item.summary}</p>
                               {exact && <blockquote className="mt-2 border-l-2 pl-3 text-xs text-muted-foreground">{exact}</blockquote>}

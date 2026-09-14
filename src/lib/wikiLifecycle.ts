@@ -1,6 +1,9 @@
 import type { WikiPage } from "@/lib/api";
 
-export function getWikiRole(page: WikiPage): "draft" | "stable" {
+export function getWikiRole(page: WikiPage): "draft" | "stable" | "archived" {
+  if (["draft", "stable", "archived"].includes(page.lifecycle_status)) {
+    return page.lifecycle_status as "draft" | "stable" | "archived";
+  }
   return (page.tags ?? []).includes("wiki-draft") ? "draft" : "stable";
 }
 
