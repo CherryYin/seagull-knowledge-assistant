@@ -49,24 +49,38 @@ async def _completion_dates_for_range(session: AsyncSession, *, user_id: str, st
     return {(reminder_id, occurrence_date) for reminder_id, occurrence_date in rows.all()}
 
 
+async def _attach_linked_notes(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    reminders: list[CalendarReminder],
+) -> None:
+    note_ids = {reminder.note_id for reminder in reminders if reminder.note_id}
+    if not note_ids:
+        return
+    rows = await session.execute(
+        select(Note).where(Note.user_id == user_id, Note.id.in_(note_ids))
+    )
+    notes_by_id = {note.id: note for note in rows.scalars()}
+    for reminder in reminders:
+        reminder.linked_note = notes_by_id.get(reminder.note_id)
+
+
 @router.get("", response_model=CalendarReminderList)
 async def list_calendar_reminders(
     start: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     end: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     include_done: bool = True,
+    note_id: str | None = Query(default=None),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
     filters = [CalendarReminder.user_id == user.id]
-    if start:
-        filters.append(CalendarReminder.date >= start)
-    if end:
-        filters.append(CalendarReminder.date <= end)
-    if not include_done:
-        filters.append(CalendarReminder.is_done.is_(False))
+    if note_id:
+        filters.append(CalendarReminder.note_id == note_id)
 
     rows = await session.execute(
-        select(CalendarReminder).where(CalendarReminder.user_id == user.id).order_by(CalendarReminder.date.asc(), CalendarReminder.created_at.asc())
+        select(CalendarReminder).where(*filters).order_by(CalendarReminder.date.asc(), CalendarReminder.created_at.asc())
     )
     reminders = list(rows.scalars())
     if start or end:
@@ -96,6 +110,7 @@ async def list_calendar_reminders(
                     user_id=reminder.user_id,
                     date=matched_day,
                     text=reminder.text,
+                    note_id=reminder.note_id,
                     recurrence=reminder.recurrence,
                     is_done=occurrence_done,
                 )
@@ -104,12 +119,16 @@ async def list_calendar_reminders(
                 items.append(clone)
     else:
         items = [reminder for reminder in reminders if include_done or not reminder.is_done]
+    await _attach_linked_notes(session, user_id=user.id, reminders=items)
+    overdue_filters = [
+        CalendarReminder.user_id == user.id,
+        CalendarReminder.is_done.is_(False),
+        CalendarReminder.date < _today_key(),
+    ]
+    if note_id:
+        overdue_filters.append(CalendarReminder.note_id == note_id)
     overdue_count = (await session.execute(
-        select(func.count()).select_from(CalendarReminder).where(
-            CalendarReminder.user_id == user.id,
-            CalendarReminder.is_done.is_(False),
-            CalendarReminder.date < _today_key(),
-        )
+        select(func.count()).select_from(CalendarReminder).where(*overdue_filters)
     )).scalar() or 0
     return CalendarReminderList(items=items, total=len(items), overdue_count=overdue_count)
 
@@ -121,6 +140,7 @@ async def create_calendar_reminder(
     session: AsyncSession = Depends(get_session),
 ):
     note_id = body.note_id
+    note = None
     if note_id:
         note = await session.get(Note, note_id)
         if not note or note.user_id != user.id:
@@ -136,6 +156,7 @@ async def create_calendar_reminder(
     session.add(reminder)
     await session.commit()
     await session.refresh(reminder)
+    reminder.linked_note = note
     return reminder
 
 
@@ -150,20 +171,21 @@ async def update_calendar_reminder(
     if not reminder or reminder.user_id != user.id:
         raise HTTPException(status_code=404, detail="Reminder not found")
     updates = body.model_dump(exclude_unset=True)
+    linked_note = None
     if "text" in updates and updates["text"] is not None:
         reminder.text = updates["text"].strip()
     if "note_id" in updates:
         note_id = updates["note_id"]
         if note_id:
-            note = await session.get(Note, note_id)
-            if not note or note.user_id != user.id:
+            linked_note = await session.get(Note, note_id)
+            if not linked_note or linked_note.user_id != user.id:
                 raise HTTPException(status_code=404, detail="Note not found")
         reminder.note_id = note_id
     if "recurrence" in updates and updates["recurrence"] is not None:
         reminder.recurrence = updates["recurrence"]
     if "is_done" in updates and updates["is_done"] is not None:
         occurrence_date = updates.get("occurrence_date") or reminder.date
-        if reminder.recurrence == "once":
+        if (reminder.recurrence or "once") == "once":
             reminder.is_done = updates["is_done"]
         else:
             existing_completion = await session.execute(
@@ -186,6 +208,11 @@ async def update_calendar_reminder(
                 await session.delete(completion)
     await session.commit()
     await session.refresh(reminder)
+    if reminder.note_id and linked_note is None:
+        linked_note = await session.get(Note, reminder.note_id)
+        if linked_note and linked_note.user_id != user.id:
+            linked_note = None
+    reminder.linked_note = linked_note
     return reminder
 
 

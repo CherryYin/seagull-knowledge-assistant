@@ -6,6 +6,14 @@ from pydantic import BaseModel, Field
 CALENDAR_RECURRENCE_PATTERN = r"^(once|daily|weekly|biweekly)$"
 
 
+class CalendarReminderLinkedNote(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: str
+    title: str
+    status: str
+
+
 class CalendarReminderCreate(BaseModel):
     date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     text: str = Field(min_length=1, max_length=1000)
@@ -29,6 +37,7 @@ class CalendarReminderRead(BaseModel):
     date: str
     text: str
     note_id: str | None = None
+    linked_note: CalendarReminderLinkedNote | None = None
     recurrence: str
     is_done: bool
     created_at: datetime
