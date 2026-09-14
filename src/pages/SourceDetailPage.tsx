@@ -1,10 +1,11 @@
 import { useLocation, useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo, useRef, useEffect } from "react";
-import { ArrowLeft, Download, ExternalLink, Trash2, List, FileText, Pencil, Check, X, Rss, RefreshCw, Bot, StickyNote, BookOpen, Network } from "lucide-react";
+import { ArrowLeft, Download, ExternalLink, Trash2, List, FileText, Pencil, Check, X, Rss, RefreshCw, Bot, StickyNote, BookOpen, Network, WandSparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { CategorySelect } from "@/components/CategorySelect";
 import { MarkdownRenderer } from "@/components/markdown";
@@ -22,6 +23,7 @@ type SourceEditDraft = {
   category_id: number;
   source_type: string;
   url: string;
+  description: string;
   metadata?: Record<string, unknown> | null;
 };
 
@@ -90,6 +92,14 @@ export function SourceDetailPage() {
     enabled: !!id,
   });
 
+  const isMediaSource = source?.source_type === "image" || source?.source_type === "video";
+  const { data: mediaFileAccess, isError: mediaPreviewError } = useQuery({
+    queryKey: ["source-file-url", id, source?.content_hash],
+    queryFn: () => sourcesApi.fileUrl(id!),
+    enabled: !!id && Boolean(source?.file_path) && isMediaSource,
+    staleTime: 10 * 60 * 1000,
+  });
+
   const { data: catData } = useQuery({
     queryKey: ["categories"],
     queryFn: () => categoriesApi.list(),
@@ -102,6 +112,13 @@ export function SourceDetailPage() {
       queryClient.setQueryData(["source", id], updated);
       queryClient.invalidateQueries({ queryKey: ["sources"] });
       setEditing(false);
+    },
+  });
+
+  const generateDescriptionMutation = useMutation({
+    mutationFn: () => sourcesApi.generateDescription(id!),
+    onSuccess: (proposal) => {
+      setDraft((current) => current ? { ...current, description: proposal.description } : current);
     },
   });
 
@@ -282,6 +299,7 @@ export function SourceDetailPage() {
       category_id: source.category_id,
       source_type: source.source_type,
       url: source.url ?? "",
+      description: source.description ?? "",
       metadata: {
         ...metadata,
         auto_discover: metadata.auto_discover === true,
@@ -306,6 +324,7 @@ export function SourceDetailPage() {
     if (draft.category_id !== source.category_id) patch.category_id = draft.category_id;
     if (draft.source_type !== source.source_type) patch.source_type = draft.source_type;
     if ((draft.url || null) !== (source.url || null)) patch.url = draft.url || null;
+    if ((draft.description || null) !== (source.description || null)) patch.description = draft.description || null;
     if (JSON.stringify(draft.metadata ?? null) !== JSON.stringify(source.metadata_ ?? null)) patch.metadata = draft.metadata ?? null;
     updateMutation.mutate(patch);
   }
@@ -361,6 +380,19 @@ export function SourceDetailPage() {
           {!editing && (
             <Button variant="outline" size="sm" onClick={startEdit}>
               <Pencil className="h-4 w-4" /> Edit
+            </Button>
+          )}
+          {!editing && isMediaSource && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                startEdit();
+                generateDescriptionMutation.mutate();
+              }}
+              disabled={generateDescriptionMutation.isPending}
+            >
+              <WandSparkles className="h-4 w-4" /> Generate Description
             </Button>
           )}
           {editing && (
@@ -430,7 +462,7 @@ export function SourceDetailPage() {
                     value={draft.source_type}
                     onChange={(e) => setDraft({ ...draft, source_type: e.target.value })}
                   >
-                    {["pdf", "article", "conversation", "video", "web", "code"].map((t) => (
+                    {["pdf", "article", "conversation", "image", "video", "web", "code"].map((t) => (
                       <option key={t} value={t}>{t}</option>
                     ))}
                   </select>
@@ -445,6 +477,38 @@ export function SourceDetailPage() {
                   placeholder="https://..."
                 />
               </div>
+              {(draft.source_type === "image" || draft.source_type === "video") && (
+                <div className="rounded-lg border border-border p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground">Search description</label>
+                      <p className="mt-1 text-xs text-muted-foreground">Used for keyword and semantic search. Review generated text before saving.</p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => generateDescriptionMutation.mutate()}
+                      disabled={generateDescriptionMutation.isPending}
+                    >
+                      <WandSparkles className="h-4 w-4" />
+                      {generateDescriptionMutation.isPending ? "Generating..." : "Generate with LLM"}
+                    </Button>
+                  </div>
+                  <Textarea
+                    className="mt-3"
+                    rows={5}
+                    value={draft.description}
+                    onChange={(event) => setDraft({ ...draft, description: event.target.value })}
+                    placeholder="Describe what appears in this media and how you may search for it later."
+                  />
+                  {generateDescriptionMutation.isError && (
+                    <p className="mt-2 text-sm text-destructive">
+                      {generateDescriptionMutation.error instanceof Error ? generateDescriptionMutation.error.message : "Description generation failed"}
+                    </p>
+                  )}
+                </div>
+              )}
               {draft.source_type === "web" && (
                 <div className="grid gap-4 rounded-lg border border-border p-4 md:grid-cols-2">
                   <div className="space-y-3">
@@ -543,6 +607,12 @@ export function SourceDetailPage() {
               <p className="mt-2 text-xs text-muted-foreground">
                 Processing status: {processing.detail}
               </p>
+              {source.description && (
+                <div className="mt-4 max-w-3xl rounded-lg border border-border bg-muted/30 p-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Search description</p>
+                  <p className="mt-2 whitespace-pre-wrap text-sm leading-6">{source.description}</p>
+                </div>
+              )}
               {(extractionMode || extractionStatus) && (
                 <p className="mt-1 text-xs text-muted-foreground">
                   Extraction: {extractionMode || "unknown"} · {extractionStatus || "unknown"}
@@ -643,6 +713,34 @@ export function SourceDetailPage() {
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {!editing && isMediaSource && (
+          <div className="mb-6 overflow-hidden rounded-lg border border-border bg-black/95">
+            {mediaFileAccess?.url && source.source_type === "image" && (
+              <img
+                src={mediaFileAccess.url}
+                alt={source.description || source.title}
+                className="mx-auto max-h-[70vh] max-w-full object-contain"
+              />
+            )}
+            {mediaFileAccess?.url && source.source_type === "video" && (
+              <video
+                src={mediaFileAccess.url}
+                controls
+                preload="metadata"
+                className="mx-auto max-h-[70vh] w-full"
+              >
+                Your browser cannot play this video.
+              </video>
+            )}
+            {!mediaFileAccess?.url && !mediaPreviewError && (
+              <p className="p-6 text-center text-sm text-white/70">Loading media preview...</p>
+            )}
+            {mediaPreviewError && (
+              <p className="p-6 text-center text-sm text-white/70">Preview is unavailable. The original file can still be downloaded.</p>
+            )}
           </div>
         )}
 

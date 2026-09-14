@@ -8,6 +8,7 @@ export interface Source {
   source_type: string;
   url?: string | null;
   content_hash?: string | null;
+  description?: string | null;
   raw_content?: string | null;
   file_path?: string | null;
   ingested_at: string;
@@ -29,6 +30,7 @@ export interface SourceCreate {
   category_id: number;
   source_type: string;
   url?: string;
+  description?: string;
   raw_content?: string;
   metadata?: Record<string, unknown>;
 }
@@ -45,7 +47,20 @@ export interface SourceUpdate {
   category_id?: number;
   source_type?: string;
   url?: string | null;
+  description?: string | null;
   metadata?: Record<string, unknown> | null;
+}
+
+export interface SourceDescriptionProposal {
+  description: string;
+  model: string;
+  basis_content_hash?: string | null;
+  generated_at: string;
+}
+
+export interface SourceFileAccess {
+  url: string;
+  expires_in_seconds?: number | null;
 }
 
 export const sourcesApi = {
@@ -75,6 +90,10 @@ export const sourcesApi = {
     request<Source>(`/sources/${encodeURIComponent(id)}/download-pdf`, { method: "POST" }),
   retryExtraction: (id: string) =>
     request<Source>(`/sources/${encodeURIComponent(id)}/retry-extraction`, { method: "POST" }),
+  generateDescription: (id: string) =>
+    request<SourceDescriptionProposal>(`/sources/${encodeURIComponent(id)}/description/generate`, { method: "POST" }),
+  fileUrl: (id: string) =>
+    request<SourceFileAccess>(`/sources/${encodeURIComponent(id)}/file-url`),
   delete: (id: string) =>
     request<void>(`/sources/${encodeURIComponent(id)}`, { method: "DELETE" }),
   keepImported: (id: string) =>

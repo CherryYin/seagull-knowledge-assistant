@@ -36,7 +36,7 @@ export function getSourceProcessingState(source: Source, options?: { chunkCount?
   const extractionStatus = statusValue(metadata.extraction_status);
   const indexStatus = statusValue(metadata.index_status);
   const chunkCount = options?.chunkCount ?? null;
-  const hasReadable = Boolean(source.raw_content) || fetchStatus === "fetched" || extractionStatus === "completed";
+  const hasReadable = Boolean(source.description || source.raw_content) || fetchStatus === "fetched" || extractionStatus === "completed";
   const hasIndex = indexStatus === "completed" || (chunkCount ?? 0) > 0;
 
   if (isFailed(fetchStatus) || isFailed(extractionStatus)) {

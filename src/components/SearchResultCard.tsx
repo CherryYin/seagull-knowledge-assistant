@@ -31,7 +31,7 @@ export function SearchResultCard({ result }: Props) {
     }
   };
 
-  const resultType = result.type.replace("_", " ");
+  const resultType = result.source_type || result.type.replace("_", " ");
   const preview = result.abstract || result.content_preview;
   const matchReason = result.match_reason || buildMatchReason(result);
   const confidence = result.score >= 0.75 ? "Strong match" : result.score >= 0.45 ? "Likely match" : "Possible match";

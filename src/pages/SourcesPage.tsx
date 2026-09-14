@@ -21,7 +21,7 @@ import { useRouteScrollRestoration } from "@/hooks/useRouteScrollRestoration";
 import { useRouteFocusRestoration } from "@/hooks/useRouteFocusRestoration";
 import { useSessionStringSet } from "@/hooks/useSessionStringSet";
 
-const SOURCE_TYPES = ["pdf", "article", "conversation", "video", "web", "github"];
+const SOURCE_TYPES = ["pdf", "article", "conversation", "image", "video", "web", "github"];
 const FEED_VIEWS = [
   { value: "parents", label: "Main Sources" },
   { value: "feeds", label: "Feeds" },
@@ -39,7 +39,13 @@ const PDF_TYPES = [
 
 /** Files that go through Docling on the server (PDF/Office/images may take a long time, especially with OCR). */
 function isServerHeavyExtract(file: File) {
-  return /\.(pdf|docx|pptx|xlsx|png|jpe?g|tiff?|bmp|webp|html?)$/i.test(file.name);
+  return /\.(pdf|docx|pptx|xlsx|html?)$/i.test(file.name);
+}
+
+function mediaTypeForFile(file: File) {
+  if (file.type.startsWith("image/")) return "image";
+  if (file.type.startsWith("video/")) return "video";
+  return null;
 }
 
 export function SourcesPage() {
@@ -303,6 +309,7 @@ export function SourcesPage() {
     payload.append("source_type", form.source_type);
     payload.append("category_id", String(form.category_id));
     payload.append("url", form.url || "");
+    payload.append("description", form.description || "");
     if (/\.pdf$/i.test(uploadFile.name)) {
       payload.append("pdf_type", pdfType);
     }
@@ -389,12 +396,26 @@ export function SourcesPage() {
                     className="flex-1 min-w-[120px]"
                   />
                 </div>
-                <Textarea
-                  placeholder={form.source_type === "web" && form.url ? "Content (optional: leave empty to fetch readable page text from URL)" : "Content"}
-                  rows={8}
-                  value={form.raw_content || ""}
-                  onChange={(e) => setForm({ ...form, raw_content: e.target.value })}
-                />
+                {form.source_type === "image" || form.source_type === "video" ? (
+                  <div>
+                    <Textarea
+                      placeholder="Describe the subject, scene, people, text, purpose, or anything you may search for later. You can also generate this after upload."
+                      rows={5}
+                      value={form.description || ""}
+                      onChange={(e) => setForm({ ...form, description: e.target.value })}
+                    />
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      This description is indexed for keyword and semantic search. The media file itself remains the Source of truth.
+                    </p>
+                  </div>
+                ) : (
+                  <Textarea
+                    placeholder={form.source_type === "web" && form.url ? "Content (optional: leave empty to fetch readable page text from URL)" : "Content"}
+                    rows={8}
+                    value={form.raw_content || ""}
+                    onChange={(e) => setForm({ ...form, raw_content: e.target.value })}
+                  />
+                )}
                 {form.source_type === "web" && form.url && !form.raw_content && (
                   <p className="text-xs text-muted-foreground">
                     Web sources with an empty content field will fetch and extract readable page text from the URL.
@@ -412,8 +433,13 @@ export function SourcesPage() {
                       uploadMutation.reset();
                       setDuplicateUploadSource(null);
                       setUploadFile(nextFile);
-                      if (nextFile && !form.title) {
-                        setForm({ ...form, title: nextFile.name.replace(/\.[^.]+$/, "") });
+                      if (nextFile) {
+                        const mediaType = mediaTypeForFile(nextFile);
+                        setForm({
+                          ...form,
+                          title: form.title || nextFile.name.replace(/\.[^.]+$/, ""),
+                          source_type: mediaType || form.source_type,
+                        });
                       }
                     }}
                   />
@@ -465,7 +491,7 @@ export function SourcesPage() {
                 <Button
                   className="w-full"
                   onClick={submitSource}
-                  disabled={!form.title || createMutation.isPending || uploadMutation.isPending || Boolean(duplicateUploadSource)}
+                  disabled={!form.title || ((form.source_type === "image" || form.source_type === "video") && !uploadFile) || createMutation.isPending || uploadMutation.isPending || Boolean(duplicateUploadSource)}
                 >
                   {uploadMutation.isPending
                     ? uploadFile && pdfType === "vlm"

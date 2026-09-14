@@ -8,6 +8,7 @@ export interface SearchResult {
   score: number;
   abstract?: string | null;
   content_preview?: string | null;
+  source_type?: string | null;
   match_reason?: string | null;
   highlights?: string[] | null;
 }
