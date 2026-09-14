@@ -35,6 +35,14 @@ class TestGetWikiPage:
 
         assert resp.status_code == 200
 
+    def test_not_found_for_other_user(self, client, mock_session):
+        wiki = _make_wiki("wiki-1", "other-user")
+        mock_session.get.return_value = wiki
+
+        resp = client.get("/wiki/wiki-1")
+
+        assert resp.status_code == 404
+
 
 class TestCloneWikiDraft:
     @pytest.mark.asyncio
@@ -44,26 +52,97 @@ class TestCloneWikiDraft:
 
         wiki = _make_wiki("wiki-1", fake_user.id)
         wiki.tags = ["wiki-stable"]
+        draft = _make_wiki("wiki-draft-1", fake_user.id)
+        draft.title = "Personal Knowledge Graph Draft"
+        draft.lifecycle_status = "draft"
+        draft.tags = ["wiki-draft", "from-stable-wiki"]
         mock_session.get.return_value = wiki
 
-        result = await clone_wiki_page_as_draft(
+        with patch("pkg.api.wiki.persist_wiki_page", new=AsyncMock(return_value=draft)) as persist:
+            result = await clone_wiki_page_as_draft(
+                "wiki-1",
+                WikiCloneDraftRequest(),
+                user=fake_user,
+                session=mock_session,
+            )
+
+        assert result.title == "Personal Knowledge Graph Draft"
+        assert "wiki-draft" in result.tags
+        assert persist.await_args.kwargs["body"].lifecycle_status == "draft"
+
+
+class TestPublishWikiDraft:
+    @pytest.mark.asyncio
+    async def test_preview_returns_warnings_without_publishing(self, mock_session, fake_user):
+        from pkg.api.wiki import publish_wiki_page
+        from pkg.schemas.wiki import WikiPublishRequest
+
+        wiki = _make_wiki("wiki-1", fake_user.id)
+        wiki.lifecycle_status = "draft"
+        wiki.tags = ["wiki-draft"]
+        wiki.derived_from_sources = []
+        wiki.open_questions = ["What changes next?"]
+        wiki.confidence_score = 0.5
+        mock_session.get.return_value = wiki
+
+        result = await publish_wiki_page(
             "wiki-1",
-            WikiCloneDraftRequest(),
+            WikiPublishRequest(base_revision=1),
             user=fake_user,
             session=mock_session,
         )
 
-        assert result.title == "Personal Knowledge Graph Draft"
-        assert "wiki-draft" in result.tags
+        assert result.published is False
+        assert len(result.warnings) == 3
+        assert wiki.lifecycle_status == "draft"
+        mock_session.commit.assert_not_awaited()
 
-    def test_not_found_for_other_user(self, client, mock_session):
-        wiki = _make_wiki("wiki-1", "other-user")
+    @pytest.mark.asyncio
+    async def test_confirm_promotes_current_revision_to_stable(self, mock_session, fake_user):
+        from pkg.api.wiki import publish_wiki_page
+        from pkg.schemas.wiki import WikiPublishRequest
+
+        wiki = _make_wiki("wiki-1", fake_user.id)
+        wiki.lifecycle_status = "draft"
+        wiki.tags = ["wiki-draft", "asset-promotion"]
+        wiki.derived_from_sources = ["source-1"]
         mock_session.get.return_value = wiki
 
-        resp = client.get("/wiki/wiki-1")
+        result = await publish_wiki_page(
+            "wiki-1",
+            WikiPublishRequest(base_revision=1, confirm=True),
+            user=fake_user,
+            session=mock_session,
+        )
 
-        assert resp.status_code == 404
+        assert result.published is True
+        assert wiki.lifecycle_status == "stable"
+        assert wiki.stable_revision == 1
+        assert wiki.stable_at is not None
+        assert "wiki-stable" in wiki.tags
+        assert "wiki-draft" not in wiki.tags
+        mock_session.commit.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_rejects_stale_publish_preview(self, mock_session, fake_user):
+        from pkg.api.wiki import publish_wiki_page
+        from pkg.schemas.wiki import WikiPublishRequest
+
+        wiki = _make_wiki("wiki-1", fake_user.id)
+        wiki.lifecycle_status = "draft"
+        wiki.content_revision = 3
+        mock_session.get.return_value = wiki
+
+        with pytest.raises(HTTPException) as exc_info:
+            await publish_wiki_page(
+                "wiki-1",
+                WikiPublishRequest(base_revision=2, confirm=True),
+                user=fake_user,
+                session=mock_session,
+            )
+
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail["current_revision"] == 3
 
 class TestListWikiPages:
     def test_success(self, client, mock_session, fake_user):
@@ -246,6 +325,10 @@ def _make_wiki(wiki_id: str, user_id: str):
     wiki.derived_from_sources = []
     wiki.open_questions = []
     wiki.confidence_score = 0.8
+    wiki.lifecycle_status = "stable"
+    wiki.content_revision = 1
+    wiki.stable_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    wiki.stable_revision = 1
     wiki.needs_recompile = False
     wiki.stale_reason = None
     wiki.stale_triggered_at = None

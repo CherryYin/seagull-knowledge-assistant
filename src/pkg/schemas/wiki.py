@@ -15,6 +15,7 @@ class WikiPageCreate(BaseModel):
     derived_from_sources: list[str] = []
     open_questions: list[str] = []
     confidence_score: float | None = Field(default=None, ge=0, le=1)
+    lifecycle_status: str | None = Field(default=None, pattern=r"^(draft|stable|archived)$")
 
 
 class WikiPageUpdate(BaseModel):
@@ -49,6 +50,10 @@ class WikiPageRead(BaseModel):
     derived_from_sources: list[str]
     open_questions: list[str]
     confidence_score: float | None = None
+    lifecycle_status: str
+    content_revision: int
+    stable_at: datetime | None = None
+    stable_revision: int | None = None
     needs_recompile: bool
     stale_reason: str | None = None
     stale_triggered_at: datetime | None = None
@@ -100,6 +105,22 @@ class WikiSuggestRequest(BaseModel):
 
 class WikiCloneDraftRequest(BaseModel):
     title: str | None = None
+
+
+class WikiPublishRequest(BaseModel):
+    base_revision: int = Field(ge=1)
+    confirm: bool = False
+    acknowledge_warnings: bool = False
+
+
+class WikiPublishRead(BaseModel):
+    wiki_id: str
+    lifecycle_status: str
+    content_revision: int
+    warnings: list[str]
+    confirmation_required: bool
+    published: bool
+    page: WikiPageRead
 
 
 class WikiEvidenceRefRead(BaseModel):

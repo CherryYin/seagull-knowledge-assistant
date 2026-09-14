@@ -22,6 +22,8 @@ from pkg.schemas.wiki import (
     WikiPageCreate,
     WikiPageList,
     WikiPageRead,
+    WikiPublishRead,
+    WikiPublishRequest,
     WikiPageUpdate,
     WikiRecompileSuggestionList,
     WikiRecompileSuggestionRead,
@@ -30,7 +32,7 @@ from pkg.schemas.wiki import (
 )
 from pkg.schemas.reference import ReferenceRead, ReferenceResolveRequest, ReferenceResolveResponse
 from pkg.services.cross_cutting.embedding import get_embedding_service
-from pkg.services.foundation.wiki_lifecycle import get_wiki_role
+from pkg.services.foundation.wiki_lifecycle import get_wiki_role, synchronize_wiki_lifecycle_tags
 from pkg.services.foundation.wiki_recompile import suggest_wiki_recompile_for_trigger
 from pkg.services.foundation.wiki_templates import build_wiki_template
 
@@ -91,6 +93,8 @@ async def _upsert_wiki_embedding(session: AsyncSession, wiki: WikiPage) -> None:
 async def persist_wiki_page(*, session: AsyncSession, body: WikiPageCreate, user_id: str) -> WikiPage:
     wiki_id = make_wiki_id(body.title, body.id)
     content = body.content or build_wiki_template(body.title, body.page_type)
+    lifecycle_status = body.lifecycle_status or ("draft" if "wiki-draft" in body.tags else "stable")
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     wiki = WikiPage(
         id=wiki_id,
         user_id=user_id,
@@ -99,12 +103,16 @@ async def persist_wiki_page(*, session: AsyncSession, body: WikiPageCreate, user
         summary=body.summary,
         content=content,
         domains=body.domains,
-        tags=body.tags,
+        tags=synchronize_wiki_lifecycle_tags(body.tags, lifecycle_status),
         derived_from_notes=body.derived_from_notes,
         derived_from_sources=body.derived_from_sources,
         open_questions=body.open_questions,
         confidence_score=body.confidence_score,
-        last_compiled_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        lifecycle_status=lifecycle_status,
+        content_revision=1,
+        stable_at=now if lifecycle_status == "stable" else None,
+        stable_revision=1 if lifecycle_status == "stable" else None,
+        last_compiled_at=now,
     )
     session.add(wiki)
     await _upsert_wiki_embedding(session, wiki)
@@ -131,6 +139,7 @@ async def list_wiki_pages(
     page_type: str | None = None,
     domain: str | None = None,
     tag: str | None = None,
+    lifecycle_status: str | None = Query(default=None, pattern=r"^(draft|stable|archived)$"),
     needs_recompile: bool | None = None,
     limit: int = Query(default=20, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
@@ -149,6 +158,9 @@ async def list_wiki_pages(
     if tag:
         stmt = stmt.where(WikiPage.tags.any(tag))
         count_stmt = count_stmt.where(WikiPage.tags.any(tag))
+    if lifecycle_status:
+        stmt = stmt.where(WikiPage.lifecycle_status == lifecycle_status)
+        count_stmt = count_stmt.where(WikiPage.lifecycle_status == lifecycle_status)
     if needs_recompile is not None:
         stmt = stmt.where(WikiPage.needs_recompile == needs_recompile)
         count_stmt = count_stmt.where(WikiPage.needs_recompile == needs_recompile)
@@ -301,11 +313,79 @@ async def update_wiki_page(
             wiki.tags = [*tags, "edited-stable"]
     for field, value in data.items():
         setattr(wiki, field, value)
+    revision_fields = {
+        "title",
+        "page_type",
+        "summary",
+        "content",
+        "domains",
+        "tags",
+        "derived_from_notes",
+        "derived_from_sources",
+        "open_questions",
+        "confidence_score",
+    }
+    if revision_fields.intersection(data):
+        wiki.content_revision = (wiki.content_revision or 1) + 1
     if any(field in data for field in ("title", "summary", "content")):
         await _upsert_wiki_embedding(session, wiki)
     await session.commit()
     await session.refresh(wiki)
     return wiki
+
+
+@router.post("/{wiki_id}/publish", response_model=WikiPublishRead)
+async def publish_wiki_page(
+    wiki_id: str,
+    body: WikiPublishRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    wiki = await session.get(WikiPage, wiki_id)
+    if not wiki or wiki.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Wiki page not found")
+    if get_wiki_role(wiki) != "draft":
+        raise HTTPException(status_code=409, detail="Only Wiki Drafts can be published to Stable")
+    if body.base_revision != wiki.content_revision:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Wiki Draft changed after this publish preview. Refresh and review the latest revision.",
+                "current_revision": wiki.content_revision,
+            },
+        )
+    if not wiki.title.strip() or not wiki.content.strip():
+        raise HTTPException(status_code=422, detail="Wiki Draft requires a title and content before publishing")
+
+    warnings: list[str] = []
+    if not wiki.derived_from_sources:
+        warnings.append("No Source evidence is linked to this Wiki Draft.")
+    if wiki.open_questions:
+        warnings.append(f"{len(wiki.open_questions)} open question(s) remain unresolved.")
+    if wiki.confidence_score is not None and wiki.confidence_score < 0.6:
+        warnings.append("Confidence is below 0.6.")
+
+    if body.confirm and warnings and not body.acknowledge_warnings:
+        raise HTTPException(status_code=422, detail="Acknowledge publish warnings before confirming")
+
+    published = body.confirm
+    if published:
+        wiki.lifecycle_status = "stable"
+        wiki.tags = synchronize_wiki_lifecycle_tags(wiki.tags, "stable")
+        wiki.stable_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        wiki.stable_revision = wiki.content_revision
+        await session.commit()
+        await session.refresh(wiki)
+
+    return WikiPublishRead(
+        wiki_id=wiki.id,
+        lifecycle_status=get_wiki_role(wiki),
+        content_revision=wiki.content_revision,
+        warnings=warnings,
+        confirmation_required=not published,
+        published=published,
+        page=wiki,
+    )
 
 
 @router.post("/{wiki_id}/clone-draft", response_model=WikiPageRead, status_code=201)
@@ -337,6 +417,7 @@ async def clone_wiki_page_as_draft(
             derived_from_sources=wiki.derived_from_sources,
             open_questions=wiki.open_questions,
             confidence_score=wiki.confidence_score,
+            lifecycle_status="draft",
         ),
         user_id=user.id,
     )

@@ -10,6 +10,7 @@ from pkg.models.user import User
 from pkg.schemas.application.asset import (
     AssetCreate,
     AssetExportResult,
+    AssetForkRequest,
     AssetQualityAuditResult,
     AssetFeedbackNoteResult,
     AssetKnowledgeLineageList,
@@ -36,7 +37,7 @@ from pkg.schemas.application.asset_workspace import (
     AssetWorkspaceRead,
 )
 from pkg.schemas.note import NoteCreate
-from pkg.services.application.assets import create_asset, delete_asset, get_asset, list_asset_knowledge_lineage, list_assets, update_asset
+from pkg.services.application.assets import create_asset, delete_asset, fork_asset, get_asset, list_asset_knowledge_lineage, list_assets, update_asset
 from pkg.services.application.asset_workspace import (
     decide_asset_claim,
     decide_asset_contribution,
@@ -135,6 +136,16 @@ async def get_asset_route(
     session: AsyncSession = Depends(get_session),
 ):
     return await get_asset(session, user_id=user.id, asset_id=asset_id)
+
+
+@router.post("/{asset_id}/fork", response_model=AssetRead, status_code=201)
+async def fork_asset_route(
+    asset_id: str,
+    body: AssetForkRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await fork_asset(session, user_id=user.id, asset_id=asset_id, body=body)
 
 
 @router.get("/{asset_id}/workspace", response_model=AssetWorkspaceRead)

@@ -581,6 +581,37 @@ async def test_keep_claim_as_hypothesis_does_not_require_supporting_evidence():
 
 
 @pytest.mark.asyncio
+async def test_need_more_evidence_creates_scoped_request_with_original_evidence_session():
+    from pkg.schemas.application.asset_workspace import AssetClaimDecisionRequest
+    from pkg.services.application.asset_workspace import decide_asset_claim
+
+    session = AsyncMock()
+    evidence = _accepted_evidence()
+    evidence["source_session_id"] = "session-evidence-1"
+    asset = _make_asset(metadata=_workspace_metadata(
+        evidence=[evidence],
+        claims=[_claim(supporting_evidence=["evidence-1"])],
+    ))
+
+    with patch("pkg.services.application.asset_workspace._get_asset_for_update", new=AsyncMock(return_value=asset)):
+        workspace = await decide_asset_claim(
+            session,
+            user_id="user-1",
+            asset_id="asset-1",
+            claim_id="claim-1",
+            body=AssetClaimDecisionRequest(base_workspace_revision=1, decision="need_more_evidence"),
+        )
+
+    request = workspace.missing_evidence_requests[0]
+    assert workspace.claims[0].status == "needs_more_evidence"
+    assert request.claim_id == "claim-1"
+    assert request.scope == ["PostgreSQL", "Harness"]
+    assert request.requested_relations == ["supports", "contradicts"]
+    assert request.source_session_id == "session-evidence-1"
+    assert "capability-scoped" in request.question
+
+
+@pytest.mark.asyncio
 async def test_propose_asset_knowledge_creates_non_promoted_candidates():
     from pkg.schemas.application.asset_workspace import AssetKnowledgeProposalRequest
     from pkg.services.application.asset_workspace import propose_asset_knowledge
@@ -796,6 +827,40 @@ async def test_promote_kept_note_candidate_writes_formal_note_and_traceability()
     assert candidate.promoted_target_id == promoted_note.id
     assert asset.note_refs == [promoted_note.id]
     session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_promote_kept_wiki_candidate_creates_formal_draft_lifecycle():
+    from pkg.models.foundation.wiki import WikiPage
+    from pkg.schemas.application.asset_workspace import AssetKnowledgePromotionRequest
+    from pkg.services.application.asset_workspace import promote_asset_knowledge_candidate
+
+    metadata = _workspace_metadata(evidence=[_accepted_evidence()], claims=[_accepted_claim()])
+    metadata["asset_workspace_v1"]["contribution"] = _accepted_contribution()
+    metadata["asset_workspace_v1"]["knowledge_candidates"] = [_kept_candidate(candidate_type="wiki")]
+    asset = _make_asset(metadata=metadata)
+    session = MagicMock()
+    session.commit = AsyncMock()
+    session.refresh = AsyncMock()
+
+    with (
+        patch("pkg.services.application.asset_workspace._get_asset_for_update", new=AsyncMock(return_value=asset)),
+        patch("pkg.services.application.asset_workspace._add_promotion_embeddings", new=AsyncMock()),
+    ):
+        await promote_asset_knowledge_candidate(
+            session,
+            user_id="user-1",
+            asset_id="asset-1",
+            candidate_id="knowledge-1",
+            body=AssetKnowledgePromotionRequest(base_workspace_revision=1, confirm=True),
+        )
+
+    promoted_wiki = next(call.args[0] for call in session.add.call_args_list if isinstance(call.args[0], WikiPage))
+    assert promoted_wiki.lifecycle_status == "draft"
+    assert promoted_wiki.content_revision == 1
+    assert promoted_wiki.stable_at is None
+    assert promoted_wiki.stable_revision is None
+    assert "wiki-draft" in promoted_wiki.tags
 
 
 @pytest.mark.asyncio

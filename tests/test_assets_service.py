@@ -1,12 +1,12 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
 
 from pkg.models.application.asset import Asset
 from pkg.models.foundation.wiki import WikiPage
-from pkg.schemas.application.asset import AssetCreate, AssetProvenance, AssetUpdate
-from pkg.services.application.assets import create_asset, list_asset_knowledge_lineage, update_asset
+from pkg.schemas.application.asset import AssetCreate, AssetForkRequest, AssetProvenance, AssetUpdate
+from pkg.services.application.assets import create_asset, fork_asset, list_asset_knowledge_lineage, update_asset
 
 
 class _ScalarResult:
@@ -137,6 +137,49 @@ async def test_create_asset_persists_asset_when_refs_exist():
     session.add.assert_called_once()
     session.commit.assert_awaited_once()
     assert refreshed["asset"] is asset
+
+
+@pytest.mark.asyncio
+async def test_fork_asset_copies_references_without_copying_workspace_state():
+    session = AsyncMock()
+    source = Asset(
+        id="asset-source",
+        user_id="user-1",
+        asset_type="research_brief",
+        status="in_review",
+        title="Original investigation",
+        brief="Original question",
+        draft_content="# Existing draft",
+        source_refs=["source-1"],
+        note_refs=["note-1"],
+        wiki_refs=["wiki-1"],
+        metadata_={
+            "audience": "Architecture reviewers",
+            "asset_workspace_v1": {"workspace_revision": 9, "claims": [{"id": "claim-1"}]},
+        },
+    )
+    forked = MagicMock()
+
+    with (
+        patch("pkg.services.application.assets.get_asset", new=AsyncMock(return_value=source)),
+        patch("pkg.services.application.assets.create_asset", new=AsyncMock(return_value=forked)) as create,
+    ):
+        result = await fork_asset(
+            session,
+            user_id="user-1",
+            asset_id="asset-source",
+            body=AssetForkRequest(title="Independent runtime question", brief="Investigate a separate boundary."),
+        )
+
+    body = create.await_args.kwargs["body"]
+    assert result is forked
+    assert body.status == "draft"
+    assert body.source_refs == ["source-1"]
+    assert body.note_refs == ["note-1"]
+    assert body.wiki_refs == ["wiki-1"]
+    assert body.draft_content is None
+    assert "asset_workspace_v1" not in body.metadata
+    assert body.metadata["forked_from"]["asset_id"] == "asset-source"
 
 
 @pytest.mark.asyncio

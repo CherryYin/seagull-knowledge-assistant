@@ -151,6 +151,19 @@ class AssetClaimRead(BaseModel):
     user_edited: bool = False
 
 
+class AssetMissingEvidenceRequestRead(BaseModel):
+    id: str
+    claim_id: str
+    question: str
+    scope: list[str] = Field(default_factory=list)
+    requested_relations: list[Literal["supports", "contradicts", "context", "unverified"]] = Field(default_factory=list)
+    status: Literal["open", "stale", "resolved"]
+    intent_revision: int = Field(ge=1)
+    source_session_id: str | None = None
+    created_by: str
+    created_at: datetime
+
+
 class AssetContributionProposalInput(BaseModel):
     kind: Literal["user_viewpoint", "synthesis", "decision", "framework", "hypothesis", "wiki_correction"]
     summary: str = Field(min_length=1)
@@ -304,6 +317,7 @@ class AssetWorkspaceRead(BaseModel):
     intent_history: list[AssetIntentRead] = Field(default_factory=list)
     evidence: list[AssetEvidenceRead] = Field(default_factory=list)
     claims: list[AssetClaimRead] = Field(default_factory=list)
+    missing_evidence_requests: list[AssetMissingEvidenceRequestRead] = Field(default_factory=list)
     contribution: AssetContributionRead | None = None
     knowledge_candidates: list[AssetKnowledgeCandidateRead] = Field(default_factory=list)
     decision_items: list[dict] = Field(default_factory=list)

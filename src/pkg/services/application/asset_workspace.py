@@ -25,6 +25,7 @@ from pkg.schemas.application.asset_workspace import (
 )
 from pkg.services.application.assets import get_asset
 from pkg.services.cross_cutting.embedding import get_embedding_service
+from pkg.services.foundation.wiki_lifecycle import get_wiki_role
 
 WORKSPACE_METADATA_KEY = "asset_workspace_v1"
 logger = logging.getLogger(__name__)
@@ -114,6 +115,7 @@ def _empty_workspace() -> dict:
         "intent_history": [],
         "evidence": [],
         "claims": [],
+        "missing_evidence_requests": [],
         "contribution": None,
         "knowledge_candidates": [],
         "decision_items": [],
@@ -214,6 +216,9 @@ async def revise_asset_intent(
         for item in workspace.get("claims") or []:
             if item.get("status") not in {"rejected", "superseded"}:
                 item["status"] = "superseded"
+        for item in workspace.get("missing_evidence_requests") or []:
+            if item.get("status") == "open":
+                item["status"] = "stale"
         contribution = workspace.get("contribution")
         if isinstance(contribution, dict) and contribution.get("status") != "rejected":
             contribution["status"] = "rejected"
@@ -404,6 +409,42 @@ async def decide_asset_claim(
         claim["status"] = "hypothesis"
     else:
         claim["status"] = "needs_more_evidence"
+        requests = list(workspace.get("missing_evidence_requests") or [])
+        existing_request = next(
+            (
+                item
+                for item in requests
+                if item.get("claim_id") == claim_id
+                and item.get("intent_revision") == claim.get("intent_revision")
+                and item.get("status") == "open"
+            ),
+            None,
+        )
+        if existing_request is None:
+            evidence_session_id = next(
+                (
+                    item.get("source_session_id")
+                    for item in reversed(workspace.get("evidence") or [])
+                    if item.get("intent_revision") == claim.get("intent_revision") and item.get("source_session_id")
+                ),
+                None,
+            )
+            intent = workspace.get("intent") or {}
+            requests.append(
+                {
+                    "id": f"missing-evidence-{uuid.uuid4().hex[:8]}",
+                    "claim_id": claim_id,
+                    "question": f"Find evidence that can validate or challenge this Claim: {claim.get('content', '').strip()}",
+                    "scope": list(intent.get("scope") or []),
+                    "requested_relations": ["supports", "contradicts"],
+                    "status": "open",
+                    "intent_revision": claim.get("intent_revision"),
+                    "source_session_id": evidence_session_id,
+                    "created_by": user_id,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+        workspace["missing_evidence_requests"] = requests
     claim["decided_by"] = user_id
     claim["decided_at"] = datetime.now(timezone.utc).isoformat()
     workspace["claims"] = claims
@@ -689,6 +730,10 @@ async def promote_asset_knowledge_candidate(
             derived_from_sources=source_ids,
             open_questions=[],
             confidence_score=None,
+            lifecycle_status="draft",
+            content_revision=1,
+            stable_at=None,
+            stable_revision=None,
             last_compiled_at=datetime.now(timezone.utc).replace(tzinfo=None),
         )
         session.add(target)
@@ -707,7 +752,7 @@ async def promote_asset_knowledge_candidate(
         if target is None:
             raise HTTPException(status_code=404, detail="Wiki target not found")
         tags = list(target.tags or [])
-        if "wiki-draft" not in tags and "edited-stable" not in tags:
+        if get_wiki_role(target) == "stable" and "edited-stable" not in tags:
             tags.append("edited-stable")
         if "asset-promotion" not in tags:
             tags.append("asset-promotion")
@@ -717,6 +762,7 @@ async def promote_asset_knowledge_candidate(
         target.tags = tags
         target.derived_from_notes = list(dict.fromkeys([*(target.derived_from_notes or []), *note_ids]))
         target.derived_from_sources = list(dict.fromkeys([*(target.derived_from_sources or []), *source_ids]))
+        target.content_revision = (target.content_revision or 1) + 1
         target.last_compiled_at = datetime.now(timezone.utc).replace(tzinfo=None)
         refs = list(asset.wiki_refs or [])
         if target_id not in refs:

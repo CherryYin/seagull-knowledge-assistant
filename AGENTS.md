@@ -21,8 +21,10 @@ The core product goal is a durable personal knowledge graph with deterministic r
 - Create `web` sources from a direct URL by fetching and extracting readable page text when content is left empty.
 - Discover article links from a `web` directory source such as a blog index and import each article as a child web source.
 - Manage review suggestions, discovery items, wiki pages, summaries, and temporary/permanent knowledge artifacts while delegating interactive Wiki/Asset drafting to Harness workflows.
+- Promote Wiki Drafts into the internal Stable knowledge layer through a readiness preview and explicit revision-safe confirmation; formal lifecycle fields are authoritative while legacy lifecycle tags remain synchronized for compatibility.
 - Preserve terminal discovery decisions (`saved`, `kept`, and `dismissed`) as durable deduplication history so reviewed connector items are not recommended again.
 - Create Assets through an Intent → Evidence → Claims → Draft workflow: selected records begin as reviewable Evidence candidates, and initial drafting stays locked until the current Evidence and Claim gates are complete.
+- Preserve Asset evidence continuity: `Need More Evidence` creates a scoped request instead of a fake Source reference, resumes the original Evidence Agent session when available, and keeps Supports/Contradicts/Context/Unverified explicit. Independent questions may fork a new Asset with copied references but a fresh Workspace.
 - Preserve unsaved Asset Editor changes with a deterministic saved/editor signature, tab-scoped recovery draft, refresh and navigation warnings, and save-time cleanup; query refreshes must not overwrite a dirty editor.
 - Trace promoted or referenced Notes and Wiki pages back to their related Assets, including the originating Knowledge Candidate and Claim references when the record was distilled from an Asset.
 - Generate PDF Source Mind Map proposals from bounded section/Chunk summaries in ephemeral Harness sessions, validate Source basis and references in PKG, and require explicit version-safe confirmation before creating or safely merging the formal Map.

@@ -13,8 +13,10 @@ from pkg.models.foundation.source import Source
 from pkg.models.foundation.wiki import WikiPage
 from pkg.schemas.application.asset import (
     AssetCreate,
+    AssetForkRequest,
     AssetKnowledgeLineageItem,
     AssetKnowledgeLineageList,
+    AssetProvenance,
     AssetUpdate,
 )
 from pkg.services.application.blog_generation import check_readiness
@@ -141,6 +143,41 @@ async def create_asset(session: AsyncSession, *, user_id: str, body: AssetCreate
     await session.commit()
     await session.refresh(asset)
     return asset
+
+
+async def fork_asset(session: AsyncSession, *, user_id: str, asset_id: str, body: AssetForkRequest) -> Asset:
+    source = await get_asset(session, user_id=user_id, asset_id=asset_id)
+    title = body.title.strip()
+    if not title:
+        raise HTTPException(status_code=422, detail="Fork title must not be blank")
+    metadata = {
+        "forked_from": {
+            "asset_id": source.id,
+            "asset_title": source.title,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+    }
+    source_metadata = source.metadata_ or {}
+    for key in ("audience", "delivery_format", "research_mode"):
+        if key in source_metadata:
+            metadata[key] = deepcopy(source_metadata[key])
+    return await create_asset(
+        session,
+        user_id=user_id,
+        body=AssetCreate(
+            title=title,
+            brief=body.brief.strip() if body.brief and body.brief.strip() else source.brief,
+            asset_type=source.asset_type,
+            status="draft",
+            source_refs=list(source.source_refs or []),
+            note_refs=list(source.note_refs or []),
+            wiki_refs=list(source.wiki_refs or []),
+            opinion_notes=getattr(source, "opinion_notes", None),
+            style_notes=getattr(source, "style_notes", None),
+            metadata=metadata,
+            provenance=AssetProvenance(origin_type="user", origin_ref=source.id, action="save"),
+        ),
+    )
 
 
 async def list_assets(session: AsyncSession, *, user_id: str, asset_type: str | None = None, status: str | None = None, limit: int = 50, offset: int = 0) -> tuple[list[Asset], int]:

@@ -24,6 +24,10 @@ class WikiPage(Base):
     derived_from_sources: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
     open_questions: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
     confidence_score: Mapped[float | None] = mapped_column(Float)
+    lifecycle_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="stable")
+    content_revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    stable_at: Mapped[datetime | None] = mapped_column()
+    stable_revision: Mapped[int | None] = mapped_column(Integer)
     needs_recompile: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     stale_reason: Mapped[str | None] = mapped_column(Text)
     stale_triggered_at: Mapped[datetime | None] = mapped_column()
@@ -34,6 +38,7 @@ class WikiPage(Base):
     __table_args__ = (
         Index("idx_wiki_pages_user_id", "user_id"),
         Index("idx_wiki_pages_type", "page_type"),
+        Index("idx_wiki_pages_lifecycle_status", "lifecycle_status"),
         Index("idx_wiki_pages_tags", "tags", postgresql_using="gin"),
         Index("idx_wiki_pages_domains", "domains", postgresql_using="gin"),
         Index(

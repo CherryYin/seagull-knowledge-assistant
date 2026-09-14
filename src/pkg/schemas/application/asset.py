@@ -30,6 +30,11 @@ class AssetCreate(BaseModel):
     provenance: AssetProvenance | None = None
 
 
+class AssetForkRequest(BaseModel):
+    title: str = Field(min_length=1)
+    brief: str | None = None
+
+
 class AssetUpdate(BaseModel):
     title: str | None = None
     brief: str | None = None
