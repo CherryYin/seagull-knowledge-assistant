@@ -2252,6 +2252,13 @@ test("Asset Outline Map projects saved Blocks and navigates to the selected edit
   await expect(page.getByText("Unsaved changes · recovery draft stored in this tab.")).toHaveCount(0);
   expect(state.savedAssetBody?.draft_content).toBe("Capability-scoped gateways reduce authority.\n\n## Updated Executive Summary");
   await page.getByRole("tab", { name: "Map" }).click();
+  await page.getByRole("button", { name: "Preview Asset Document Patch" }).click();
+  await page.getByRole("button", { name: "Apply to Asset Editor" }).click();
+  await expect(page.getByText("Asset Document Patch could not be applied")).toBeVisible();
+  await page.getByText("Details", { exact: true }).last().click();
+  await expect(page.getByText(/Asset Document changed from revision/)).toBeVisible();
+  await expect(page).toHaveURL(/tab=map/);
+  expect(state.savedAssetBody?.draft_content).toBe("Capability-scoped gateways reduce authority.\n\n## Updated Executive Summary");
   await page.getByTestId("asset-outline-map-preview").getByText("Updated Executive Summary", { exact: true }).click();
   await page.getByRole("button", { name: "Open selected Block in Editor" }).click();
   await expect(page).toHaveURL(/tab=edit/);
