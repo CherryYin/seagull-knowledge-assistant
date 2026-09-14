@@ -6,6 +6,11 @@ export interface CalendarReminder {
   date: string;
   text: string;
   note_id?: string | null;
+  linked_note?: {
+    id: string;
+    title: string;
+    status: string;
+  } | null;
   recurrence: "once" | "daily" | "weekly" | "biweekly";
   is_done: boolean;
   created_at: string;
@@ -34,11 +39,12 @@ export interface CalendarReminderUpdate {
 }
 
 export const calendarRemindersApi = {
-  list: (params?: { start?: string; end?: string; include_done?: boolean }) => {
+  list: (params?: { start?: string; end?: string; include_done?: boolean; note_id?: string }) => {
     const q = new URLSearchParams();
     if (params?.start) q.set("start", params.start);
     if (params?.end) q.set("end", params.end);
     if (params?.include_done !== undefined) q.set("include_done", String(params.include_done));
+    if (params?.note_id) q.set("note_id", params.note_id);
     return request<CalendarReminderList>(`/calendar/reminders?${q}`);
   },
   create: (body: CalendarReminderCreate) =>

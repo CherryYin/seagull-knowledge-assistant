@@ -1,14 +1,14 @@
 import { Link, useLocation, useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, useMemo, useRef, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
-import { ArrowLeft, Download, Pencil, Save, X, Trash2, List, FileText, FileDown, Bot, RefreshCw, LinkIcon, BookOpen, Bold, Italic, Heading1, Heading2, Heading3, ListChecks, ListOrdered, Quote, Code, SquareCode, Table, Check, Loader2, Sparkles, Wand2, PanelRight, Square, Cpu, Pin, History, ImagePlus } from "lucide-react";
+import { ArrowLeft, CalendarDays, Download, Pencil, Plus, Save, X, Trash2, List, FileText, FileDown, Bot, RefreshCw, LinkIcon, BookOpen, Bold, Italic, Heading1, Heading2, Heading3, ListChecks, ListOrdered, Quote, Code, SquareCode, Table, Check, Loader2, Sparkles, Wand2, PanelRight, Square, Cpu, Pin, History, ImagePlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { NoteContentRenderer, inferNoteRenderModeFromTags, type NoteRenderMode } from "@/components/NoteContentRenderer";
-import { assetsApi, notesApi, categoriesApi, wikiApi, knowledgeApi, downloadFile, type NoteUpdate, type Note } from "@/lib/api";
+import { assetsApi, calendarRemindersApi, notesApi, categoriesApi, wikiApi, knowledgeApi, downloadFile, type NoteUpdate, type Note } from "@/lib/api";
 import { CategorySelect } from "@/components/CategorySelect";
 import { buildAssetHandoffState } from "@/lib/asset-handoff";
 import { NoteAIPanel } from "@/components/NoteAIPanel";
@@ -18,6 +18,13 @@ import { useReturnNavigation } from "@/hooks/useReturnNavigation";
 import { useRouteScrollRestoration } from "@/hooks/useRouteScrollRestoration";
 
 const NOTE_TYPES = ["inbox", "architecture", "case-study", "concept", "how-to", "remember"] as const;
+
+function localDateKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
 
 type ViewMode = "full" | "slices";
 
@@ -146,6 +153,8 @@ export function NoteDetailPage() {
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [imageUploading, setImageUploading] = useState(false);
+  const [todoText, setTodoText] = useState("");
+  const [todoDate, setTodoDate] = useState(() => localDateKey());
   const contentTextareaRef = useRef<HTMLTextAreaElement>(null);
   const pendingSelection = useRef<[number, number] | null>(null);
   const splitContainerRef = useRef<HTMLDivElement>(null);
@@ -165,6 +174,12 @@ export function NoteDetailPage() {
   const { data: assetLineage } = useQuery({
     queryKey: ["asset-knowledge-lineage", "note", id],
     queryFn: () => assetsApi.knowledgeLineage("note", id!),
+    enabled: !!id,
+  });
+
+  const { data: linkedTodos } = useQuery({
+    queryKey: ["calendar-reminders", "note", id],
+    queryFn: () => calendarRemindersApi.list({ note_id: id!, include_done: false }),
     enabled: !!id,
   });
 
@@ -550,6 +565,21 @@ export function NoteDetailPage() {
     },
   });
 
+  const createTodoMutation = useMutation({
+    mutationFn: () => calendarRemindersApi.create({
+      date: todoDate,
+      text: todoText.trim(),
+      note_id: id!,
+      recurrence: "once",
+    }),
+    onSuccess: () => {
+      setTodoText("");
+      queryClient.invalidateQueries({ queryKey: ["calendar-reminders", "note", id] });
+      queryClient.invalidateQueries({ queryKey: ["calendar-reminders"] });
+      queryClient.invalidateQueries({ queryKey: ["calendar-reminders-overdue"] });
+    },
+  });
+
   const attachSourceMutation = useMutation({
     mutationFn: async (sourceId: string) => {
       if (!note) throw new Error("Note is not loaded");
@@ -891,6 +921,65 @@ export function NoteDetailPage() {
                       <Bot className="h-4 w-4" /> Ask Agent
                     </Button>
                   </div>
+                </div>
+              </div>
+            )}
+            {!editing && (
+              <div className="mb-6 rounded-lg border border-border bg-card p-4">
+                <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                  <div>
+                    <h2 className="flex items-center gap-2 text-sm font-medium">
+                      <CalendarDays className="h-4 w-4" /> Linked Todos
+                    </h2>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Create a Todo from this Note or reopen its scheduled day in Calendar.
+                    </p>
+                    <div className="mt-3 space-y-2">
+                      {(linkedTodos?.items ?? []).length ? (linkedTodos?.items ?? []).map((todo) => (
+                        <Link
+                          key={`${todo.id}:${todo.date}`}
+                          to={`/calendar?date=${encodeURIComponent(todo.date)}`}
+                          className="flex items-start justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm hover:border-primary/40 hover:bg-muted/40"
+                        >
+                          <span className="min-w-0 truncate">{todo.text}</span>
+                          <span className="shrink-0 text-xs text-muted-foreground">{todo.date}</span>
+                        </Link>
+                      )) : (
+                        <p className="text-xs text-muted-foreground">No open Todos are linked to this Note.</p>
+                      )}
+                    </div>
+                  </div>
+                  <form
+                    className="flex min-w-0 flex-col gap-2 sm:min-w-[360px]"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      if (todoText.trim()) createTodoMutation.mutate();
+                    }}
+                  >
+                    <Input
+                      value={todoText}
+                      onChange={(event) => setTodoText(event.target.value)}
+                      placeholder="Add a Todo linked to this Note..."
+                      aria-label="Todo text"
+                    />
+                    <div className="flex gap-2">
+                      <Input
+                        type="date"
+                        value={todoDate}
+                        onChange={(event) => setTodoDate(event.target.value)}
+                        aria-label="Todo date"
+                        className="min-w-0 flex-1"
+                      />
+                      <Button type="submit" size="sm" disabled={!todoText.trim() || createTodoMutation.isPending}>
+                        <Plus className="h-4 w-4" /> {createTodoMutation.isPending ? "Adding…" : "Add Todo"}
+                      </Button>
+                    </div>
+                    {createTodoMutation.isError ? (
+                      <p className="text-xs text-destructive">
+                        {createTodoMutation.error instanceof Error ? createTodoMutation.error.message : "Could not create Todo"}
+                      </p>
+                    ) : null}
+                  </form>
                 </div>
               </div>
             )}

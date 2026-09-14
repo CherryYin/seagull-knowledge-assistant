@@ -55,6 +55,7 @@ type MockState = {
   assetItems?: Array<Record<string, unknown>>;
   searchResults?: Array<Record<string, unknown>>;
   searchRequests?: Array<Record<string, unknown>>;
+  calendarReminders?: Array<Record<string, unknown>>;
 };
 
 const intentProposal = {
@@ -96,7 +97,17 @@ async function installMockBff(page: Page, state: MockState) {
         : json(route, { detail: "Unauthorized" }, 401);
     }
     if (path === "/api/auth/logout") return json(route, { ok: true });
+    if (path === "/api/auth/me/settings") return json(route, {
+      settings: { modules: { preset: "basic", enabled: ["calendar", "completed"], disabled: [], pinned: [], onboarding_completed: true } },
+      updated_at: now,
+    });
     if (path === "/api/auth/me/settings/publishing") return json(route, { primary_site_url: "https://publish.example.com", default_channel: "Blog", updated_at: now });
+    if (path === "/api/knowledge/dashboard") return json(route, {
+      counts: { notes: 2, sources: 1, chats: 0, digest_pending: 0 },
+      trends: [],
+      category_distribution: [],
+      note_type_distribution: [],
+    });
 
     if (path === "/api/chat-sessions" && method === "GET") {
       return json(route, { items: state.chatSessions ?? [], total: state.chatSessions?.length ?? 0 });
@@ -637,6 +648,53 @@ async function installMockBff(page: Page, state: MockState) {
     }
     if (path === "/api/notes/note-input" && method === "GET") {
       return json(route, { id: "note-input", title: "E2E Knowledge Note", note_type: "concept", status: "seed", category_id: 1, category_name: "Inbox", abstract: "A distilled note.", content: "# Distilled Note\n\nReusable knowledge.", project: null, domains: [], tags: ["asset-promotion"], confidence: "medium", source_ids: [], file_path: null, word_count: 4, is_pinned: false, created_at: now, updated_at: now });
+    }
+    if (path === "/api/calendar/reminders" && method === "GET") {
+      const noteId = url.searchParams.get("note_id");
+      const includeDone = url.searchParams.get("include_done") !== "false";
+      const items = (state.calendarReminders ?? []).filter((item) => {
+        if (noteId && item.note_id !== noteId) return false;
+        if (!includeDone && item.is_done) return false;
+        return true;
+      });
+      return json(route, { items, total: items.length, overdue_count: 0 });
+    }
+    if (path === "/api/calendar/reminders" && method === "POST") {
+      const body = request.postDataJSON() as Record<string, unknown>;
+      const linkedNote = (state.noteItems ?? []).find((item) => item.id === body.note_id);
+      const reminder = {
+        id: `reminder-${(state.calendarReminders?.length ?? 0) + 1}`,
+        user_id: "user-e2e",
+        date: body.date,
+        text: body.text,
+        note_id: body.note_id ?? null,
+        linked_note: linkedNote ? { id: linkedNote.id, title: linkedNote.title, status: linkedNote.status } : null,
+        recurrence: body.recurrence ?? "once",
+        is_done: false,
+        created_at: now,
+        updated_at: now,
+      };
+      state.calendarReminders = [...(state.calendarReminders ?? []), reminder];
+      return json(route, reminder, 201);
+    }
+    if (path.startsWith("/api/calendar/reminders/") && method === "PATCH") {
+      const reminderId = path.split("/").at(-1);
+      const body = request.postDataJSON() as Record<string, unknown>;
+      const linkedNote = (state.noteItems ?? []).find((item) => item.id === body.note_id);
+      let updated: Record<string, unknown> | undefined;
+      state.calendarReminders = (state.calendarReminders ?? []).map((item) => {
+        if (item.id !== reminderId) return item;
+        updated = {
+          ...item,
+          ...body,
+          linked_note: "note_id" in body
+            ? linkedNote ? { id: linkedNote.id, title: linkedNote.title, status: linkedNote.status } : null
+            : item.linked_note,
+          updated_at: now,
+        };
+        return updated;
+      });
+      return json(route, updated ?? { detail: "Not Found" }, updated ? 200 : 404);
     }
     if (path === "/api/wiki/suggestions") return json(route, { items: [], total: 0 });
     if (path === "/api/wiki/mining/runs") return json(route, { items: [], total: 0 });
@@ -1929,6 +1987,62 @@ test("Note detail returns to the previous filtered list position without adding 
 
   await page.goBack();
   await expect(page).not.toHaveURL(/\/notes\/note-input/);
+});
+
+test("Todo can change its linked Note and Note detail can create a linked Todo", async ({ page }) => {
+  const noteItems = [
+    { id: "note-input", title: "E2E Knowledge Note", note_type: "concept", status: "kept", category_id: 1, domains: [], tags: [], confidence: "medium", source_ids: [], created_at: now, updated_at: now },
+    { id: "note-second", title: "Second Context Note", note_type: "concept", status: "kept", category_id: 1, domains: [], tags: [], confidence: "medium", source_ids: [], created_at: now, updated_at: now },
+  ];
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: null,
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+    noteItems,
+    calendarReminders: [{
+      id: "reminder-existing",
+      user_id: "user-e2e",
+      date: "2026-09-14",
+      text: "Review linked research",
+      note_id: null,
+      linked_note: null,
+      recurrence: "once",
+      is_done: false,
+      created_at: now,
+      updated_at: now,
+    }],
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/calendar?date=2026-09-14");
+  await expect(page.getByRole("paragraph").filter({ hasText: "Review linked research" })).toBeVisible();
+  await page.getByRole("button", { name: "Attach note" }).click();
+  await page.getByLabel("Search notes to link").fill("Knowledge Note");
+  await page.getByLabel("Linked note").selectOption("note-input");
+  await page.getByRole("button", { name: "Save Link" }).click();
+  await expect(page.getByRole("link", { name: "E2E Knowledge Note" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Change linked note" }).click();
+  await page.getByLabel("Search notes to link").fill("Second Context");
+  await page.getByLabel("Linked note").selectOption("note-second");
+  await page.getByRole("button", { name: "Save Link" }).click();
+  await expect(page.getByRole("link", { name: "Second Context Note" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Change linked note" }).click();
+  await page.getByRole("button", { name: "Remove" }).click();
+  await expect(page.getByRole("button", { name: "Attach note" })).toBeVisible();
+
+  await page.goto("/notes/note-input");
+  await page.getByLabel("Todo text").fill("Follow up from Note");
+  await page.getByLabel("Todo date").fill("2026-09-15");
+  await page.getByRole("button", { name: "Add Todo" }).click();
+  await expect(page.getByRole("link", { name: /Follow up from Note/ })).toBeVisible();
+  await page.getByRole("link", { name: /Follow up from Note/ }).click();
+  await expect(page).toHaveURL(/\/calendar\?date=2026-09-15$/);
 });
 
 test("Wiki detail returns to the previous list position without adding a fake back entry", async ({ page }) => {

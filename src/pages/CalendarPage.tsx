@@ -1,11 +1,11 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
-import { Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, FileText, Plus, Sparkles, StickyNote, Trash2 } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
+import { Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, FileText, Link2, Plus, Sparkles, StickyNote, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { calendarRemindersApi, notesApi, sourcesApi, type CalendarReminder, type Note, type Source } from "@/lib/api";
+import { calendarRemindersApi, notesApi, sourcesApi, type CalendarReminder, type CalendarReminderUpdate, type Note, type Source } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const RECURRENCE_OPTIONS = [
@@ -51,6 +51,12 @@ function yesterdayKey() {
   const date = new Date();
   date.setDate(date.getDate() - 1);
   return dateKey(date);
+}
+
+function dateFromKey(value: string | null) {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return new Date();
+  const parsed = new Date(`${value}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
 }
 
 function toCalendarItems(notes: Note[], sources: Source[]): CalendarItem[] {
@@ -101,11 +107,16 @@ function groupReminders(reminders: CalendarReminder[]) {
 
 export function CalendarPage() {
   const queryClient = useQueryClient();
-  const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(new Date()));
-  const [selectedKey, setSelectedKey] = useState(() => dateKey(new Date()));
+  const [searchParams] = useSearchParams();
+  const [initialDate] = useState(() => dateFromKey(searchParams.get("date")));
+  const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(initialDate));
+  const [selectedKey, setSelectedKey] = useState(() => dateKey(initialDate));
   const [newReminder, setNewReminder] = useState("");
   const [newReminderRecurrence, setNewReminderRecurrence] = useState<CalendarReminder["recurrence"]>("once");
   const [linkedNoteId, setLinkedNoteId] = useState<string>("");
+  const [editingReminderNoteId, setEditingReminderNoteId] = useState<string | null>(null);
+  const [pendingLinkedNoteId, setPendingLinkedNoteId] = useState("");
+  const [noteSearch, setNoteSearch] = useState("");
 
   const days = useMemo(() => buildCalendarDays(visibleMonth), [visibleMonth]);
   const gridStart = dateKey(days[0]);
@@ -154,6 +165,12 @@ export function CalendarPage() {
   const sourceCount = items.filter((item) => item.kind === "source").length;
   const reminderCount = reminders.filter((reminder) => !reminder.is_done).length;
   const activeDays = new Set([...itemsByDay.keys(), ...remindersByDay.keys()]).size;
+  const filteredNotes = useMemo(() => {
+    const query = noteSearch.trim().toLowerCase();
+    const notes = notesData?.items ?? [];
+    if (!query) return notes.slice(0, 100);
+    return notes.filter((note) => `${note.title} ${note.abstract ?? ""}`.toLowerCase().includes(query)).slice(0, 100);
+  }, [noteSearch, notesData?.items]);
 
   const createReminderMutation = useMutation({
     mutationFn: () => calendarRemindersApi.create({
@@ -172,8 +189,13 @@ export function CalendarPage() {
   });
 
   const updateReminderMutation = useMutation({
-    mutationFn: ({ id, is_done, occurrence_date }: { id: string; is_done: boolean; occurrence_date?: string }) => calendarRemindersApi.update(id, { is_done, occurrence_date }),
-    onSuccess: () => {
+    mutationFn: ({ id, ...body }: { id: string } & CalendarReminderUpdate) => calendarRemindersApi.update(id, body),
+    onSuccess: (_, variables) => {
+      if ("note_id" in variables) {
+        setEditingReminderNoteId(null);
+        setPendingLinkedNoteId("");
+        setNoteSearch("");
+      }
       queryClient.invalidateQueries({ queryKey: ["calendar-reminders"] });
       queryClient.invalidateQueries({ queryKey: ["calendar-reminders-overdue"] });
     },
@@ -190,6 +212,12 @@ export function CalendarPage() {
   const submitReminder = () => {
     if (!newReminder.trim()) return;
     createReminderMutation.mutate();
+  };
+
+  const startEditingLinkedNote = (reminder: CalendarReminder) => {
+    setEditingReminderNoteId(reminder.id);
+    setPendingLinkedNoteId(reminder.note_id ?? "");
+    setNoteSearch("");
   };
 
   return (
@@ -429,9 +457,64 @@ export function CalendarPage() {
                           <p className="mt-1 text-xs text-muted-foreground">{reminder.date} · {recurrenceLabel(reminder.recurrence)}</p>
                           {reminder.note_id ? (
                             <Link to={`/notes/${encodeURIComponent(reminder.note_id)}`} className="mt-1 inline-flex text-xs text-primary hover:underline">
-                              Open linked note
+                              {reminder.linked_note?.title ?? "Open linked note"}
                             </Link>
                           ) : null}
+                          {editingReminderNoteId === reminder.id ? (
+                            <div className="mt-3 space-y-2 rounded-lg border bg-background/80 p-2">
+                              <Input
+                                value={noteSearch}
+                                onChange={(event) => setNoteSearch(event.target.value)}
+                                placeholder="Search notes..."
+                                aria-label="Search notes to link"
+                                className="h-8"
+                              />
+                              <select
+                                className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                                value={pendingLinkedNoteId}
+                                onChange={(event) => setPendingLinkedNoteId(event.target.value)}
+                                aria-label="Linked note"
+                              >
+                                <option value="">No linked note</option>
+                                {filteredNotes.map((note) => (
+                                  <option key={note.id} value={note.id}>{note.title}</option>
+                                ))}
+                              </select>
+                              <div className="flex flex-wrap gap-2">
+                                <Button
+                                  size="sm"
+                                  type="button"
+                                  onClick={() => updateReminderMutation.mutate({ id: reminder.id, note_id: pendingLinkedNoteId || null })}
+                                  disabled={updateReminderMutation.isPending}
+                                >
+                                  Save Link
+                                </Button>
+                                {reminder.note_id ? (
+                                  <Button
+                                    size="sm"
+                                    type="button"
+                                    variant="outline"
+                                    onClick={() => updateReminderMutation.mutate({ id: reminder.id, note_id: null })}
+                                    disabled={updateReminderMutation.isPending}
+                                  >
+                                    Remove
+                                  </Button>
+                                ) : null}
+                                <Button size="sm" type="button" variant="ghost" onClick={() => setEditingReminderNoteId(null)}>
+                                  Cancel
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              className="mt-2 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary"
+                              onClick={() => startEditingLinkedNote(reminder)}
+                            >
+                              {reminder.note_id ? <Link2 className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
+                              {reminder.note_id ? "Change linked note" : "Attach note"}
+                            </button>
+                          )}
                         </div>
                         <button
                           type="button"
