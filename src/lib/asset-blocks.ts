@@ -112,6 +112,16 @@ function isAssetBlock(value: unknown): value is AssetBlock {
     && (block.claimRefs === undefined || Array.isArray(block.claimRefs));
 }
 
+export function hasStableAssetDocument(metadata: Record<string, unknown> | null | undefined) {
+  const document = metadata?.asset_document;
+  if (!document || typeof document !== "object") return false;
+  const candidate = document as Record<string, unknown>;
+  return candidate.schemaVersion === 1
+    && Array.isArray(candidate.blocks)
+    && candidate.blocks.length > 0
+    && candidate.blocks.every(isAssetBlock);
+}
+
 export function loadAssetBlocks(metadata: Record<string, unknown> | null | undefined, draftContent?: string | null) {
   const document = metadata?.asset_document;
   if (document && typeof document === "object") {

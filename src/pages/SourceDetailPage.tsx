@@ -24,6 +24,7 @@ type SourceEditDraft = {
   source_type: string;
   url: string;
   description: string;
+  rawContent: string;
   metadata?: Record<string, unknown> | null;
 };
 
@@ -300,6 +301,7 @@ export function SourceDetailPage() {
       source_type: source.source_type,
       url: source.url ?? "",
       description: source.description ?? "",
+      rawContent: source.raw_content ?? "",
       metadata: {
         ...metadata,
         auto_discover: metadata.auto_discover === true,
@@ -325,6 +327,7 @@ export function SourceDetailPage() {
     if (draft.source_type !== source.source_type) patch.source_type = draft.source_type;
     if ((draft.url || null) !== (source.url || null)) patch.url = draft.url || null;
     if ((draft.description || null) !== (source.description || null)) patch.description = draft.description || null;
+    if ((draft.rawContent || null) !== (source.raw_content || null)) patch.raw_content = draft.rawContent || null;
     if (JSON.stringify(draft.metadata ?? null) !== JSON.stringify(source.metadata_ ?? null)) patch.metadata = draft.metadata ?? null;
     updateMutation.mutate(patch);
   }
@@ -437,8 +440,9 @@ export function SourceDetailPage() {
           {editing && draft ? (
             <div className="space-y-3">
               <div>
-                <label className="text-xs font-medium text-muted-foreground">Title</label>
+                <label htmlFor="source-edit-title" className="text-xs font-medium text-muted-foreground">Title</label>
                 <Input
+                  id="source-edit-title"
                   value={draft.title}
                   onChange={(e) => setDraft({ ...draft, title: e.target.value })}
                   className="mt-1"
@@ -478,30 +482,45 @@ export function SourceDetailPage() {
                 />
               </div>
               {(draft.source_type === "image" || draft.source_type === "video") && (
-                <div className="rounded-lg border border-border p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <label className="text-xs font-medium text-muted-foreground">Search description</label>
-                      <p className="mt-1 text-xs text-muted-foreground">Used for keyword and semantic search. Review generated text before saving.</p>
+                <div className="space-y-4 rounded-lg border border-border p-4">
+                  <div>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <label htmlFor="source-edit-description" className="text-xs font-medium text-muted-foreground">Search description</label>
+                        <p className="mt-1 text-xs text-muted-foreground">A concise summary used for keyword and semantic search. Review generated text before saving.</p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => generateDescriptionMutation.mutate()}
+                        disabled={generateDescriptionMutation.isPending}
+                      >
+                        <WandSparkles className="h-4 w-4" />
+                        {generateDescriptionMutation.isPending ? "Generating..." : "Generate with LLM"}
+                      </Button>
                     </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => generateDescriptionMutation.mutate()}
-                      disabled={generateDescriptionMutation.isPending}
-                    >
-                      <WandSparkles className="h-4 w-4" />
-                      {generateDescriptionMutation.isPending ? "Generating..." : "Generate with LLM"}
-                    </Button>
+                    <Textarea
+                      id="source-edit-description"
+                      className="mt-3"
+                      rows={5}
+                      value={draft.description}
+                      onChange={(event) => setDraft({ ...draft, description: event.target.value })}
+                      placeholder="Describe what appears in this media and how you may search for it later."
+                    />
                   </div>
-                  <Textarea
-                    className="mt-3"
-                    rows={5}
-                    value={draft.description}
-                    onChange={(event) => setDraft({ ...draft, description: event.target.value })}
-                    placeholder="Describe what appears in this media and how you may search for it later."
-                  />
+                  <div className="border-t border-border pt-4">
+                    <label htmlFor="source-edit-extraction-content" className="text-xs font-medium text-muted-foreground">Extraction content</label>
+                    <p className="mt-1 text-xs text-muted-foreground">Editable OCR, visible text, transcript, or detailed extracted facts. This content is also indexed for search.</p>
+                    <Textarea
+                      id="source-edit-extraction-content"
+                      className="mt-3 font-mono text-sm"
+                      rows={8}
+                      value={draft.rawContent}
+                      onChange={(event) => setDraft({ ...draft, rawContent: event.target.value })}
+                      placeholder={draft.source_type === "image" ? "Paste or correct text extracted from the image…" : "Paste or correct the video transcript or extracted text…"}
+                    />
+                  </div>
                   {generateDescriptionMutation.isError && (
                     <p className="mt-2 text-sm text-destructive">
                       {generateDescriptionMutation.error instanceof Error ? generateDescriptionMutation.error.message : "Description generation failed"}

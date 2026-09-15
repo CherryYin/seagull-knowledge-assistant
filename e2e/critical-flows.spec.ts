@@ -1486,6 +1486,62 @@ test("Asset complete optimization records a saved first round before running the
   expect(state.documentOptimizationCalls).toBe(2);
 });
 
+test("legacy Asset can establish stable Blocks before creating an Outline Map", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: {
+      title: "Legacy Asset",
+      brief: "Saved before stable Asset Blocks were introduced.",
+      asset_type: "research_brief",
+      status: "draft",
+      draft_content: "# Legacy Asset\n\n## Finding\n\nA saved evidence-backed finding.",
+      source_refs: ["source-input"],
+      note_refs: [],
+      wiki_refs: [],
+      metadata_: {},
+      metadata: {},
+    },
+    assetWorkspace: {
+      asset_id: "asset-e2e",
+      workspace_revision: 1,
+      intent: { revision: 1, question: "What does the legacy Asset show?", goal: "Preserve its structure.", audience: "Reviewers", creation_mode: "explain_topic", scope: [], constraints: [], status: "confirmed", confirmed_by: "user-e2e", confirmed_at: now },
+      intent_history: [],
+      evidence: [],
+      claims: [],
+      contribution: null,
+      knowledge_candidates: [],
+      decision_items: [],
+    },
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+  };
+  await installMockBff(page, state);
+  let projectionRequests = 0;
+  await page.route(`${apiBase}/api/mind-maps**`, async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/api/mind-maps/projections/asset-outline") {
+      projectionRequests += 1;
+      return json(route, { detail: "Projection should not run before stable Blocks exist" }, 409);
+    }
+    if (url.pathname === "/api/mind-maps") return json(route, { items: [], total: 0 });
+    return route.fallback();
+  });
+  await signIn(page);
+
+  await page.goto("/assets/asset-e2e?tab=map");
+  await expect(page.getByTestId("asset-stable-blocks-required")).toHaveCount(0);
+  await page.getByRole("button", { name: "Establish Stable Blocks First" }).click();
+  await expect.poll(() => {
+    const metadata = state.savedAssetBody?.metadata as Record<string, unknown> | undefined;
+    const document = metadata?.asset_document as Record<string, unknown> | undefined;
+    return Array.isArray(document?.blocks) ? document.blocks.length : 0;
+  }).toBeGreaterThan(0);
+  await expect(page.getByRole("button", { name: "Create Outline Map from Saved Blocks" })).toBeVisible();
+  expect(projectionRequests).toBe(0);
+});
+
 test("Asset editor preserves dirty changes, recovers after refresh, and clears recovery after save", async ({ page }) => {
   const initialBlocks = [
     { id: "block-title", type: "heading", markdown: "# Recovery Asset", revision: 1, claim_refs: [] },
@@ -2002,6 +2058,47 @@ test("Source upload reports an identical file and opens the existing Source", as
   await expect(page.getByText("Existing Source: Existing Upload")).toBeVisible();
   await page.getByRole("button", { name: "Open existing Source" }).click();
   await expect(page).toHaveURL(/\/sources\/source-existing-upload$/);
+});
+
+test("Image Source title and extraction content can be edited and re-saved", async ({ page }) => {
+  const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null };
+  await installMockBff(page, state);
+  let source = {
+    id: "source-image",
+    title: "Architecture Screenshot",
+    source_type: "image",
+    category_id: 1,
+    category_name: "Inbox",
+    description: "A screenshot of an architecture diagram.",
+    raw_content: "Gateway",
+    file_path: null,
+    ingested_at: now,
+    metadata_: { extraction_status: "completed", extraction_mode: "manual_edit", index_status: "completed" },
+  };
+  let savedPatch: Record<string, unknown> | null = null;
+  await page.route(`${apiBase}/api/sources/source-image**`, async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/api/sources/source-image/chunk-count") return json(route, { count: 1 });
+    if (url.pathname === "/api/sources/source-image/chunks") return json(route, []);
+    if (url.pathname === "/api/sources/source-image" && route.request().method() === "PATCH") {
+      savedPatch = route.request().postDataJSON() as Record<string, unknown>;
+      source = { ...source, ...savedPatch };
+      return json(route, source);
+    }
+    if (url.pathname === "/api/sources/source-image") return json(route, source);
+    return route.fallback();
+  });
+  await signIn(page);
+
+  await page.goto("/sources/source-image");
+  await page.getByRole("button", { name: "Edit" }).click();
+  await page.getByLabel("Title").fill("Updated Architecture Screenshot");
+  await page.getByLabel("Extraction content").fill("Gateway\nPolicy engine\nKnowledge service");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+
+  await expect.poll(() => savedPatch?.title).toBe("Updated Architecture Screenshot");
+  expect(savedPatch?.raw_content).toBe("Gateway\nPolicy engine\nKnowledge service");
+  await expect(page.getByRole("heading", { name: "Updated Architecture Screenshot" })).toBeVisible();
 });
 
 test("Source detail returns to the previous filtered list position without adding a fake back entry", async ({ page }) => {

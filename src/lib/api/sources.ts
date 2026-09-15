@@ -48,6 +48,7 @@ export interface SourceUpdate {
   source_type?: string;
   url?: string | null;
   description?: string | null;
+  raw_content?: string | null;
   metadata?: Record<string, unknown> | null;
 }
 

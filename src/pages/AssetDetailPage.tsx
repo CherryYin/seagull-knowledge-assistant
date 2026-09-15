@@ -14,7 +14,7 @@ import { MarkdownRenderer } from "@/components/markdown/MarkdownRenderer";
 import { ReferenceChips, type ReferenceItem } from "@/components/ReferenceChips";
 import { QuestionCard } from "@/components/QuestionCard";
 import { splitAssetContent } from "@/lib/asset-content";
-import { createAssetBlock, createAssetDocument, loadAssetBlocks, serializeAssetBlocks, updateAssetBlock, updateAssetBlockClaimRefs, type AssetBlock } from "@/lib/asset-blocks";
+import { createAssetBlock, createAssetDocument, hasStableAssetDocument, loadAssetBlocks, serializeAssetBlocks, updateAssetBlock, updateAssetBlockClaimRefs, type AssetBlock } from "@/lib/asset-blocks";
 import { answerHarnessQuestion, harnessChat, type HarnessQuestionAnswer, type HarnessQuestionItem } from "@/lib/api";
 import { useReturnNavigation } from "@/hooks/useReturnNavigation";
 import { useRouteScrollRestoration } from "@/hooks/useRouteScrollRestoration";
@@ -1145,6 +1145,11 @@ export function AssetDetailPage() {
   const serverEditorSignature = useMemo(
     () => serverEditorSnapshot ? assetEditorSignature(serverEditorSnapshot) : "",
     [serverEditorSnapshot],
+  );
+  const needsStableBlocks = Boolean(
+    asset
+    && serverEditorSnapshot?.blocks.length
+    && !hasStableAssetDocument(asset.metadata_),
   );
   const editorSnapshot = useMemo<AssetEditorSnapshot>(() => ({
     title: editTitle,
@@ -3184,6 +3189,14 @@ export function AssetDetailPage() {
                       saving={editMutation.isPending}
                       saveDisabled={!editTitle.trim()}
                     />
+                  ) : needsStableBlocks ? (
+                    <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950" data-testid="asset-stable-blocks-required">
+                      <p className="font-semibold">This Asset has saved content but no stable Block record yet.</p>
+                      <p className="mt-1">Establish Blocks once so Outline Maps and Block references can safely track later changes.</p>
+                      <Button className="mt-3" type="button" onClick={() => editMutation.mutate()} disabled={editMutation.isPending || !editTitle.trim()}>
+                        {editMutation.isPending ? "Establishing Stable Blocks…" : "Establish Stable Blocks"}
+                      </Button>
+                    </div>
                   ) : (
                     <div className="flex flex-wrap items-center gap-3">
                       <Button disabled>Save Changes</Button>
@@ -3499,9 +3512,18 @@ export function AssetDetailPage() {
                     <div className="rounded-xl border border-dashed p-5">
                       <p className="text-sm font-medium">No Asset Outline Map yet.</p>
                       <p className="mt-1 text-sm text-muted-foreground">The first projection uses the currently saved Blocks and confirmed Claim links. Later Asset changes will not silently replace it.</p>
-                      <Button className="mt-4" type="button" onClick={() => projectAssetOutlineMutation.mutate()} disabled={projectAssetOutlineMutation.isPending || isEditorDirty}>
-                        {projectAssetOutlineMutation.isPending ? "Creating Outline Map…" : "Create Outline Map from Saved Blocks"}
-                      </Button>
+                      {needsStableBlocks ? (
+                        <>
+                          <Button className="mt-4" type="button" onClick={() => editMutation.mutate()} disabled={editMutation.isPending || isEditorDirty || !editTitle.trim()}>
+                            {editMutation.isPending ? "Establishing Stable Blocks…" : "Establish Stable Blocks First"}
+                          </Button>
+                          <p className="mt-2 text-xs text-amber-700">This older or automatically generated Asset already has content, but its stable Block record has not been saved yet. This step preserves the current text and adds Block identities only.</p>
+                        </>
+                      ) : (
+                        <Button className="mt-4" type="button" onClick={() => projectAssetOutlineMutation.mutate()} disabled={projectAssetOutlineMutation.isPending || isEditorDirty}>
+                          {projectAssetOutlineMutation.isPending ? "Creating Outline Map…" : "Create Outline Map from Saved Blocks"}
+                        </Button>
+                      )}
                       {isEditorDirty && <p className="mt-2 text-xs text-amber-700">Save the current editor changes before creating the Map so every node receives a stable Block reference.</p>}
                     </div>
                   )}
