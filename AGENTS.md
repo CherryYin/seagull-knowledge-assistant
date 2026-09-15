@@ -11,7 +11,7 @@ The core product goal is a durable personal knowledge graph with deterministic r
 ## Core Capabilities
 
 - Ingest and manage sources, notes, categories, files, and user-owned chat sessions; image and video files are first-class Sources stored in MinIO with SHA-256 deduplication and a user-reviewed searchable description.
-- Generate image/video Source description proposals with the configured multimodal LLM; image proposals inspect a normalized image and video proposals inspect sampled representative frames, while saving remains an explicit user action.
+- Generate image/video Source description proposals with the configured multimodal LLM; image proposals inspect a normalized image and video proposals inspect sampled representative frames, while saving remains an explicit user action. Media Source title, search description, and detailed Extraction Content remain user-editable, and description/extraction edits rebuild the Source search index.
 - Treat `pdf` and `article` sources as permanent user knowledge: automated retention jobs must never delete them; deletion requires an explicit user action.
 - Search knowledge using SQL filters, vector embeddings, full-text style search, and hybrid retrieval.
 - Expose authenticated REST APIs that Harness tools use to search, read, and write user knowledge.
@@ -29,7 +29,7 @@ The core product goal is a durable personal knowledge graph with deterministic r
 - Preserve unsaved Asset Editor changes with a deterministic saved/editor signature, tab-scoped recovery draft, refresh and navigation warnings, and save-time cleanup; query refreshes must not overwrite a dirty editor.
 - Trace promoted or referenced Notes and Wiki pages back to their related Assets, including the originating Knowledge Candidate and Claim references when the record was distilled from an Asset.
 - Generate PDF Source Mind Map proposals from bounded section/Chunk summaries in ephemeral Harness sessions, validate Source basis and references in PKG, and require explicit version-safe confirmation before creating or safely merging the formal Map.
-- Project saved Asset Blocks into a revision-based Asset Outline Map with stable Block/Claim references; M3 is complete with deterministic projection, stale refresh, Patch Preview, revision-safe local Editor Apply, and existing Save Changes as the sole persistence path. Agent outline refinement is optional M3.1 work.
+- Project saved Asset Blocks into a revision-based Asset Outline Map with stable Block/Claim references; M3 is complete with deterministic projection, stale refresh, Patch Preview, revision-safe local Editor Apply, and existing Save Changes as the sole persistence path. Legacy or automatically generated Assets with saved text but no Block record expose an explicit Establish Stable Blocks action before projection. Agent outline refinement is optional M3.1 work.
 - Create and edit newsletter assets through PKG CRUD, then develop their content in Harness Agent Chat and explicitly save the reviewed result back to the Asset.
 - Run Newsletter automation only from a saved configuration revision: dirty UI settings must save before Run, each result carries a configuration snapshot, skipped runs are recorded, and generated Assets retain the revision used.
 - Pin notes for quick access, keep content version history (snapshots captured on content/title edits, restorable), and attach inline images to notes via drag-and-drop upload.

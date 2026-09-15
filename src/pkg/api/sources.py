@@ -674,7 +674,15 @@ async def update_source(
         metadata["description_updated_at"] = datetime.now(timezone.utc).isoformat()
         source.metadata_ = metadata
 
-    if "title" in patch or "description" in patch:
+    if "raw_content" in patch:
+        source.raw_content = (source.raw_content or "").replace("\x00", "").strip() or None
+        metadata = dict(source.metadata_ or {})
+        metadata["extraction_status"] = "completed" if source.raw_content else "missing_text"
+        metadata["extraction_mode"] = "manual_edit"
+        metadata["extracted_at"] = datetime.now(timezone.utc).isoformat()
+        source.metadata_ = metadata
+
+    if "title" in patch or "description" in patch or "raw_content" in patch:
         index_succeeded = await upsert_source_embeddings(session, source)
         metadata = dict(source.metadata_ or {})
         metadata["index_status"] = "completed" if index_succeeded else "failed"

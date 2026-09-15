@@ -32,6 +32,7 @@ class SourceUpdate(BaseModel):
     )
     url: str | None = None
     description: str | None = Field(default=None, max_length=8000)
+    raw_content: str | None = None
     metadata: dict | None = None
 
 

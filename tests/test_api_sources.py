@@ -403,6 +403,32 @@ class TestUpdateSource:
         assert source.metadata_["index_status"] == "completed"
         reindex.assert_awaited_once_with(mock_session, source)
 
+    @pytest.mark.asyncio
+    async def test_update_media_extraction_content_rebuilds_search_index(self, mock_session, fake_user):
+        from pkg.api.sources import update_source
+        from pkg.schemas.source import SourceUpdate
+
+        source = _make_source("src-image", fake_user.id)
+        source.source_type = "image"
+        source.raw_content = None
+        category = MagicMock()
+        category.name = "General"
+        mock_session.get.side_effect = [source, category]
+
+        with patch("pkg.api.sources.upsert_source_embeddings", new=AsyncMock(return_value=True)) as reindex:
+            result = await update_source(
+                "src-image",
+                SourceUpdate(raw_content="  Diagram label: retrieval gateway\x00  "),
+                user=fake_user,
+                session=mock_session,
+            )
+
+        assert result.raw_content == "Diagram label: retrieval gateway"
+        assert source.metadata_["extraction_status"] == "completed"
+        assert source.metadata_["extraction_mode"] == "manual_edit"
+        assert source.metadata_["index_status"] == "completed"
+        reindex.assert_awaited_once_with(mock_session, source)
+
 
 @pytest.mark.asyncio
 async def test_generate_media_description_returns_unsaved_proposal(mock_session, fake_user):
