@@ -129,4 +129,9 @@ export const notesApi = {
     form.append("file", file);
     return request<NoteImageResponse>(`/notes/${encodeURIComponent(id)}/images`, { method: "POST", body: form });
   },
+  promoteImage: (noteId: string, imageId: string, body?: { title?: string; description?: string }) =>
+    request<{ id: string; title: string }>(`/notes/${encodeURIComponent(noteId)}/images/${encodeURIComponent(imageId)}/promote`, {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    }),
 };

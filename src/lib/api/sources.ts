@@ -64,6 +64,40 @@ export interface SourceFileAccess {
   expires_in_seconds?: number | null;
 }
 
+export interface SourceMedia {
+  source_id: string;
+  mime_type?: string | null;
+  file_size?: number | null;
+  width?: number | null;
+  height?: number | null;
+  duration_seconds?: number | null;
+  thumbnail_url?: string | null;
+  caption?: string | null;
+  caption_model?: string | null;
+  transcript?: string | null;
+  transcript_model?: string | null;
+  transcript_status: string;
+  segment_count: number;
+  processing_stage: string;
+  processing_status: string;
+  processing_version: number;
+  processing_attempts: number;
+  next_retry_at?: string | null;
+  error_message?: string | null;
+  processed_at?: string | null;
+}
+
+export interface SourceMediaSegment {
+  id: number;
+  source_id: string;
+  segment_index: number;
+  start_ms: number;
+  end_ms: number;
+  transcript?: string | null;
+  caption?: string | null;
+  thumbnail_url?: string | null;
+}
+
 export const sourcesApi = {
   list: (params?: { source_type?: string; category_id?: number; kind?: string; review_status?: string; feed_view?: string; limit?: number; offset?: number }) => {
     const q = new URLSearchParams();
@@ -96,6 +130,11 @@ export const sourcesApi = {
     request<SourceDescriptionProposal>(`/sources/${encodeURIComponent(id)}/description/generate`, { method: "POST" }),
   fileUrl: (id: string) =>
     request<SourceFileAccess>(`/sources/${encodeURIComponent(id)}/file-url`),
+  media: (id: string) => request<SourceMedia>(`/sources/${encodeURIComponent(id)}/media`),
+  mediaSegments: (id: string) =>
+    request<SourceMediaSegment[]>(`/sources/${encodeURIComponent(id)}/media/segments`),
+  processMedia: (id: string) =>
+    request<SourceMedia>(`/sources/${encodeURIComponent(id)}/media/process`, { method: "POST" }),
   delete: (id: string) =>
     request<void>(`/sources/${encodeURIComponent(id)}`, { method: "DELETE" }),
   keepImported: (id: string) =>

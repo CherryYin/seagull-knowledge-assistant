@@ -27,7 +27,9 @@ export function SearchResultCard({ result }: Props) {
     } else if (result.type === "memory") {
       return;
     } else {
-      navigate(`/sources/${encodeURIComponent(result.id)}`, { state: backState });
+      navigate(`/sources/${encodeURIComponent(result.id)}`, {
+        state: { ...backState, startMs: result.start_ms ?? undefined },
+      });
     }
   };
 
@@ -40,7 +42,7 @@ export function SearchResultCard({ result }: Props) {
   const askAgent = (event: React.MouseEvent) => {
     event.stopPropagation();
     const workflowId =
-      result.type === "source" || result.type === "source_chunk"
+      result.type === "source" || result.type === "source_chunk" || result.type === "video_segment"
         ? "summarize-source"
         : result.type === "wiki" || result.type === "memory"
           ? "draft-wiki-refresh"
@@ -64,7 +66,7 @@ export function SearchResultCard({ result }: Props) {
         assetHandoff: buildAssetHandoffState({
           title: result.title,
           brief: `Create a blog asset from search result: ${result.title}`,
-          source_refs: result.type === "source" || result.type === "source_chunk" ? [result.id] : [],
+          source_refs: result.type === "source" || result.type === "source_chunk" || result.type === "video_segment" ? [result.id] : [],
           note_refs: result.type === "note" ? [result.id] : [],
           wiki_refs: result.type === "wiki" ? [result.id] : [],
         }),
@@ -81,7 +83,7 @@ export function SearchResultCard({ result }: Props) {
           title: result.title,
           summary: `Seeded from search result: ${result.title}`,
           page_type: "topic",
-          derived_from_sources: result.type === "source" || result.type === "source_chunk" ? [result.id] : [],
+          derived_from_sources: result.type === "source" || result.type === "source_chunk" || result.type === "video_segment" ? [result.id] : [],
           derived_from_notes: result.type === "note" ? [result.id] : [],
         },
       },
@@ -102,6 +104,13 @@ export function SearchResultCard({ result }: Props) {
       className="w-full cursor-pointer rounded-lg border border-border bg-card p-4 text-left transition-colors hover:border-primary/40"
     >
       <div className="flex items-start justify-between gap-3">
+        {result.thumbnail_url && (
+          <img
+            src={result.thumbnail_url}
+            alt=""
+            className="h-20 w-20 shrink-0 rounded-md border border-border object-cover"
+          />
+        )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             <Badge variant={result.type === "note" || result.type === "wiki" ? "note" : result.type === "memory" ? "default" : "source"}>
@@ -113,6 +122,11 @@ export function SearchResultCard({ result }: Props) {
             </span>
           </div>
           <h3 className="font-medium text-sm truncate">{result.title}</h3>
+          {result.start_ms != null && (
+            <p className="mt-1 text-xs font-medium text-primary">
+              Play from {formatTimestamp(result.start_ms)}
+            </p>
+          )}
           {preview && (
             <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{preview}</p>
           )}
@@ -154,12 +168,19 @@ function getResultLayer(layer: string | null | undefined, type: string) {
   if (layer === "knowledge_tree") return "Legacy Memory";
   if (layer === "stable_wiki") return "Stable Wiki";
   if (layer === "asset") return "Asset";
-  if (type === "source" || type === "source_chunk") return "Raw Evidence";
+  if (type === "source" || type === "source_chunk" || type === "video_segment") return "Raw Evidence";
   if (type === "note") return "User Note";
   if (type === "memory") return "Legacy Memory";
   if (type === "wiki") return "Stable Wiki";
   if (type === "asset") return "Asset";
   return "Knowledge";
+}
+
+function formatTimestamp(milliseconds: number) {
+  const totalSeconds = Math.floor(milliseconds / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
 function buildMatchReason(result: SearchResult) {

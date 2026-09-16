@@ -33,7 +33,7 @@ export function SourceDetailPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
-  const locationState = location.state as { backTo?: string; backLabel?: string } | null;
+  const locationState = location.state as { backTo?: string; backLabel?: string; startMs?: number } | null;
   const backTo = locationState?.backTo || "/sources";
   const backLabel = locationState?.backLabel || "Back to Sources";
   const navigationParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
@@ -45,6 +45,7 @@ export function SourceDetailPage() {
   const viewMode: ViewMode = requestedView === "slices" || requestedView === "mind-map" ? requestedView : "full";
   const [selectedChunk, setSelectedChunk] = useState(0);
   const previewRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<SourceEditDraft | null>(null);
   const returnToPrevious = useReturnNavigation(backTo, Boolean(locationState?.backTo));
@@ -100,6 +101,38 @@ export function SourceDetailPage() {
     enabled: !!id && Boolean(source?.file_path) && isMediaSource,
     staleTime: 10 * 60 * 1000,
   });
+  const { data: mediaDetails } = useQuery({
+    queryKey: ["source-media", id],
+    queryFn: () => sourcesApi.media(id!),
+    enabled: !!id && isMediaSource,
+    retry: false,
+    refetchInterval: (query) => {
+      const status = query.state.data?.processing_status;
+      return status === "pending" || status === "processing" || status === "retrying" ? 3000 : false;
+    },
+  });
+  const { data: mediaSegments = [] } = useQuery({
+    queryKey: ["source-media-segments", id],
+    queryFn: () => sourcesApi.mediaSegments(id!),
+    enabled: !!id && source?.source_type === "video" && (mediaDetails?.segment_count ?? 0) > 0,
+  });
+
+  useEffect(() => {
+    const startMs = locationState?.startMs;
+    const video = videoRef.current;
+    if (!video || startMs == null) return;
+    const seek = () => {
+      video.currentTime = startMs / 1000;
+    };
+    if (video.readyState >= 1) seek();
+    else video.addEventListener("loadedmetadata", seek, { once: true });
+  }, [locationState?.startMs, mediaFileAccess?.url]);
+
+  const playSegment = (startMs: number) => {
+    if (!videoRef.current) return;
+    videoRef.current.currentTime = startMs / 1000;
+    void videoRef.current.play();
+  };
 
   const { data: catData } = useQuery({
     queryKey: ["categories"],
@@ -137,6 +170,11 @@ export function SourceDetailPage() {
       queryClient.setQueryData(["source", id], updated);
       queryClient.invalidateQueries({ queryKey: ["sources"] });
     },
+  });
+
+  const retryMediaMutation = useMutation({
+    mutationFn: () => sourcesApi.processMedia(id!),
+    onSuccess: (media) => queryClient.setQueryData(["source-media", id], media),
   });
 
   const downloadPdfMutation = useMutation({
@@ -747,6 +785,7 @@ export function SourceDetailPage() {
             )}
             {mediaFileAccess?.url && source.source_type === "video" && (
               <video
+                ref={videoRef}
                 src={mediaFileAccess.url}
                 controls
                 preload="metadata"
@@ -760,6 +799,77 @@ export function SourceDetailPage() {
             )}
             {mediaPreviewError && (
               <p className="p-6 text-center text-sm text-white/70">Preview is unavailable. The original file can still be downloaded.</p>
+            )}
+          </div>
+        )}
+
+        {!editing && isMediaSource && mediaDetails && (
+          <div className="mb-6 rounded-lg border border-border bg-card p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-sm font-medium">Media Processing</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Thumbnail, technical metadata, transcript, scene captions, and searchable time segments. OCR is not enabled.
+                </p>
+              </div>
+              <Badge variant="outline">{mediaDetails.processing_status}</Badge>
+            </div>
+            <div className="mt-4 grid gap-4 md:grid-cols-[160px_1fr]">
+              {mediaDetails.thumbnail_url && (
+                <img src={mediaDetails.thumbnail_url} alt="" className="h-36 w-40 rounded-md border object-cover" />
+              )}
+              <div className="space-y-2 text-sm">
+                <p className="text-muted-foreground">
+                  {mediaDetails.width && mediaDetails.height ? `${mediaDetails.width} × ${mediaDetails.height}` : "Dimensions pending"}
+                  {mediaDetails.duration_seconds ? ` · ${mediaDetails.duration_seconds.toFixed(1)}s` : ""}
+                  {mediaDetails.file_size ? ` · ${(mediaDetails.file_size / 1024 / 1024).toFixed(2)} MB` : ""}
+                </p>
+                {mediaDetails.caption && <p className="leading-6">{mediaDetails.caption}</p>}
+                {source.source_type === "video" && (
+                  <p className="text-xs text-muted-foreground">
+                    Stage: {mediaDetails.processing_stage} · Transcript: {mediaDetails.transcript_status} · Segments: {mediaDetails.segment_count}
+                  </p>
+                )}
+                {mediaDetails.transcript && (
+                  <p className="max-h-32 overflow-auto rounded-md bg-muted/40 p-3 text-xs leading-5">
+                    {mediaDetails.transcript}
+                  </p>
+                )}
+                {mediaDetails.error_message && <p className="text-destructive">{mediaDetails.error_message}</p>}
+                {(mediaDetails.processing_status === "failed" || mediaDetails.processing_status === "retrying") && (
+                  <Button size="sm" variant="outline" onClick={() => retryMediaMutation.mutate()} disabled={retryMediaMutation.isPending}>
+                    <RefreshCw className={retryMediaMutation.isPending ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+                    Retry Media Processing
+                  </Button>
+                )}
+              </div>
+            </div>
+            {source.source_type === "video" && mediaSegments.length > 0 && (
+              <div className="mt-5 space-y-2">
+                <h3 className="text-sm font-medium">Searchable Segments</h3>
+                <div className="grid gap-2 md:grid-cols-2">
+                  {mediaSegments.map((segment) => (
+                    <button
+                      key={segment.id}
+                      type="button"
+                      onClick={() => playSegment(segment.start_ms)}
+                      className="flex gap-3 rounded-md border p-3 text-left hover:border-primary/40"
+                    >
+                      {segment.thumbnail_url && (
+                        <img src={segment.thumbnail_url} alt="" className="h-16 w-24 shrink-0 rounded object-cover" />
+                      )}
+                      <span className="min-w-0">
+                        <span className="text-xs font-medium text-primary">
+                          {formatTimestamp(segment.start_ms)}–{formatTimestamp(segment.end_ms)}
+                        </span>
+                        <span className="mt-1 block line-clamp-3 text-xs text-muted-foreground">
+                          {segment.transcript || segment.caption || "Visual segment"}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
         )}
@@ -1114,4 +1224,11 @@ export function SourceDetailPage() {
       </Dialog>
     </div>
   );
+}
+
+function formatTimestamp(milliseconds: number) {
+  const totalSeconds = Math.floor(milliseconds / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }

@@ -11,6 +11,11 @@ export interface SearchResult {
   source_type?: string | null;
   match_reason?: string | null;
   highlights?: string[] | null;
+  thumbnail_url?: string | null;
+  segment_id?: number | null;
+  start_ms?: number | null;
+  end_ms?: number | null;
+  playback_url?: string | null;
 }
 
 export interface SearchRequest {
