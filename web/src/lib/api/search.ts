@@ -10,6 +10,8 @@ export interface SearchResult {
   content_preview?: string | null;
   match_reason?: string | null;
   highlights?: string[] | null;
+  source_type?: string | null;
+  thumbnail_url?: string | null;
 }
 
 export interface SearchRequest {

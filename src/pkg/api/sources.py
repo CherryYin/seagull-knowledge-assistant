@@ -18,7 +18,7 @@ from pkg.api.deps import get_current_user
 from pkg.config import settings
 from pkg.db import get_session
 from pkg.models.category import Category
-from pkg.models.foundation.source import Source, SourceChunk, SourceEmbedding
+from pkg.models.foundation.source import Source, SourceChunk, SourceEmbedding, SourceMedia
 from pkg.models.user import User
 from pkg.schemas.source import (
     ChunkRead,
@@ -26,6 +26,7 @@ from pkg.schemas.source import (
     SourceDescriptionProposal,
     SourceFileAccess,
     SourceList,
+    SourceMediaRead,
     SourceRead,
     SourceUpdate,
     SourceUploadResult,
@@ -35,6 +36,10 @@ from pkg.services.cross_cutting.storage import get_storage_service
 from pkg.services.foundation.chunking import chunk_text
 from pkg.services.foundation.discovery_review import sync_discovery_review_for_source
 from pkg.services.foundation.media_description import generate_media_description
+from pkg.services.foundation.media_processing import (
+    delete_media_derivatives,
+    queue_media_processing,
+)
 from pkg.services.foundation.source_review import mark_explicitly_saved
 from pkg.services.foundation.source_retention import apply_source_retention
 from pkg.services.foundation.web_extractor import WebPageFetchError, fetch_web_page
@@ -291,12 +296,12 @@ async def find_owned_uploaded_source_by_hash(
     return result.scalars().first()
 
 
-def source_embedding_text(source: Source) -> str:
+def source_embedding_text(source: Source, media_caption: str | None = None) -> str:
     metadata = source.metadata_ or {}
     embedding_text = metadata.get("embedding_text")
     if isinstance(embedding_text, str) and embedding_text.strip():
         return embedding_text.strip()
-    parts = [source.description, source.raw_content]
+    parts = [source.description, media_caption, source.raw_content]
     searchable = "\n\n".join(part.strip() for part in parts if isinstance(part, str) and part.strip())
     return searchable or (source.title or "").strip()
 
@@ -315,11 +320,16 @@ def _validate_media_upload(source_type: str, filename: str, content_type: str | 
         )
 
 
-async def upsert_source_embeddings(session: AsyncSession, source: Source) -> bool:
+async def upsert_source_embeddings(
+    session: AsyncSession,
+    source: Source,
+    *,
+    media_caption: str | None = None,
+) -> bool:
     try:
         emb_svc = get_embedding_service()
         title_vec = await emb_svc.embed_text(source.title)
-        text_for_embedding = source_embedding_text(source)
+        text_for_embedding = source_embedding_text(source, media_caption)
         summary_vec = await emb_svc.embed_text(text_for_embedding or source.title)
         existing = await session.get(SourceEmbedding, source.id)
         if existing:
@@ -514,6 +524,9 @@ async def upload_source(
         content_hash=content_hash,
     )
     if existing:
+        if existing.source_type in {"image", "video"}:
+            await queue_media_processing(session, existing)
+            await session.commit()
         response.status_code = 200
         return SourceUploadResult(
             **SourceRead.model_validate(existing).model_dump(),
@@ -581,6 +594,9 @@ async def upload_source(
         raw_content_override=body.raw_content,
         content_hash_override=content_hash,
     )
+    if is_media:
+        await queue_media_processing(session, source)
+        await session.commit()
     return SourceUploadResult(
         **SourceRead.model_validate(source).model_dump(),
         created=True,
@@ -810,6 +826,8 @@ async def delete_source_by_id(
         raise HTTPException(status_code=404, detail="Source not found")
 
     await sync_discovery_review_for_source(session, source=source, status="dismissed")
+    media = await session.get(SourceMedia, source_id)
+    await delete_media_derivatives(media)
 
     # Delete stored file from MinIO
     if source.file_path and source.file_path.startswith("minio://"):
@@ -832,6 +850,62 @@ async def delete_source_by_id(
 
     await session.delete(source)
     await session.commit()
+
+
+async def _source_media_read(media: SourceMedia) -> SourceMediaRead:
+    thumbnail_url = None
+    if media.thumbnail_path:
+        thumbnail_url = await get_storage_service().generate_download_url(media.thumbnail_path)
+    return SourceMediaRead(
+        source_id=media.source_id,
+        mime_type=media.mime_type,
+        file_size=media.file_size,
+        width=media.width,
+        height=media.height,
+        duration_seconds=media.duration_seconds,
+        thumbnail_url=thumbnail_url,
+        caption=media.caption,
+        caption_model=media.caption_model,
+        processing_status=media.processing_status,
+        processing_version=media.processing_version,
+        processing_attempts=media.processing_attempts,
+        next_retry_at=media.next_retry_at,
+        error_message=media.error_message,
+        processed_at=media.processed_at,
+    )
+
+
+@router.get("/{source_id}/media", response_model=SourceMediaRead)
+async def get_source_media(
+    source_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    source = await session.get(Source, source_id)
+    if not source or (source.user_id != user.id and not source.is_shared):
+        raise HTTPException(status_code=404, detail="Source not found")
+    media = await session.get(SourceMedia, source_id)
+    if media is None:
+        raise HTTPException(status_code=404, detail="Media processing record not found")
+    return await _source_media_read(media)
+
+
+@router.post("/{source_id}/media/process", response_model=SourceMediaRead)
+async def retry_source_media_processing(
+    source_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    source = await session.get(Source, source_id)
+    if not source or source.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Source not found")
+    if source.source_type not in {"image", "video"} or not source.file_path:
+        raise HTTPException(status_code=422, detail="Source is not processable media")
+    media = await queue_media_processing(session, source, force=True)
+    media.processing_attempts = 0
+    await session.commit()
+    await session.refresh(media)
+    return await _source_media_read(media)
 
 
 @router.delete("/{source_id}", status_code=204)

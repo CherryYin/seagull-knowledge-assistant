@@ -1,14 +1,17 @@
 from fastapi import APIRouter, Depends
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.api.deps import get_current_user
 from pkg.config import settings
 from pkg.db import get_session
 from pkg.models.user import User
+from pkg.models.foundation.source import SourceMedia
 from pkg.schemas.note import SearchRequest, SearchResult
 from pkg.services.cross_cutting.activity import log_activity
 from pkg.services.foundation.retriever import RetrieverAgent
 from pkg.services.cross_cutting.stats import increment_stats
+from pkg.services.cross_cutting.storage import get_storage_service
 from pkg.services.foundation.sync_pipeline import sync_notes_from_directory, sync_sources_from_directory
 
 router = APIRouter()
@@ -29,6 +32,25 @@ async def search(
     # Track search hits per item
     note_ids = [r.id for r in results if r.type == "note"]
     source_ids = [r.id for r in results if r.type in ("source", "source_chunk")]
+    if source_ids:
+        media_rows = await session.execute(
+            select(SourceMedia).where(SourceMedia.source_id.in_(set(source_ids)))
+        )
+        media_by_source = {media.source_id: media for media in media_rows.scalars()}
+        storage = get_storage_service()
+        normalized_query = body.query.casefold()
+        for result in results:
+            media = media_by_source.get(result.id)
+            if media is None:
+                continue
+            if media.thumbnail_path:
+                result.thumbnail_url = await storage.generate_download_url(media.thumbnail_path)
+            if media.caption:
+                result.content_preview = result.content_preview or media.caption[:200]
+                if normalized_query and normalized_query in media.caption.casefold():
+                    result.match_reason = "Matched text in the generated media caption."
+                else:
+                    result.match_reason = "Semantic match from the generated media caption."
     if note_ids:
         await increment_stats(note_ids, "note", "search_count")
     if source_ids:

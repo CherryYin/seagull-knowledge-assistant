@@ -1,3 +1,4 @@
+import hashlib
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -17,7 +18,17 @@ from pkg.db import get_session
 from pkg.models.category import Category
 from pkg.models.foundation.note import Note, NoteEmbedding, NoteImage
 from pkg.models.user import User
-from pkg.schemas.note import DigestMergeRequest, NoteCreate, NoteImageResponse, NoteList, NoteRead, NoteUpdate, NoteVersion
+from pkg.schemas.note import (
+    DigestMergeRequest,
+    NoteCreate,
+    NoteImagePromoteRequest,
+    NoteImageResponse,
+    NoteList,
+    NoteRead,
+    NoteUpdate,
+    NoteVersion,
+)
+from pkg.schemas.source import SourceCreate, SourceRead
 from pkg.services.cross_cutting.embedding import get_embedding_service
 from pkg.services.cross_cutting.storage import get_storage_service
 
@@ -789,3 +800,89 @@ async def get_note_image(
         raise HTTPException(status_code=404, detail="Image not found")
     url = await get_storage_service().generate_download_url(image.storage_uri)
     return RedirectResponse(url=url)
+
+
+@router.post(
+    "/{note_id}/images/{image_id}/promote",
+    response_model=SourceRead,
+    status_code=201,
+)
+async def promote_note_image_to_source(
+    note_id: str,
+    image_id: str,
+    body: NoteImagePromoteRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    note = await session.get(Note, note_id)
+    if not note or note.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Note not found")
+    image = await session.get(NoteImage, image_id)
+    if not image or image.note_id != note_id:
+        raise HTTPException(status_code=404, detail="Image not found")
+    if image.content_type == "image/svg+xml":
+        raise HTTPException(status_code=422, detail="SVG images cannot be promoted as raster Sources")
+
+    storage = get_storage_service()
+    payload = await storage.get_object(image.storage_uri)
+    content_hash = hashlib.sha256(payload).hexdigest()
+    from pkg.api.sources import find_owned_uploaded_source_by_hash, persist_source
+    from pkg.services.foundation.media_processing import queue_media_processing
+
+    existing = await find_owned_uploaded_source_by_hash(
+        session,
+        user_id=user.id,
+        content_hash=content_hash,
+    )
+    if existing:
+        await queue_media_processing(session, existing)
+        await session.commit()
+        category = await session.get(Category, existing.category_id)
+        result = SourceRead.model_validate(existing)
+        result.category_name = category.name if category else None
+        return result
+
+    title = (body.title or Path(image.filename or image.id).stem or note.title).strip()
+    filename = Path(image.filename or f"{image.id}.jpg").name
+    source_id = f"src-{uuid.uuid4().hex[:12]}"
+    category = await session.get(Category, note.category_id)
+    category_name = category.name if category else None
+    object_key = storage.build_object_key(
+        "sources",
+        source_id,
+        filename,
+        category_name=category_name,
+    )
+    storage_uri = await storage.upload_bytes(
+        object_key=object_key,
+        data=payload,
+        content_type=image.content_type,
+    )
+    source = await persist_source(
+        session=session,
+        body=SourceCreate(
+            id=source_id,
+            title=title,
+            category_id=note.category_id,
+            source_type="image",
+            description=body.description,
+            file_path=storage_uri,
+            metadata={
+                "origin": "note_image",
+                "note_id": note.id,
+                "note_image_id": image.id,
+                "original_filename": filename,
+                "content_type": image.content_type,
+                "byte_size": len(payload),
+                "description_status": "completed" if body.description else "missing",
+            },
+        ),
+        user_id=user.id,
+        file_path=storage_uri,
+        content_hash_override=content_hash,
+    )
+    await queue_media_processing(session, source)
+    await session.commit()
+    result = SourceRead.model_validate(source)
+    result.category_name = category_name
+    return result

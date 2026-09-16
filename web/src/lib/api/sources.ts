@@ -43,6 +43,24 @@ export interface SourceUpdate {
   metadata?: Record<string, unknown> | null;
 }
 
+export interface SourceMedia {
+  source_id: string;
+  mime_type?: string | null;
+  file_size?: number | null;
+  width?: number | null;
+  height?: number | null;
+  duration_seconds?: number | null;
+  thumbnail_url?: string | null;
+  caption?: string | null;
+  caption_model?: string | null;
+  processing_status: string;
+  processing_version: number;
+  processing_attempts: number;
+  next_retry_at?: string | null;
+  error_message?: string | null;
+  processed_at?: string | null;
+}
+
 export const sourcesApi = {
   list: (params?: { source_type?: string; category_id?: number; kind?: string; feed_view?: string; limit?: number; offset?: number }) => {
     const q = new URLSearchParams();
@@ -69,6 +87,9 @@ export const sourcesApi = {
     request<Source>(`/sources/${encodeURIComponent(id)}/download-pdf`, { method: "POST" }),
   retryExtraction: (id: string) =>
     request<Source>(`/sources/${encodeURIComponent(id)}/retry-extraction`, { method: "POST" }),
+  media: (id: string) => request<SourceMedia>(`/sources/${encodeURIComponent(id)}/media`),
+  processMedia: (id: string) =>
+    request<SourceMedia>(`/sources/${encodeURIComponent(id)}/media/process`, { method: "POST" }),
   delete: (id: string) =>
     request<void>(`/sources/${encodeURIComponent(id)}`, { method: "DELETE" }),
   keepImported: (id: string) =>

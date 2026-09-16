@@ -484,3 +484,65 @@ class TestUploadNoteImage:
 
         assert resp.status_code == 307
         assert resp.headers["location"] == "https://minio/presigned"
+
+
+@pytest.mark.asyncio
+async def test_promote_note_image_copies_file_and_queues_media(mock_session, fake_user):
+    from pkg.api.notes import promote_note_image_to_source
+    from pkg.models.foundation.source import Source
+    from pkg.schemas.note import NoteImagePromoteRequest
+
+    note = _make_note("note-1", fake_user.id)
+    image = MagicMock()
+    image.id = "img-1"
+    image.note_id = note.id
+    image.storage_uri = "minio://bucket/note-image.png"
+    image.content_type = "image/png"
+    image.filename = "architecture.png"
+    category = MagicMock()
+    category.name = "General"
+    mock_session.get.side_effect = [note, image, category]
+    storage = MagicMock()
+    storage.get_object = AsyncMock(return_value=b"image-bytes")
+    storage.build_object_key.return_value = "sources/source-1/architecture.png"
+    storage.upload_bytes = AsyncMock(return_value="minio://bucket/source-image.png")
+    source = Source(
+        id="source-1",
+        user_id=fake_user.id,
+        category_id=1,
+        title="Architecture",
+        source_type="image",
+        file_path="minio://bucket/source-image.png",
+        content_hash="abc",
+        ingested_at=datetime(2026, 9, 16),
+    )
+    captured = {}
+
+    async def fake_persist_source(*, body, **_kwargs):
+        captured["body"] = body
+        return source
+
+    with (
+        patch("pkg.api.notes.get_storage_service", return_value=storage),
+        patch(
+            "pkg.api.sources.find_owned_uploaded_source_by_hash",
+            new=AsyncMock(return_value=None),
+        ),
+        patch("pkg.api.sources.persist_source", new=AsyncMock(side_effect=fake_persist_source)),
+        patch(
+            "pkg.services.foundation.media_processing.queue_media_processing",
+            new=AsyncMock(),
+        ) as queue,
+    ):
+        result = await promote_note_image_to_source(
+            note.id,
+            image.id,
+            NoteImagePromoteRequest(title="Architecture"),
+            user=fake_user,
+            session=mock_session,
+        )
+
+    assert result.id == source.id
+    assert captured["body"].metadata["origin"] == "note_image"
+    assert captured["body"].metadata["note_image_id"] == image.id
+    queue.assert_awaited_once_with(mock_session, source)

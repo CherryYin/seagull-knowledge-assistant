@@ -108,6 +108,8 @@ class SearchResult(BaseModel):
     abstract: str | None = None
     content_preview: str | None = None
     source_type: str | None = None
+    match_reason: str | None = None
+    thumbnail_url: str | None = None
 
 
 class NoteImageResponse(BaseModel):
@@ -116,3 +118,8 @@ class NoteImageResponse(BaseModel):
     url: str
     content_type: str | None = None
     filename: str | None = None
+
+
+class NoteImagePromoteRequest(BaseModel):
+    title: str | None = Field(default=None, max_length=300)
+    description: str | None = Field(default=None, max_length=8000)

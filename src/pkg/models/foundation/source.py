@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -56,4 +56,34 @@ class SourceChunk(Base):
 
     __table_args__ = (
         Index("idx_source_chunks_source", "source_id"),
+    )
+
+
+class SourceMedia(Base):
+    __tablename__ = "source_media"
+
+    source_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("sources.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    mime_type: Mapped[str | None] = mapped_column(String(120))
+    file_size: Mapped[int | None] = mapped_column(Integer)
+    width: Mapped[int | None] = mapped_column(Integer)
+    height: Mapped[int | None] = mapped_column(Integer)
+    duration_seconds: Mapped[float | None] = mapped_column(Float)
+    thumbnail_path: Mapped[str | None] = mapped_column(Text)
+    caption: Mapped[str | None] = mapped_column(Text)
+    caption_model: Mapped[str | None] = mapped_column(String(200))
+    processing_status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="pending")
+    processing_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    processing_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime())
+    error_message: Mapped[str | None] = mapped_column(Text)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime())
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("idx_source_media_processing", "processing_status", "next_retry_at"),
     )

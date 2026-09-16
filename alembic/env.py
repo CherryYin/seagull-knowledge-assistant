@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from pkg.config import settings
 from pkg.db import Base
 from pkg.models.category import Category  # noqa: F401
-from pkg.models.source import Source, SourceChunk, SourceEmbedding  # noqa: F401
+from pkg.models.source import Source, SourceChunk, SourceEmbedding, SourceMedia  # noqa: F401
 from pkg.models.note import Note, NoteEmbedding  # noqa: F401
 from pkg.models.chat_session import ChatSession, ChatSessionEvent  # noqa: F401
 from pkg.models.user import User, UserMemory, UserSettings, ActivityLog  # noqa: F401

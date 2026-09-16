@@ -1,9 +1,11 @@
+import asyncio
 import logging
 import os
 
 from pkg.config import settings
 from pkg.services.cross_cutting.scheduler import get_scheduled_tasks, scheduled_pipeline_loop
 from pkg.services.cross_cutting.system_jobs import mark_stale_running_jobs_failed
+from pkg.services.foundation.media_processing import media_processing_loop
 
 
 logger = logging.getLogger(__name__)
@@ -41,4 +43,7 @@ async def run_worker(*, poll_interval_seconds: int = 30) -> None:
             "DISCOVERY_AUTO_GENERATE_ENABLED is ignored: Discovery generation is now triggered by collection flows or explicit refresh, not an independent scheduled task."
         )
 
-    await scheduled_pipeline_loop(poll_interval_seconds=poll_interval_seconds)
+    await asyncio.gather(
+        scheduled_pipeline_loop(poll_interval_seconds=poll_interval_seconds),
+        media_processing_loop(),
+    )

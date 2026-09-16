@@ -98,6 +98,13 @@ export function SearchResultCard({ result }: Props) {
       className="w-full cursor-pointer rounded-lg border border-border bg-card p-4 text-left transition-colors hover:border-primary/40"
     >
       <div className="flex items-start justify-between gap-3">
+        {result.thumbnail_url && (
+          <img
+            src={result.thumbnail_url}
+            alt=""
+            className="h-20 w-20 shrink-0 rounded-md border border-border object-cover"
+          />
+        )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             <Badge variant={result.type === "note" || result.type === "wiki" ? "note" : result.type === "memory" ? "default" : "source"}>

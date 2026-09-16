@@ -143,6 +143,7 @@ async def test_upload_media_stores_original_without_document_extraction(
         patch("pkg.api.sources.find_owned_uploaded_source_by_hash", new=AsyncMock(return_value=None)),
         patch("pkg.api.sources.get_storage_service", return_value=storage),
         patch("pkg.api.sources.persist_source", new=AsyncMock(side_effect=fake_persist_source)),
+        patch("pkg.api.sources.queue_media_processing", new=AsyncMock()) as queue_processing,
     ):
         result = await upload_source(
             response=MagicMock(),
@@ -164,6 +165,7 @@ async def test_upload_media_stores_original_without_document_extraction(
     assert captured["body"].metadata["extraction_status"] == "not_applicable"
     assert captured["body"].metadata["description_status"] == "completed"
     assert captured["body"].metadata["original_filename"] == filename
+    queue_processing.assert_awaited_once_with(mock_session, uploaded)
 
 
 @pytest.mark.asyncio
@@ -745,8 +747,8 @@ class TestCreateSource:
 class TestDeleteSource:
     def test_success(self, client, mock_session, fake_user):
         source = _make_source("src-1", fake_user.id, file_path=None)
-        # get calls: source, embedding
-        mock_session.get.side_effect = [source, None]
+        # get calls: source, media, embedding
+        mock_session.get.side_effect = [source, None, None]
         # execute for chunks query
         mock_chunks = MagicMock()
         mock_chunks.scalars.return_value = []
@@ -773,7 +775,7 @@ class TestDeleteSource:
 
         legacy_id = "src-20260603-https://claude.com/blog/introd-5e073745"
         source = _make_source(legacy_id, fake_user.id)
-        mock_session.get.side_effect = [source, None]
+        mock_session.get.side_effect = [source, None, None]
         mock_chunks = MagicMock()
         mock_chunks.scalars.return_value = []
         mock_session.execute.return_value = mock_chunks

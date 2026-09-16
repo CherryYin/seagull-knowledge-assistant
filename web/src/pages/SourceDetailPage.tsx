@@ -41,6 +41,17 @@ export function SourceDetailPage() {
     queryFn: () => sourcesApi.get(id!),
     enabled: !!id,
   });
+  const isMediaSource = source?.source_type === "image" || source?.source_type === "video";
+  const { data: mediaDetails } = useQuery({
+    queryKey: ["source-media", id],
+    queryFn: () => sourcesApi.media(id!),
+    enabled: !!id && isMediaSource,
+    retry: false,
+    refetchInterval: (query) => {
+      const status = query.state.data?.processing_status;
+      return status === "pending" || status === "processing" || status === "retrying" ? 3000 : false;
+    },
+  });
 
   const { data: chunks } = useQuery({
     queryKey: ["source-chunks", id],
@@ -77,6 +88,11 @@ export function SourceDetailPage() {
       queryClient.setQueryData(["source", id], updated);
       queryClient.invalidateQueries({ queryKey: ["sources"] });
     },
+  });
+
+  const retryMediaMutation = useMutation({
+    mutationFn: () => sourcesApi.processMedia(id!),
+    onSuccess: (media) => queryClient.setQueryData(["source-media", id], media),
   });
 
   const downloadPdfMutation = useMutation({
@@ -581,6 +597,34 @@ export function SourceDetailPage() {
                   </p>
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {!editing && isMediaSource && mediaDetails && (
+          <div className="mb-6 rounded-lg border border-border bg-card p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-sm font-medium">Media Processing</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Thumbnail, metadata, and generated caption. OCR is disabled.</p>
+              </div>
+              <Badge variant="outline">{mediaDetails.processing_status}</Badge>
+            </div>
+            <div className="mt-4 grid gap-4 md:grid-cols-[160px_1fr]">
+              {mediaDetails.thumbnail_url && <img src={mediaDetails.thumbnail_url} alt="" className="h-36 w-40 rounded-md border object-cover" />}
+              <div className="space-y-2 text-sm">
+                <p className="text-muted-foreground">
+                  {mediaDetails.width && mediaDetails.height ? `${mediaDetails.width} × ${mediaDetails.height}` : "Dimensions pending"}
+                  {mediaDetails.duration_seconds ? ` · ${mediaDetails.duration_seconds.toFixed(1)}s` : ""}
+                </p>
+                {mediaDetails.caption && <p className="leading-6">{mediaDetails.caption}</p>}
+                {mediaDetails.error_message && <p className="text-destructive">{mediaDetails.error_message}</p>}
+                {(mediaDetails.processing_status === "failed" || mediaDetails.processing_status === "retrying") && (
+                  <Button size="sm" variant="outline" onClick={() => retryMediaMutation.mutate()} disabled={retryMediaMutation.isPending}>
+                    <RefreshCw className={retryMediaMutation.isPending ? "h-4 w-4 animate-spin" : "h-4 w-4"} /> Retry Media Processing
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
         )}

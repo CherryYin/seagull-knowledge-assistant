@@ -53,6 +53,22 @@ class SourceRead(BaseModel):
     file_path: str | None = None
     ingested_at: datetime
     metadata_: dict | None = Field(None, alias="metadata_")
+class SourceMediaRead(BaseModel):
+    source_id: str
+    mime_type: str | None = None
+    file_size: int | None = None
+    width: int | None = None
+    height: int | None = None
+    duration_seconds: float | None = None
+    thumbnail_url: str | None = None
+    caption: str | None = None
+    caption_model: str | None = None
+    processing_status: str
+    processing_version: int
+    processing_attempts: int
+    next_retry_at: datetime | None = None
+    error_message: str | None = None
+    processed_at: datetime | None = None
 
 
 class SourceList(BaseModel):

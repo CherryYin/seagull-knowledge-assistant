@@ -116,7 +116,7 @@ async def generate_media_description(
             },
         ],
         temperature=0.1,
-        max_completion_tokens=500,
+        max_tokens=500,
         timeout=120,
     )
     description = _extract_response_text(response)

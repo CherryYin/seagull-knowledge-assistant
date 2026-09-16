@@ -142,6 +142,9 @@ export function NoteDetailPage() {
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [imageUploading, setImageUploading] = useState(false);
+  const [uploadedImage, setUploadedImage] = useState<{ id: string; filename?: string | null } | null>(null);
+  const [promotingImage, setPromotingImage] = useState(false);
+  const [promotedSourceId, setPromotedSourceId] = useState<string | null>(null);
   const contentTextareaRef = useRef<HTMLTextAreaElement>(null);
   const pendingSelection = useRef<[number, number] | null>(null);
   const splitContainerRef = useRef<HTMLDivElement>(null);
@@ -386,6 +389,8 @@ export function NoteDetailPage() {
     setImageUploading(true);
     try {
       const res = await notesApi.uploadImage(note.id, file);
+      setUploadedImage(res);
+      setPromotedSourceId(null);
       const alt = file.name.replace(/\.[^.]+$/, "");
       const markdown = `![${alt}](api/notes/${encodeURIComponent(note.id)}/images/${encodeURIComponent(res.id)})`;
       // Insert at cursor; if no cursor info, append.
@@ -401,6 +406,20 @@ export function NoteDetailPage() {
       /* surfaced via toast if available; keep silent fallback */
     } finally {
       setImageUploading(false);
+    }
+  }
+
+  async function handlePromoteImage() {
+    if (!note || !uploadedImage) return;
+    setPromotingImage(true);
+    try {
+      const source = await notesApi.promoteImage(note.id, uploadedImage.id, {
+        title: uploadedImage.filename?.replace(/\.[^.]+$/, "") || undefined,
+      });
+      setPromotedSourceId(source.id);
+      queryClient.invalidateQueries({ queryKey: ["sources"] });
+    } finally {
+      setPromotingImage(false);
     }
   }
 
@@ -991,6 +1010,23 @@ export function NoteDetailPage() {
                       <ToolbarButton title="Table" onClick={() => insertMarkdown("table")}><Table className="h-4 w-4" /></ToolbarButton>
                       <ToolbarDivider />
                       <ToolbarButton title="Enhance with AI" onClick={startEnhance}><Wand2 className="h-4 w-4" /></ToolbarButton>
+                    </div>
+                  )}
+
+                  {uploadedImage && (
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs">
+                      <span className="text-muted-foreground">
+                        Image inserted into this Note. Save it as a Source to make it independently searchable.
+                      </span>
+                      {promotedSourceId ? (
+                        <Button type="button" size="sm" variant="outline" onClick={() => navigate(`/sources/${encodeURIComponent(promotedSourceId)}`)}>
+                          Open Image Source
+                        </Button>
+                      ) : (
+                        <Button type="button" size="sm" variant="outline" onClick={handlePromoteImage} disabled={promotingImage}>
+                          {promotingImage ? "Saving…" : "Save as Image Source"}
+                        </Button>
+                      )}
                     </div>
                   )}
 
