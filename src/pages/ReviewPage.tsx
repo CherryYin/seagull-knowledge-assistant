@@ -34,15 +34,15 @@ export function ReviewPage() {
   });
   const { data: sourceData, isLoading: sourcesLoading } = useQuery({
     queryKey: ["review-source-imported"],
-    queryFn: () => sourcesApi.list({ limit: 100, feed_view: "parents" }),
+    queryFn: () => sourcesApi.list({ review_status: "imported_reviewable", limit: 100, feed_view: "all" }),
   });
   const { data: profileSuggestionData, isLoading: profileSuggestionLoading } = useQuery({
     queryKey: ["review-profile-suggestions"],
     queryFn: () => reviewApi.suggestions({ suggestion_type: "profile_update", status: "pending", limit: 5 }),
   });
 
-  const reviewableSources = (sourceData?.items ?? []).filter((source) => source.metadata_?.review_status === "imported_reviewable").slice(0, 5);
-  const sourceReviewCount = (sourceData?.items ?? []).filter((source) => source.metadata_?.review_status === "imported_reviewable").length;
+  const reviewableSources = (sourceData?.items ?? []).slice(0, 5);
+  const sourceReviewCount = sourceData?.total ?? 0;
   const pendingMiningRuns = (miningRunsData?.items ?? []).filter((run) => {
     const summary = run.metadata_?.input_summary as Record<string, number> | undefined;
     return run.status === "completed" && !!summary;

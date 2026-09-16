@@ -22,6 +22,12 @@ import { useRouteFocusRestoration } from "@/hooks/useRouteFocusRestoration";
 import { useSessionStringSet } from "@/hooks/useSessionStringSet";
 
 const SOURCE_TYPES = ["pdf", "article", "conversation", "image", "video", "web", "github"];
+const WEB_MODES = [
+  { value: "page", label: "Single Web Page", description: "Save and extract one page. It will not collect future articles." },
+  { value: "collection_feed", label: "RSS Feed", description: "Subscribe to a feed and collect new entries as reviewable articles." },
+  { value: "collection_directory", label: "Website Directory", description: "Save a blog or documentation index, then discover child pages." },
+] as const;
+type WebMode = typeof WEB_MODES[number]["value"];
 const FEED_VIEWS = [
   { value: "parents", label: "Main Sources" },
   { value: "feeds", label: "Feeds" },
@@ -58,10 +64,12 @@ export function SourcesPage() {
   const newsOnly = searchParams.get("news") === "1";
   const requestedFeedView = searchParams.get("feed") ?? "parents";
   const feedView = FEED_VIEWS.some((view) => view.value === requestedFeedView) ? requestedFeedView : "parents";
+  const effectiveFeedView = reviewFilter === "imported" ? "all" : feedView;
   const requestedCategory = Number(searchParams.get("category"));
   const categoryFilter = Number.isInteger(requestedCategory) && requestedCategory > 0 ? requestedCategory : null;
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<SourceCreate>({ title: "", category_id: 1, source_type: "article" });
+  const [webMode, setWebMode] = useState<WebMode>("page");
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [duplicateUploadSource, setDuplicateUploadSource] = useState<Source | null>(null);
   const [pdfType, setPdfType] = useState("text");
@@ -84,12 +92,13 @@ export function SourcesPage() {
   const categories = categoriesData?.items ?? [];
 
   const { data, isLoading } = useQuery({
-    queryKey: ["sources", typeFilter, categoryFilter, newsOnly ? "news" : "", feedView, reviewFilter],
+    queryKey: ["sources", typeFilter, categoryFilter, newsOnly ? "news" : "", effectiveFeedView, reviewFilter],
     queryFn: () => sourcesApi.list({
       source_type: typeFilter || undefined,
       category_id: categoryFilter ?? undefined,
       kind: newsOnly ? "news" : undefined,
-      feed_view: feedView,
+      review_status: reviewFilter === "imported" ? "imported_reviewable" : undefined,
+      feed_view: effectiveFeedView,
       limit: 100,
     }),
   });
@@ -147,6 +156,7 @@ export function SourcesPage() {
       queryClient.invalidateQueries({ queryKey: ["sources"] });
       setOpen(false);
       setForm({ title: "", category_id: 1, source_type: "article" });
+      setWebMode("page");
       setUploadFile(null);
       setPdfType("text");
     },
@@ -162,6 +172,7 @@ export function SourcesPage() {
       }
       setOpen(false);
       setForm({ title: "", category_id: 1, source_type: "article" });
+      setWebMode("page");
       setUploadFile(null);
       setDuplicateUploadSource(null);
       setPdfType("text");
@@ -322,7 +333,9 @@ export function SourcesPage() {
       uploadMutation.mutate(payload);
       return;
     }
-    createMutation.mutate(form);
+    createMutation.mutate(form.source_type === "web"
+      ? { ...form, metadata: { ...(form.metadata || {}), web_role: webMode, origin: "manual_url" } }
+      : form);
   }
 
   const showGrouped = categoryFilter === null && groupedSources.length > 1;
@@ -380,7 +393,11 @@ export function SourcesPage() {
                   <select
                     className="flex h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm w-40"
                     value={form.source_type}
-                    onChange={(e) => setForm({ ...form, source_type: e.target.value })}
+                    onChange={(e) => {
+                      const sourceType = e.target.value;
+                      setForm({ ...form, source_type: sourceType });
+                      if (sourceType !== "web") setWebMode("page");
+                    }}
                   >
                     {SOURCE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                   </select>
@@ -396,6 +413,25 @@ export function SourcesPage() {
                     className="flex-1 min-w-[120px]"
                   />
                 </div>
+                {form.source_type === "web" && (
+                  <div className="space-y-2 rounded-lg border border-border p-3">
+                    <p className="text-sm font-medium">How should this Web Source behave?</p>
+                    <div className="grid gap-2 md:grid-cols-3">
+                      {WEB_MODES.map((mode) => (
+                        <button
+                          key={mode.value}
+                          type="button"
+                          onClick={() => setWebMode(mode.value)}
+                          className={`rounded-md border p-3 text-left transition-colors ${webMode === mode.value ? "border-primary bg-primary/5" : "border-border hover:bg-accent/50"}`}
+                          aria-pressed={webMode === mode.value}
+                        >
+                          <span className="block text-sm font-medium">{mode.label}</span>
+                          <span className="mt-1 block text-xs leading-5 text-muted-foreground">{mode.description}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {form.source_type === "image" || form.source_type === "video" ? (
                   <div>
                     <Textarea
@@ -416,9 +452,11 @@ export function SourcesPage() {
                     onChange={(e) => setForm({ ...form, raw_content: e.target.value })}
                   />
                 )}
-                {form.source_type === "web" && form.url && !form.raw_content && (
+                {form.source_type === "web" && form.url && !form.raw_content && webMode !== "collection_feed" && (
                   <p className="text-xs text-muted-foreground">
-                    Web sources with an empty content field will fetch and extract readable page text from the URL.
+                    {webMode === "page"
+                      ? "The page will be fetched once and saved as a stable Web Page."
+                      : "The directory page will be saved first; use its collection controls to discover child pages."}
                   </p>
                 )}
                 <div className="space-y-2 rounded-md border border-dashed border-border p-3">
@@ -491,7 +529,7 @@ export function SourcesPage() {
                 <Button
                   className="w-full"
                   onClick={submitSource}
-                  disabled={!form.title || ((form.source_type === "image" || form.source_type === "video") && !uploadFile) || createMutation.isPending || uploadMutation.isPending || Boolean(duplicateUploadSource)}
+                  disabled={!form.title || (form.source_type === "web" && !form.url) || ((form.source_type === "image" || form.source_type === "video") && !uploadFile) || createMutation.isPending || uploadMutation.isPending || Boolean(duplicateUploadSource)}
                 >
                   {uploadMutation.isPending
                     ? uploadFile && pdfType === "vlm"

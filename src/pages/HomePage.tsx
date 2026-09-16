@@ -78,6 +78,10 @@ export function HomePage() {
     queryKey: ["home-sources"],
     queryFn: () => sourcesApi.list({ limit: 20, feed_view: "parents" }),
   });
+  const { data: importedReviewData } = useQuery({
+    queryKey: ["home-imported-sources"],
+    queryFn: () => sourcesApi.list({ review_status: "imported_reviewable", limit: 100, feed_view: "all" }),
+  });
   const { data: noteData } = useQuery({
     queryKey: ["home-notes"],
     queryFn: () => notesApi.list({ limit: 20 }),
@@ -118,7 +122,7 @@ export function HomePage() {
   const notes = noteData?.items ?? [];
   const pendingWikiCount = wikiSuggestions?.total ?? 0;
   const reviewSuggestionCount = reviewSuggestions?.total ?? 0;
-  const reviewableSources = sources.filter((source) => source.metadata_?.review_status === "imported_reviewable");
+  const reviewableSourceCount = importedReviewData?.total ?? 0;
   const failedSourceItems = sources.filter((source) => isFailedSource(source));
   const unprocessedSources = sources.filter((source) => {
     const state = getSourceProcessingState(source);
@@ -139,7 +143,7 @@ export function HomePage() {
     pendingWikiCount,
     digestPending,
     reviewSuggestionCount,
-    reviewableSources,
+    reviewableSourceCount,
     keptDiscoveryCount,
     sources,
     sessions: recentSessions,
@@ -149,7 +153,7 @@ export function HomePage() {
     digestPending > 0 && card("digest", "Digest Review", "Generated summaries are waiting for keep, merge, or dismiss.", "Generated but not confirmed", "/review/digest", "Open Digest Review", "high", Bell, digestPending),
     pendingWikiCount > 0 && card("wiki-refresh", "Wiki Refresh Queue", "New material may affect stable wiki pages.", "Pending wiki refresh reminders", "/review/wiki-suggestions", "Open Wiki Refresh Queue", "high", RefreshCw, pendingWikiCount),
     reviewSuggestionCount > 0 && card("review-suggestions", "Review Suggestions", "Profile or knowledge suggestions need confirmation.", "Pending review suggestions", "/review/suggestions", "Open Suggestions", "medium", Bell, reviewSuggestionCount),
-    reviewableSources.length > 0 && card("review-sources", "Imported Sources", "Connector imports are saved but still need review.", "Imported reviewable sources", "/sources?review=imported", "Review Sources", "medium", BookOpen, reviewableSources.length),
+    reviewableSourceCount > 0 && card("review-sources", "Imported Sources", "Automatically collected sources need one review before becoming confirmed knowledge.", "Imported reviewable sources", "/sources?review=imported", "Review Sources", "medium", BookOpen, reviewableSourceCount),
     pendingNotesCount > 0 && card("pending-notes", "Pending Notes", "Generated notes need confirmation before becoming stable knowledge.", "Notes with pending_review status", "/notes?status=pending_review", "Review Notes", "medium", FileText, pendingNotesCount),
     unprocessedSources.length > 0 && card("unprocessed-sources", "Unprocessed Sources", "Some sources are still raw and need extraction, chunking, or summarization before they become easy to use.", "Source processing still incomplete", "/sources", "Open Sources", "medium", BookOpen, unprocessedSources.length),
   ].filter(Boolean) as TodayCardData[];
@@ -269,7 +273,7 @@ function buildFocusCards({
   pendingWikiCount,
   digestPending,
   reviewSuggestionCount,
-  reviewableSources,
+  reviewableSourceCount,
   keptDiscoveryCount,
   sources,
   sessions,
@@ -279,7 +283,7 @@ function buildFocusCards({
   pendingWikiCount: number;
   digestPending: number;
   reviewSuggestionCount: number;
-  reviewableSources: Source[];
+  reviewableSourceCount: number;
   keptDiscoveryCount: number;
   sources: Source[];
   sessions: ChatSessionRecord[];
@@ -291,8 +295,8 @@ function buildFocusCards({
   if (pendingWikiCount) {
     cards.push(card("focus-wiki-refresh", "Wiki pages may need refresh", "New materials may affect stable wiki pages.", "Pending Wiki Refresh Queue", "/review/wiki-suggestions", "Open Wiki Refresh Queue", "high", RefreshCw, pendingWikiCount));
   }
-  if (digestPending || reviewSuggestionCount || reviewableSources.length) {
-    cards.push(card("focus-review", "Decision queue has work", "Generated or imported knowledge needs confirmation.", "Pending decisions", "/review", "Open Decisions", "high", Bell, digestPending + reviewSuggestionCount + reviewableSources.length));
+  if (digestPending || reviewSuggestionCount || reviewableSourceCount) {
+    cards.push(card("focus-review", "Decision queue has work", "Generated or imported knowledge needs confirmation.", "Pending decisions", "/review", "Open Decisions", "high", Bell, digestPending + reviewSuggestionCount + reviewableSourceCount));
   }
   if (keptDiscoveryCount) {
     cards.push(card("focus-kept-discoveries", "Kept discoveries are waiting", "Candidate materials were kept but not imported.", "Kept for later", "/discover", "Open Discover", "medium", Compass, keptDiscoveryCount));

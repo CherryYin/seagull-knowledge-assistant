@@ -395,13 +395,13 @@ function DiscoveryCard({
             <XCircle className="mr-1 h-4 w-4" /> {candidateActionLabel("dismiss")}
           </Button>
           <Button size="sm" variant="outline" onClick={onKeep} disabled={isUpdating}>
-            <CheckCircle2 className="mr-1 h-4 w-4" /> {candidateActionLabel("keep")}
+            <CheckCircle2 className="mr-1 h-4 w-4" /> {candidateActionLabel("keep", "for Later")}
           </Button>
           <Button size="sm" variant="outline" onClick={onAskAgent} disabled={isUpdating}>
             <Bot className="mr-1 h-4 w-4" /> Ask Agent
           </Button>
           <Button size="sm" onClick={onSave} disabled={isUpdating}>
-            <CheckCircle2 className="mr-1 h-4 w-4" /> {candidateActionLabel("publish", "as Source")}
+            <CheckCircle2 className="mr-1 h-4 w-4" /> Save to Sources
           </Button>
         </div>
       </div>

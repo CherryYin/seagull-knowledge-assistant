@@ -12,7 +12,7 @@ import { MarkdownRenderer } from "@/components/markdown";
 import { sourcesApi, notesApi, wikiApi, categoriesApi, downloadFile, type Source, type SourceChunk, type SourceUpdate, type SourceList } from "@/lib/api";
 import { buildAssetHandoffState } from "@/lib/asset-handoff";
 import { getSourceProcessingState, getSourceProcessingSteps } from "@/lib/sourceProcessingStatus";
-import { isRssFeedSource, sourcePresentationLabel } from "@/lib/source-presentation";
+import { isRssFeedSource, sourcePresentationLabel, webSourceRole } from "@/lib/source-presentation";
 import { SourceMindMapPanel } from "@/components/mind-map";
 import { useReturnNavigation } from "@/hooks/useReturnNavigation";
 import { useRouteScrollRestoration } from "@/hooks/useRouteScrollRestoration";
@@ -151,7 +151,8 @@ export function SourceDetailPage() {
   });
 
   const isRssEnabled = source ? isRssFeedSource(source) : false;
-  const isWebDirectoryEnabled = source?.metadata_?.web_directory_enabled === true;
+  const webRole = source ? webSourceRole(source) : null;
+  const isWebDirectoryEnabled = webRole === "collection_directory";
   const pdfUrl = typeof source?.metadata_?.pdf_url === "string"
     ? source.metadata_.pdf_url
     : typeof source?.metadata_?.download_url === "string"
@@ -174,7 +175,7 @@ export function SourceDetailPage() {
   const { data: articlesData } = useQuery({
     queryKey: ["source-articles", id],
     queryFn: () => sourcesApi.listArticles(id!, { limit: 10 }),
-    enabled: !!id && source?.source_type === "web" && (isRssEnabled || isWebDirectoryEnabled),
+    enabled: !!id && (webRole === "collection_feed" || webRole === "collection_directory"),
   });
 
   const enableRssMutation = useMutation({
@@ -911,14 +912,16 @@ export function SourceDetailPage() {
           </div>
         )}
 
-        {source.source_type === "web" && source.url && !isRssEnabled && (
+        {source.source_type === "web" && source.url && (webRole === "page" || webRole === "collection_directory") && (
           <div className="mb-6 rounded-lg border border-border p-4">
             <div className="flex items-center gap-2 mb-3">
               <List className="h-4 w-4 text-blue-500" />
-              <span className="text-sm font-medium">Web Directory</span>
+              <span className="text-sm font-medium">{isWebDirectoryEnabled ? "Web Directory Collection" : "Collect from this site"}</span>
             </div>
             <p className="text-sm text-muted-foreground mb-3">
-              Discover same-site article links under this URL, then import each article as a child web source.
+              {isWebDirectoryEnabled
+                ? "Refresh same-site article links and update this collection without recreating reviewed articles."
+                : "Convert this saved Web Page into a directory collection, then import discovered child articles for review."}
             </p>
             <Button
               variant="outline"
@@ -927,7 +930,11 @@ export function SourceDetailPage() {
               disabled={discoverWebArticlesMutation.isPending}
             >
               <RefreshCw className={`h-4 w-4 ${discoverWebArticlesMutation.isPending ? "animate-spin" : ""}`} />
-              {discoverWebArticlesMutation.isPending ? "Discovering..." : "Discover Articles"}
+              {discoverWebArticlesMutation.isPending
+                ? "Discovering..."
+                : isWebDirectoryEnabled
+                  ? "Refresh Collected Articles"
+                  : "Enable Directory Collection & Discover"}
             </Button>
             {webDiscoverResult && (
               <p className="text-sm text-muted-foreground mt-2">
