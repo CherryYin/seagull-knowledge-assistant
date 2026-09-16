@@ -153,6 +153,22 @@ class Settings(BaseSettings):
     MEDIA_TRANSCRIPTION_API_BASE: str = ""
     MEDIA_TRANSCRIPTION_API_KEY: str = ""
     MEDIA_TRANSCRIPTION_MODEL: str = "whisper-1"
+    MEDIA_TRANSCRIPTION_PROTOCOL: str = Field(
+        default="openai_audio",
+        pattern=r"^(openai_audio|openai_chat_audio)$",
+    )
+    MEDIA_TRANSCRIPTION_CHUNK_SECONDS: int = 240
+    MEDIA_TRANSCRIPTION_PROVIDER_ORDER: str = "embedded_subtitles,faster_whisper,remote"
+    MEDIA_TRANSCRIPTION_LANGUAGE: str = ""
+    MEDIA_LOCAL_TRANSCRIPTION_MODEL: str = "small"
+    MEDIA_LOCAL_TRANSCRIPTION_DEVICE: str = Field(
+        default="cpu",
+        pattern=r"^(cpu|cuda|auto)$",
+    )
+    MEDIA_LOCAL_TRANSCRIPTION_COMPUTE_TYPE: str = "int8"
+    MEDIA_LOCAL_TRANSCRIPTION_CPU_THREADS: int = 6
+    MEDIA_LOCAL_TRANSCRIPTION_WORKERS: int = 1
+    MEDIA_LOCAL_TRANSCRIPTION_CACHE_DIR: Path = Path("./data/models/faster-whisper")
     MEDIA_VIDEO_SEGMENT_SECONDS: int = 30
     MEDIA_VIDEO_MAX_SEGMENTS: int = 24
     MEDIA_VIDEO_SCENE_THRESHOLD: float = 0.35

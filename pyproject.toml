@@ -39,6 +39,9 @@ dev = [
     "pytest~=8.3.5",
     "pytest-asyncio~=0.25.3"
 ]
+media-local = [
+    "faster-whisper>=1.1,<2"
+]
 
 [project.scripts]
 pkg = "pkg.cli:app"

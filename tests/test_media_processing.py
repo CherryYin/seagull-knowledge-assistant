@@ -1,6 +1,7 @@
 import io
 from contextlib import asynccontextmanager
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -15,7 +16,10 @@ from pkg.services.foundation.media_processing import (
 )
 from pkg.services.foundation.media_video import (
     TranscriptSegment,
+    VideoTranscript,
     build_video_segment_windows,
+    parse_srt_transcript,
+    transcribe_video,
 )
 
 
@@ -58,6 +62,160 @@ def test_video_segment_windows_align_transcript_with_scene_boundaries(monkeypatc
     ]
     assert windows[0].transcript == "opening"
     assert windows[1].transcript == "demo"
+
+
+def test_parse_srt_transcript_preserves_timestamps_and_text():
+    segments = parse_srt_transcript(
+        """1
+00:00:01,250 --> 00:00:03,500
+Hello <i>world</i>.
+
+2
+00:00:04.000 --> 00:00:06.125
+Second line.
+"""
+    )
+
+    assert segments == [
+        TranscriptSegment(start_ms=1_250, end_ms=3_500, text="Hello world."),
+        TranscriptSegment(start_ms=4_000, end_ms=6_125, text="Second line."),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_qwen_chat_audio_transcription_keeps_chunk_offsets(monkeypatch):
+    monkeypatch.setattr("pkg.services.foundation.media_video.settings.MEDIA_TRANSCRIPTION_ENABLED", True)
+    monkeypatch.setattr(
+        "pkg.services.foundation.media_video.settings.MEDIA_TRANSCRIPTION_PROTOCOL",
+        "openai_chat_audio",
+    )
+    monkeypatch.setattr(
+        "pkg.services.foundation.media_video.settings.MEDIA_TRANSCRIPTION_MODEL",
+        "qwen3-asr-flash",
+    )
+    monkeypatch.setattr("pkg.services.foundation.media_video.settings.MEDIA_TRANSCRIPTION_API_KEY", "")
+    monkeypatch.setattr("pkg.services.foundation.media_video.settings.QWEN_API_KEY", "test-key")
+    monkeypatch.setattr(
+        "pkg.services.foundation.media_video.settings.MEDIA_TRANSCRIPTION_PROVIDER_ORDER",
+        "remote",
+    )
+
+    async def fake_split(_audio_path, output_pattern):
+        first = output_pattern.parent / "audio-0000.mp3"
+        second = output_pattern.parent / "audio-0001.mp3"
+        first.write_bytes(b"first")
+        second.write_bytes(b"second")
+        return [first, second]
+
+    client = MagicMock()
+    client.chat.completions.create = AsyncMock(
+        side_effect=[
+            SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="first transcript"))]
+            ),
+            SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="second transcript"))]
+            ),
+        ]
+    )
+
+    from unittest.mock import patch
+
+    with (
+        patch("pkg.services.foundation.media_video._extract_audio", new=AsyncMock()),
+        patch("pkg.services.foundation.media_video._split_audio", new=AsyncMock(side_effect=fake_split)),
+        patch(
+            "pkg.services.foundation.media_video._audio_duration_ms",
+            new=AsyncMock(side_effect=[240_000, 80_000]),
+        ),
+        patch("pkg.services.foundation.media_video.AsyncOpenAI", return_value=client),
+    ):
+        transcript = await transcribe_video(b"video", ".mp4")
+
+    assert transcript is not None
+    assert transcript.text == "first transcript\nsecond transcript"
+    assert [(segment.start_ms, segment.end_ms) for segment in transcript.segments] == [
+        (0, 240_000),
+        (240_000, 320_000),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_local_transcription_provider_runs_before_remote(monkeypatch):
+    monkeypatch.setattr("pkg.services.foundation.media_video.settings.MEDIA_TRANSCRIPTION_ENABLED", True)
+    monkeypatch.setattr(
+        "pkg.services.foundation.media_video.settings.MEDIA_TRANSCRIPTION_PROVIDER_ORDER",
+        "faster_whisper,remote",
+    )
+    local_result = VideoTranscript(
+        text="local transcript",
+        model="faster-whisper:small",
+        segments=[TranscriptSegment(start_ms=0, end_ms=2_000, text="local transcript")],
+    )
+
+    async def fake_split(_audio_path, output_pattern):
+        chunk = output_pattern.parent / "audio-0000.mp3"
+        chunk.write_bytes(b"audio")
+        return [chunk]
+
+    from unittest.mock import patch
+
+    with (
+        patch("pkg.services.foundation.media_video._extract_audio", new=AsyncMock()),
+        patch("pkg.services.foundation.media_video._split_audio", new=AsyncMock(side_effect=fake_split)),
+        patch("pkg.services.foundation.media_video._audio_duration_ms", new=AsyncMock(return_value=2_000)),
+        patch(
+            "pkg.services.foundation.media_video._transcribe_with_faster_whisper",
+            new=AsyncMock(return_value=local_result),
+        ) as local,
+        patch("pkg.services.foundation.media_video._transcribe_with_remote", new=AsyncMock()) as remote,
+    ):
+        transcript = await transcribe_video(b"video", ".mp4")
+
+    assert transcript == local_result
+    local.assert_awaited_once()
+    remote.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_local_transcription_recovers_from_embedded_subtitle_failure(monkeypatch):
+    monkeypatch.setattr("pkg.services.foundation.media_video.settings.MEDIA_TRANSCRIPTION_ENABLED", True)
+    monkeypatch.setattr(
+        "pkg.services.foundation.media_video.settings.MEDIA_TRANSCRIPTION_PROVIDER_ORDER",
+        "embedded_subtitles,faster_whisper,remote",
+    )
+    local_result = VideoTranscript(
+        text="local transcript",
+        model="faster-whisper:small",
+        segments=[TranscriptSegment(start_ms=0, end_ms=2_000, text="local transcript")],
+    )
+
+    async def fake_split(_audio_path, output_pattern):
+        chunk = output_pattern.parent / "audio-0000.mp3"
+        chunk.write_bytes(b"audio")
+        return [chunk]
+
+    from unittest.mock import patch
+
+    with (
+        patch(
+            "pkg.services.foundation.media_video.extract_embedded_subtitles",
+            new=AsyncMock(side_effect=ValueError("unsupported subtitle codec")),
+        ),
+        patch("pkg.services.foundation.media_video._extract_audio", new=AsyncMock()),
+        patch("pkg.services.foundation.media_video._split_audio", new=AsyncMock(side_effect=fake_split)),
+        patch("pkg.services.foundation.media_video._audio_duration_ms", new=AsyncMock(return_value=2_000)),
+        patch(
+            "pkg.services.foundation.media_video._transcribe_with_faster_whisper",
+            new=AsyncMock(return_value=local_result),
+        ) as local,
+        patch("pkg.services.foundation.media_video._transcribe_with_remote", new=AsyncMock()) as remote,
+    ):
+        transcript = await transcribe_video(b"video", ".mp4")
+
+    assert transcript == local_result
+    local.assert_awaited_once()
+    remote.assert_not_awaited()
 
 
 @pytest.mark.asyncio
