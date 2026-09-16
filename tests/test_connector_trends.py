@@ -4,13 +4,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from pkg.models.github_trend_profile import GitHubTrendProfile
 from pkg.schemas.connector import ArxivPaper, GitHubRepo
 from pkg.services.foundation.connector_trends import (
     score_arxiv_paper,
     score_github_repo,
     collect_arxiv_trends_for_user,
     collect_daily_connector_trends,
+    collect_daily_github_trends,
+    collect_github_trends_for_profile,
     collect_github_trends_for_user,
+    run_scheduled_github_trend_profiles,
+    should_run_github_trend_profile,
 )
 
 
@@ -177,7 +182,7 @@ async def test_collect_github_trends_filters_old_repositories():
 
 
 @pytest.mark.asyncio
-async def test_collect_daily_connector_trends_skips_missing_user():
+async def test_collect_daily_github_trends_skips_missing_user():
     session = AsyncMock()
     missing_user_rows = MagicMock()
     missing_user_rows.scalar_one_or_none.return_value = None
@@ -189,7 +194,127 @@ async def test_collect_daily_connector_trends_skips_missing_user():
 
     with patch("pkg.services.foundation.connector_trends.async_session", return_value=session_cm), \
          patch("pkg.services.foundation.connector_trends.collect_github_trends_for_user", new_callable=AsyncMock) as mock_collect:
-        stats = await collect_daily_connector_trends(user_ids=["missing-user"])
+        stats = await collect_daily_github_trends(user_ids=["missing-user"])
 
     assert stats == {"users": 0, "github": 0, "failed": 1, "github_failed": 0, "skipped_missing_user": 1}
     mock_collect.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_collect_daily_connector_trends_delegates_to_github_only_entry_point():
+    expected = {"users": 1, "github": 2, "failed": 0, "github_failed": 0, "skipped_missing_user": 0}
+
+    with patch(
+        "pkg.services.foundation.connector_trends.collect_daily_github_trends",
+        new_callable=AsyncMock,
+        return_value=expected,
+    ) as mock_collect:
+        stats = await collect_daily_connector_trends(user_ids=["user-1"], trend_date="2026-09-15")
+
+    assert stats == expected
+    mock_collect.assert_awaited_once_with(user_ids=["user-1"], trend_date="2026-09-15")
+
+
+def test_should_run_github_trend_profile_respects_schedule_and_last_run():
+    now = datetime(2026, 9, 15, 8, tzinfo=timezone.utc)
+    profile = GitHubTrendProfile(
+        user_id="user-1",
+        name="Agents",
+        query="agent framework",
+        schedule="manual",
+        is_enabled=True,
+        candidate_count=25,
+        top_k=5,
+    )
+
+    assert not should_run_github_trend_profile(profile, now=now)
+    profile.schedule = "daily"
+    assert should_run_github_trend_profile(profile, now=now)
+    profile.last_run_at = now - timedelta(hours=23)
+    assert not should_run_github_trend_profile(profile, now=now)
+    profile.last_run_at = now - timedelta(days=1)
+    assert should_run_github_trend_profile(profile, now=now)
+    profile.schedule = "weekly"
+    assert not should_run_github_trend_profile(profile, now=now)
+    profile.last_run_at = now - timedelta(days=7)
+    assert should_run_github_trend_profile(profile, now=now)
+    profile.is_enabled = False
+    assert not should_run_github_trend_profile(profile, now=now)
+
+
+@pytest.mark.asyncio
+async def test_collect_github_trends_for_profile_uses_profile_scope():
+    session = AsyncMock()
+    profile = GitHubTrendProfile(
+        user_id="user-1",
+        name="Python Agents",
+        query="agent framework",
+        language="Python",
+        schedule="weekly",
+        is_enabled=True,
+        candidate_count=40,
+        top_k=8,
+    )
+
+    with patch(
+        "pkg.services.foundation.connector_trends.collect_github_trends_for_user",
+        new_callable=AsyncMock,
+        return_value=[],
+    ) as mock_collect:
+        items = await collect_github_trends_for_profile(session, profile=profile, trend_date="2026-09-15")
+
+    assert items == []
+    assert profile.last_run_at is not None
+    mock_collect.assert_awaited_once_with(
+        session,
+        user_id="user-1",
+        trend_date="2026-09-15",
+        query="agent framework",
+        language="Python",
+        candidate_count=40,
+        top_k=8,
+    )
+
+
+@pytest.mark.asyncio
+async def test_scheduled_github_profiles_isolate_profile_failures():
+    session = AsyncMock()
+    first = GitHubTrendProfile(
+        id=1,
+        user_id="user-1",
+        name="Agents",
+        query="agents",
+        schedule="daily",
+        is_enabled=True,
+        candidate_count=25,
+        top_k=5,
+    )
+    second = GitHubTrendProfile(
+        id=2,
+        user_id="user-2",
+        name="Knowledge Graphs",
+        query="knowledge graph",
+        schedule="daily",
+        is_enabled=True,
+        candidate_count=25,
+        top_k=5,
+    )
+    rows = MagicMock()
+    rows.scalars.return_value = [first, second]
+    session.execute.return_value = rows
+    session.get.side_effect = [first, second]
+    session_cm = MagicMock()
+    session_cm.__aenter__ = AsyncMock(return_value=session)
+    session_cm.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("pkg.services.foundation.connector_trends.async_session", return_value=session_cm), patch(
+        "pkg.services.foundation.connector_trends.collect_github_trends_for_profile",
+        new_callable=AsyncMock,
+        side_effect=[[MagicMock(), MagicMock()], RuntimeError("provider failed")],
+    ):
+        stats = await run_scheduled_github_trend_profiles()
+
+    assert stats == {"profiles": 2, "eligible": 2, "runs": 1, "github": 2, "failed": 1}
+    assert session.get.await_count == 2
+    assert session.commit.await_count == 1
+    assert session.rollback.await_count == 1

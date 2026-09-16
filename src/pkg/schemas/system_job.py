@@ -33,6 +33,7 @@ class SchedulerTaskStatus(BaseModel):
     enabled: bool
     schedule_type: str
     last_run_at: datetime | None = None
+    last_run_status: str | None = None
     next_run_at: datetime | None = None
     due_now: bool
 

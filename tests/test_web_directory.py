@@ -113,6 +113,10 @@ async def test_import_web_directory_articles_persists_children():
     assert body.title == "Introducing dynamic workflows in Claude Code"
     assert body.metadata["feed_source_id"] == "src-claude-blog"
     assert body.metadata["content_source"] == "web_directory"
+    assert body.metadata["web_role"] == "article"
+    assert body.metadata["origin"] == "web_directory"
+    assert body.metadata["collection_source_id"] == "src-claude-blog"
+    assert body.metadata["review_status"] == "imported_reviewable"
 
 
 @pytest.mark.asyncio

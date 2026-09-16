@@ -81,6 +81,43 @@ export interface GitHubImportRequest {
   fetch_readme?: boolean;
 }
 
+export type GitHubTrendSchedule = "manual" | "daily" | "weekly";
+
+export interface GitHubTrendProfile {
+  id: number;
+  user_id: string;
+  name: string;
+  query: string;
+  language?: string | null;
+  schedule: GitHubTrendSchedule;
+  is_enabled: boolean;
+  candidate_count: number;
+  top_k: number;
+  last_run_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GitHubTrendProfileInput {
+  name: string;
+  query: string;
+  language?: string | null;
+  schedule: GitHubTrendSchedule;
+  is_enabled: boolean;
+  candidate_count: number;
+  top_k: number;
+}
+
+export interface GitHubTrendProfileList {
+  items: GitHubTrendProfile[];
+  total: number;
+}
+
+export interface GitHubTrendProfileRunResponse {
+  profile: GitHubTrendProfile;
+  collected: number;
+}
+
 export interface NewsSearchRequest {
   query: string;
   language?: string | null;
@@ -138,6 +175,16 @@ export const connectorsApi = {
     request<GitHubRepoSearchResponse>("/connectors/github/search", { method: "POST", body: JSON.stringify(body) }),
   importGitHub: (body: GitHubImportRequest) =>
     request<ConnectorImportResponse>("/connectors/github/import", { method: "POST", body: JSON.stringify(body) }),
+  listGitHubTrendProfiles: () =>
+    request<GitHubTrendProfileList>("/connectors/github/trend-profiles"),
+  createGitHubTrendProfile: (body: GitHubTrendProfileInput) =>
+    request<GitHubTrendProfile>("/connectors/github/trend-profiles", { method: "POST", body: JSON.stringify(body) }),
+  updateGitHubTrendProfile: (profileId: number, body: Partial<GitHubTrendProfileInput>) =>
+    request<GitHubTrendProfile>(`/connectors/github/trend-profiles/${profileId}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteGitHubTrendProfile: (profileId: number) =>
+    request<void>(`/connectors/github/trend-profiles/${profileId}`, { method: "DELETE" }),
+  runGitHubTrendProfile: (profileId: number) =>
+    request<GitHubTrendProfileRunResponse>(`/connectors/github/trend-profiles/${profileId}/run`, { method: "POST" }),
   searchNews: (body: NewsSearchRequest) =>
     request<NewsSearchResponse>("/connectors/news/search", { method: "POST", body: JSON.stringify(body) }),
   importNews: (body: NewsImportRequest) =>

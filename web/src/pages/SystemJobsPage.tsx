@@ -41,6 +41,7 @@ function nextStep(job: SystemJob) {
   if (reason === "no_due_web_directories") return "No web directory sources were due for auto-discovery.";
   if (reason === "no_due_web_sources") return "No web sources were due for auto-refresh.";
   if (reason === "no_web_content_changes") return "Web sources were checked, but content did not change.";
+  if (reason === "partial_failure") return "Some targets completed, while failed targets were isolated. Inspect the error count and recent job logs.";
   return "No action needed. This job is available for audit history.";
 }
 
@@ -134,6 +135,21 @@ function JobCard({ job }: { job: SystemJob }) {
 }
 
 function SchedulerTaskCard({ task }: { task: SchedulerTaskStatus }) {
+  const badgeStatus = !task.enabled
+    ? "archived"
+    : task.due_now
+      ? "running"
+      : task.last_run_status === "failed"
+        ? "failed"
+        : "completed";
+  const badgeLabel = !task.enabled
+    ? "Disabled"
+    : task.due_now
+      ? "Due now"
+      : task.last_run_status === "failed"
+        ? "Retry scheduled"
+        : "Enabled";
+
   return (
     <Card>
       <CardHeader>
@@ -142,14 +158,17 @@ function SchedulerTaskCard({ task }: { task: SchedulerTaskStatus }) {
             <CardTitle className="flex flex-wrap items-center gap-2 text-base">
               <Clock className="h-4 w-4" />
               <span className="truncate">{task.title}</span>
-              <StatusBadge status={task.enabled ? (task.due_now ? "running" : "completed") : "archived"} label={task.enabled ? (task.due_now ? "Due now" : "Enabled") : "Disabled"} />
+              <StatusBadge status={badgeStatus} label={badgeLabel} />
             </CardTitle>
             <p className="mt-1 text-xs text-muted-foreground">
               {task.job_type} · {task.schedule_type}
             </p>
           </div>
           <div className="flex flex-col gap-1 text-xs text-muted-foreground md:text-right">
-            <span>Last run {formatDateTime(task.last_run_at)}</span>
+            <span>
+              Last run {formatDateTime(task.last_run_at)}
+              {task.last_run_status ? ` · ${task.last_run_status}` : ""}
+            </span>
             <span>Next run {formatDateTime(task.next_run_at)}</span>
           </div>
         </div>

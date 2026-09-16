@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pkg.models.system_job import SystemJob
-from pkg.services.cross_cutting.system_jobs import cleanup_system_jobs, get_last_terminal_job_run, list_system_jobs, record_system_event, sanitize_system_job
+from pkg.services.cross_cutting.system_jobs import cleanup_system_jobs, get_last_terminal_job_run, get_last_terminal_job_runs, list_system_jobs, record_system_event, sanitize_system_job
 
 
 class _ScalarResult:
@@ -198,3 +198,26 @@ async def test_get_last_terminal_job_run_returns_latest_end_time():
     assert "system_jobs.job_type =" in sql
     assert "system_jobs.status IN" in sql
     assert "ORDER BY system_jobs.ended_at DESC" in sql
+
+
+@pytest.mark.asyncio
+async def test_get_last_terminal_job_runs_returns_latest_state_per_job_type():
+    session = AsyncMock()
+    rss_ended_at = datetime(2026, 9, 15, 1, 0)
+    newsletter_ended_at = datetime(2026, 9, 15, 2, 0)
+    rows = [
+        MagicMock(job_type="rss_fetch", status="completed", ended_at=rss_ended_at),
+        MagicMock(job_type="newsletter_automation", status="failed", ended_at=newsletter_ended_at),
+    ]
+    session.execute.return_value = rows
+
+    with patch("pkg.services.cross_cutting.system_jobs.async_session") as session_factory:
+        session_factory.return_value.__aenter__.return_value = session
+        result = await get_last_terminal_job_runs(["rss_fetch", "newsletter_automation"])
+
+    assert result["rss_fetch"].status == "completed"
+    assert result["rss_fetch"].ended_at == rss_ended_at
+    assert result["newsletter_automation"].status == "failed"
+    assert result["newsletter_automation"].ended_at == newsletter_ended_at
+    sql = str(session.execute.await_args.args[0])
+    assert "row_number() OVER" in sql

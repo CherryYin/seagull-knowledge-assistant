@@ -7,6 +7,8 @@ from pkg.models.discovery import DiscoveryItem
 from pkg.models.foundation.source import Source
 from pkg.schemas.connector import ArxivPaper, GitHubRepo
 from pkg.services.foundation.connectors import import_arxiv_paper, import_github_repo
+from pkg.services.foundation.source_review import mark_explicitly_saved, merge_import_metadata
+from pkg.services.foundation.web_source_roles import WEB_ROLE_PAGE, apply_web_source_role
 
 
 def utc_now_naive() -> datetime:
@@ -156,7 +158,8 @@ async def import_web_discovery_item(session: AsyncSession, item: DiscoveryItem, 
         raise ValueError("Discovery item does not contain a valid http(s) URL to import")
     source_id = web_source_id(item.user_id, url)
     dedupe_key = f"web:{url.lower()}"
-    metadata = {
+    saved_at = utc_now_naive().isoformat()
+    metadata = mark_explicitly_saved(apply_web_source_role({
         "connector": "web_discovery",
         "dedupe_key": dedupe_key,
         "discovery_item_id": item.id,
@@ -165,9 +168,8 @@ async def import_web_discovery_item(session: AsyncSession, item: DiscoveryItem, 
         "domain": payload.get("domain") or domain_from_url(url),
         "published_at": payload.get("published_at"),
         "retention": "permanent",
-        "kept_at": utc_now_naive().isoformat(),
-        "review_status": "imported_reviewable",
-    }
+        "kept_at": saved_at,
+    }, role=WEB_ROLE_PAGE, origin="web_search"), saved_at=saved_at)
     raw_content = "\n".join(part for part in [
         item.title,
         payload.get("summary"),
@@ -182,7 +184,7 @@ async def import_web_discovery_item(session: AsyncSession, item: DiscoveryItem, 
         existing.source_type = "web"
         existing.url = url
         existing.raw_content = raw_content
-        existing.metadata_ = {**(existing.metadata_ or {}), **metadata}
+        existing.metadata_ = merge_import_metadata(existing.metadata_, metadata)
         return existing, False, dedupe_key
 
     source = Source(

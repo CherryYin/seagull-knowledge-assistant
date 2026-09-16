@@ -12,6 +12,7 @@ from pkg.db import async_session
 from pkg.models.foundation.source import Source
 from pkg.schemas.source import SourceCreate
 from pkg.services.foundation.web_extractor import WEB_FETCH_HEADERS, fetch_web_page
+from pkg.services.foundation.web_source_roles import WEB_ROLE_ARTICLE, apply_web_source_role
 
 
 class _LinkParser(HTMLParser):
@@ -229,25 +230,26 @@ async def import_web_directory_articles(
 
             existing.title = page.title or existing.title
             existing.url = page.final_url
-            existing.metadata_ = {
+            existing.metadata_ = apply_web_source_role({
                 **existing_meta,
                 **page.metadata,
                 "feed_source_id": directory_source.id,
                 "article_url": page.final_url,
                 "content_source": "web_directory",
                 "web_directory_url": directory_source.url,
-            }
+            }, role=WEB_ROLE_ARTICLE, origin="web_directory", collection_source_id=directory_source.id)
             await _update_source_content(existing, page.text, session)
             updated += 1
             continue
 
-        metadata = {
+        metadata = apply_web_source_role({
             **page.metadata,
             "feed_source_id": directory_source.id,
             "article_url": page.final_url,
             "content_source": "web_directory",
             "web_directory_url": directory_source.url,
-        }
+            "review_status": "imported_reviewable",
+        }, role=WEB_ROLE_ARTICLE, origin="web_directory", collection_source_id=directory_source.id)
         body = SourceCreate(
             title=page.title or link,
             source_type="web",

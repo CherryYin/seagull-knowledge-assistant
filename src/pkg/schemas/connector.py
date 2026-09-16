@@ -86,6 +86,50 @@ class GitHubImportRequest(BaseModel):
     fetch_readme: bool = True
 
 
+class GitHubTrendProfileBase(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    query: str = Field(min_length=1, max_length=1000)
+    language: str | None = Field(default=None, max_length=80)
+    schedule: str = Field(default="manual", pattern=r"^(manual|daily|weekly)$")
+    is_enabled: bool = True
+    candidate_count: int = Field(default=25, ge=1, le=100)
+    top_k: int = Field(default=5, ge=1, le=20)
+
+
+class GitHubTrendProfileCreate(GitHubTrendProfileBase):
+    pass
+
+
+class GitHubTrendProfileUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    query: str | None = Field(default=None, min_length=1, max_length=1000)
+    language: str | None = Field(default=None, max_length=80)
+    schedule: str | None = Field(default=None, pattern=r"^(manual|daily|weekly)$")
+    is_enabled: bool | None = None
+    candidate_count: int | None = Field(default=None, ge=1, le=100)
+    top_k: int | None = Field(default=None, ge=1, le=20)
+
+
+class GitHubTrendProfileRead(GitHubTrendProfileBase):
+    model_config = {"from_attributes": True}
+
+    id: int
+    user_id: str
+    last_run_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class GitHubTrendProfileList(BaseModel):
+    items: list[GitHubTrendProfileRead]
+    total: int
+
+
+class GitHubTrendProfileRunResponse(BaseModel):
+    profile: GitHubTrendProfileRead
+    collected: int
+
+
 class NewsSearchRequest(BaseModel):
     query: str
     language: str | None = None

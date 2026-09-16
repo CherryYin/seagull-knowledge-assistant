@@ -59,7 +59,7 @@ export function DiscoverPage() {
     },
   });
   const generateMutation = useMutation({
-    mutationFn: () => discoveryApi.generate({ providers: ["github", "news", "rss", "web"], limit: 100 }),
+    mutationFn: () => discoveryApi.refreshRecommendations({ providers: ["arxiv", "github", "news"], limit: 100 }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["discovery-items", "recommended"] }),
   });
   const feedbackMutation = useMutation({
@@ -131,7 +131,7 @@ export function DiscoverPage() {
               <div>
                 <h1 className="text-3xl font-semibold tracking-tight">Discover</h1>
 				<p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-					A personalized candidate pool, not long-term knowledge yet. Keep, save, or dismiss recommendations to train future ranking.
+					Unsaved external candidates from connector searches and trends. Imported Sources are reviewed in Sources instead of appearing here again.
 				</p>
               </div>
             </div>

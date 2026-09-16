@@ -19,11 +19,15 @@ The core product goal is a durable personal knowledge graph with deterministic r
 - Persist a per-message Agent Run contract in Chat sessions so Workflow/Owner context, terminal status, allowed save actions, and saved receipts survive Workflow changes, reloads, and History review.
 - Present Agent runs, Proposal actions, unsaved state, and recoverable errors through shared interaction components; user-facing copy explains impact and recovery while tool names, revisions, and raw contracts stay in diagnostic details.
 - Import or discover external knowledge from RSS, web pages, GitHub repositories, arXiv papers, and news providers.
+- Run recurring PKG automation through a single background Worker with PostgreSQL advisory locks, bounded task execution, short failed-run retries, startup-relative initial delays, and one batched job-history read per polling cycle.
+- Treat `docs/plans/scheduled-pipeline/scheduling-policy.md` and `scheduler_policy.py` as the authority for which capabilities remain independent calendar jobs, due-item dispatchers, upstream-triggered derivations, or transitional automation.
 - Create `web` sources from a direct URL by fetching and extracting readable page text when content is left empty.
 - Discover article links from a `web` directory source such as a blog index and import each article as a child web source.
+- Classify Web Sources as saved pages, RSS collections, directory collections, or collected articles through backward-compatible metadata; explicit user saves are terminal review decisions, while automatically collected articles enter imported review exactly once and content refreshes preserve prior decisions.
 - Manage review suggestions, discovery items, wiki pages, summaries, and temporary/permanent knowledge artifacts while delegating interactive Wiki/Asset drafting to Harness workflows.
 - Promote Wiki Drafts into the internal Stable knowledge layer through a readiness preview and explicit revision-safe confirmation; formal lifecycle fields are authoritative while legacy lifecycle tags remain synchronized for compatibility.
 - Preserve terminal discovery decisions (`saved`, `kept`, and `dismissed`) as durable deduplication history so reviewed connector items are not recommended again.
+- Keep Discovery focused on unsaved external Connector Search/Trend candidates; once RSS, Web, News, or other collected content exists as a Source, Source Review owns the decision and Discovery must not ask again. Use `/discovery/refresh` as the canonical refresh endpoint while retaining `/discovery/generate` only for compatibility.
 - Create Assets through an Intent → Evidence → Claims → Draft workflow: selected records begin as reviewable Evidence candidates, and initial drafting stays locked until the current Evidence and Claim gates are complete.
 - Preserve Asset evidence continuity: `Need More Evidence` creates a scoped request instead of a fake Source reference, resumes the original Evidence Agent session when available, and keeps Supports/Contradicts/Context/Unverified explicit. Independent questions may fork a new Asset with copied references but a fresh Workspace.
 - Preserve unsaved Asset Editor changes with a deterministic saved/editor signature, tab-scoped recovery draft, refresh and navigation warnings, and save-time cleanup; query refreshes must not overwrite a dirty editor.
@@ -68,7 +72,7 @@ The core product goal is a durable personal knowledge graph with deterministic r
 - `src/pkg/services/foundation/retriever.py`: Source/Chunk/Note/Wiki/Asset retrieval; it does not query a Memory Tree.
 - `src/pkg/services/foundation/sync_pipeline.py`, `src/pkg/services/foundation/document_extractor.py`: source ingestion and document processing.
 - `src/pkg/services/foundation/connectors.py`: GitHub, arXiv, and news connector search/import logic.
-- `src/pkg/services/foundation/connector_trends.py`: daily GitHub/arXiv trend collection.
+- `src/pkg/services/foundation/connector_trends.py`: scheduled GitHub-only trend collection dispatches explicit enabled daily/weekly `GitHubTrendProfile` records; the old mixed entry point remains a compatibility wrapper, while scholarly collection belongs to Paper Discovery.
 - `src/pkg/services/foundation/rss_fetcher.py`, `src/pkg/services/foundation/rss_discovery.py`, `src/pkg/services/foundation/rss_summarizer.py`: RSS ingestion and summarization.
 - `src/pkg/services/foundation/discovery.py`, `src/pkg/services/foundation/review_suggestions.py`, `src/pkg/services/foundation/wiki_recompile.py`: discovery/review/wiki workflows.
 - `src/pkg/services/foundation/wiki_concept_discovery.py`: reusable knowledge concept/entity discovery for wiki mining recommendations, with rule-based recall and optional top-K LLM refinement.

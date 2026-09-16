@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from time import perf_counter
 from typing import AsyncIterator
@@ -9,6 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pkg.db import async_session
 from pkg.config import settings
 from pkg.models.system_job import SystemJob
+
+
+@dataclass(frozen=True, slots=True)
+class TerminalJobRun:
+    status: str
+    ended_at: datetime
 
 
 def _utc_now_naive() -> datetime:
@@ -177,3 +184,37 @@ async def get_last_terminal_job_run(job_type: str) -> datetime | None:
             .limit(1)
         )
         return row.scalar_one_or_none()
+
+
+async def get_last_terminal_job_runs(job_types: list[str]) -> dict[str, TerminalJobRun]:
+    if not job_types:
+        return {}
+
+    ranked = (
+        select(
+            SystemJob.job_type.label("job_type"),
+            SystemJob.status.label("status"),
+            SystemJob.ended_at.label("ended_at"),
+            func.row_number()
+            .over(
+                partition_by=SystemJob.job_type,
+                order_by=SystemJob.ended_at.desc(),
+            )
+            .label("run_rank"),
+        )
+        .where(
+            SystemJob.job_type.in_(job_types),
+            SystemJob.status.in_(("completed", "failed")),
+            SystemJob.ended_at.is_not(None),
+        )
+        .subquery()
+    )
+
+    async with async_session() as session:
+        rows = await session.execute(
+            select(ranked.c.job_type, ranked.c.status, ranked.c.ended_at).where(ranked.c.run_rank == 1)
+        )
+        return {
+            row.job_type: TerminalJobRun(status=row.status, ended_at=row.ended_at)
+            for row in rows
+        }

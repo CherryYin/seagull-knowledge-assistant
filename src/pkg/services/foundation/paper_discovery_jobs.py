@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
@@ -5,6 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.models.paper_discovery import PaperDiscoveryProfile
 from pkg.services.foundation.paper_discovery import execute_profile_run
+
+
+logger = logging.getLogger(__name__)
 
 
 def _utc_now() -> datetime:
@@ -34,20 +38,35 @@ async def run_scheduled_paper_discovery_profiles(session: AsyncSession) -> dict[
         select(PaperDiscoveryProfile).where(PaperDiscoveryProfile.is_enabled.is_(True))
     )
     profiles = list(rows.scalars())
-    stats = {"profiles": len(profiles), "eligible": 0, "runs": 0, "created": 0, "updated": 0}
-    for profile in profiles:
-        if not should_run_profile(profile):
+    due_profiles = [
+        (profile.user_id, profile.id)
+        for profile in profiles
+        if should_run_profile(profile)
+    ]
+    stats = {
+        "profiles": len(profiles),
+        "eligible": len(due_profiles),
+        "runs": 0,
+        "created": 0,
+        "updated": 0,
+        "errors": 0,
+    }
+    for user_id, profile_id in due_profiles:
+        try:
+            _run, _items, created, updated = await execute_profile_run(
+                session,
+                user_id=user_id,
+                profile_id=profile_id,
+                mode="query",
+                commit=False,
+            )
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            stats["errors"] += 1
+            logger.exception("Scheduled paper discovery failed for profile %s", profile_id)
             continue
-        stats["eligible"] += 1
-        _run, _items, created, updated = await execute_profile_run(
-            session,
-            user_id=profile.user_id,
-            profile_id=profile.id,
-            mode="query",
-            commit=False,
-        )
         stats["runs"] += 1
         stats["created"] += created
         stats["updated"] += updated
-    await session.commit()
     return stats

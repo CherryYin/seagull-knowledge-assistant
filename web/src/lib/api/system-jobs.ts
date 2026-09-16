@@ -27,6 +27,7 @@ export interface SchedulerTaskStatus {
   enabled: boolean;
   schedule_type: string;
   last_run_at: string | null;
+  last_run_status: "completed" | "failed" | null;
   next_run_at: string | null;
   due_now: boolean;
 }

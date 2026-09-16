@@ -1,6 +1,16 @@
-from unittest.mock import AsyncMock
-
 import pytest
+
+
+def test_discovery_refresh_rejects_source_owned_providers():
+    from pydantic import ValidationError
+
+    from pkg.schemas.discovery import DiscoveryGenerateRequest
+
+    with pytest.raises(ValidationError):
+        DiscoveryGenerateRequest(providers=["rss"])
+
+    with pytest.raises(ValidationError):
+        DiscoveryGenerateRequest(providers=["web"])
 
 
 @pytest.mark.asyncio

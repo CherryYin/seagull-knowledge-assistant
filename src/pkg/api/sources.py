@@ -35,8 +35,16 @@ from pkg.services.cross_cutting.storage import get_storage_service
 from pkg.services.foundation.chunking import chunk_text
 from pkg.services.foundation.discovery_review import sync_discovery_review_for_source
 from pkg.services.foundation.media_description import generate_media_description
+from pkg.services.foundation.source_review import mark_explicitly_saved
 from pkg.services.foundation.source_retention import apply_source_retention
 from pkg.services.foundation.web_extractor import WebPageFetchError, fetch_web_page
+from pkg.services.foundation.web_source_roles import (
+    WEB_ROLE_COLLECTION_DIRECTORY,
+    WEB_ROLE_COLLECTION_FEED,
+    WEB_ROLE_PAGE,
+    apply_web_source_role,
+    infer_web_source_role,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -171,8 +179,8 @@ async def maybe_enable_rss_for_source(source: Source, *, auto_fetch: bool, sessi
     meta["entries_available"] = discovered["entries_available"]
     meta["feed_auto_detected"] = True
     meta["rss_auto_discovery"] = "found"
-    source.url = discovered["feed_url"]
-    source.metadata_ = meta
+    meta.setdefault("original_url", source.url)
+    source.metadata_ = apply_web_source_role(meta, role=WEB_ROLE_COLLECTION_FEED)
 
     if auto_fetch:
         from pkg.services.foundation.rss_fetcher import fetch_single_feed
@@ -355,7 +363,35 @@ async def create_source(
             detail="This content looks like user-authored or agent-authored writing. Save it as a Note or Writing document instead of a Source.",
         )
 
-    if body.source_type == "web" and body.url and not (body.raw_content or "").strip():
+    requested_web_role = infer_web_source_role(body.source_type, body.metadata)
+    if body.source_type == "web":
+        if requested_web_role in {WEB_ROLE_COLLECTION_FEED, WEB_ROLE_COLLECTION_DIRECTORY} and not body.url:
+            raise HTTPException(status_code=422, detail="Web collections require a URL")
+        saved_at = datetime.now(timezone.utc).isoformat()
+        body.metadata = mark_explicitly_saved(
+            apply_web_source_role(body.metadata, role=requested_web_role or WEB_ROLE_PAGE, origin="manual_url"),
+            saved_at=saved_at,
+        )
+
+    if body.source_type == "web" and requested_web_role == WEB_ROLE_COLLECTION_FEED:
+        discovered = await discover_rss_feed(body.url)
+        if not discovered:
+            raise HTTPException(status_code=422, detail="Cannot find a valid RSS feed for this URL")
+        metadata = dict(body.metadata or {})
+        metadata.update({
+            "rss_enabled": "true",
+            "feed_title": discovered["feed_title"],
+            "feed_url": discovered["feed_url"],
+            "entries_available": discovered["entries_available"],
+            "feed_auto_detected": False,
+            "original_url": body.url,
+        })
+        body.metadata = apply_web_source_role(metadata, role=WEB_ROLE_COLLECTION_FEED, origin="manual_url")
+        if not (body.raw_content or "").strip():
+            body.raw_content = f"RSS Feed: {discovered['feed_title'] or body.title}\nURL: {body.url}\nFeed URL: {discovered['feed_url']}"
+        if discovered["feed_title"] and _is_placeholder_or_url_title(body.title):
+            body.title = discovered["feed_title"]
+    elif body.source_type == "web" and body.url and not (body.raw_content or "").strip():
         try:
             page = await fetch_web_page(body.url)
         except WebPageFetchError as exc:
@@ -370,13 +406,13 @@ async def create_source(
         body.metadata = metadata
 
     source = await persist_source(session=session, body=body, user_id=user.id)
-    if is_url_backed_source(source):
+    if requested_web_role == WEB_ROLE_COLLECTION_FEED:
         try:
-            await maybe_enable_rss_for_source(source, auto_fetch=True, session=session)
-            await session.commit()
-            await session.refresh(source)
+            from pkg.services.foundation.rss_fetcher import fetch_single_feed
+
+            await fetch_single_feed(source, session)
         except Exception:
-            logger.info("RSS auto-discovery failed for source %s", source.id, exc_info=True)
+            logger.info("Initial RSS fetch failed for source %s", source.id, exc_info=True)
     return source
 
 
@@ -557,6 +593,7 @@ async def list_sources(
     source_type: str | None = None,
     category_id: int | None = None,
     kind: str | None = None,
+    review_status: str | None = None,
     feed_view: str = Query(default="parents", pattern=r"^(parents|all|articles|feeds|snapshots)$"),
     limit: int = Query(default=20, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
@@ -577,6 +614,10 @@ async def list_sources(
         kind_filter = text("metadata->>'kind' = :kind")
         stmt = stmt.where(kind_filter).params(kind=kind)
         count_stmt = count_stmt.where(kind_filter).params(kind=kind)
+    if review_status:
+        review_filter = text("metadata->>'review_status' = :review_status")
+        stmt = stmt.where(review_filter).params(review_status=review_status)
+        count_stmt = count_stmt.where(review_filter).params(review_status=review_status)
 
     if feed_view == "parents":
         no_parent = text("NOT (metadata ? 'feed_source_id')")
@@ -960,9 +1001,8 @@ async def enable_rss(
     meta["feed_url"] = discovered["feed_url"]
     meta["entries_available"] = discovered["entries_available"]
     meta["feed_auto_detected"] = False
-    if discovered["feed_url"] != source.url:
-        source.url = discovered["feed_url"]
-    source.metadata_ = meta
+    meta.setdefault("original_url", source.url)
+    source.metadata_ = apply_web_source_role(meta, role=WEB_ROLE_COLLECTION_FEED)
     await session.commit()
     await session.refresh(source)
     return source
@@ -981,7 +1021,7 @@ async def disable_rss(
 
     meta = dict(source.metadata_ or {})
     meta.pop("rss_enabled", None)
-    source.metadata_ = meta
+    source.metadata_ = apply_web_source_role(meta, role=WEB_ROLE_PAGE)
     await session.commit()
     await session.refresh(source)
     return source
@@ -1032,7 +1072,7 @@ async def discover_web_articles_now(
     meta["web_directory_last_updated"] = result.updated
     meta["web_directory_last_skipped"] = result.skipped
     meta["web_directory_last_fetch_at"] = datetime.now(timezone.utc).isoformat()
-    source.metadata_ = meta
+    source.metadata_ = apply_web_source_role(meta, role=WEB_ROLE_COLLECTION_DIRECTORY)
     await session.commit()
     await session.refresh(source)
     return {"discovered": result.discovered, "imported": result.imported, "updated": result.updated, "skipped": result.skipped}

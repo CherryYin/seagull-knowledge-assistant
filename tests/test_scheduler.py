@@ -8,6 +8,7 @@ import pytest
 from pkg.services.cross_cutting.scheduler import (
     ScheduledTask,
     TaskRunResult,
+    acquire_task_lock,
     get_scheduler_status,
     get_scheduled_tasks,
     is_task_due,
@@ -21,10 +22,16 @@ from pkg.services.cross_cutting.scheduler import (
     run_scheduled_task,
     run_user_profiler_step,
 )
+from pkg.services.cross_cutting.system_jobs import TerminalJobRun
 
 
 async def _noop():
     return None
+
+
+@asynccontextmanager
+async def _acquired_lock(task_name: str):
+    yield True
 
 
 def test_interval_task_not_due_before_interval_passes():
@@ -73,6 +80,58 @@ def test_interval_task_respects_initial_delay_on_first_run():
     now = datetime(2026, 6, 13, 10, 0, tzinfo=timezone.utc)
 
     assert is_task_due(task, now, None) is False
+
+
+def test_interval_task_becomes_due_after_initial_delay():
+    task = ScheduledTask(
+        name="rss_fetch",
+        job_type="rss_fetch",
+        title="RSS fetch",
+        handler=_noop,
+        schedule_type="interval",
+        interval_seconds=3600,
+        initial_delay_seconds=60,
+    )
+    started_at = datetime(2026, 6, 13, 10, 0, tzinfo=timezone.utc)
+
+    assert is_task_due(
+        task,
+        datetime(2026, 6, 13, 10, 0, 59, tzinfo=timezone.utc),
+        None,
+        scheduler_started_at=started_at,
+    ) is False
+    assert is_task_due(
+        task,
+        datetime(2026, 6, 13, 10, 1, tzinfo=timezone.utc),
+        None,
+        scheduler_started_at=started_at,
+    ) is True
+
+
+def test_failed_task_retries_after_short_delay():
+    task = ScheduledTask(
+        name="rss_fetch",
+        job_type="rss_fetch",
+        title="RSS fetch",
+        handler=_noop,
+        schedule_type="interval",
+        interval_seconds=86400,
+        retry_delay_seconds=300,
+    )
+    failed_at = datetime(2026, 6, 13, 10, 0, tzinfo=timezone.utc)
+
+    assert is_task_due(
+        task,
+        datetime(2026, 6, 13, 10, 4, 59, tzinfo=timezone.utc),
+        failed_at,
+        last_status="failed",
+    ) is False
+    assert is_task_due(
+        task,
+        datetime(2026, 6, 13, 10, 5, tzinfo=timezone.utc),
+        failed_at,
+        last_status="failed",
+    ) is True
 
 
 def test_daily_task_runs_once_after_scheduled_time():
@@ -216,7 +275,10 @@ async def test_run_scheduled_task_records_completed_metadata():
     async def fake_record_system_job(**kwargs):
         yield job
 
-    with patch("pkg.services.cross_cutting.scheduler.record_system_job", fake_record_system_job):
+    with (
+        patch("pkg.services.cross_cutting.scheduler.acquire_task_lock", _acquired_lock),
+        patch("pkg.services.cross_cutting.scheduler.record_system_job", fake_record_system_job),
+    ):
         result = await run_scheduled_task(task)
 
     assert result == TaskRunResult(status="completed", metadata={"created": 3}, reason=None)
@@ -267,7 +329,10 @@ async def test_run_scheduled_task_returns_failed_on_timeout():
     async def fake_record_system_job(**kwargs):
         yield job
 
-    with patch("pkg.services.cross_cutting.scheduler.record_system_job", fake_record_system_job):
+    with (
+        patch("pkg.services.cross_cutting.scheduler.acquire_task_lock", _acquired_lock),
+        patch("pkg.services.cross_cutting.scheduler.record_system_job", fake_record_system_job),
+    ):
         result = await run_scheduled_task(task)
 
     assert result.status == "failed"
@@ -293,9 +358,36 @@ async def test_run_scheduled_task_propagates_cancellation():
     async def fake_record_system_job(**kwargs):
         yield MagicMock()
 
-    with patch("pkg.services.cross_cutting.scheduler.record_system_job", fake_record_system_job):
+    with (
+        patch("pkg.services.cross_cutting.scheduler.acquire_task_lock", _acquired_lock),
+        patch("pkg.services.cross_cutting.scheduler.record_system_job", fake_record_system_job),
+    ):
         with pytest.raises(asyncio.CancelledError):
             await run_scheduled_task(task)
+
+
+@pytest.mark.asyncio
+async def test_acquire_task_lock_uses_postgres_advisory_lock_and_releases_it():
+    acquire_result = MagicMock()
+    acquire_result.scalar.return_value = True
+    release_result = MagicMock()
+    connection = AsyncMock()
+    connection.execute.side_effect = [acquire_result, release_result]
+    connection_cm = MagicMock(
+        __aenter__=AsyncMock(return_value=connection),
+        __aexit__=AsyncMock(return_value=None),
+    )
+    engine = MagicMock()
+    engine.connect.return_value = connection_cm
+
+    with patch("pkg.services.cross_cutting.scheduler.engine", engine):
+        async with acquire_task_lock("rss_fetch") as acquired:
+            assert acquired is True
+
+    assert connection.execute.await_count == 2
+    assert connection.commit.await_count == 2
+    assert "pg_try_advisory_lock" in str(connection.execute.await_args_list[0].args[0])
+    assert "pg_advisory_unlock" in str(connection.execute.await_args_list[1].args[0])
 
 
 @pytest.mark.asyncio
@@ -448,6 +540,43 @@ async def test_run_discovery_generate_step_reports_candidate_counts():
 
 
 @pytest.mark.asyncio
+async def test_run_discovery_generate_step_continues_after_one_user_fails():
+    user_lookup_session = AsyncMock()
+    user_lookup_session.execute.return_value = _ScalarRows(["user-1", "user-2"])
+    failed_session = AsyncMock()
+    healthy_session = AsyncMock()
+    sessions = [
+        MagicMock(
+            __aenter__=AsyncMock(return_value=user_lookup_session),
+            __aexit__=AsyncMock(return_value=None),
+        ),
+        MagicMock(
+            __aenter__=AsyncMock(return_value=failed_session),
+            __aexit__=AsyncMock(return_value=None),
+        ),
+        MagicMock(
+            __aenter__=AsyncMock(return_value=healthy_session),
+            __aexit__=AsyncMock(return_value=None),
+        ),
+    ]
+
+    with (
+        patch("pkg.services.cross_cutting.scheduler.async_session", side_effect=sessions),
+        patch(
+            "pkg.services.foundation.discovery.generate_discovery_items",
+            AsyncMock(side_effect=[RuntimeError("provider failed"), (2, 0, 1)]),
+        ),
+    ):
+        result = await run_discovery_generate_step()
+
+    failed_session.rollback.assert_awaited_once()
+    assert result["processed_users"] == 1
+    assert result["errors"] == 1
+    assert result["candidate_count"] == 3
+    assert result["reason"] == "partial_failure"
+
+
+@pytest.mark.asyncio
 async def test_run_maintenance_step_delegates_to_cleanup_service():
     cleanup = AsyncMock(return_value={"expired_digest_notes_deleted": 4})
     with patch("pkg.services.cross_cutting.maintenance.run_maintenance_cleanup_step", cleanup):
@@ -587,6 +716,51 @@ async def test_run_news_auto_search_step_searches_en_and_zh_and_imports_articles
     assert result["reason"] is None
 
 
+@pytest.mark.asyncio
+async def test_run_news_auto_search_step_continues_after_one_language_fails():
+    class _Article:
+        pass
+
+    user_lookup_session = AsyncMock()
+    user_lookup_session.execute.return_value = _ScalarRows(["user-1"])
+    settings_session = AsyncMock()
+    worker_session = AsyncMock()
+    sessions = [
+        MagicMock(
+            __aenter__=AsyncMock(return_value=user_lookup_session),
+            __aexit__=AsyncMock(return_value=None),
+        ),
+        MagicMock(
+            __aenter__=AsyncMock(return_value=settings_session),
+            __aexit__=AsyncMock(return_value=None),
+        ),
+        MagicMock(
+            __aenter__=AsyncMock(return_value=worker_session),
+            __aexit__=AsyncMock(return_value=None),
+        ),
+    ]
+    search_mock = AsyncMock(side_effect=[RuntimeError("provider failed"), [_Article()]])
+
+    with (
+        patch("pkg.services.cross_cutting.scheduler.async_session", side_effect=sessions),
+        patch(
+            "pkg.services.cross_cutting.scheduler.get_user_setting_str",
+            AsyncMock(return_value="custom query"),
+        ),
+        patch("pkg.services.foundation.connectors.search_news_articles", search_mock),
+        patch(
+            "pkg.services.foundation.connectors.import_news_article",
+            AsyncMock(return_value=(object(), True, "created")),
+        ),
+    ):
+        result = await run_news_auto_search_step()
+
+    assert result["searched"] == 1
+    assert result["created"] == 1
+    assert result["errors"] == 1
+    assert result["reason"] == "partial_failure"
+
+
 def test_next_task_run_at_for_daily_task_after_run_today():
     task = ScheduledTask(
         name="daily_summarizer",
@@ -617,12 +791,21 @@ async def test_get_scheduler_status_reports_enabled_and_next_run():
 
     with (
         patch("pkg.services.cross_cutting.scheduler.get_scheduled_tasks", return_value=[task]),
-        patch("pkg.services.cross_cutting.scheduler.get_last_terminal_job_run", AsyncMock(return_value=datetime(2026, 6, 14, 2, 0, tzinfo=timezone.utc))),
+        patch(
+            "pkg.services.cross_cutting.scheduler.get_last_terminal_job_runs",
+            AsyncMock(return_value={
+                "daily_summarizer": TerminalJobRun(
+                    status="completed",
+                    ended_at=datetime(2026, 6, 14, 2, 0, tzinfo=timezone.utc),
+                ),
+            }),
+        ),
     ):
         items = await get_scheduler_status(now=now)
 
     assert len(items) == 1
     assert items[0]["name"] == "daily_summarizer"
     assert items[0]["enabled"] is True
+    assert items[0]["last_run_status"] == "completed"
     assert items[0]["due_now"] is True
     assert items[0]["next_run_at"] == datetime(2026, 6, 16, 2, 0, tzinfo=timezone.utc)

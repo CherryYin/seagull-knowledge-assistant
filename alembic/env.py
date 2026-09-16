@@ -21,6 +21,7 @@ from pkg.models.wiki import WikiEmbedding, WikiPage, WikiRecompileSuggestion  # 
 from pkg.models.calendar_reminder import CalendarReminder  # noqa: F401
 from pkg.models.connector_trend import ConnectorTrendItem  # noqa: F401
 from pkg.models.connector_cache import ConnectorSearchItem  # noqa: F401
+from pkg.models.github_trend_profile import GitHubTrendProfile  # noqa: F401
 from pkg.models.review import ReviewSuggestion  # noqa: F401
 from pkg.models.discovery import DiscoveryItem  # noqa: F401
 from pkg.models.system_job import SystemJob  # noqa: F401

@@ -425,6 +425,10 @@ async def fetch_single_feed(feed_source: Source, session: AsyncSession) -> int:
                 "published_at": published_at,
                 "guid": entry.get("id", ""),
                 "content_source": content_source,
+                "web_role": "article",
+                "origin": "rss",
+                "collection_source_id": feed_source.id,
+                "review_status": "imported_reviewable",
             }
 
             filter_reason = _rss_filter_reason(title, raw_content, article_meta)
@@ -469,14 +473,6 @@ async def fetch_single_feed(feed_source: Source, session: AsyncSession) -> int:
         meta["last_modified"] = resp.headers["last-modified"]
     feed_source.metadata_ = meta
     await session.commit()
-
-    if new_count:
-        try:
-            from pkg.services.foundation.discovery import generate_discovery_items
-
-            await generate_discovery_items(session, user_id=feed_source.user_id, providers=["rss"], limit=settings.RSS_MAX_ARTICLES_PER_FEED)
-        except Exception:
-            logger.error("RSS discovery item generation failed for feed=%s", feed_source.id, exc_info=True)
 
     elapsed = time.monotonic() - start
     logger.info(

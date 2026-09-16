@@ -50,6 +50,11 @@ export const discoveryApi = {
       method: "POST",
       body: JSON.stringify(body ?? {}),
     }),
+  refreshRecommendations: (body?: { providers?: DiscoveryProvider[]; limit?: number }) =>
+    request<{ created: number; updated: number; skipped: number }>("/discovery/refresh", {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    }),
   ingestWebResults: (body: { query: string; items: DiscoveryWebResult[] }) =>
     request<{ created: number; updated: number; skipped: number }>("/discovery/web-results", {
       method: "POST",

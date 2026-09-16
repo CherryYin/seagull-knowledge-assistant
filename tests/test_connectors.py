@@ -446,6 +446,32 @@ async def test_import_github_repo_updates_existing_source():
     mock_embeddings.assert_awaited_once_with(mock_session, existing)
 
 
+@pytest.mark.asyncio
+async def test_import_github_repo_preserves_existing_review_decision():
+    existing = MagicMock()
+    existing.user_id = "user-1"
+    existing.metadata_ = {
+        "review_status": "reviewed_kept",
+        "reviewed_at": "2026-09-01T10:00:00+00:00",
+        "kept_at": "2026-09-01T09:00:00+00:00",
+    }
+    mock_session = AsyncMock()
+    mock_session.get.return_value = existing
+    repo = GitHubRepo(
+        full_name="openai/codex",
+        owner="openai",
+        name="codex",
+        html_url="https://github.com/openai/codex",
+    )
+
+    with patch("pkg.services.foundation.connectors.upsert_source_embeddings", new_callable=AsyncMock):
+        await import_github_repo(mock_session, user_id="user-1", repo=repo)
+
+    assert existing.metadata_["review_status"] == "reviewed_kept"
+    assert existing.metadata_["reviewed_at"] == "2026-09-01T10:00:00+00:00"
+    assert existing.metadata_["kept_at"] == "2026-09-01T09:00:00+00:00"
+
+
 def test_canonicalize_news_url_removes_tracking_params():
     url = "https://Example.com/story?a=1&utm_source=x&fbclid=abc#section"
     assert _canonicalize_news_url(url) == "https://example.com/story?a=1"

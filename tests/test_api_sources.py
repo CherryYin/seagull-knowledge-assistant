@@ -313,6 +313,29 @@ class TestListSources:
         executed_sql = str(mock_session.execute.await_args_list[0].args[0])
         assert "metadata->>'kind' = :kind" in executed_sql
 
+    @pytest.mark.asyncio
+    async def test_list_sources_supports_review_status_filter(self, mock_session, fake_user):
+        from pkg.api.sources import list_sources
+
+        mock_count = MagicMock()
+        mock_count.scalar.return_value = 0
+        mock_rows = MagicMock()
+        mock_rows.scalars.return_value = []
+        mock_session.execute.side_effect = [mock_count, mock_rows]
+
+        result = await list_sources(
+            review_status="imported_reviewable",
+            feed_view="all",
+            offset=0,
+            limit=100,
+            user=fake_user,
+            session=mock_session,
+        )
+
+        assert result.total == 0
+        executed_sql = str(mock_session.execute.await_args_list[0].args[0])
+        assert "metadata->>'review_status' = :review_status" in executed_sql
+
 
 # ---------------------------------------------------------------------------
 # PATCH /sources/{source_id}
@@ -557,6 +580,9 @@ class TestCreateSource:
         fetch_mock.assert_awaited_once()
         assert source.raw_content == "Dynamic workflows article content"
         assert source.metadata_["web_fetch_status"] == "fetched"
+        assert source.metadata_["web_role"] == "page"
+        assert source.metadata_["origin"] == "manual_url"
+        assert source.metadata_["review_status"] == "reviewed_kept"
 
     @pytest.mark.asyncio
     async def test_web_url_title_is_replaced_with_page_title(self, mock_session, fake_user):
@@ -594,6 +620,97 @@ class TestCreateSource:
             )
 
         assert source.title == "Introducing dynamic workflows in Claude Code"
+
+    @pytest.mark.asyncio
+    async def test_web_rss_mode_validates_feed_and_preserves_page_url(self, mock_session, fake_user):
+        from pkg.api.sources import create_source
+        from pkg.schemas.source import SourceCreate
+
+        captured = {}
+
+        async def fake_persist_source(*, body, user_id, **_kwargs):
+            captured["body"] = body
+            source = _make_source("src-feed", user_id)
+            source.title = body.title
+            source.source_type = body.source_type
+            source.url = body.url
+            source.raw_content = body.raw_content
+            source.metadata_ = body.metadata
+            return source
+
+        discovered = {
+            "feed_title": "Example Feed",
+            "feed_url": "https://example.com/feed.xml",
+            "entries_available": 12,
+        }
+        with (
+            patch("pkg.api.sources.discover_rss_feed", new=AsyncMock(return_value=discovered)),
+            patch("pkg.api.sources.persist_source", new=AsyncMock(side_effect=fake_persist_source)),
+            patch("pkg.services.foundation.rss_fetcher.fetch_single_feed", new=AsyncMock(return_value=0)) as fetch_feed,
+            patch("pkg.api.sources.fetch_web_page", new=AsyncMock()) as fetch_page,
+        ):
+            source = await create_source(
+                SourceCreate(
+                    title="Example Blog",
+                    category_id=1,
+                    source_type="web",
+                    url="https://example.com/blog",
+                    metadata={"web_role": "collection_feed"},
+                ),
+                user=fake_user,
+                session=mock_session,
+            )
+
+        assert source.url == "https://example.com/blog"
+        assert captured["body"].metadata["web_role"] == "collection_feed"
+        assert captured["body"].metadata["feed_url"] == "https://example.com/feed.xml"
+        assert captured["body"].metadata["review_status"] == "reviewed_kept"
+        fetch_page.assert_not_awaited()
+        fetch_feed.assert_awaited_once_with(source, mock_session)
+
+    @pytest.mark.asyncio
+    async def test_web_directory_mode_stays_directory_after_page_extraction(self, mock_session, fake_user):
+        from pkg.api.sources import create_source
+        from pkg.schemas.source import SourceCreate
+        from pkg.services.foundation.web_extractor import WebPageFetchResult
+
+        fetched = WebPageFetchResult(
+            url="https://example.com/blog",
+            final_url="https://example.com/blog",
+            title="Example Blog",
+            text="Blog index",
+            metadata={"web_fetch_status": "fetched"},
+        )
+
+        async def fake_persist_source(*, body, user_id, **_kwargs):
+            source = _make_source("src-directory", user_id)
+            source.title = body.title
+            source.source_type = body.source_type
+            source.url = body.url
+            source.raw_content = body.raw_content
+            source.metadata_ = body.metadata
+            return source
+
+        with (
+            patch("pkg.api.sources.fetch_web_page", new=AsyncMock(return_value=fetched)),
+            patch("pkg.api.sources.persist_source", new=AsyncMock(side_effect=fake_persist_source)),
+            patch("pkg.api.sources.discover_rss_feed", new=AsyncMock()) as discover_feed,
+        ):
+            source = await create_source(
+                SourceCreate(
+                    title="Example Blog",
+                    category_id=1,
+                    source_type="web",
+                    url="https://example.com/blog",
+                    metadata={"web_role": "collection_directory"},
+                ),
+                user=fake_user,
+                session=mock_session,
+            )
+
+        assert source.metadata_["web_role"] == "collection_directory"
+        assert source.metadata_["review_status"] == "reviewed_kept"
+        discover_feed.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_web_url_fetch_failure_returns_422(self, mock_session, fake_user):

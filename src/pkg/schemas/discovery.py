@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -32,7 +33,9 @@ class DiscoveryItemList(BaseModel):
 
 
 class DiscoveryGenerateRequest(BaseModel):
-    providers: list[str] = Field(default_factory=lambda: ["github", "rss", "web"])
+    providers: list[Literal["arxiv", "github", "news"]] = Field(
+        default_factory=lambda: ["arxiv", "github", "news"]
+    )
     limit: int = Field(default=50, ge=1, le=200)
 
 

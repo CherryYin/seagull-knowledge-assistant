@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pkg.config import settings
 from pkg.db import async_session
 from pkg.models.connector_trend import ConnectorTrendItem
+from pkg.models.github_trend_profile import GitHubTrendProfile
 from pkg.models.user import User
 from pkg.schemas.connector import ArxivPaper, GitHubRepo
 from pkg.services.cross_cutting.user_settings import get_user_setting_str
@@ -290,7 +291,75 @@ async def _active_user_exists(session: AsyncSession, user_id: str) -> bool:
     return row.scalar_one_or_none() is not None
 
 
-async def collect_daily_connector_trends(*, user_ids: list[str] | None = None, trend_date: str | None = None) -> dict[str, int]:
+def should_run_github_trend_profile(profile: GitHubTrendProfile, *, now: datetime | None = None) -> bool:
+    now = now or datetime.now(timezone.utc)
+    if not profile.is_enabled or profile.schedule == "manual":
+        return False
+    if profile.last_run_at is None:
+        return True
+    last_run_at = profile.last_run_at
+    if last_run_at.tzinfo is None:
+        last_run_at = last_run_at.replace(tzinfo=timezone.utc)
+    if profile.schedule == "daily":
+        return now - last_run_at >= timedelta(days=1)
+    if profile.schedule == "weekly":
+        return now - last_run_at >= timedelta(days=7)
+    return False
+
+
+async def collect_github_trends_for_profile(
+    session: AsyncSession,
+    *,
+    profile: GitHubTrendProfile,
+    trend_date: str | None = None,
+) -> list[ConnectorTrendItem]:
+    items = await collect_github_trends_for_user(
+        session,
+        user_id=profile.user_id,
+        trend_date=trend_date,
+        query=profile.query,
+        language=profile.language,
+        candidate_count=profile.candidate_count,
+        top_k=profile.top_k,
+    )
+    profile.last_run_at = datetime.now(timezone.utc)
+    return items
+
+
+async def run_scheduled_github_trend_profiles() -> dict[str, int]:
+    stats = {"profiles": 0, "eligible": 0, "runs": 0, "github": 0, "failed": 0}
+    async with async_session() as session:
+        rows = await session.execute(
+            select(GitHubTrendProfile).where(GitHubTrendProfile.is_enabled.is_(True))
+        )
+        profiles = list(rows.scalars())
+        due_profile_ids = [profile.id for profile in profiles if should_run_github_trend_profile(profile)]
+        stats["profiles"] = len(profiles)
+        stats["eligible"] = len(due_profile_ids)
+        for profile_id in due_profile_ids:
+            try:
+                profile = await session.get(GitHubTrendProfile, profile_id)
+                if not profile or not should_run_github_trend_profile(profile):
+                    continue
+                items = await collect_github_trends_for_profile(session, profile=profile)
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                stats["failed"] += 1
+                logger.exception("Scheduled GitHub trend collection failed for profile %s", profile_id)
+                continue
+            stats["runs"] += 1
+            stats["github"] += len(items)
+    return stats
+
+
+async def collect_daily_github_trends(*, user_ids: list[str] | None = None, trend_date: str | None = None) -> dict[str, int]:
+    """Collect scheduled GitHub trend sources for active users.
+
+    Scholarly discovery is intentionally owned by Paper Discovery. The
+    historical connector-trends job type remains in use for job-history
+    continuity, but its scheduled work is GitHub-only.
+    """
     stats = {"users": 0, "github": 0, "failed": 0, "github_failed": 0, "skipped_missing_user": 0}
     async with async_session() as session:
         target_users = await _trend_user_ids(session, user_ids)
@@ -318,3 +387,8 @@ async def collect_daily_connector_trends(*, user_ids: list[str] | None = None, t
             if user_ok:
                 stats["users"] += 1
     return stats
+
+
+async def collect_daily_connector_trends(*, user_ids: list[str] | None = None, trend_date: str | None = None) -> dict[str, int]:
+    """Compatibility wrapper for the former mixed connector-trends entry point."""
+    return await collect_daily_github_trends(user_ids=user_ids, trend_date=trend_date)

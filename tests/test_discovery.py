@@ -156,7 +156,7 @@ async def test_generate_discovery_items_scores_profile_match():
 
 
 @pytest.mark.asyncio
-async def test_generate_discovery_items_from_rss_source():
+async def test_generate_discovery_items_does_not_recommend_imported_rss_source():
     session = AsyncMock()
     session.add = MagicMock()
     rss_source = Source(
@@ -173,11 +173,8 @@ async def test_generate_discovery_items_from_rss_source():
 
     created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["rss"])
 
-    assert (created, updated, skipped) == (1, 0, 0)
-    item = session.add.call_args.args[0]
-    assert item.provider == "rss"
-    assert item.source_id == "src-rss-1"
-    assert "From a followed RSS feed" in item.why
+    assert (created, updated, skipped) == (0, 0, 0)
+    session.add.assert_not_called()
     session.commit.assert_awaited_once()
 
 
@@ -213,7 +210,32 @@ async def test_generate_discovery_items_from_news_connector_cache():
 
 
 @pytest.mark.asyncio
-async def test_generate_discovery_items_from_imported_news_source():
+async def test_generate_discovery_items_excludes_saved_connector_cache_item():
+    session = AsyncMock()
+    session.add = MagicMock()
+    cached = ConnectorSearchItem(
+        user_id="user-1",
+        provider="github",
+        item_key="owner/repo",
+        title="owner/repo",
+        status="saved",
+        source_id="src-github-owner-repo",
+        payload={"full_name": "owner/repo", "html_url": "https://github.com/owner/repo"},
+    )
+    session.execute.side_effect = _select_router(cached=[cached])
+
+    created, updated, skipped = await generate_discovery_items(
+        session,
+        user_id="user-1",
+        providers=["github"],
+    )
+
+    assert (created, updated, skipped) == (0, 0, 0)
+    session.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_generate_discovery_items_does_not_recommend_imported_news_source():
     session = AsyncMock()
     session.add = MagicMock()
     news_source = Source(
@@ -237,17 +259,12 @@ async def test_generate_discovery_items_from_imported_news_source():
 
     created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["news"])
 
-    assert (created, updated, skipped) == (1, 0, 0)
-    item = session.add.call_args.args[0]
-    assert item.provider == "news"
-    assert item.source_id == "src-news-1"
-    assert item.payload["source_name"] == "Policy Daily"
-    assert item.payload["published_at"] == "2026-05-24T08:00:00Z"
-    assert any("Recent news article" in reason for reason in item.why)
+    assert (created, updated, skipped) == (0, 0, 0)
+    session.add.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_generate_discovery_items_from_web_source_with_credibility_and_preferences():
+async def test_generate_discovery_items_does_not_recommend_imported_web_article():
     session = AsyncMock()
     session.add = MagicMock()
     profile = UserMemory(user_id="user-1", key=PROFILE_MEMORY_KEY, value={"discovery_feedback": {"web": {"keep": 2, "dismiss": 0}}})
@@ -259,17 +276,14 @@ async def test_generate_discovery_items_from_web_source_with_credibility_and_pre
         source_type="web",
         url="https://example.com/kg",
         raw_content="A guide about knowledge graph architecture.",
-        metadata={},
+        metadata={"feed_source_id": "src-directory", "content_source": "web_directory"},
     )
     session.execute.side_effect = _select_router(profile=profile, sources=[web_source])
 
     created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["web"])
 
-    assert (created, updated, skipped) == (1, 0, 0)
-    item = session.add.call_args.args[0]
-    assert item.provider == "web"
-    assert any("HTTPS source" in reason for reason in item.why)
-    assert any("Boosted by your keep/save history" in reason for reason in item.why)
+    assert (created, updated, skipped) == (0, 0, 0)
+    session.add.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -347,6 +361,38 @@ async def test_generate_discovery_items_uses_trend_metadata_payload():
     item = session.add.call_args.args[0]
     assert item.provider == "github"
     assert item.payload["full_name"] == "owner/trending-repo"
+
+
+@pytest.mark.asyncio
+async def test_generate_discovery_items_excludes_trend_with_saved_source():
+    session = AsyncMock()
+    session.add = MagicMock()
+    trend = ConnectorTrendItem(
+        user_id="user-1",
+        provider="github",
+        trend_date="2026-09-15",
+        item_key="owner/repo",
+        title="owner/repo",
+        source_id="src-github-owner-repo",
+        metadata_={"full_name": "owner/repo"},
+    )
+
+    async def execute(stmt, *args, **kwargs):
+        sql = str(stmt)
+        if "FROM connector_trend_items" in sql:
+            return _ScalarResult([trend])
+        return await _select_router(cached=[], discovery_items=[])(stmt, *args, **kwargs)
+
+    session.execute.side_effect = execute
+
+    created, updated, skipped = await generate_discovery_items(
+        session,
+        user_id="user-1",
+        providers=["github"],
+    )
+
+    assert (created, updated, skipped) == (0, 0, 0)
+    session.add.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -608,7 +654,7 @@ async def test_load_discovery_preferences_reads_preference_memory():
 
 
 @pytest.mark.asyncio
-async def test_generate_discovery_items_uses_domain_preferences():
+async def test_generate_discovery_items_does_not_recommend_directory_source_again():
     session = AsyncMock()
     session.add = MagicMock()
     profile = UserMemory(
@@ -624,16 +670,62 @@ async def test_generate_discovery_items_uses_domain_preferences():
         source_type="web",
         url="https://openai.com/guide",
         raw_content="Guide about AI agents.",
-        metadata={},
+        metadata={"feed_source_id": "src-directory", "content_source": "web_directory"},
     )
     session.execute.side_effect = _select_router(profile=profile, sources=[web_source])
 
     created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["web"])
 
-    assert (created, updated, skipped) == (1, 0, 0)
-    item = session.add.call_args.args[0]
-    assert any("Trusted domain" in reason for reason in item.why)
-    assert any("domain preference" in reason.lower() or "kept domain" in reason.lower() for reason in item.why)
+    assert (created, updated, skipped) == (0, 0, 0)
+    session.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_generate_discovery_items_does_not_recommend_saved_web_page():
+    session = AsyncMock()
+    session.add = MagicMock()
+    web_source = Source(
+        id="src-web-saved",
+        user_id="user-1",
+        category_id=1,
+        title="Saved guide",
+        source_type="web",
+        url="https://example.com/guide",
+        raw_content="Saved content",
+        metadata={"web_role": "page", "review_status": "reviewed_kept"},
+    )
+    session.execute.side_effect = _select_router(sources=[web_source])
+
+    created, updated, skipped = await generate_discovery_items(session, user_id="user-1", providers=["web"])
+
+    assert (created, updated, skipped) == (0, 0, 0)
+    session.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_import_web_discovery_item_is_already_reviewed_after_explicit_save():
+    from pkg.services.foundation.discovery_imports import import_web_discovery_item
+
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.get.return_value = None
+    item = DiscoveryItem(
+        id=12,
+        user_id="user-1",
+        provider="web",
+        item_key="web:guide",
+        title="Web guide",
+        url="https://example.com/guide",
+        payload={"url": "https://example.com/guide", "query": "agent guide"},
+    )
+
+    source, created, dedupe_key = await import_web_discovery_item(session, item, dict(item.payload))
+
+    assert created is True
+    assert dedupe_key == "web:https://example.com/guide"
+    assert source.metadata_["web_role"] == "page"
+    assert source.metadata_["origin"] == "web_search"
+    assert source.metadata_["review_status"] == "reviewed_kept"
 
 
 @pytest.mark.asyncio

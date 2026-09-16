@@ -23,7 +23,10 @@ def _utc_now_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-async def generate_discovery_items(
+DEFAULT_DISCOVERY_PROVIDERS = ["arxiv", "github", "news"]
+
+
+async def refresh_discovery_recommendations(
     session: AsyncSession,
     *,
     user_id: str,
@@ -31,7 +34,7 @@ async def generate_discovery_items(
     limit: int = 50,
     commit: bool = True,
 ) -> tuple[int, int, int]:
-    providers = providers or ["arxiv", "github", "news", "rss", "web", "openalex", "crossref", "semantic_scholar"]
+    providers = providers or DEFAULT_DISCOVERY_PROVIDERS
     profile = await load_discovery_profile(session, user_id)
     try:
         preferences = await load_discovery_preferences(session, user_id)
@@ -66,6 +69,23 @@ async def generate_discovery_items(
     if commit:
         await session.commit()
     return created, updated, skipped
+
+
+async def generate_discovery_items(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    providers: list[str] | None = None,
+    limit: int = 50,
+    commit: bool = True,
+) -> tuple[int, int, int]:
+    return await refresh_discovery_recommendations(
+        session,
+        user_id=user_id,
+        providers=providers,
+        limit=limit,
+        commit=commit,
+    )
 
 
 async def apply_discovery_feedback(
@@ -215,16 +235,25 @@ async def ingest_web_discovery_results(
 async def _load_candidates(session: AsyncSession, *, user_id: str, providers: list[str], limit: int) -> list[dict]:
     candidates: list[dict] = []
     cache_payloads = await _load_cache_payloads(session, user_id=user_id, providers=providers)
+    connector_providers = [
+        provider
+        for provider in providers
+        if provider in {"arxiv", "github", "news"}
+    ]
 
-    if any(provider in providers for provider in ["arxiv", "github", "news"]):
+    if connector_providers:
         rows = await session.execute(
             select(ConnectorSearchItem)
             .where(ConnectorSearchItem.user_id == user_id)
-            .where(ConnectorSearchItem.provider.in_([provider for provider in providers if provider in {"arxiv", "github", "news"}]))
+            .where(ConnectorSearchItem.provider.in_(connector_providers))
+            .where(ConnectorSearchItem.status == "cached")
+            .where(ConnectorSearchItem.source_id.is_(None))
             .order_by(ConnectorSearchItem.updated_at.desc())
             .limit(limit * 3)
         )
         for item in rows.scalars():
+            if item.source_id or item.status not in {None, "cached"}:
+                continue
             payload = cache_payloads.get((item.provider, item.item_key), item.payload)
             candidates.append({
                 "source": "connector_cache",
@@ -243,15 +272,19 @@ async def _load_candidates(session: AsyncSession, *, user_id: str, providers: li
             .where(ConnectorSearchItem.provider.in_([]))
         )
 
-    if any(provider in providers for provider in ["github", "arxiv"]):
+    trend_providers = [provider for provider in providers if provider in {"github", "arxiv"}]
+    if trend_providers:
         trend_rows = await session.execute(
             select(ConnectorTrendItem)
             .where(ConnectorTrendItem.user_id == user_id)
-            .where(ConnectorTrendItem.provider.in_([provider for provider in providers if provider in {"github", "arxiv"}]))
+            .where(ConnectorTrendItem.provider.in_(trend_providers))
+            .where(ConnectorTrendItem.source_id.is_(None))
             .order_by(ConnectorTrendItem.updated_at.desc())
             .limit(limit * 2)
         )
         for trend in trend_rows.scalars():
+            if trend.source_id:
+                continue
             payload = cache_payloads.get((trend.provider, trend.item_key), trend.metadata_)
             candidates.append({
                 "source": "trend",
@@ -269,75 +302,6 @@ async def _load_candidates(session: AsyncSession, *, user_id: str, providers: li
             .where(ConnectorTrendItem.user_id == user_id)
             .where(ConnectorTrendItem.provider.in_([]))
         )
-
-    if "rss" in providers or "web" in providers or "news" in providers:
-        source_rows = await session.execute(
-            select(Source)
-            .where(Source.user_id == user_id)
-            .order_by(Source.ingested_at.desc())
-            .limit(limit * 4)
-        )
-        for source in source_rows.scalars():
-            raw_metadata = getattr(source, "metadata_", None)
-            if not raw_metadata and hasattr(source, "__dict__"):
-                raw_metadata = source.__dict__.get("metadata")
-            metadata = dict(raw_metadata or {})
-            if metadata.get("feed_source_id") and "rss" in providers:
-                candidates.append({
-                    "source": "rss_article",
-                    "provider": "rss",
-                    "item_key": source.id,
-                    "title": source.title,
-                    "payload": {
-                        "source_id": source.id,
-                        "title": source.title,
-                        "url": source.url,
-                        "summary": source.summary if hasattr(source, "summary") else None,
-                        "source_name": metadata.get("source_name") or metadata.get("connector"),
-                        "domain": metadata.get("domain") or domain_from_url(source.url or ""),
-                        "published_at": metadata.get("published") or metadata.get("published_at"),
-                    },
-                    "base_score": 0,
-                    "source_id": source.id,
-                })
-            elif source.source_type == "article" and metadata.get("kind") == "news" and "news" in providers:
-                candidates.append({
-                    "source": "news_article",
-                    "provider": "news",
-                    "item_key": metadata.get("dedupe_key") or source.id,
-                    "title": source.title,
-                    "payload": {
-                        "source_id": source.id,
-                        "title": source.title,
-                        "url": source.url,
-                        "summary": metadata.get("description"),
-                        "source_name": metadata.get("source_name") or metadata.get("connector"),
-                        "domain": metadata.get("domain") or domain_from_url(source.url or ""),
-                        "published_at": metadata.get("published_at"),
-                        "author": metadata.get("author"),
-                        "provider": metadata.get("provider") or "news",
-                    },
-                    "base_score": 6,
-                    "source_id": source.id,
-                })
-            elif source.source_type == "web" and "web" in providers:
-                candidates.append({
-                    "source": "web_source",
-                    "provider": "web",
-                    "item_key": _web_item_key(source.url or source.id),
-                    "title": source.title,
-                    "payload": {
-                        "url": source.url,
-                        "summary": source.summary if hasattr(source, "summary") else None,
-                        "source_name": metadata.get("source_name") or metadata.get("connector"),
-                        "domain": metadata.get("domain") or domain_from_url(source.url or ""),
-                        "published_at": metadata.get("published_at"),
-                    },
-                    "base_score": 4,
-                    "source_id": source.id,
-                })
-    else:
-        await session.execute(select(Source).where(Source.user_id == user_id).limit(0))
 
     return _dedupe_candidates(candidates)
 
@@ -474,6 +438,7 @@ __all__ = [
     "apply_discovery_feedback",
     "discovery_item_key",
     "generate_discovery_items",
+    "refresh_discovery_recommendations",
     "import_github_repo",
     "ingest_web_discovery_results",
     "search_external_web_results",

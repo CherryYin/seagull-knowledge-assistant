@@ -19,6 +19,7 @@ from pkg.models.foundation.source import Source
 from pkg.schemas.connector import ArxivPaper, GitHubRepo, NewsArticle
 from pkg.schemas.source import SourceCreate
 from pkg.services.foundation.web_extractor import WebPageFetchError, fetch_web_page
+from pkg.services.foundation.source_review import merge_import_metadata
 from pkg.services.cross_cutting.user_api_credentials import get_default_user_api_credential_secret
 
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
@@ -256,7 +257,7 @@ async def import_arxiv_paper(session: AsyncSession, *, user_id: str, paper: Arxi
         existing.source_type = "article"
         existing.url = paper.entry_url or f"https://arxiv.org/abs/{canonical_id}"
         existing.raw_content = raw_content
-        existing.metadata_ = {**(existing.metadata_ or {}), **metadata}
+        existing.metadata_ = merge_import_metadata(existing.metadata_, metadata)
         return existing, False, metadata["dedupe_key"]
 
     source = await persist_source(
@@ -436,7 +437,7 @@ async def import_github_repo(session: AsyncSession, *, user_id: str, repo: GitHu
         existing.source_type = "github"
         existing.url = repo.html_url
         existing.raw_content = raw_content
-        existing.metadata_ = {**(existing.metadata_ or {}), **metadata}
+        existing.metadata_ = merge_import_metadata(existing.metadata_, metadata)
         await upsert_source_embeddings(session, existing)
         return existing, False, dedupe_key
 
@@ -614,7 +615,7 @@ async def import_news_article(session: AsyncSession, *, user_id: str, article: N
         existing.source_type = "article"
         existing.url = canonical_url or article.url
         existing.raw_content = raw_content
-        existing.metadata_ = {**(existing.metadata_ or {}), **metadata}
+        existing.metadata_ = merge_import_metadata(existing.metadata_, metadata)
         return existing, False, dedupe_key
 
     source = await persist_source(

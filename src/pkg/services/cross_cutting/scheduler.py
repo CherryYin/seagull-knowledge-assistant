@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -6,13 +7,13 @@ from datetime import datetime, time, timedelta, timezone
 from time import perf_counter
 from typing import AsyncIterator, Awaitable, Callable, Literal
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from pkg.config import settings
-from pkg.db import async_session
+from pkg.db import async_session, engine
 from pkg.models.user import User
 from pkg.services.cross_cutting.system_jobs import record_system_job
-from pkg.services.cross_cutting.system_jobs import get_last_terminal_job_run
+from pkg.services.cross_cutting.system_jobs import get_last_terminal_job_runs
 from pkg.services.cross_cutting.user_settings import get_user_setting_str
 
 
@@ -33,7 +34,8 @@ class ScheduledTask:
     daily_time_utc: time | None = None
     weekday_utc: int | None = None
     weekly_time_utc: time | None = None
-    timeout_seconds: int | None = None
+    timeout_seconds: int | None = settings.SCHEDULER_TASK_TIMEOUT_SECONDS
+    retry_delay_seconds: int = settings.SCHEDULER_RETRY_DELAY_SECONDS
     jitter_seconds: int = 0
     initial_delay_seconds: int = 0
 
@@ -45,15 +47,26 @@ class TaskRunResult:
     reason: str | None = None
 
 
-def is_task_due(task: ScheduledTask, now: datetime, last_run: datetime | None) -> bool:
+def is_task_due(
+    task: ScheduledTask,
+    now: datetime,
+    last_run: datetime | None,
+    *,
+    last_status: str | None = None,
+    scheduler_started_at: datetime | None = None,
+) -> bool:
     current = _ensure_utc(now)
     previous = _ensure_utc(last_run) if last_run else None
 
     if not task.enabled:
         return False
 
+    if previous is not None and last_status == "failed":
+        return current >= previous + timedelta(seconds=max(task.retry_delay_seconds, 0))
+
     if task.schedule_type == "interval":
-        return _is_interval_due(task, current, previous)
+        started_at = _ensure_utc(scheduler_started_at) if scheduler_started_at else None
+        return _is_interval_due(task, current, previous, scheduler_started_at=started_at)
     if task.schedule_type == "daily":
         return _is_daily_due(task, current, previous)
     if task.schedule_type == "weekly":
@@ -63,13 +76,37 @@ def is_task_due(task: ScheduledTask, now: datetime, last_run: datetime | None) -
 
 @asynccontextmanager
 async def acquire_task_lock(task_name: str) -> AsyncIterator[bool]:
-    """Acquire a task-scoped execution lock.
+    lock_key = int.from_bytes(
+        hashlib.blake2b(task_name.encode("utf-8"), digest_size=8).digest(),
+        byteorder="big",
+        signed=True,
+    )
+    async with engine.connect() as connection:
+        acquired = bool(
+            (
+                await connection.execute(
+                    text("SELECT pg_try_advisory_lock(:lock_key)"),
+                    {"lock_key": lock_key},
+                )
+            ).scalar()
+        )
+        await connection.commit()
+        try:
+            yield acquired
+        finally:
+            if acquired:
+                try:
+                    async def release_lock() -> None:
+                        await connection.execute(
+                            text("SELECT pg_advisory_unlock(:lock_key)"),
+                            {"lock_key": lock_key},
+                        )
+                        await connection.commit()
 
-    Current implementation is process-local no-op scaffolding so the scheduler
-    keeps a stable lock boundary before we wire DB advisory locks.
-    """
-    _ = task_name
-    yield True
+                    await release_lock()
+                except Exception:
+                    logger.exception("Failed to release scheduler advisory lock for task %s", task_name)
+                    await connection.invalidate()
 
 
 async def run_scheduled_task(task: ScheduledTask) -> TaskRunResult:
@@ -167,9 +204,9 @@ async def run_rss_summary_step() -> dict:
 
 
 async def run_connector_trends_step() -> dict:
-    from pkg.services.foundation.connector_trends import collect_daily_connector_trends
+    from pkg.services.foundation.connector_trends import run_scheduled_github_trend_profiles
 
-    stats = await collect_daily_connector_trends()
+    stats = await run_scheduled_github_trend_profiles()
     return {"stats": stats}
 
 
@@ -180,17 +217,39 @@ async def run_discovery_generate_step() -> dict:
         rows = await session.execute(select(User.id).where(User.is_active.is_(True)))
         user_ids = list(rows.scalars())
 
-    totals = {"users": len(user_ids), "created": 0, "updated": 0, "skipped": 0}
+    totals = {
+        "users": len(user_ids),
+        "processed_users": 0,
+        "created": 0,
+        "updated": 0,
+        "skipped": 0,
+        "errors": 0,
+    }
     for user_id in user_ids:
         async with async_session() as session:
-            created, updated, skipped = await generate_discovery_items(session, user_id=user_id, limit=100)
+            try:
+                created, updated, skipped = await generate_discovery_items(
+                    session,
+                    user_id=user_id,
+                    limit=100,
+                )
+            except Exception:
+                await session.rollback()
+                totals["errors"] += 1
+                logger.exception("Discovery generation failed for user %s", user_id)
+                continue
+            totals["processed_users"] += 1
             totals["created"] += created
             totals["updated"] += updated
             totals["skipped"] += skipped
+    if totals["users"] > 0 and totals["processed_users"] == 0 and totals["errors"] > 0:
+        raise RuntimeError("Discovery generation failed for all active users")
     totals["candidate_count"] = totals["created"] + totals["updated"] + totals["skipped"]
     totals["reason"] = None
     if totals["users"] == 0:
         totals["reason"] = "no_active_users"
+    elif totals["errors"] > 0:
+        totals["reason"] = "partial_failure"
     elif totals["candidate_count"] == 0:
         totals["reason"] = "no_recent_rss_articles_or_connector_candidates"
     return totals
@@ -207,6 +266,10 @@ async def run_paper_discovery_step() -> dict:
         result["reason"] = "no_enabled_profiles"
     elif int(result.get("eligible", 0) or 0) == 0:
         result["reason"] = "no_due_profiles"
+    elif int(result.get("runs", 0) or 0) == 0 and int(result.get("errors", 0) or 0) > 0:
+        raise RuntimeError("Paper discovery failed for all due profiles")
+    elif int(result.get("errors", 0) or 0) > 0:
+        result["reason"] = "partial_failure"
     return result
 
 
@@ -261,6 +324,7 @@ async def run_news_auto_search_step() -> dict:
             "created": 0,
             "updated": 0,
             "skipped": 0,
+            "errors": 0,
             "languages": {},
         }
 
@@ -268,25 +332,49 @@ async def run_news_auto_search_step() -> dict:
     created = 0
     updated = 0
     skipped = 0
+    errors = 0
+    attempted_searches = 0
+    successful_searches = 0
     languages: dict[str, int] = {}
 
     for user_id in user_ids:
-        async with async_session() as settings_session:
-            query = await get_user_setting_str(settings_session, user_id, "news_auto_search_query", settings.NEWS_AUTO_SEARCH_QUERY)
+        try:
+            async with async_session() as settings_session:
+                query = await get_user_setting_str(
+                    settings_session,
+                    user_id,
+                    "news_auto_search_query",
+                    settings.NEWS_AUTO_SEARCH_QUERY,
+                )
+        except Exception:
+            errors += 1
+            logger.exception("News auto-search could not load settings for user %s", user_id)
+            continue
 
         if not query:
             skipped += 1
             continue
 
         for language, limit in searches:
-            articles = await search_news_articles(
-                query=query,
-                language=language,
-                from_date=from_date,
-                to_date=to_date,
-                max_results=limit,
-                user_id=user_id,
-            )
+            attempted_searches += 1
+            try:
+                articles = await search_news_articles(
+                    query=query,
+                    language=language,
+                    from_date=from_date,
+                    to_date=to_date,
+                    max_results=limit,
+                    user_id=user_id,
+                )
+            except Exception:
+                errors += 1
+                logger.exception(
+                    "News auto-search failed for user %s language %s",
+                    user_id,
+                    language,
+                )
+                continue
+            successful_searches += 1
             languages[language] = languages.get(language, 0) + len(articles)
             searched += len(articles)
 
@@ -304,14 +392,32 @@ async def run_news_auto_search_step() -> dict:
                         await session.rollback()
                         skipped += 1
                         continue
+                    except Exception:
+                        await session.rollback()
+                        errors += 1
+                        logger.exception(
+                            "News article import failed for user %s language %s",
+                            user_id,
+                            language,
+                        )
+                        continue
 
                 if was_created:
                     created += 1
                 else:
                     updated += 1
 
+    if errors > 0 and (
+        (successful_searches == 0 and skipped == 0)
+        or (searched > 0 and created + updated == 0)
+    ):
+        raise RuntimeError("News auto-search failed before any result could be saved")
+
+    reason = None if searched else "no_results"
+    if errors > 0:
+        reason = "partial_failure"
     return {
-        "reason": None if searched else "no_results",
+        "reason": reason,
         "query": settings.NEWS_AUTO_SEARCH_QUERY,
         "from_date": from_date,
         "to_date": to_date,
@@ -320,6 +426,7 @@ async def run_news_auto_search_step() -> dict:
         "created": created,
         "updated": updated,
         "skipped": skipped,
+        "errors": errors,
         "languages": languages,
     }
 
@@ -388,34 +495,14 @@ def get_scheduled_tasks() -> list[ScheduledTask]:
             enabled=settings.RSS_AUTO_FETCH_ENABLED,
         ),
         ScheduledTask(
-            name="rss_summary",
-            job_type="rss_summary",
-            title="RSS topic summarization",
-            handler=run_rss_summary_step,
-            schedule_type="interval",
-            interval_seconds=settings.RSS_SUMMARY_INTERVAL_HOURS * 3600,
-            initial_delay_seconds=300,
-            enabled=settings.RSS_AUTO_SUMMARY_ENABLED,
-        ),
-        ScheduledTask(
             name="connector_trends",
             job_type="connector_trends",
-            title="Connector trend discovery",
+            title="GitHub trend profile collection",
             handler=run_connector_trends_step,
             schedule_type="interval",
             interval_seconds=settings.CONNECTOR_TRENDS_INTERVAL_HOURS * 3600,
             initial_delay_seconds=300,
             enabled=settings.CONNECTOR_TRENDS_AUTO_ENABLED,
-        ),
-        ScheduledTask(
-            name="discovery_generate",
-            job_type="discovery_generate",
-            title="Discovery item generation",
-            handler=run_discovery_generate_step,
-            schedule_type="interval",
-            interval_seconds=settings.DISCOVERY_GENERATE_INTERVAL_HOURS * 3600,
-            initial_delay_seconds=180,
-            enabled=settings.DISCOVERY_AUTO_GENERATE_ENABLED,
         ),
         ScheduledTask(
             name="web_directory_discover",
@@ -468,14 +555,37 @@ def get_scheduled_tasks() -> list[ScheduledTask]:
     return tasks
 
 
-async def scheduled_pipeline_loop(*, poll_interval_seconds: int = 30) -> None:
+async def scheduled_pipeline_loop(
+    *,
+    poll_interval_seconds: int = 30,
+    db_failure_backoff_seconds: int = settings.SCHEDULER_DB_FAILURE_BACKOFF_SECONDS,
+) -> None:
+    scheduler_started_at = datetime.now(timezone.utc)
     while True:
         now = datetime.now(timezone.utc)
         tasks = get_scheduled_tasks()
+        try:
+            last_runs = await get_last_terminal_job_runs([task.job_type for task in tasks])
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "Scheduled pipeline could not read job history; retrying after %s seconds",
+                db_failure_backoff_seconds,
+            )
+            await asyncio.sleep(max(db_failure_backoff_seconds, poll_interval_seconds))
+            continue
+
         for task in tasks:
             try:
-                last_run = await get_last_terminal_job_run(task.job_type)
-                if is_task_due(task, now, last_run):
+                last_run = last_runs.get(task.job_type)
+                if is_task_due(
+                    task,
+                    now,
+                    last_run.ended_at if last_run else None,
+                    last_status=last_run.status if last_run else None,
+                    scheduler_started_at=scheduler_started_at,
+                ):
                     result = await run_scheduled_task(task)
                     logger.info("Scheduled task %s finished with status=%s", task.name, result.status)
             except asyncio.CancelledError:
@@ -491,17 +601,27 @@ def _ensure_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
-def next_task_run_at(task: ScheduledTask, now: datetime, last_run: datetime | None) -> datetime | None:
+def next_task_run_at(
+    task: ScheduledTask,
+    now: datetime,
+    last_run: datetime | None,
+    *,
+    last_status: str | None = None,
+    scheduler_started_at: datetime | None = None,
+) -> datetime | None:
     current = _ensure_utc(now)
     previous = _ensure_utc(last_run) if last_run else None
 
     if not task.enabled:
         return None
+    if previous is not None and last_status == "failed":
+        return previous + timedelta(seconds=max(task.retry_delay_seconds, 0))
     if task.schedule_type == "interval":
         if task.interval_seconds is None:
             raise ValueError(f"interval_seconds is required for task {task.name}")
         if previous is None:
-            return current + timedelta(seconds=max(task.initial_delay_seconds, 0))
+            started_at = _ensure_utc(scheduler_started_at) if scheduler_started_at else current
+            return started_at + timedelta(seconds=max(task.initial_delay_seconds, 0))
         return previous + timedelta(seconds=task.interval_seconds)
     if task.schedule_type == "daily":
         if task.daily_time_utc is None:
@@ -529,26 +649,49 @@ def next_task_run_at(task: ScheduledTask, now: datetime, last_run: datetime | No
 async def get_scheduler_status(*, now: datetime | None = None) -> list[dict]:
     current = now or datetime.now(timezone.utc)
     items: list[dict] = []
-    for task in get_scheduled_tasks():
-        last_run = await get_last_terminal_job_run(task.job_type)
+    tasks = get_scheduled_tasks()
+    last_runs = await get_last_terminal_job_runs([task.job_type for task in tasks])
+    for task in tasks:
+        last_run = last_runs.get(task.job_type)
         items.append({
             "name": task.name,
             "job_type": task.job_type,
             "title": task.title,
             "enabled": task.enabled,
             "schedule_type": task.schedule_type,
-            "last_run_at": last_run,
-            "next_run_at": next_task_run_at(task, current, last_run),
-            "due_now": is_task_due(task, current, last_run) if task.enabled else False,
+            "last_run_at": last_run.ended_at if last_run else None,
+            "last_run_status": last_run.status if last_run else None,
+            "next_run_at": next_task_run_at(
+                task,
+                current,
+                last_run.ended_at if last_run else None,
+                last_status=last_run.status if last_run else None,
+            ),
+            "due_now": is_task_due(
+                task,
+                current,
+                last_run.ended_at if last_run else None,
+                last_status=last_run.status if last_run else None,
+            ) if task.enabled else False,
         })
     return items
 
 
-def _is_interval_due(task: ScheduledTask, now: datetime, last_run: datetime | None) -> bool:
+def _is_interval_due(
+    task: ScheduledTask,
+    now: datetime,
+    last_run: datetime | None,
+    *,
+    scheduler_started_at: datetime | None,
+) -> bool:
     if task.interval_seconds is None:
         raise ValueError(f"interval_seconds is required for task {task.name}")
     if last_run is None:
-        return task.initial_delay_seconds <= 0
+        if task.initial_delay_seconds <= 0:
+            return True
+        if scheduler_started_at is None:
+            return False
+        return now >= scheduler_started_at + timedelta(seconds=task.initial_delay_seconds)
     return now >= last_run + timedelta(seconds=task.interval_seconds)
 
 
