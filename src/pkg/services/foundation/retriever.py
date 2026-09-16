@@ -2,7 +2,7 @@ from sqlalchemy import select, text, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.models.foundation.note import Note
-from pkg.models.foundation.source import Source
+from pkg.models.foundation.source import Source, SourceMediaSegment
 from pkg.models.foundation.wiki import WikiPage
 from pkg.models.application.asset import Asset
 from pkg.schemas.note import SearchResult
@@ -14,7 +14,7 @@ def _escape_like(value: str) -> str:
 
 
 def _result_layer(result_type: str) -> str:
-    if result_type in {"source", "source_chunk"}:
+    if result_type in {"source", "source_chunk", "video_segment"}:
         return "raw_evidence"
     if result_type == "note":
         return "user_note"
@@ -38,12 +38,50 @@ class RetrieverAgent:
             mode = self._detect_mode(query, filters)
 
         if mode == "sql":
-            return await self.sql_search(query, filters, top_k)
+            results = await self.sql_search(query, filters, top_k)
         elif mode == "vector":
-            return await self.vector_search(query, top_k)
+            results = await self.vector_search(query, top_k)
         elif mode == "hybrid":
-            return await self.hybrid_search(query, filters, top_k)
-        return await self.vector_search(query, top_k)
+            results = await self.hybrid_search(query, filters, top_k)
+        else:
+            results = await self.vector_search(query, top_k)
+        return self._merge_adjacent_video_segments(results, top_k)
+
+    def _merge_adjacent_video_segments(
+        self,
+        results: list[SearchResult],
+        top_k: int,
+    ) -> list[SearchResult]:
+        merged: list[SearchResult] = []
+        for result in sorted(results, key=lambda item: item.score, reverse=True):
+            if result.type != "video_segment" or result.start_ms is None or result.end_ms is None:
+                merged.append(result)
+                continue
+            adjacent = next(
+                (
+                    item
+                    for item in merged
+                    if item.type == "video_segment"
+                    and item.id == result.id
+                    and item.start_ms is not None
+                    and item.end_ms is not None
+                    and result.start_ms <= item.end_ms + 5000
+                    and result.end_ms >= item.start_ms - 5000
+                ),
+                None,
+            )
+            if adjacent is None:
+                merged.append(result)
+                continue
+            adjacent.start_ms = min(adjacent.start_ms, result.start_ms)
+            adjacent.end_ms = max(adjacent.end_ms, result.end_ms)
+            if result.content_preview and result.content_preview not in (adjacent.content_preview or ""):
+                adjacent.content_preview = " ".join(
+                    value for value in (adjacent.content_preview, result.content_preview) if value
+                )[:400]
+            adjacent.score = max(adjacent.score, result.score)
+        merged.sort(key=lambda item: item.score, reverse=True)
+        return merged[:top_k]
 
     def _detect_mode(self, query: str, filters: dict | None) -> str:
         if filters:
@@ -166,6 +204,47 @@ class RetrieverAgent:
                 source_type=src.source_type,
             ))
 
+        segment_stmt = select(SourceMediaSegment, Source).join(
+            Source, Source.id == SourceMediaSegment.source_id
+        )
+        if self.user_id:
+            segment_stmt = segment_stmt.where(
+                or_(Source.user_id == self.user_id, Source.is_shared)
+            )
+        if query:
+            like_pattern = f"%{_escape_like(query)}%"
+            segment_stmt = segment_stmt.where(
+                or_(
+                    SourceMediaSegment.transcript.ilike(like_pattern),
+                    SourceMediaSegment.caption.ilike(like_pattern),
+                )
+            )
+        if filters and "source_type" in filters and filters["source_type"] != "video":
+            segment_stmt = segment_stmt.where(False)
+        segment_stmt = segment_stmt.order_by(SourceMediaSegment.start_ms.asc()).limit(top_k)
+        rows = await self.session.execute(segment_stmt)
+        for segment, source in rows:
+            preview = segment.transcript or segment.caption
+            results.append(SearchResult(
+                id=source.id,
+                segment_id=segment.id,
+                title=source.title,
+                type="video_segment",
+                layer=_result_layer("video_segment"),
+                score=1.1,
+                abstract=source.description,
+                content_preview=(preview or "")[:200],
+                source_type="video",
+                start_ms=segment.start_ms,
+                end_ms=segment.end_ms,
+                match_reason=(
+                    "Matched spoken transcript in this video segment."
+                    if segment.transcript and query.casefold() in segment.transcript.casefold()
+                    else "Matched the generated caption for this video segment."
+                ),
+            ))
+
+        results.sort(key=lambda item: item.score, reverse=True)
         return results[:top_k]
 
     async def vector_search(self, query: str, top_k: int = 5) -> list[SearchResult]:
@@ -313,6 +392,38 @@ class RetrieverAgent:
                 source_type=row.source_type,
             ))
 
+        segment_user_clause = "WHERE sms.embedding IS NOT NULL"
+        if self.user_id:
+            segment_user_clause += " AND (s.user_id = :user_id OR s.is_shared = true)"
+        segment_stmt = text(f"""
+            SELECT sms.id AS segment_id, sms.source_id, s.title, s.description,
+                   sms.start_ms, sms.end_ms, sms.transcript, sms.caption,
+                   1 - (sms.embedding <=> CAST(:query_vec AS vector)) AS score
+            FROM source_media_segments sms
+            JOIN sources s ON s.id = sms.source_id
+            {segment_user_clause}
+            ORDER BY sms.embedding <=> CAST(:query_vec AS vector)
+            LIMIT :top_k
+        """)
+        rows = await self.session.execute(
+            segment_stmt, {"query_vec": query_vec_literal, "top_k": top_k, **user_params}
+        )
+        for row in rows:
+            results.append(SearchResult(
+                id=row.source_id,
+                segment_id=row.segment_id,
+                title=row.title,
+                type="video_segment",
+                layer=_result_layer("video_segment"),
+                score=float(row.score) * 1.08,
+                abstract=row.description,
+                content_preview=(row.transcript or row.caption or "")[:200],
+                source_type="video",
+                start_ms=row.start_ms,
+                end_ms=row.end_ms,
+                match_reason="Semantic match in a video transcript or scene caption.",
+            ))
+
         results.sort(key=lambda r: r.score, reverse=True)
         return results[:top_k]
 
@@ -326,12 +437,12 @@ class RetrieverAgent:
         seen = set()
         merged = []
         for r in vec_results:
-            key = (r.type, r.id)
+            key = (r.type, r.id, r.segment_id)
             if key not in seen:
                 seen.add(key)
                 merged.append(r)
         for r in sql_results:
-            key = (r.type, r.id)
+            key = (r.type, r.id, r.segment_id)
             if key not in seen:
                 seen.add(key)
                 r.score = r.score * 0.8  # slight penalty for SQL-only matches

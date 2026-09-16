@@ -82,3 +82,62 @@ async def test_search_route_enriches_media_results_with_thumbnail_and_reason():
     assert result[0].thumbnail_url == "https://storage/thumb.jpg"
     assert result[0].content_preview == media.caption
     assert result[0].match_reason == "Matched text in the generated media caption."
+
+
+@pytest.mark.asyncio
+async def test_search_route_enriches_video_segment_with_playback_urls():
+    from pkg.api.search import search
+    from pkg.schemas.note import SearchRequest, SearchResult
+
+    fake_user = MagicMock()
+    fake_user.id = "user-1"
+    session = AsyncMock()
+    media_rows = MagicMock()
+    media_rows.scalars.return_value = []
+    segment = MagicMock()
+    segment.id = 9
+    segment.thumbnail_path = "minio://bucket/segment.jpg"
+    segment_rows = MagicMock()
+    segment_rows.scalars.return_value = [segment]
+    source = MagicMock()
+    source.id = "video-1"
+    source.file_path = "minio://bucket/video.mp4"
+    source_rows = MagicMock()
+    source_rows.scalars.return_value = [source]
+    session.execute.side_effect = [media_rows, segment_rows, source_rows]
+    layered = [
+        SearchResult(
+            id="video-1",
+            segment_id=9,
+            title="Demo",
+            type="video_segment",
+            layer="raw_evidence",
+            score=0.91,
+            source_type="video",
+            start_ms=12_000,
+            end_ms=20_000,
+            match_reason="Matched spoken transcript in this video segment.",
+        )
+    ]
+    retriever_instance = MagicMock()
+    retriever_instance.search = AsyncMock(return_value=layered)
+    storage = MagicMock()
+    storage.generate_download_url = AsyncMock(
+        side_effect=["https://storage/segment.jpg", "https://storage/video.mp4"]
+    )
+
+    with (
+        patch("pkg.api.search.RetrieverAgent", return_value=retriever_instance),
+        patch("pkg.api.search.get_storage_service", return_value=storage),
+        patch("pkg.api.search.log_activity", new=AsyncMock()),
+        patch("pkg.api.search.increment_stats", new=AsyncMock()),
+    ):
+        result = await search(
+            SearchRequest(query="spoken demo", mode="hybrid", top_k=5),
+            user=fake_user,
+            session=session,
+        )
+
+    assert result[0].thumbnail_url == "https://storage/segment.jpg"
+    assert result[0].playback_url == "https://storage/video.mp4"
+    assert result[0].start_ms == 12_000

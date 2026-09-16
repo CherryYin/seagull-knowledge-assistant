@@ -21,6 +21,7 @@ The core product goal is a durable personal knowledge graph with deterministic r
 - Import or discover external knowledge from RSS, web pages, GitHub repositories, arXiv papers, and news providers.
 - Run recurring PKG automation through a single background Worker with PostgreSQL advisory locks, bounded task execution, short failed-run retries, startup-relative initial delays, and one batched job-history read per polling cycle. Media derivatives use a separate queue loop inside the same Worker, default to one item at a time, record System Jobs only when work exists, and retry failed Caption/thumbnail processing with exponential backoff.
 - Store image/video technical metadata, generated Caption, processing state, and version in `source_media`; keep derived thumbnails in MinIO, include Caption in text retrieval, allow Note images to be explicitly promoted to Image Sources, and keep OCR deferred until screenshot or scan retrieval demand justifies it.
+- Video Sources use resumable Worker stages for transcript, scene/keyframe segmentation, per-segment Caption and text Embedding. Search results may return `start_ms`/`end_ms`; the supported `seagull-ui` frontend seeks playback to the matched timestamp.
 - Treat `docs/plans/scheduled-pipeline/scheduling-policy.md` and `scheduler_policy.py` as the authority for which capabilities remain independent calendar jobs, due-item dispatchers, upstream-triggered derivations, or transitional automation.
 - Create `web` sources from a direct URL by fetching and extracting readable page text when content is left empty.
 - Discover article links from a `web` directory source such as a blog index and import each article as a child web source.
@@ -117,7 +118,8 @@ Use the project virtual environment when available.
 - Apply migrations: `alembic upgrade head`
 - Start infrastructure: `docker compose up -d`
 - Start API: `pkg serve`; add `--reload` only for local development.
-- Start scheduled jobs separately: `pkg worker`.
+- Start scheduled and media jobs separately: `pkg worker`.
+- Start the complete detached development stack with `npm run dev:all-bg`; it uses the sibling `seagull-ui` repository by default and tracks API, Worker, and UI process groups.
 - Set strong `JWT_SECRET_KEY` and `ADMIN_INIT_PASSWORD`; weak or missing admin initialization password blocks normal app startup.
 - Frontend dependencies/build commands are in `package.json`; inspect scripts before running.
 

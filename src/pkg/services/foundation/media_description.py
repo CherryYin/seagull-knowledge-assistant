@@ -2,13 +2,13 @@ import asyncio
 import base64
 import io
 import logging
-import subprocess
 import tempfile
 from pathlib import Path
 
 from PIL import Image, ImageOps
 
 from pkg.services.cross_cutting.llm import create_async_client
+from pkg.services.foundation.media_tools import run_media_command
 
 
 logger = logging.getLogger(__name__)
@@ -39,7 +39,7 @@ def _prepare_image(payload: bytes) -> tuple[bytes, str]:
         return output.getvalue(), "image/jpeg"
 
 
-def _extract_video_contact_sheet(payload: bytes, suffix: str) -> tuple[bytes, str]:
+async def _extract_video_contact_sheet(payload: bytes, suffix: str) -> tuple[bytes, str]:
     with tempfile.TemporaryDirectory(prefix="pkg-media-description-") as tmpdir:
         video_path = Path(tmpdir) / f"input{suffix or '.mp4'}"
         sheet_path = Path(tmpdir) / "contact-sheet.jpg"
@@ -47,6 +47,7 @@ def _extract_video_contact_sheet(payload: bytes, suffix: str) -> tuple[bytes, st
         command = [
             "ffmpeg",
             "-hide_banner",
+            "-nostdin",
             "-loglevel",
             "error",
             "-i",
@@ -60,10 +61,30 @@ def _extract_video_contact_sheet(payload: bytes, suffix: str) -> tuple[bytes, st
             "-y",
             str(sheet_path),
         ]
-        result = subprocess.run(command, capture_output=True, timeout=90, check=False)
-        if result.returncode != 0 or not sheet_path.exists():
-            detail = result.stderr.decode("utf-8", errors="replace").strip()
-            raise ValueError(detail or "No representative video frames could be extracted")
+        await run_media_command(command, timeout=90)
+        if not sheet_path.exists():
+            await run_media_command(
+                [
+                    "ffmpeg",
+                    "-hide_banner",
+                    "-nostdin",
+                    "-loglevel",
+                    "error",
+                    "-i",
+                    str(video_path),
+                    "-frames:v",
+                    "1",
+                    "-vf",
+                    "scale=640:-2",
+                    "-q:v",
+                    "3",
+                    "-y",
+                    str(sheet_path),
+                ],
+                timeout=90,
+            )
+        if not sheet_path.exists():
+            raise ValueError("No representative video frames could be extracted")
         return sheet_path.read_bytes(), "image/jpeg"
 
 
@@ -71,7 +92,7 @@ async def prepare_media_preview(payload: bytes, *, source_type: str, filename: s
     if source_type == "image":
         return await asyncio.to_thread(_prepare_image, payload)
     if source_type == "video":
-        return await asyncio.to_thread(_extract_video_contact_sheet, payload, Path(filename).suffix.lower())
+        return await _extract_video_contact_sheet(payload, Path(filename).suffix.lower())
     raise ValueError("Description generation is available only for image and video Sources")
 
 

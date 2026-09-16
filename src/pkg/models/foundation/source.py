@@ -1,7 +1,18 @@
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -75,6 +86,15 @@ class SourceMedia(Base):
     thumbnail_path: Mapped[str | None] = mapped_column(Text)
     caption: Mapped[str | None] = mapped_column(Text)
     caption_model: Mapped[str | None] = mapped_column(String(200))
+    transcript: Mapped[str | None] = mapped_column(Text)
+    transcript_model: Mapped[str | None] = mapped_column(String(200))
+    transcript_status: Mapped[str] = mapped_column(
+        String(30), nullable=False, server_default="pending"
+    )
+    segment_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    processing_stage: Mapped[str] = mapped_column(
+        String(30), nullable=False, server_default="queued"
+    )
     processing_status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="pending")
     processing_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     processing_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
@@ -86,4 +106,29 @@ class SourceMedia(Base):
 
     __table_args__ = (
         Index("idx_source_media_processing", "processing_status", "next_retry_at"),
+    )
+
+
+class SourceMediaSegment(Base):
+    __tablename__ = "source_media_segments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("sources.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    segment_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    start_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    transcript: Mapped[str | None] = mapped_column(Text)
+    caption: Mapped[str | None] = mapped_column(Text)
+    thumbnail_path: Mapped[str | None] = mapped_column(Text)
+    embedding = mapped_column(Vector(settings.EMBEDDING_DIM))
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("source_id", "segment_index", name="uq_source_media_segment_index"),
+        Index("idx_source_media_segments_source_time", "source_id", "start_ms"),
     )

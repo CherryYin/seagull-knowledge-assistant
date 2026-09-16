@@ -63,12 +63,28 @@ class SourceMediaRead(BaseModel):
     thumbnail_url: str | None = None
     caption: str | None = None
     caption_model: str | None = None
+    transcript: str | None = None
+    transcript_model: str | None = None
+    transcript_status: str
+    segment_count: int
+    processing_stage: str
     processing_status: str
     processing_version: int
     processing_attempts: int
     next_retry_at: datetime | None = None
     error_message: str | None = None
     processed_at: datetime | None = None
+
+
+class SourceMediaSegmentRead(BaseModel):
+    id: int
+    source_id: str
+    segment_index: int
+    start_ms: int
+    end_ms: int
+    transcript: str | None = None
+    caption: str | None = None
+    thumbnail_url: str | None = None
 
 
 class SourceList(BaseModel):

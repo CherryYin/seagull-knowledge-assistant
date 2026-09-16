@@ -64,3 +64,38 @@ async def test_retry_source_media_processing_resets_attempts(mock_session, fake_
     queue.assert_awaited_once_with(mock_session, source, force=True)
     assert media.processing_attempts == 0
     mock_session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_list_source_media_segments_returns_signed_thumbnails(mock_session, fake_user):
+    from pkg.api.sources import list_source_media_segments
+    from pkg.models.foundation.source import SourceMediaSegment
+
+    source = _source(fake_user.id)
+    source.source_type = "video"
+    segment = SourceMediaSegment(
+        id=7,
+        source_id=source.id,
+        segment_index=0,
+        start_ms=1_000,
+        end_ms=8_000,
+        transcript="spoken demo",
+        thumbnail_path="minio://bucket/segment.jpg",
+    )
+    mock_session.get.return_value = source
+    rows = MagicMock()
+    rows.scalars.return_value = [segment]
+    mock_session.execute.return_value = rows
+    storage = MagicMock()
+    storage.generate_download_url = AsyncMock(return_value="https://storage/segment.jpg")
+
+    with patch("pkg.api.sources.get_storage_service", return_value=storage):
+        result = await list_source_media_segments(
+            source.id,
+            user=fake_user,
+            session=mock_session,
+        )
+
+    assert result[0].start_ms == 1_000
+    assert result[0].transcript == "spoken demo"
+    assert result[0].thumbnail_url == "https://storage/segment.jpg"

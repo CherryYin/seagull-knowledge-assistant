@@ -110,6 +110,10 @@ class SearchResult(BaseModel):
     source_type: str | None = None
     match_reason: str | None = None
     thumbnail_url: str | None = None
+    segment_id: int | None = None
+    start_ms: int | None = None
+    end_ms: int | None = None
+    playback_url: str | None = None
 
 
 class NoteImageResponse(BaseModel):

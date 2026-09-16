@@ -6,8 +6,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEV_DIR="$ROOT_DIR/tmp/dev"
 BACKEND_PID_FILE="$DEV_DIR/backend.pid"
 FRONTEND_PID_FILE="$DEV_DIR/frontend.pid"
+WORKER_PID_FILE="$DEV_DIR/worker.pid"
 BACKEND_LOG="$DEV_DIR/backend.log"
 FRONTEND_LOG="$DEV_DIR/frontend.log"
+WORKER_LOG="$DEV_DIR/worker.log"
 
 show_status() {
   local name="$1"
@@ -40,4 +42,5 @@ show_status() {
 }
 
 show_status "backend" "$BACKEND_PID_FILE" "$BACKEND_LOG"
+show_status "worker" "$WORKER_PID_FILE" "$WORKER_LOG"
 show_status "frontend" "$FRONTEND_PID_FILE" "$FRONTEND_LOG"

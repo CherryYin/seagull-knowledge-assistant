@@ -13,6 +13,10 @@ from pkg.services.foundation.media_processing import (
     process_source_media,
     queue_media_processing,
 )
+from pkg.services.foundation.media_video import (
+    TranscriptSegment,
+    build_video_segment_windows,
+)
 
 
 def test_image_processing_creates_bounded_jpeg_thumbnail_and_metadata():
@@ -30,6 +34,30 @@ def test_image_processing_creates_bounded_jpeg_thumbnail_and_metadata():
         assert thumbnail.format == "JPEG"
         assert thumbnail.width <= 640
         assert thumbnail.height <= 640
+
+
+def test_video_segment_windows_align_transcript_with_scene_boundaries(monkeypatch):
+    monkeypatch.setattr("pkg.services.foundation.media_video.settings.MEDIA_VIDEO_SEGMENT_SECONDS", 30)
+    monkeypatch.setattr("pkg.services.foundation.media_video.settings.MEDIA_VIDEO_MAX_SEGMENTS", 24)
+
+    windows = build_video_segment_windows(
+        65,
+        [15_000],
+        [
+            TranscriptSegment(start_ms=2_000, end_ms=8_000, text="opening"),
+            TranscriptSegment(start_ms=16_000, end_ms=20_000, text="demo"),
+        ],
+        "opening demo",
+    )
+
+    assert [(window.start_ms, window.end_ms) for window in windows] == [
+        (0, 15_000),
+        (15_000, 30_000),
+        (30_000, 60_000),
+        (60_000, 65_000),
+    ]
+    assert windows[0].transcript == "opening"
+    assert windows[1].transcript == "demo"
 
 
 @pytest.mark.asyncio
@@ -121,3 +149,65 @@ async def test_process_source_media_persists_derivatives_caption_and_index():
     assert media.height == 800
     assert media.caption == "Generated caption"
     index.assert_awaited_once_with(session, source, media_caption="Generated caption")
+
+
+@pytest.mark.asyncio
+async def test_process_video_media_runs_resumable_segment_pipeline():
+    session = MagicMock()
+    session.commit = AsyncMock()
+    session.rollback = AsyncMock()
+    source = Source(
+        id="video-1",
+        user_id="user-1",
+        category_id=1,
+        title="Demo recording",
+        source_type="video",
+        file_path="minio://bucket/demo.mp4",
+        ingested_at=datetime(2026, 9, 16),
+    )
+    media = SourceMedia(
+        source_id=source.id,
+        thumbnail_path="minio://bucket/thumb.jpg",
+        width=1280,
+        height=720,
+        duration_seconds=60,
+        caption="Video overview",
+        transcript_status="pending",
+        segment_count=0,
+        processing_stage="caption",
+        processing_status="pending",
+        processing_version=1,
+        processing_attempts=0,
+    )
+    session.get = AsyncMock(side_effect=[source, media])
+
+    @asynccontextmanager
+    async def session_context():
+        yield session
+
+    storage = MagicMock()
+    storage.get_object = AsyncMock(return_value=b"video-bytes")
+
+    from unittest.mock import patch
+
+    with (
+        patch("pkg.services.foundation.media_processing.async_session", side_effect=session_context),
+        patch("pkg.services.foundation.media_processing.get_storage_service", return_value=storage),
+        patch(
+            "pkg.services.foundation.media_processing.process_video_segments",
+            new=AsyncMock(),
+        ) as process_segments,
+        patch("pkg.api.sources.upsert_source_embeddings", new=AsyncMock(return_value=True)) as index,
+    ):
+        await process_source_media(source.id)
+
+    process_segments.assert_awaited_once_with(
+        session,
+        source,
+        media,
+        b"video-bytes",
+        "demo.mp4",
+    )
+    index.assert_awaited_once_with(session, source, media_caption="Video overview")
+    assert media.processing_stage == "completed"
+    assert media.processing_status == "completed"

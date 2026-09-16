@@ -18,7 +18,13 @@ from pkg.api.deps import get_current_user
 from pkg.config import settings
 from pkg.db import get_session
 from pkg.models.category import Category
-from pkg.models.foundation.source import Source, SourceChunk, SourceEmbedding, SourceMedia
+from pkg.models.foundation.source import (
+    Source,
+    SourceChunk,
+    SourceEmbedding,
+    SourceMedia,
+    SourceMediaSegment,
+)
 from pkg.models.user import User
 from pkg.schemas.source import (
     ChunkRead,
@@ -27,6 +33,7 @@ from pkg.schemas.source import (
     SourceFileAccess,
     SourceList,
     SourceMediaRead,
+    SourceMediaSegmentRead,
     SourceRead,
     SourceUpdate,
     SourceUploadResult,
@@ -827,7 +834,10 @@ async def delete_source_by_id(
 
     await sync_discovery_review_for_source(session, source=source, status="dismissed")
     media = await session.get(SourceMedia, source_id)
-    await delete_media_derivatives(media)
+    segment_rows = await session.execute(
+        select(SourceMediaSegment).where(SourceMediaSegment.source_id == source_id)
+    )
+    await delete_media_derivatives(media, list(segment_rows.scalars()))
 
     # Delete stored file from MinIO
     if source.file_path and source.file_path.startswith("minio://"):
@@ -866,6 +876,11 @@ async def _source_media_read(media: SourceMedia) -> SourceMediaRead:
         thumbnail_url=thumbnail_url,
         caption=media.caption,
         caption_model=media.caption_model,
+        transcript=media.transcript,
+        transcript_model=media.transcript_model,
+        transcript_status=media.transcript_status or "pending",
+        segment_count=media.segment_count or 0,
+        processing_stage=media.processing_stage or "queued",
         processing_status=media.processing_status,
         processing_version=media.processing_version,
         processing_attempts=media.processing_attempts,
@@ -888,6 +903,41 @@ async def get_source_media(
     if media is None:
         raise HTTPException(status_code=404, detail="Media processing record not found")
     return await _source_media_read(media)
+
+
+@router.get("/{source_id}/media/segments", response_model=list[SourceMediaSegmentRead])
+async def list_source_media_segments(
+    source_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    source = await session.get(Source, source_id)
+    if not source or (source.user_id != user.id and not source.is_shared):
+        raise HTTPException(status_code=404, detail="Source not found")
+    rows = await session.execute(
+        select(SourceMediaSegment)
+        .where(SourceMediaSegment.source_id == source_id)
+        .order_by(SourceMediaSegment.segment_index.asc())
+    )
+    storage = get_storage_service()
+    results = []
+    for segment in rows.scalars():
+        thumbnail_url = None
+        if segment.thumbnail_path:
+            thumbnail_url = await storage.generate_download_url(segment.thumbnail_path)
+        results.append(
+            SourceMediaSegmentRead(
+                id=segment.id,
+                source_id=segment.source_id,
+                segment_index=segment.segment_index,
+                start_ms=segment.start_ms,
+                end_ms=segment.end_ms,
+                transcript=segment.transcript,
+                caption=segment.caption,
+                thumbnail_url=thumbnail_url,
+            )
+        )
+    return results
 
 
 @router.post("/{source_id}/media/process", response_model=SourceMediaRead)

@@ -2,7 +2,6 @@ import asyncio
 import io
 import json
 import logging
-import subprocess
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -14,10 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.config import settings
 from pkg.db import async_session
-from pkg.models.foundation.source import Source, SourceMedia
+from pkg.models.foundation.source import Source, SourceMedia, SourceMediaSegment
 from pkg.services.cross_cutting.storage import get_storage_service
 from pkg.services.cross_cutting.system_jobs import record_system_job
 from pkg.services.foundation.media_description import generate_media_description
+from pkg.services.foundation.media_tools import run_media_command
+from pkg.services.foundation.media_video import process_video_segments
 
 logger = logging.getLogger(__name__)
 
@@ -57,12 +58,12 @@ def _image_derivatives(payload: bytes) -> MediaDerivatives:
         )
 
 
-def _video_derivatives(payload: bytes, suffix: str) -> MediaDerivatives:
+async def _video_derivatives(payload: bytes, suffix: str) -> MediaDerivatives:
     with tempfile.TemporaryDirectory(prefix="pkg-media-processing-") as tmpdir:
         video_path = Path(tmpdir) / f"input{suffix or '.mp4'}"
         thumbnail_path = Path(tmpdir) / "thumbnail.jpg"
         video_path.write_bytes(payload)
-        probe = subprocess.run(
+        probe_stdout, _ = await run_media_command(
             [
                 "ffprobe",
                 "-v",
@@ -75,21 +76,17 @@ def _video_derivatives(payload: bytes, suffix: str) -> MediaDerivatives:
                 "json",
                 str(video_path),
             ],
-            capture_output=True,
             timeout=settings.MEDIA_PROCESSING_VIDEO_TIMEOUT_SECONDS,
-            check=False,
         )
-        if probe.returncode != 0:
-            detail = probe.stderr.decode("utf-8", errors="replace").strip()
-            raise ValueError(detail or "Video metadata extraction failed")
-        details = json.loads(probe.stdout or b"{}")
+        details = json.loads(probe_stdout or b"{}")
         stream = (details.get("streams") or [{}])[0]
         format_details = details.get("format") or {}
         duration = float(format_details["duration"]) if format_details.get("duration") else None
-        frame = subprocess.run(
+        await run_media_command(
             [
                 "ffmpeg",
                 "-hide_banner",
+                "-nostdin",
                 "-loglevel",
                 "error",
                 "-ss",
@@ -105,13 +102,10 @@ def _video_derivatives(payload: bytes, suffix: str) -> MediaDerivatives:
                 "-y",
                 str(thumbnail_path),
             ],
-            capture_output=True,
             timeout=settings.MEDIA_PROCESSING_VIDEO_TIMEOUT_SECONDS,
-            check=False,
         )
-        if frame.returncode != 0 or not thumbnail_path.exists():
-            detail = frame.stderr.decode("utf-8", errors="replace").strip()
-            raise ValueError(detail or "Video thumbnail generation failed")
+        if not thumbnail_path.exists():
+            raise ValueError("Video thumbnail generation failed")
         format_name = str(format_details.get("format_name") or "").split(",", 1)[0]
         return MediaDerivatives(
             mime_type=f"video/{format_name}" if format_name else None,
@@ -133,7 +127,7 @@ async def build_media_derivatives(
         return await asyncio.to_thread(_image_derivatives, payload)
     if source_type == "video":
         suffix = Path(filename).suffix.lower()
-        return await asyncio.to_thread(_video_derivatives, payload, suffix)
+        return await _video_derivatives(payload, suffix)
     raise ValueError("Media processing is available only for image and video Sources")
 
 
@@ -150,12 +144,16 @@ async def queue_media_processing(
             processing_status="pending",
             processing_version=1,
             processing_attempts=0,
+            transcript_status="pending" if source.source_type == "video" else "not_applicable",
+            processing_stage="queued",
         )
         session.add(media)
     elif force:
         media.processing_status = "pending"
         media.next_retry_at = None
         media.error_message = None
+        if source.source_type == "video" and media.transcript_status == "disabled":
+            media.transcript_status = "pending"
     return media
 
 
@@ -201,21 +199,32 @@ async def process_source_media(source_id: str) -> None:
                 media.width = derivatives.width
                 media.height = derivatives.height
                 media.duration_seconds = derivatives.duration_seconds
+                media.processing_stage = "derivatives"
                 await session.commit()
-            caption, caption_model = await generate_media_description(
-                payload,
-                source_type=source.source_type,
-                filename=filename,
-                title=source.title,
-            )
-            media.caption = caption
-            media.caption_model = caption_model
+            if not media.caption:
+                caption, caption_model = await generate_media_description(
+                    payload,
+                    source_type=source.source_type,
+                    filename=filename,
+                    title=source.title,
+                )
+                media.caption = caption
+                media.caption_model = caption_model
+                media.processing_stage = "caption"
+                await session.commit()
+            if source.source_type == "video":
+                await process_video_segments(session, source, media, payload, filename)
+            media.processing_stage = "indexing"
             media.processing_status = "completed"
             media.processed_at = datetime.now(timezone.utc).replace(tzinfo=None)
             media.error_message = None
             from pkg.api.sources import upsert_source_embeddings
 
-            await upsert_source_embeddings(session, source, media_caption=caption)
+            media_index_text = "\n".join(
+                value for value in (media.caption, media.transcript) if value
+            )
+            await upsert_source_embeddings(session, source, media_caption=media_index_text)
+            media.processing_stage = "completed"
             await session.commit()
         except Exception as exc:
             await session.rollback()
@@ -296,14 +305,18 @@ async def media_processing_loop() -> None:
         await asyncio.sleep(max(settings.MEDIA_PROCESSING_INTERVAL_SECONDS, 1))
 
 
-async def delete_media_derivatives(media: SourceMedia | None) -> None:
-    if media is None or not media.thumbnail_path:
+async def delete_media_derivatives(
+    media: SourceMedia | None,
+    segments: list[SourceMediaSegment] | None = None,
+) -> None:
+    if media is None:
         return
-    try:
-        await get_storage_service().delete_object(media.thumbnail_path)
-    except Exception:
-        logger.warning(
-            "Failed to delete media thumbnail %s",
-            media.thumbnail_path,
-            exc_info=True,
-        )
+    paths = [media.thumbnail_path]
+    paths.extend(segment.thumbnail_path for segment in segments or [])
+    for path in paths:
+        if not path:
+            continue
+        try:
+            await get_storage_service().delete_object(path)
+        except Exception:
+            logger.warning("Failed to delete media derivative %s", path, exc_info=True)
