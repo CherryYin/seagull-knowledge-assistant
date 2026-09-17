@@ -31,6 +31,7 @@ from pkg.api.search import router as search_router
 from pkg.api.completion import router as completion_router
 from pkg.api.chat_sessions import router as chat_sessions_router
 from pkg.api.knowledge import router as knowledge_router
+from pkg.api.library import router as library_router
 from pkg.api.models import router as models_router
 from pkg.api.dashboard import router as dashboard_router
 from pkg.api.categories import router as categories_router
@@ -133,6 +134,7 @@ app.add_middleware(
 app.include_router(sources_router, prefix="/sources", tags=["sources"])
 app.include_router(notes_router, prefix="/notes", tags=["notes"])
 app.include_router(search_router, tags=["search"])
+app.include_router(library_router, prefix="/library", tags=["library"])
 app.include_router(completion_router, tags=["completion"])
 app.include_router(chat_sessions_router, prefix="/chat-sessions", tags=["chat-sessions"])
 app.include_router(knowledge_router, prefix="/knowledge", tags=["knowledge"])

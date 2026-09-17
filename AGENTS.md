@@ -14,6 +14,7 @@ The core product goal is a durable personal knowledge graph with deterministic r
 - Generate image/video Source description proposals with the configured multimodal LLM; image proposals inspect a normalized image and video proposals inspect sampled representative frames, while saving remains an explicit user action. Media Source title, search description, and detailed Extraction Content remain user-editable, and description/extraction edits rebuild the Source search index.
 - Treat `pdf` and `article` sources as permanent user knowledge: automated retention jobs must never delete them; deletion requires an explicit user action.
 - Search knowledge using SQL filters, vector embeddings, full-text style search, and hybrid retrieval.
+- Browse a unified Library over Source, Note, and Wiki records through `/library` and `/library/search`; the shared result envelope exposes independent lifecycle state, tags, dates, Source media type, signed thumbnails/playback, and text/Caption/Transcript hit explanations while legacy domain and `/search` routes remain compatible.
 - Expose authenticated REST APIs that Harness tools use to search, read, and write user knowledge.
 - Delegate interactive Agent Chat and workflow execution to DeepSeek Harness through the shared gateway.
 - Persist a per-message Agent Run contract in Chat sessions so Workflow/Owner context, terminal status, allowed save actions, and saved receipts survive Workflow changes, reloads, and History review.
@@ -75,6 +76,7 @@ The core product goal is a durable personal knowledge graph with deterministic r
 - `src/pkg/services/foundation/retriever.py`: Source/Chunk/Note/Wiki/Asset retrieval; it does not query a Memory Tree.
 - `src/pkg/services/foundation/sync_pipeline.py`, `src/pkg/services/foundation/document_extractor.py`: source ingestion and document processing.
 - `src/pkg/services/foundation/connectors.py`: GitHub, arXiv, and news connector search/import logic.
+- `src/pkg/services/foundation/library.py` and `src/pkg/api/library.py`: unified Source/Note/Wiki Library aggregation, filtering, result normalization, and media hit enrichment.
 - `src/pkg/services/foundation/connector_trends.py`: scheduled GitHub-only trend collection dispatches explicit enabled daily/weekly `GitHubTrendProfile` records; the old mixed entry point remains a compatibility wrapper, while scholarly collection belongs to Paper Discovery.
 - `src/pkg/services/foundation/rss_fetcher.py`, `src/pkg/services/foundation/rss_discovery.py`, `src/pkg/services/foundation/rss_summarizer.py`: RSS ingestion and summarization.
 - `src/pkg/services/foundation/discovery.py`, `src/pkg/services/foundation/review_suggestions.py`, `src/pkg/services/foundation/wiki_recompile.py`: discovery/review/wiki workflows.
