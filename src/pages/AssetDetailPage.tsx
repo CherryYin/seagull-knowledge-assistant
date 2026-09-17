@@ -14,7 +14,7 @@ import { MarkdownRenderer } from "@/components/markdown/MarkdownRenderer";
 import { ReferenceChips, type ReferenceItem } from "@/components/ReferenceChips";
 import { QuestionCard } from "@/components/QuestionCard";
 import { splitAssetContent } from "@/lib/asset-content";
-import { createAssetBlock, createAssetDocument, hasStableAssetDocument, loadAssetBlocks, serializeAssetBlocks, updateAssetBlock, updateAssetBlockClaimRefs, type AssetBlock } from "@/lib/asset-blocks";
+import { createAssetBlock, createAssetDocument, hasStableAssetDocument, loadAssetBlocks, locateAssetBlockSelection, reconcileAssetBlocks, serializeAssetBlocks, updateAssetBlock, updateAssetBlockClaimRefs, type AssetBlock } from "@/lib/asset-blocks";
 import { answerHarnessQuestion, harnessChat, type HarnessQuestionAnswer, type HarnessQuestionItem } from "@/lib/api";
 import { useReturnNavigation } from "@/hooks/useReturnNavigation";
 import { useRouteScrollRestoration } from "@/hooks/useRouteScrollRestoration";
@@ -167,6 +167,11 @@ interface BlockRevisionState {
   proposal?: AssetBlockPatch;
   error?: string;
   diagnostic?: string;
+}
+
+interface AssetEditorSelection {
+  blockId: string;
+  text: string;
 }
 
 interface AssetDocumentPatchBlock {
@@ -1094,6 +1099,9 @@ export function AssetDetailPage() {
   const [editOutline, setEditOutline] = useState("");
   const [editBlocks, setEditBlocks] = useState<AssetBlock[]>([]);
   const [editStyle, setEditStyle] = useState("");
+  const [editorSelection, setEditorSelection] = useState<AssetEditorSelection | null>(null);
+  const [selectionInstruction, setSelectionInstruction] = useState("");
+  const documentEditorRef = useRef<HTMLTextAreaElement | null>(null);
   const [previewBlockIds, setPreviewBlockIds] = useState<Set<string>>(() => new Set());
   const [blockRevision, setBlockRevision] = useState<BlockRevisionState | null>(null);
   const blockRevisionAbortRef = useRef<AbortController | null>(null);
@@ -1151,6 +1159,7 @@ export function AssetDetailPage() {
     && serverEditorSnapshot?.blocks.length
     && !hasStableAssetDocument(asset.metadata_),
   );
+  const editDocumentMarkdown = useMemo(() => serializeAssetBlocks(editBlocks), [editBlocks]);
   const editorSnapshot = useMemo<AssetEditorSnapshot>(() => ({
     title: editTitle,
     brief: editBrief,
@@ -1235,6 +1244,8 @@ export function AssetDetailPage() {
     setEditBlocks(snapshot.blocks);
     setEditStyle(snapshot.style);
     setPendingOptimizationRound(snapshot.pendingOptimizationRound);
+    setEditorSelection(null);
+    setSelectionInstruction("");
     setPreviewBlockIds(new Set());
     blockRevisionAbortRef.current?.abort();
     blockRevisionAbortRef.current = null;
@@ -1680,10 +1691,6 @@ export function AssetDetailPage() {
     },
   });
 
-  const changeBlock = (blockId: string, markdown: string) => {
-    setEditBlocks((blocks) => blocks.map((block) => block.id === blockId ? updateAssetBlock(block, markdown) : block));
-  };
-
   const toggleBlockClaim = (blockId: string, claimId: string) => {
     setEditBlocks((blocks) => blocks.map((block) => {
       if (block.id !== blockId) return block;
@@ -1692,6 +1699,10 @@ export function AssetDetailPage() {
         : [...block.claimRefs, claimId];
       return updateAssetBlockClaimRefs(block, claimRefs);
     }));
+  };
+
+  const changeBlock = (blockId: string, markdown: string) => {
+    setEditBlocks((blocks) => blocks.map((block) => block.id === blockId ? updateAssetBlock(block, markdown) : block));
   };
 
   const moveBlock = (blockId: string, offset: -1 | 1) => {
@@ -1722,11 +1733,6 @@ export function AssetDetailPage() {
       next.delete(blockId);
       return next;
     });
-    if (blockRevision?.blockId === blockId) {
-      blockRevisionAbortRef.current?.abort();
-      blockRevisionAbortRef.current = null;
-      setBlockRevision(null);
-    }
   };
 
   const toggleBlockPreview = (blockId: string) => {
@@ -1738,14 +1744,14 @@ export function AssetDetailPage() {
     });
   };
 
-  const openBlockRevision = (block: AssetBlock) => {
+  const openBlockRevision = (block: AssetBlock, instruction = "") => {
     blockRevisionAbortRef.current?.abort();
     blockRevisionAbortRef.current = null;
     setBlockRevision({
       blockId: block.id,
       baseRevision: block.revision,
       originalMarkdown: block.markdown,
-      instruction: "",
+      instruction,
       streaming: false,
       agentStatus: "",
     });
@@ -1755,6 +1761,36 @@ export function AssetDetailPage() {
     blockRevisionAbortRef.current?.abort();
     blockRevisionAbortRef.current = null;
     setBlockRevision(null);
+  };
+
+  const changeDocumentMarkdown = (markdown: string) => {
+    setEditBlocks((blocks) => reconcileAssetBlocks(blocks, markdown));
+    setEditorSelection(null);
+  };
+
+  const captureDocumentSelection = () => {
+    const editor = documentEditorRef.current;
+    if (!editor || editor.selectionStart === editor.selectionEnd) {
+      setEditorSelection(null);
+      return;
+    }
+    const selection = locateAssetBlockSelection(
+      editBlocks,
+      editor.selectionStart,
+      editor.selectionEnd,
+    );
+    setEditorSelection(selection ? { blockId: selection.block.id, text: selection.selectedText } : null);
+  };
+
+  const openSelectionRevision = (preset?: string) => {
+    if (!editorSelection) return;
+    const block = editBlocks.find((item) => item.id === editorSelection.blockId);
+    if (!block) return;
+    const instruction = selectionInstruction.trim() || preset || "Improve clarity and flow";
+    openBlockRevision(
+      block,
+      `${instruction}. Only revise the selected excerpt while preserving the surrounding paragraph and its supported claims. Selected excerpt: ${JSON.stringify(editorSelection.text)}`,
+    );
   };
 
   const startBlockRevision = async () => {
@@ -1887,6 +1923,8 @@ export function AssetDetailPage() {
         ? { ...updated, claimRefs: blockRevision.proposal!.claimRefs }
         : updated;
     }));
+    setEditorSelection(null);
+    setSelectionInstruction("");
     setBlockRevision(null);
   };
 
@@ -3063,7 +3101,115 @@ export function AssetDetailPage() {
                   </div>
                   <div className="space-y-2"><label className="text-sm font-medium" htmlFor="asset-edit-brief">Brief</label><Textarea id="asset-edit-brief" rows={4} value={editBrief} onChange={(event) => setEditBrief(event.target.value)} /></div>
                   <div className="space-y-2"><label className="text-sm font-medium" htmlFor="asset-edit-outline">Outline</label><Textarea id="asset-edit-outline" className="font-mono text-sm" rows={8} value={editOutline} onChange={(event) => setEditOutline(event.target.value)} /></div>
-                  <div className="space-y-3">
+                  <section className="space-y-4">
+                    <div>
+                      <h3 className="text-sm font-medium">Document</h3>
+                      <p className="text-xs text-muted-foreground">Edit the complete Markdown document naturally. Select text inside one paragraph to ask the Agent for a focused revision.</p>
+                    </div>
+                    <div className="grid gap-4 xl:grid-cols-2">
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Markdown</span>
+                          <span className="text-xs text-muted-foreground">{editDocumentMarkdown.length.toLocaleString()} characters</span>
+                        </div>
+                        <Textarea
+                          ref={documentEditorRef}
+                          aria-label="Asset document Markdown"
+                          className="min-h-[60rem] resize-y font-mono text-sm leading-6"
+                          value={editDocumentMarkdown}
+                          onChange={(event) => changeDocumentMarkdown(event.target.value)}
+                          onSelect={captureDocumentSelection}
+                          onKeyUp={captureDocumentSelection}
+                          onMouseUp={captureDocumentSelection}
+                          placeholder="Write the Asset as Markdown…"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Live Preview</span>
+                        <article className="min-h-[60rem] overflow-auto rounded-xl border bg-background p-6 shadow-sm">
+                          {editDocumentMarkdown.trim() ? (
+                            <div className="prose prose-slate max-w-none dark:prose-invert">
+                              <MarkdownRenderer evidenceLinks={evidenceLinks}>{editDocumentMarkdown}</MarkdownRenderer>
+                            </div>
+                          ) : (
+                            <p className="text-sm text-muted-foreground">Start writing to preview the document.</p>
+                          )}
+                        </article>
+                      </div>
+                    </div>
+                    {editorSelection && (
+                      <div className="sticky bottom-4 z-10 space-y-3 rounded-xl border border-violet-300 bg-background/95 p-4 shadow-xl backdrop-blur">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold">Revise selected text with Agent</p>
+                            <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">“{editorSelection.text}”</p>
+                          </div>
+                          <Button type="button" variant="ghost" size="sm" onClick={() => setEditorSelection(null)}>Dismiss</Button>
+                        </div>
+                        <Input value={selectionInstruction} onChange={(event) => setSelectionInstruction(event.target.value)} placeholder="Optional instruction for the selected text…" />
+                        <div className="flex flex-wrap gap-2">
+                          <Button type="button" size="sm" onClick={() => openSelectionRevision()}>Ask Agent</Button>
+                          <Button type="button" variant="outline" size="sm" onClick={() => openSelectionRevision("Make it clearer and more direct")}>Clarify</Button>
+                          <Button type="button" variant="outline" size="sm" onClick={() => openSelectionRevision("Make it more concise without losing meaning")}>Shorten</Button>
+                          <Button type="button" variant="outline" size="sm" onClick={() => openSelectionRevision("Expand it with useful detail and stronger transitions")}>Expand</Button>
+                        </div>
+                      </div>
+                    )}
+                    {blockRevision && (
+                      <div className="space-y-4 rounded-xl border border-primary/20 bg-background p-4" data-agent-block-revision={blockRevision.blockId}>
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div><p className="text-sm font-semibold">Agent Selection Revision</p><p className="text-xs text-muted-foreground">The Agent returns a proposal for the containing paragraph. Apply updates the editor only; Save Changes persists it.</p></div>
+                          <Button type="button" variant="ghost" size="sm" onClick={discardBlockRevision}>Close</Button>
+                        </div>
+                        <Textarea rows={3} value={blockRevision.instruction} disabled={blockRevision.streaming} onChange={(event) => setBlockRevision((current) => current ? { ...current, instruction: event.target.value } : current)} />
+                        <Button type="button" size="sm" onClick={() => void startBlockRevision()} disabled={blockRevision.streaming}>
+                          {blockRevision.streaming ? "Agent is working…" : blockRevision.proposal ? "Regenerate" : "Generate Revision"}
+                        </Button>
+                        {blockRevision.agentStatus && <AgentRunStatus status={blockRevision.error ? "failed" : blockRevision.proposal ? "completed" : blockRevision.pendingQuestion ? "awaiting_input" : blockRevision.streaming ? "running" : "completed"} message={blockRevision.agentStatus} details={blockRevision.diagnostic} />}
+                        {blockRevision.pendingQuestion && (
+                          <QuestionCard questions={blockRevision.pendingQuestion.questions} onSubmit={async (answers: HarnessQuestionAnswer[]) => {
+                            await answerHarnessQuestion(blockRevision.pendingQuestion!.rpcId, blockRevision.pendingQuestion!.sessionId, answers);
+                            setBlockRevision((current) => current ? { ...current, pendingQuestion: undefined, agentStatus: "Clarification received. Agent is continuing…" } : current);
+                          }} />
+                        )}
+                        {blockRevision.proposal && (
+                          <div className="space-y-3">
+                            {blockRevision.proposal.explanation && <p className="rounded-md bg-muted/50 p-3 text-sm">{blockRevision.proposal.explanation}</p>}
+                            <pre className="max-h-96 overflow-auto rounded-md border bg-muted/20 p-3 text-xs leading-5">
+                              {buildLineDiff(blockRevision.originalMarkdown, blockRevision.proposal.replacementMarkdown).map((line, lineIndex) => (
+                                <div key={`${lineIndex}-${line.kind}`} className={line.kind === "added" ? "bg-emerald-100 text-emerald-950" : line.kind === "removed" ? "bg-red-100 text-red-950" : "text-muted-foreground"}>
+                                  <span className="mr-2 inline-block w-3 select-none">{line.kind === "added" ? "+" : line.kind === "removed" ? "-" : " "}</span>{line.text || " "}
+                                </div>
+                              ))}
+                            </pre>
+                            <ProposalActions primaryLabel="Apply to Document" onPrimary={applyBlockRevision} onRegenerate={() => void startBlockRevision()} regenerateDisabled={blockRevision.streaming} onDiscard={discardBlockRevision} note="Review the continuous preview, then save explicitly." />
+                          </div>
+                        )}
+                        {blockRevision.error && <ActionError title="Selection revision failed" impact="The document was not changed." recovery="Retry the proposal or adjust the instruction." details={blockRevision.error} onRetry={() => void startBlockRevision()} />}
+                      </div>
+                    )}
+                    <details className="rounded-xl border bg-muted/10 px-4 py-3">
+                      <summary className="cursor-pointer text-sm font-medium">Advanced claim links</summary>
+                      <p className="mt-2 text-xs text-muted-foreground">Block boundaries remain internal and are shown here only for maintaining Claim references.</p>
+                      <div className="mt-3 space-y-3">
+                        {editBlocks.map((block, index) => (
+                          <div key={block.id} className="rounded-lg border bg-background p-3">
+                            <p className="line-clamp-2 text-xs text-muted-foreground">{block.markdown}</p>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {(workspaceQuery.data?.claims ?? []).filter((claim) => claim.status === "accepted" || claim.status === "hypothesis").map((claim) => (
+                                <label key={claim.id} className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2 py-1 text-xs">
+                                  <input type="checkbox" checked={block.claimRefs.includes(claim.id)} onChange={() => toggleBlockClaim(block.id, claim.id)} />
+                                  {claim.id}
+                                </label>
+                              ))}
+                              {!block.claimRefs.length && <span className="text-xs text-muted-foreground">Paragraph {index + 1} has no linked Claims.</span>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  </section>
+                  <div className="hidden" aria-hidden="true">
                     <div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-medium">Draft Blocks</h3><p className="text-xs text-muted-foreground">Each heading, paragraph group, list, quote, table, or code fence is edited independently.</p></div><Button type="button" variant="outline" size="sm" onClick={() => insertBlockAfter()}>Add Block</Button></div>
                     {editBlocks.length === 0 && <div className="rounded-xl border border-dashed p-8 text-center"><p className="text-sm text-muted-foreground">This draft has no content blocks yet.</p><Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => insertBlockAfter()}>Add First Block</Button></div>}
                     {editBlocks.map((block, index) => {

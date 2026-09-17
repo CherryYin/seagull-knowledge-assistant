@@ -101,6 +101,47 @@ export function serializeAssetBlocks(blocks: AssetBlock[]) {
   return blocks.map((block) => block.markdown.trim()).filter(Boolean).join("\n\n").trim();
 }
 
+export function reconcileAssetBlocks(previousBlocks: AssetBlock[], content: string) {
+  const parsedBlocks = parseAssetBlocks(content);
+  const availableByMarkdown = new Map<string, AssetBlock[]>();
+  for (const block of previousBlocks) {
+    const key = block.markdown.trim();
+    availableByMarkdown.set(key, [...(availableByMarkdown.get(key) ?? []), block]);
+  }
+  const usedIds = new Set<string>();
+  return parsedBlocks.map((parsedBlock, index) => {
+    const exact = (availableByMarkdown.get(parsedBlock.markdown.trim()) ?? [])
+      .find((block) => !usedIds.has(block.id));
+    if (exact) {
+      usedIds.add(exact.id);
+      return exact;
+    }
+    const positional = previousBlocks[index];
+    if (positional && !usedIds.has(positional.id)) {
+      usedIds.add(positional.id);
+      return updateAssetBlock(positional, parsedBlock.markdown);
+    }
+    return createAssetBlock(parsedBlock.markdown);
+  });
+}
+
+export function locateAssetBlockSelection(blocks: AssetBlock[], start: number, end: number) {
+  let offset = 0;
+  for (const block of blocks) {
+    const markdown = block.markdown.trim();
+    const blockStart = offset;
+    const blockEnd = blockStart + markdown.length;
+    if (start >= blockStart && end <= blockEnd) {
+      return {
+        block,
+        selectedText: markdown.slice(start - blockStart, end - blockStart),
+      };
+    }
+    offset = blockEnd + 2;
+  }
+  return null;
+}
+
 function isAssetBlock(value: unknown): value is AssetBlock {
   if (!value || typeof value !== "object") return false;
   const block = value as Record<string, unknown>;

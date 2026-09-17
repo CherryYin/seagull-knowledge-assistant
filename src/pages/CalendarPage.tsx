@@ -105,6 +105,11 @@ function groupReminders(reminders: CalendarReminder[]) {
   return map;
 }
 
+function linkedNotesForReminder(reminder: CalendarReminder) {
+  if (reminder.linked_notes?.length) return reminder.linked_notes;
+  return reminder.linked_note ? [reminder.linked_note] : [];
+}
+
 export function CalendarPage() {
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
@@ -115,7 +120,7 @@ export function CalendarPage() {
   const [newReminderRecurrence, setNewReminderRecurrence] = useState<CalendarReminder["recurrence"]>("once");
   const [linkedNoteId, setLinkedNoteId] = useState<string>("");
   const [editingReminderNoteId, setEditingReminderNoteId] = useState<string | null>(null);
-  const [pendingLinkedNoteId, setPendingLinkedNoteId] = useState("");
+  const [pendingLinkedNoteIds, setPendingLinkedNoteIds] = useState<string[]>([]);
   const [noteSearch, setNoteSearch] = useState("");
 
   const days = useMemo(() => buildCalendarDays(visibleMonth), [visibleMonth]);
@@ -171,13 +176,17 @@ export function CalendarPage() {
     if (!query) return notes.slice(0, 100);
     return notes.filter((note) => `${note.title} ${note.abstract ?? ""}`.toLowerCase().includes(query)).slice(0, 100);
   }, [noteSearch, notesData?.items]);
+  const notesById = useMemo(
+    () => new Map((notesData?.items ?? []).map((note) => [note.id, note])),
+    [notesData?.items]
+  );
 
   const createReminderMutation = useMutation({
     mutationFn: () => calendarRemindersApi.create({
       date: selectedKey,
       text: newReminder.trim(),
       recurrence: newReminderRecurrence,
-      note_id: linkedNoteId || null,
+      note_ids: linkedNoteId ? [linkedNoteId] : [],
     }),
     onSuccess: () => {
       setNewReminder("");
@@ -191,9 +200,9 @@ export function CalendarPage() {
   const updateReminderMutation = useMutation({
     mutationFn: ({ id, ...body }: { id: string } & CalendarReminderUpdate) => calendarRemindersApi.update(id, body),
     onSuccess: (_, variables) => {
-      if ("note_id" in variables) {
+      if ("note_ids" in variables || "note_id" in variables) {
         setEditingReminderNoteId(null);
-        setPendingLinkedNoteId("");
+        setPendingLinkedNoteIds([]);
         setNoteSearch("");
       }
       queryClient.invalidateQueries({ queryKey: ["calendar-reminders"] });
@@ -216,7 +225,13 @@ export function CalendarPage() {
 
   const startEditingLinkedNote = (reminder: CalendarReminder) => {
     setEditingReminderNoteId(reminder.id);
-    setPendingLinkedNoteId(reminder.note_id ?? "");
+    setPendingLinkedNoteIds(
+      reminder.note_ids?.length
+        ? reminder.note_ids
+        : reminder.note_id
+          ? [reminder.note_id]
+          : []
+    );
     setNoteSearch("");
   };
 
@@ -455,10 +470,18 @@ export function CalendarPage() {
                         <div className="min-w-0 flex-1">
                           <p className={cn("text-sm", reminder.is_done && "line-through")}>{reminder.text}</p>
                           <p className="mt-1 text-xs text-muted-foreground">{reminder.date} · {recurrenceLabel(reminder.recurrence)}</p>
-                          {reminder.note_id ? (
-                            <Link to={`/notes/${encodeURIComponent(reminder.note_id)}`} className="mt-1 inline-flex text-xs text-primary hover:underline">
-                              {reminder.linked_note?.title ?? "Open linked note"}
-                            </Link>
+                          {linkedNotesForReminder(reminder).length ? (
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              {linkedNotesForReminder(reminder).map((note) => (
+                                <Link
+                                  key={note.id}
+                                  to={`/notes/${encodeURIComponent(note.id)}`}
+                                  className="rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-xs text-primary hover:bg-primary/10"
+                                >
+                                  {note.title}
+                                </Link>
+                              ))}
+                            </div>
                           ) : null}
                           {editingReminderNoteId === reminder.id ? (
                             <div className="mt-3 space-y-2 rounded-lg border bg-background/80 p-2">
@@ -471,33 +494,57 @@ export function CalendarPage() {
                               />
                               <select
                                 className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
-                                value={pendingLinkedNoteId}
-                                onChange={(event) => setPendingLinkedNoteId(event.target.value)}
-                                aria-label="Linked note"
+                                value=""
+                                onChange={(event) => {
+                                  const noteId = event.target.value;
+                                  if (noteId) {
+                                    setPendingLinkedNoteIds((current) => Array.from(new Set([...current, noteId])));
+                                  }
+                                }}
+                                aria-label="Add linked note"
                               >
-                                <option value="">No linked note</option>
-                                {filteredNotes.map((note) => (
+                                <option value="">Add a note…</option>
+                                {filteredNotes.filter((note) => !pendingLinkedNoteIds.includes(note.id)).map((note) => (
                                   <option key={note.id} value={note.id}>{note.title}</option>
                                 ))}
                               </select>
+                              {pendingLinkedNoteIds.length ? (
+                                <div className="flex flex-wrap gap-1.5">
+                                  {pendingLinkedNoteIds.map((noteId) => (
+                                    <span key={noteId} className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-1 text-xs">
+                                      {notesById.get(noteId)?.title ?? noteId}
+                                      <button
+                                        type="button"
+                                        className="text-muted-foreground hover:text-destructive"
+                                        onClick={() => setPendingLinkedNoteIds((current) => current.filter((id) => id !== noteId))}
+                                        aria-label={`Remove ${notesById.get(noteId)?.title ?? "note"}`}
+                                      >
+                                        ×
+                                      </button>
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="text-xs text-muted-foreground">No notes attached.</p>
+                              )}
                               <div className="flex flex-wrap gap-2">
                                 <Button
                                   size="sm"
                                   type="button"
-                                  onClick={() => updateReminderMutation.mutate({ id: reminder.id, note_id: pendingLinkedNoteId || null })}
+                                  onClick={() => updateReminderMutation.mutate({ id: reminder.id, note_ids: pendingLinkedNoteIds })}
                                   disabled={updateReminderMutation.isPending}
                                 >
-                                  Save Link
+                                  Save Notes
                                 </Button>
-                                {reminder.note_id ? (
+                                {pendingLinkedNoteIds.length ? (
                                   <Button
                                     size="sm"
                                     type="button"
                                     variant="outline"
-                                    onClick={() => updateReminderMutation.mutate({ id: reminder.id, note_id: null })}
+                                    onClick={() => setPendingLinkedNoteIds([])}
                                     disabled={updateReminderMutation.isPending}
                                   >
-                                    Remove
+                                    Clear All
                                   </Button>
                                 ) : null}
                                 <Button size="sm" type="button" variant="ghost" onClick={() => setEditingReminderNoteId(null)}>
@@ -511,8 +558,8 @@ export function CalendarPage() {
                               className="mt-2 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary"
                               onClick={() => startEditingLinkedNote(reminder)}
                             >
-                              {reminder.note_id ? <Link2 className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
-                              {reminder.note_id ? "Change linked note" : "Attach note"}
+                              {linkedNotesForReminder(reminder).length ? <Link2 className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
+                              {linkedNotesForReminder(reminder).length ? "Edit linked notes" : "Attach notes"}
                             </button>
                           )}
                         </div>

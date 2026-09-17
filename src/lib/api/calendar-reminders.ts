@@ -6,11 +6,17 @@ export interface CalendarReminder {
   date: string;
   text: string;
   note_id?: string | null;
+  note_ids: string[];
   linked_note?: {
     id: string;
     title: string;
     status: string;
   } | null;
+  linked_notes: Array<{
+    id: string;
+    title: string;
+    status: string;
+  }>;
   recurrence: "once" | "daily" | "weekly" | "biweekly";
   is_done: boolean;
   created_at: string;
@@ -27,12 +33,14 @@ export interface CalendarReminderCreate {
   date: string;
   text: string;
   note_id?: string | null;
+  note_ids?: string[];
   recurrence?: "once" | "daily" | "weekly" | "biweekly";
 }
 
 export interface CalendarReminderUpdate {
   text?: string;
   note_id?: string | null;
+  note_ids?: string[];
   recurrence?: "once" | "daily" | "weekly" | "biweekly";
   is_done?: boolean;
   occurrence_date?: string;

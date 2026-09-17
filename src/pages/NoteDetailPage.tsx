@@ -588,7 +588,7 @@ export function NoteDetailPage() {
     mutationFn: () => calendarRemindersApi.create({
       date: todoDate,
       text: todoText.trim(),
-      note_id: id!,
+      note_ids: [id!],
       recurrence: "once",
     }),
     onSuccess: () => {
