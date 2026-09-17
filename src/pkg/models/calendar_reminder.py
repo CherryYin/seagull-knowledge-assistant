@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, ForeignKey, Index, String, Text, func
+from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from pkg.db import Base
@@ -28,3 +28,21 @@ class CalendarReminder(Base):
         Index("idx_calendar_reminders_user_date", "user_id", "date"),
         Index("idx_calendar_reminders_user_done", "user_id", "is_done"),
     )
+
+
+class CalendarReminderNote(Base):
+    __tablename__ = "calendar_reminder_notes"
+
+    reminder_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("calendar_reminders.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    note_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("notes.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+
+    __table_args__ = (Index("idx_calendar_reminder_notes_note_id", "note_id"),)

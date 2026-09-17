@@ -16,12 +16,18 @@ from pkg.services.foundation.connectors import (
     import_arxiv_paper,
     import_github_repo,
     import_news_article,
+    normalize_news_search_query,
     one_year_ago_date,
     parse_arxiv_feed,
     search_news_articles,
     search_arxiv,
     search_github_repos,
 )
+
+
+def test_normalize_news_search_query_converts_topic_list_to_or_query():
+    assert normalize_news_search_query("AI, LLM, Agent, workflow") == "AI OR LLM OR Agent OR workflow"
+    assert normalize_news_search_query("artificial intelligence") == "artificial intelligence"
 
 
 def test_build_arxiv_query_supports_filters():

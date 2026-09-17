@@ -8,6 +8,7 @@ from pkg.models.discovery import DiscoveryItem
 from pkg.models.foundation.source import Source
 from pkg.models.user import UserSettings
 from pkg.schemas.application.asset import NewsletterAutomationConfig, NewsletterAutomationUpdate
+from pkg.schemas.connector import NewsArticle
 from pkg.services.application.newsletter_automation import (
     _save_newsletter_config,
     build_newsletter_markdown,
@@ -147,11 +148,97 @@ async def test_generate_newsletter_creates_draft_asset_from_recent_items():
     assert body.metadata["newsletter_automation"]["config_snapshot"]["max_news_items"] == 3
     source_statement = session.execute.await_args_list[0].args[0]
     discovery_statement = session.execute.await_args_list[1].args[0]
-    source_datetimes = [value for value in source_statement.compile().params.values() if isinstance(value, datetime)]
-    discovery_datetimes = [value for value in discovery_statement.compile().params.values() if isinstance(value, datetime)]
+    source_datetimes = [
+        value for value in source_statement.compile().params.values() if isinstance(value, datetime)
+    ]
+    discovery_datetimes = [
+        value
+        for value in discovery_statement.compile().params.values()
+        if isinstance(value, datetime)
+    ]
     assert source_datetimes and all(value.tzinfo is None for value in source_datetimes)
     assert discovery_datetimes and all(value.tzinfo is None for value in discovery_datetimes)
     saved_config = save_mock.await_args.kwargs["config"]
     assert saved_config.last_run_status == "generated"
     assert saved_config.last_news_count == 1
     assert saved_config.last_paper_count == 1
+
+
+@pytest.mark.asyncio
+async def test_forced_newsletter_collects_news_when_local_window_is_empty():
+    now = datetime(2026, 9, 16, 8, 0, tzinfo=timezone.utc)
+    config = NewsletterAutomationConfig(
+        config_revision=4,
+        enabled=True,
+        topics=[],
+        frequency="manual",
+        lookback_days=7,
+        max_news_items=2,
+        max_paper_items=0,
+    )
+    empty_sources = MagicMock()
+    empty_sources.scalars.return_value = []
+    empty_discoveries = MagicMock()
+    empty_discoveries.scalars.return_value = []
+    session = AsyncMock()
+    session.execute = AsyncMock(side_effect=[empty_sources, empty_discoveries])
+    article = NewsArticle(
+        provider="newsapi",
+        title="AI infrastructure update",
+        url="https://example.com/ai-infrastructure",
+        description="A recent infrastructure update.",
+        published_at=now,
+    )
+    source = Source(
+        id="news-1",
+        user_id="user-1",
+        category_id=1,
+        title=article.title,
+        source_type="article",
+        url=article.url,
+        raw_content=article.description,
+        metadata_={"kind": "news"},
+    )
+    asset = Asset(
+        id="asset-newsletter",
+        user_id="user-1",
+        asset_type="newsletter_issue",
+        status="draft",
+        title="Technology Newsletter · 2026-09-16",
+        source_refs=[source.id],
+        note_refs=[],
+        wiki_refs=[],
+    )
+    asset.created_at = now
+    asset.updated_at = now
+
+    with (
+        patch(
+            "pkg.services.application.newsletter_automation.get_newsletter_config",
+            new=AsyncMock(return_value=config),
+        ),
+        patch(
+            "pkg.services.application.newsletter_automation.search_news_articles",
+            new=AsyncMock(return_value=[article]),
+        ) as search_mock,
+        patch(
+            "pkg.services.application.newsletter_automation.import_news_article",
+            new=AsyncMock(return_value=(source, True, "newsapi:example")),
+        ) as import_mock,
+        patch(
+            "pkg.services.application.newsletter_automation.create_asset",
+            new=AsyncMock(return_value=asset),
+        ),
+        patch(
+            "pkg.services.application.newsletter_automation._save_newsletter_config",
+            new=AsyncMock(),
+        ),
+    ):
+        result = await generate_newsletter(session, user_id="user-1", force=True, now=now)
+
+    assert result.status == "generated"
+    assert result.news_count == 1
+    assert result.paper_count == 0
+    search_mock.assert_awaited_once()
+    assert search_mock.await_args.kwargs["query"] == "AI, LLM, Agent, workflow"
+    import_mock.assert_awaited_once()

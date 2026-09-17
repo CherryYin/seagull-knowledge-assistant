@@ -18,12 +18,14 @@ class CalendarReminderCreate(BaseModel):
     date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     text: str = Field(min_length=1, max_length=1000)
     note_id: str | None = None
+    note_ids: list[str] | None = Field(default=None, max_length=20)
     recurrence: str = Field(default="once", pattern=CALENDAR_RECURRENCE_PATTERN)
 
 
 class CalendarReminderUpdate(BaseModel):
     text: str | None = Field(default=None, min_length=1, max_length=1000)
     note_id: str | None = None
+    note_ids: list[str] | None = Field(default=None, max_length=20)
     recurrence: str | None = Field(default=None, pattern=CALENDAR_RECURRENCE_PATTERN)
     is_done: bool | None = None
     occurrence_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
@@ -38,6 +40,8 @@ class CalendarReminderRead(BaseModel):
     text: str
     note_id: str | None = None
     linked_note: CalendarReminderLinkedNote | None = None
+    note_ids: list[str] = Field(default_factory=list)
+    linked_notes: list[CalendarReminderLinkedNote] = Field(default_factory=list)
     recurrence: str
     is_done: bool
     created_at: datetime

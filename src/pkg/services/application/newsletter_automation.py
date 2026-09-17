@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Iterable
@@ -12,6 +13,7 @@ from pkg.models.discovery import DiscoveryItem
 from pkg.models.foundation.source import Source
 from pkg.models.paper_discovery import PaperDiscoveryProfile
 from pkg.models.user import UserSettings
+from pkg.config import settings
 from pkg.schemas.application.asset import (
     AssetCreate,
     AssetProvenance,
@@ -22,11 +24,13 @@ from pkg.schemas.application.asset import (
 )
 from pkg.services.application.assets import create_asset
 from pkg.services.cross_cutting.user_settings import get_user_settings_dict
+from pkg.services.foundation.connectors import import_news_article, search_news_articles
 
 NEWSLETTER_SETTING_KEY = "newsletter_automation"
 NEWSLETTER_PAPER_PROFILE_NAME = "Newsletter Automation Papers"
 PAPER_PROVIDERS = {"arxiv", "openalex", "semantic_scholar", "crossref"}
 NEWS_PROVIDERS = {"news", "rss", "web"}
+logger = logging.getLogger(__name__)
 
 
 def is_newsletter_due(config: NewsletterAutomationConfig, now: datetime) -> bool:
@@ -118,6 +122,19 @@ async def generate_newsletter(
         config.topics,
         config.max_news_items,
     )
+    if force and not news_sources and config.max_news_items > 0:
+        collected_news = await _collect_news_sources(
+            session,
+            user_id=user_id,
+            config=config,
+            cutoff=cutoff,
+            current=current,
+        )
+        news_sources = _take_matching(
+            collected_news,
+            config.topics,
+            config.max_news_items,
+        )
     paper_sources = _take_matching(
         (source for source in sources if _source_kind(source) == "paper"),
         config.topics,
@@ -227,6 +244,48 @@ def _newsletter_run_snapshot(config: NewsletterAutomationConfig) -> NewsletterAu
         audience=config.audience,
         style_notes=config.style_notes,
     )
+
+
+async def _collect_news_sources(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    config: NewsletterAutomationConfig,
+    cutoff: datetime,
+    current: datetime,
+) -> list[Source]:
+    query = ", ".join(config.topics) if config.topics else settings.NEWS_AUTO_SEARCH_QUERY
+    if not query.strip():
+        return []
+    try:
+        articles = await search_news_articles(
+            query=query,
+            language=settings.NEWS_DEFAULT_LANGUAGE or None,
+            from_date=cutoff.date().isoformat(),
+            to_date=current.date().isoformat(),
+            max_results=max(config.max_news_items * 2, config.max_news_items),
+            user_id=user_id,
+        )
+    except Exception as exc:
+        logger.warning("Newsletter news collection failed for user %s: %s", user_id, exc)
+        return []
+
+    sources = []
+    for article in articles:
+        try:
+            source, _, _ = await import_news_article(
+                session,
+                user_id=user_id,
+                article=article,
+                fetch_full_text=False,
+            )
+        except Exception as exc:
+            logger.warning("Newsletter news import failed for user %s: %s", user_id, exc)
+            continue
+        sources.append(source)
+        if len(sources) >= config.max_news_items:
+            break
+    return sources
 
 
 def build_newsletter_markdown(

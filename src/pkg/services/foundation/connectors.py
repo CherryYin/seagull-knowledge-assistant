@@ -516,7 +516,15 @@ def parse_newsapi_article(item: dict, *, query: str | None = None, language: str
     )
 
 
+def normalize_news_search_query(query: str) -> str:
+    topics = [part.strip() for part in query.split(",") if part.strip()]
+    if len(topics) <= 1:
+        return query.strip()
+    return " OR ".join(topics)
+
+
 async def search_news_articles(*, query: str, language: str | None = None, country: str | None = None, from_date: str | None = None, to_date: str | None = None, sources: list[str] | None = None, domains: list[str] | None = None, max_results: int | None = None, user_id: str | None = None) -> list[NewsArticle]:
+    query = normalize_news_search_query(query)
     provider = (settings.NEWS_PROVIDER or "newsapi").strip().lower()
     if provider != "newsapi":
         raise ValueError(f"Unsupported news provider: {provider}")
