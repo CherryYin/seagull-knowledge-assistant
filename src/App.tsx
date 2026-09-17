@@ -106,6 +106,7 @@ export default function App() {
             {MindMapSpikePage && <Route path="/lab/mind-map-spike" element={<LazyPage><MindMapSpikePage /></LazyPage>} />}
             <Route path="/chat" element={<LazyPage><ChatPage /></LazyPage>} />
             <Route path="/agent-memory" element={<LazyPage><AgentMemoryPage /></LazyPage>} />
+            <Route path="/library" element={<LazyPage><SearchPage /></LazyPage>} />
             <Route path="/search" element={<LazyPage><SearchPage /></LazyPage>} />
             <Route path="/notes" element={<LazyPage><NotesPage /></LazyPage>} />
             <Route path="/notes/:id" element={<LazyPage><NoteDetailPage /></LazyPage>} />
