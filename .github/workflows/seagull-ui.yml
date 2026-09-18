@@ -1,0 +1,27 @@
+name: Seagull UI
+
+on:
+  push:
+    paths:
+      - "seagull-ui/**"
+      - ".github/workflows/seagull-ui.yml"
+  pull_request:
+    paths:
+      - "seagull-ui/**"
+      - ".github/workflows/seagull-ui.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: seagull-ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: seagull-ui/package-lock.json
+      - run: npm ci
+      - run: npm run build

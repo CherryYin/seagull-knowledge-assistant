@@ -1,0 +1,36 @@
+name: Knowledge Lab
+
+on:
+  push:
+    paths:
+      - "deepseek-knowledge-lab/**"
+      - ".gitmodules"
+      - ".github/workflows/knowledge-lab.yml"
+  pull_request:
+    paths:
+      - "deepseek-knowledge-lab/**"
+      - ".gitmodules"
+      - ".github/workflows/knowledge-lab.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: deepseek-knowledge-lab
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: deepseek-knowledge-lab/package-lock.json
+      - run: corepack enable
+      - run: npm ci
+      - run: npm run profiles:install
+      - run: npm run profiles:check
+      - run: npm run test:pkg-client
+      - run: npm run test:agent-memory
+      - run: npm run test:session-context

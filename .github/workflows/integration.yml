@@ -1,0 +1,32 @@
+name: Cross-Service Contracts
+
+on:
+  push:
+    paths:
+      - "personal_knowledge_graph/**"
+      - "seagull-ui/**"
+      - "bff/**"
+      - "deepseek-knowledge-lab/**"
+      - "tests/integration/**"
+      - ".github/workflows/integration.yml"
+  pull_request:
+    paths:
+      - "personal_knowledge_graph/**"
+      - "seagull-ui/**"
+      - "bff/**"
+      - "deepseek-knowledge-lab/**"
+      - "tests/integration/**"
+      - ".github/workflows/integration.yml"
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: node tests/integration/check-agent-memory.mjs
+      - run: node tests/integration/check-asset-production.mjs
+      - run: node tests/integration/check-shared-settings.mjs
+      - run: node tests/integration/check-source-mind-map.mjs

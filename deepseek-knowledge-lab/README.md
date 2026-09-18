@@ -60,12 +60,12 @@ npm run stack:stop    # 停止应用进程和 Docker 基础设施
 `http://127.0.0.1:3080`。PID 保存到 `.dsh/run/dev-stack/`，日志保存到
 `.dsh/logs/dev-stack/`。
 
-也可以直接使用 `./scripts/dev-stack.sh`：
+在 Monorepo 中也可以直接使用根目录的 `scripts/dev-stack.sh`：
 
 ```bash
-./scripts/dev-stack.sh restart --skip-worker
-./scripts/dev-stack.sh stop --keep-infra
-./scripts/dev-stack.sh logs harness
+../scripts/dev-stack.sh restart --skip-worker
+../scripts/dev-stack.sh stop --keep-infra
+../scripts/dev-stack.sh logs harness
 ```
 
 ### 注册 pkg-client 插件

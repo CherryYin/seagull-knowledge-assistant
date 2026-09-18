@@ -1,0 +1,21 @@
+{
+  "name": "seagull-knowledge-assistant",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Unified Seagull knowledge platform repository",
+  "scripts": {
+    "bootstrap": "bash scripts/bootstrap.sh",
+    "stack:check": "bash scripts/dev-stack.sh check",
+    "stack:start": "bash scripts/dev-stack.sh start",
+    "stack:stop": "bash scripts/dev-stack.sh stop",
+    "stack:restart": "bash scripts/dev-stack.sh restart",
+    "stack:status": "bash scripts/dev-stack.sh status",
+    "stack:logs": "bash scripts/dev-stack.sh logs",
+    "test": "bash scripts/test-all.sh",
+    "test:pkg": "personal_knowledge_graph/.venv/bin/pytest personal_knowledge_graph/tests -q",
+    "test:ui": "npm --prefix seagull-ui run build",
+    "test:gateway": "npm --prefix bff test",
+    "test:lab": "npm --prefix deepseek-knowledge-lab run profiles:check",
+    "test:integration": "node tests/integration/check-agent-memory.mjs && node tests/integration/check-asset-production.mjs && node tests/integration/check-shared-settings.mjs && node tests/integration/check-source-mind-map.mjs"
+  }
+}

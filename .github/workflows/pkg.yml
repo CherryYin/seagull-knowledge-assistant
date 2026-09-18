@@ -1,0 +1,28 @@
+name: PKG
+
+on:
+  push:
+    paths:
+      - "personal_knowledge_graph/**"
+      - ".github/workflows/pkg.yml"
+  pull_request:
+    paths:
+      - "personal_knowledge_graph/**"
+      - ".github/workflows/pkg.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: personal_knowledge_graph
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e ".[dev]" ruff
+      - run: ruff check src tests
+      - run: pytest -q
