@@ -4,11 +4,14 @@ from datetime import datetime
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from pkg.models.category import Category
 from pkg.models.foundation.note import Note
 from pkg.models.foundation.source import Source, SourceMedia, SourceMediaSegment
 from pkg.models.foundation.wiki import WikiPage
 from pkg.schemas.library import (
     LibrarySearchHit,
+    LibraryCategoryOption,
+    LibraryFilterOptions,
     LibrarySearchRequest,
     LibrarySearchResponse,
     LibrarySearchResult,
@@ -113,10 +116,35 @@ class LibraryService:
             facets=facets,
         )
 
+    async def filter_options(self) -> LibraryFilterOptions:
+        category_rows = await self.session.execute(select(Category).order_by(Category.display_name))
+        categories = [
+            LibraryCategoryOption(id=category.id, name=category.name, label=category.display_name)
+            for category in category_rows.scalars()
+        ]
+
+        tags: set[str] = set()
+        note_rows = await self.session.execute(select(Note.tags).where(Note.user_id == self.user_id))
+        for values in note_rows.scalars():
+            tags.update(str(value).strip() for value in values or [] if str(value).strip())
+        wiki_rows = await self.session.execute(
+            select(WikiPage.tags).where(WikiPage.user_id == self.user_id)
+        )
+        for values in wiki_rows.scalars():
+            tags.update(str(value).strip() for value in values or [] if str(value).strip())
+        source_rows = await self.session.execute(
+            select(Source.metadata_).where(or_(Source.user_id == self.user_id, Source.is_shared))
+        )
+        for metadata in source_rows.scalars():
+            tags.update(_metadata_tags(metadata))
+        return LibraryFilterOptions(categories=categories, tags=sorted(tags, key=str.casefold))
+
     def _retriever_filters(self, body: LibrarySearchRequest) -> dict | None:
         filters: dict[str, object] = {}
         if body.tags:
             filters["tags"] = body.tags
+        if body.category_ids:
+            filters["category_ids"] = body.category_ids
         if body.media_types and len(body.media_types) == 1:
             media_type = body.media_types[0]
             if media_type in {"image", "video"}:
@@ -133,6 +161,8 @@ class LibraryService:
 
         if "source" in entity_types:
             stmt = select(Source).where(or_(Source.user_id == self.user_id, Source.is_shared))
+            if body.category_ids:
+                stmt = stmt.where(Source.category_id.in_(body.category_ids))
             if body.media_types:
                 media_clauses = []
                 if "text" in body.media_types:
@@ -165,6 +195,8 @@ class LibraryService:
 
         if "note" in entity_types:
             stmt = select(Note).where(Note.user_id == self.user_id)
+            if body.category_ids:
+                stmt = stmt.where(Note.category_id.in_(body.category_ids))
             if body.tags:
                 stmt = stmt.where(Note.tags.overlap(body.tags))
             if body.lifecycle_statuses:
@@ -188,7 +220,7 @@ class LibraryService:
                 for note in rows.scalars()
             )
 
-        if "wiki" in entity_types:
+        if "wiki" in entity_types and not body.category_ids:
             stmt = select(WikiPage).where(WikiPage.user_id == self.user_id)
             if body.tags:
                 stmt = stmt.where(WikiPage.tags.overlap(body.tags))
@@ -238,6 +270,15 @@ class LibraryService:
                 select(SourceMediaSegment).where(SourceMediaSegment.id.in_(segment_ids))
             )
             segments = {segment.id: segment for segment in rows.scalars()}
+        category_ids = {
+            item.category_id
+            for item in [*sources.values(), *notes.values()]
+            if item.category_id is not None
+        }
+        categories: dict[int, Category] = {}
+        if category_ids:
+            rows = await self.session.execute(select(Category).where(Category.id.in_(category_ids)))
+            categories = {category.id: category for category in rows.scalars()}
 
         storage = get_storage_service()
         items: list[LibrarySearchResult] = []
@@ -265,6 +306,7 @@ class LibraryService:
                     playback_url = await storage.generate_download_url(source.file_path)
                 if result.source_type == "image" and media and media.caption:
                     hit.text = hit.text or media.caption
+                category = categories.get(source.category_id)
                 items.append(
                     LibrarySearchResult(
                         id=result.id,
@@ -279,6 +321,9 @@ class LibraryService:
                         updated_at=media.updated_at if media else source.ingested_at,
                         tags=_metadata_tags(source.metadata_),
                         lifecycle_status=_source_lifecycle(source.metadata_),
+                        category_id=source.category_id,
+                        category_name=category.name if category else None,
+                        category_label=category.display_name if category else None,
                         source_type=source.source_type,
                         thumbnail_url=thumbnail_url,
                         playback_url=playback_url,
@@ -292,6 +337,7 @@ class LibraryService:
                 note = notes.get(result.id)
                 if note is None:
                     continue
+                category = categories.get(note.category_id)
                 items.append(
                     LibrarySearchResult(
                         id=result.id,
@@ -306,6 +352,9 @@ class LibraryService:
                         updated_at=note.updated_at,
                         tags=list(note.tags or []),
                         lifecycle_status=note.status,
+                        category_id=note.category_id,
+                        category_name=category.name if category else None,
+                        category_label=category.display_name if category else None,
                         hit=hit,
                     )
                 )
@@ -346,6 +395,8 @@ class LibraryService:
                 return False
         if body.lifecycle_statuses and item.lifecycle_status not in body.lifecycle_statuses:
             return False
+        if body.category_ids and item.category_id not in body.category_ids:
+            return False
         if body.tags and not set(body.tags).intersection(item.tags):
             return False
         item_date = _naive_datetime(item.updated_at or item.created_at)
@@ -364,4 +415,8 @@ class LibraryService:
             "lifecycle_status": dict(
                 Counter(item.lifecycle_status for item in items if item.lifecycle_status)
             ),
+            "category": dict(
+                Counter(str(item.category_id) for item in items if item.category_id is not None)
+            ),
+            "tag": dict(Counter(tag for item in items for tag in item.tags)),
         }

@@ -14,6 +14,7 @@ class LibrarySearchRequest(BaseModel):
     entity_types: list[LibraryEntityType] | None = None
     media_types: list[LibraryMediaType] | None = None
     lifecycle_statuses: list[str] | None = None
+    category_ids: list[int] | None = None
     tags: list[str] | None = None
     date_from: datetime | None = None
     date_to: datetime | None = None
@@ -40,6 +41,9 @@ class LibrarySearchResult(BaseModel):
     updated_at: datetime | None = None
     tags: list[str] = Field(default_factory=list)
     lifecycle_status: str | None = None
+    category_id: int | None = None
+    category_name: str | None = None
+    category_label: str | None = None
     source_type: str | None = None
     thumbnail_url: str | None = None
     playback_url: str | None = None
@@ -55,3 +59,14 @@ class LibrarySearchResponse(BaseModel):
     limit: int
     offset: int
     facets: dict[str, dict[str, int]] = Field(default_factory=dict)
+
+
+class LibraryCategoryOption(BaseModel):
+    id: int
+    name: str
+    label: str
+
+
+class LibraryFilterOptions(BaseModel):
+    categories: list[LibraryCategoryOption]
+    tags: list[str]

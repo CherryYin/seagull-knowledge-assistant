@@ -207,7 +207,9 @@ async def run_connector_trends_step() -> dict:
     from pkg.services.foundation.connector_trends import run_scheduled_github_trend_profiles
 
     stats = await run_scheduled_github_trend_profiles()
-    return {"stats": stats}
+    if int(stats.get("runs", 0) or 0) == 0 and int(stats.get("failed", 0) or 0) > 0:
+        raise RuntimeError("GitHub trend collection failed for all scheduled users or profiles")
+    return dict(stats)
 
 
 async def run_discovery_generate_step() -> dict:

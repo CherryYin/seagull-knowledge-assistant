@@ -307,6 +307,24 @@ async def _github_headers(user_id: str | None = None) -> dict[str, str]:
     return headers
 
 
+async def _github_get(
+    url: str,
+    *,
+    user_id: str | None = None,
+    params: dict | None = None,
+) -> httpx.Response:
+    headers = await _github_headers(user_id)
+    async with httpx.AsyncClient(timeout=20, headers=headers) as client:
+        response = await client.get(url, params=params) if params is not None else await client.get(url)
+    if getattr(response, "status_code", None) != 401 or "Authorization" not in headers:
+        return response
+
+    logger.warning("GitHub credential was rejected; retrying public API request without authentication")
+    anonymous_headers = {key: value for key, value in headers.items() if key != "Authorization"}
+    async with httpx.AsyncClient(timeout=20, headers=anonymous_headers) as client:
+        return await client.get(url, params=params) if params is not None else await client.get(url)
+
+
 def parse_github_repo(item: dict, readme: str | None = None) -> GitHubRepo:
     owner = item.get("owner") or {}
     license_info = item.get("license") or {}
@@ -329,11 +347,10 @@ def parse_github_repo(item: dict, readme: str | None = None) -> GitHubRepo:
 
 
 async def fetch_github_readme(full_name: str, *, user_id: str | None = None) -> str | None:
-    async with httpx.AsyncClient(timeout=20, headers=await _github_headers(user_id)) as client:
-        response = await client.get(f"{GITHUB_API_URL}/repos/{full_name}/readme")
-        if response.status_code == 404:
-            return None
-        response.raise_for_status()
+    response = await _github_get(f"{GITHUB_API_URL}/repos/{full_name}/readme", user_id=user_id)
+    if response.status_code == 404:
+        return None
+    response.raise_for_status()
     payload = response.json()
     content = payload.get("content")
     if not content:
@@ -348,18 +365,16 @@ async def search_github_repos(*, query: str, language: str | None = None, topic:
     pushed_after = pushed_after or one_year_ago_date()
     q = build_github_query(query=query, language=language, topic=topic, min_stars=min_stars, pushed_after=pushed_after)
     params = {"q": q, "sort": "stars", "order": "desc", "per_page": max_results}
-    async with httpx.AsyncClient(timeout=20, headers=await _github_headers(user_id)) as client:
-        response = await client.get(f"{GITHUB_API_URL}/search/repositories", params=params)
-        response.raise_for_status()
+    response = await _github_get(f"{GITHUB_API_URL}/search/repositories", user_id=user_id, params=params)
+    response.raise_for_status()
     payload = response.json()
     return [parse_github_repo(item) for item in payload.get("items", [])]
 
 
 async def get_github_repo(full_name: str, *, fetch_readme: bool = True, user_id: str | None = None) -> GitHubRepo:
-    async with httpx.AsyncClient(timeout=20, headers=await _github_headers(user_id)) as client:
-        response = await client.get(f"{GITHUB_API_URL}/repos/{full_name}")
-        response.raise_for_status()
-        item = response.json()
+    response = await _github_get(f"{GITHUB_API_URL}/repos/{full_name}", user_id=user_id)
+    response.raise_for_status()
+    item = response.json()
     readme = await fetch_github_readme(full_name, user_id=user_id) if fetch_readme else None
     return parse_github_repo(item, readme=readme)
 

@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pkg.api.deps import get_current_user
 from pkg.db import get_session
 from pkg.models.user import User
-from pkg.schemas.library import LibrarySearchRequest, LibrarySearchResponse
+from pkg.schemas.library import LibraryFilterOptions, LibrarySearchRequest, LibrarySearchResponse
 from pkg.services.cross_cutting.activity import log_activity
 from pkg.services.foundation.library import LibraryService
 
@@ -38,3 +38,11 @@ async def list_library(
     session: AsyncSession = Depends(get_session),
 ):
     return await LibraryService(session, user.id).search(LibrarySearchRequest())
+
+
+@router.get("/filter-options", response_model=LibraryFilterOptions)
+async def get_library_filter_options(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await LibraryService(session, user.id).filter_options()

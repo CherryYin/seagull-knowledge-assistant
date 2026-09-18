@@ -326,13 +326,49 @@ async def collect_github_trends_for_profile(
     return items
 
 
-async def run_scheduled_github_trend_profiles() -> dict[str, int]:
-    stats = {"profiles": 0, "eligible": 0, "runs": 0, "github": 0, "failed": 0}
+async def run_scheduled_github_trend_profiles() -> dict[str, int | str | None]:
+    stats: dict[str, int | str | None] = {
+        "mode": "profiles",
+        "profiles": 0,
+        "eligible": 0,
+        "runs": 0,
+        "users": 0,
+        "github": 0,
+        "failed": 0,
+        "reason": None,
+    }
     async with async_session() as session:
         rows = await session.execute(
             select(GitHubTrendProfile).where(GitHubTrendProfile.is_enabled.is_(True))
         )
         profiles = list(rows.scalars())
+        if not profiles:
+            configured_user_ids = [
+                item.strip()
+                for item in settings.CONNECTOR_TRENDS_USER_IDS.split(",")
+                if item.strip()
+            ]
+            configured_user_ids = list(dict.fromkeys(configured_user_ids))
+            if not configured_user_ids:
+                stats["reason"] = "no_enabled_profiles_or_configured_users"
+                return stats
+
+            legacy_stats = await collect_daily_github_trends(user_ids=configured_user_ids)
+            stats.update(
+                mode="legacy_config",
+                runs=int(legacy_stats.get("users", 0) or 0),
+                users=int(legacy_stats.get("users", 0) or 0),
+                github=int(legacy_stats.get("github", 0) or 0),
+                failed=int(legacy_stats.get("failed", 0) or 0),
+            )
+            if int(stats["runs"] or 0) == 0 and int(stats["failed"] or 0) > 0:
+                stats["reason"] = "legacy_config_failed"
+            elif int(stats["failed"] or 0) > 0:
+                stats["reason"] = "partial_failure"
+            elif int(stats["github"] or 0) == 0:
+                stats["reason"] = "no_matching_github_repositories"
+            return stats
+
         due_profile_ids = [profile.id for profile in profiles if should_run_github_trend_profile(profile)]
         stats["profiles"] = len(profiles)
         stats["eligible"] = len(due_profile_ids)
@@ -350,6 +386,14 @@ async def run_scheduled_github_trend_profiles() -> dict[str, int]:
                 continue
             stats["runs"] += 1
             stats["github"] += len(items)
+        if not due_profile_ids:
+            stats["reason"] = "no_due_profiles"
+        elif int(stats["runs"] or 0) == 0 and int(stats["failed"] or 0) > 0:
+            stats["reason"] = "profile_runs_failed"
+        elif int(stats["failed"] or 0) > 0:
+            stats["reason"] = "partial_failure"
+        elif int(stats["github"] or 0) == 0:
+            stats["reason"] = "no_matching_github_repositories"
     return stats
 
 

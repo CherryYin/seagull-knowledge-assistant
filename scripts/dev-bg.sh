@@ -46,21 +46,21 @@ stop_if_running "$FRONTEND_PID_FILE"
 echo "Starting backend in background..."
 (
   cd "$ROOT_DIR"
-  exec setsid "${BACKEND_CMD[@]}"
+  exec nohup setsid "${BACKEND_CMD[@]}" </dev/null
 ) >"$BACKEND_LOG" 2>&1 &
 echo $! > "$BACKEND_PID_FILE"
 
 echo "Starting worker in background..."
 (
   cd "$ROOT_DIR"
-  exec setsid "${WORKER_CMD[@]}"
+  exec nohup setsid "${WORKER_CMD[@]}" </dev/null
 ) >"$WORKER_LOG" 2>&1 &
 echo $! > "$WORKER_PID_FILE"
 
 echo "Starting frontend in background..."
 (
   cd "$ROOT_DIR"
-  exec setsid "${FRONTEND_CMD[@]}"
+  exec nohup setsid "${FRONTEND_CMD[@]}" </dev/null
 ) >"$FRONTEND_LOG" 2>&1 &
 echo $! > "$FRONTEND_PID_FILE"
 

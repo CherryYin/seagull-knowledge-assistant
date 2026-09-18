@@ -48,6 +48,9 @@ def test_library_filters_keep_domain_lifecycle_independent():
         updated_at=datetime(2026, 9, 10),
         tags=["retrieval", "architecture"],
         lifecycle_status="growing",
+        category_id=2,
+        category_name="research",
+        category_label="Research",
         hit=LibrarySearchHit(field="summary", reason="Matched this Note."),
     )
 
@@ -56,6 +59,7 @@ def test_library_filters_keep_domain_lifecycle_independent():
         LibrarySearchRequest(
             entity_types=["note"],
             lifecycle_statuses=["growing"],
+            category_ids=[2],
             tags=["retrieval"],
             date_from=datetime(2026, 9, 5),
         ),
@@ -64,6 +68,7 @@ def test_library_filters_keep_domain_lifecycle_independent():
         item,
         LibrarySearchRequest(media_types=["text"]),
     )
+    assert not service._matches(item, LibrarySearchRequest(category_ids=[3]))
 
 
 def test_library_facets_separate_entity_and_media_types():

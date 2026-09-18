@@ -379,6 +379,43 @@ async def test_search_github_prefers_user_db_token(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_search_github_retries_anonymously_when_token_is_rejected(monkeypatch):
+    captured_headers = []
+
+    class Response:
+        def __init__(self, status_code):
+            self.status_code = status_code
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise AssertionError(f"unexpected status {self.status_code}")
+
+        def json(self):
+            return {"items": []}
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            captured_headers.append(kwargs.get("headers") or {})
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url, params):
+            return Response(401 if len(captured_headers) == 1 else 200)
+
+    monkeypatch.setattr("pkg.services.foundation.connectors.httpx.AsyncClient", Client)
+    monkeypatch.setattr("pkg.services.foundation.connectors.settings.GITHUB_TOKEN", "expired-token")
+
+    await search_github_repos(query="agent framework")
+
+    assert captured_headers[0]["Authorization"] == "Bearer expired-token"
+    assert "Authorization" not in captured_headers[1]
+
+
+@pytest.mark.asyncio
 async def test_import_arxiv_paper_creates_source_with_metadata():
     mock_session = AsyncMock()
     mock_session.get.return_value = None

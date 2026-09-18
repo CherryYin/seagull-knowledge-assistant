@@ -314,7 +314,121 @@ async def test_scheduled_github_profiles_isolate_profile_failures():
     ):
         stats = await run_scheduled_github_trend_profiles()
 
-    assert stats == {"profiles": 2, "eligible": 2, "runs": 1, "github": 2, "failed": 1}
+    assert stats == {
+        "mode": "profiles",
+        "profiles": 2,
+        "eligible": 2,
+        "runs": 1,
+        "users": 0,
+        "github": 2,
+        "failed": 1,
+        "reason": "partial_failure",
+    }
     assert session.get.await_count == 2
     assert session.commit.await_count == 1
     assert session.rollback.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_scheduled_github_profiles_do_not_use_legacy_config_when_profiles_exist(monkeypatch):
+    profile = GitHubTrendProfile(
+        id=1,
+        user_id="user-1",
+        name="Manual",
+        query="agents",
+        schedule="manual",
+        is_enabled=True,
+        candidate_count=25,
+        top_k=5,
+    )
+    session = AsyncMock()
+    rows = MagicMock()
+    rows.scalars.return_value = [profile]
+    session.execute.return_value = rows
+    session_cm = MagicMock()
+    session_cm.__aenter__ = AsyncMock(return_value=session)
+    session_cm.__aexit__ = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "pkg.services.foundation.connector_trends.settings.CONNECTOR_TRENDS_USER_IDS",
+        "legacy-user",
+    )
+
+    with patch("pkg.services.foundation.connector_trends.async_session", return_value=session_cm), patch(
+        "pkg.services.foundation.connector_trends.collect_daily_github_trends",
+        new_callable=AsyncMock,
+    ) as mock_collect:
+        stats = await run_scheduled_github_trend_profiles()
+
+    assert stats["mode"] == "profiles"
+    assert stats["profiles"] == 1
+    assert stats["runs"] == 0
+    assert stats["reason"] == "no_due_profiles"
+    mock_collect.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_scheduled_github_profiles_fall_back_to_configured_users(monkeypatch):
+    session = AsyncMock()
+    rows = MagicMock()
+    rows.scalars.return_value = []
+    session.execute.return_value = rows
+    session_cm = MagicMock()
+    session_cm.__aenter__ = AsyncMock(return_value=session)
+    session_cm.__aexit__ = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "pkg.services.foundation.connector_trends.settings.CONNECTOR_TRENDS_USER_IDS",
+        "user-1, user-2, user-1",
+    )
+    legacy_stats = {
+        "users": 2,
+        "github": 3,
+        "failed": 0,
+        "github_failed": 0,
+        "skipped_missing_user": 0,
+    }
+
+    with patch("pkg.services.foundation.connector_trends.async_session", return_value=session_cm), patch(
+        "pkg.services.foundation.connector_trends.collect_daily_github_trends",
+        new_callable=AsyncMock,
+        return_value=legacy_stats,
+    ) as mock_collect:
+        stats = await run_scheduled_github_trend_profiles()
+
+    assert stats == {
+        "mode": "legacy_config",
+        "profiles": 0,
+        "eligible": 0,
+        "runs": 2,
+        "users": 2,
+        "github": 3,
+        "failed": 0,
+        "reason": None,
+    }
+    mock_collect.assert_awaited_once_with(user_ids=["user-1", "user-2"])
+
+
+@pytest.mark.asyncio
+async def test_scheduled_github_profiles_report_missing_configuration(monkeypatch):
+    session = AsyncMock()
+    rows = MagicMock()
+    rows.scalars.return_value = []
+    session.execute.return_value = rows
+    session_cm = MagicMock()
+    session_cm.__aenter__ = AsyncMock(return_value=session)
+    session_cm.__aexit__ = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "pkg.services.foundation.connector_trends.settings.CONNECTOR_TRENDS_USER_IDS",
+        "",
+    )
+
+    with patch("pkg.services.foundation.connector_trends.async_session", return_value=session_cm), patch(
+        "pkg.services.foundation.connector_trends.collect_daily_github_trends",
+        new_callable=AsyncMock,
+    ) as mock_collect:
+        stats = await run_scheduled_github_trend_profiles()
+
+    assert stats["mode"] == "profiles"
+    assert stats["profiles"] == 0
+    assert stats["runs"] == 0
+    assert stats["reason"] == "no_enabled_profiles_or_configured_users"
+    mock_collect.assert_not_awaited()

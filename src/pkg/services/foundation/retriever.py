@@ -111,6 +111,8 @@ class RetrieverAgent:
                 stmt = stmt.where(Note.note_type == filters["note_type"])
             if "status" in filters:
                 stmt = stmt.where(Note.status == filters["status"])
+            if "category_ids" in filters:
+                stmt = stmt.where(Note.category_id.in_(filters["category_ids"]))
         if query:
             like_pattern = f"%{_escape_like(query)}%"
             stmt = stmt.where(
@@ -189,6 +191,8 @@ class RetrieverAgent:
             )
         if filters and "source_type" in filters:
             src_stmt = src_stmt.where(Source.source_type == filters["source_type"])
+        if filters and "category_ids" in filters:
+            src_stmt = src_stmt.where(Source.category_id.in_(filters["category_ids"]))
         src_stmt = src_stmt.limit(top_k)
 
         rows = await self.session.execute(src_stmt)
