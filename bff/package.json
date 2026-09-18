@@ -1,0 +1,14 @@
+{
+  "name": "bff",
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "test": "node --test",
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module"
+}
