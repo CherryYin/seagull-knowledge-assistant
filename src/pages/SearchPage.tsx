@@ -38,6 +38,9 @@ export function SearchPage() {
   const [query, setQuery] = useState(submitted);
   const entityTypes = splitParam(searchParams.get("types")) as LibraryEntityType[];
   const mediaTypes = splitParam(searchParams.get("media")) as LibraryMediaType[];
+  const categoryIds = splitParam(searchParams.get("categories"))
+    .map((value) => Number(value))
+    .filter(Number.isInteger);
   const lifecycle = searchParams.get("lifecycle")?.trim() ?? "";
   const tags = splitParam(searchParams.get("tags"));
   const dateFrom = searchParams.get("from") ?? "";
@@ -55,15 +58,21 @@ export function SearchPage() {
     entity_types: entityTypes.length ? entityTypes : undefined,
     media_types: mediaTypes.length ? mediaTypes : undefined,
     lifecycle_statuses: lifecycle ? [lifecycle] : undefined,
+    category_ids: categoryIds.length ? categoryIds : undefined,
     tags: tags.length ? tags : undefined,
     date_from: dateFrom ? `${dateFrom}T00:00:00` : undefined,
     date_to: dateTo ? `${dateTo}T23:59:59` : undefined,
     limit: 50,
-  }), [submitted, mode, entityTypes.join(","), mediaTypes.join(","), lifecycle, tags.join(","), dateFrom, dateTo]);
+  }), [submitted, mode, entityTypes.join(","), mediaTypes.join(","), categoryIds.join(","), lifecycle, tags.join(","), dateFrom, dateTo]);
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["library", requestBody],
     queryFn: () => libraryApi.search(requestBody),
+  });
+  const { data: filterOptions } = useQuery({
+    queryKey: ["library-filter-options"],
+    queryFn: libraryApi.filterOptions,
+    staleTime: 60_000,
   });
   const { scrollRef, onScroll } = useRouteScrollRestoration<HTMLDivElement>(
     "library-results",
@@ -90,7 +99,7 @@ export function SearchPage() {
     setSearchParams(next, { replace: true });
   };
 
-  const hasFilters = entityTypes.length > 0 || mediaTypes.length > 0 || lifecycle || tags.length > 0 || dateFrom || dateTo;
+  const hasFilters = entityTypes.length > 0 || mediaTypes.length > 0 || categoryIds.length > 0 || lifecycle || tags.length > 0 || dateFrom || dateTo;
 
   return (
     <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto" data-route-scroll="library-results">
@@ -124,6 +133,20 @@ export function SearchPage() {
           </div>
           <FilterButtons label="Type" options={ENTITY_OPTIONS} selected={entityTypes} onToggle={(value) => toggleListParam("types", entityTypes, value)} />
           <FilterButtons label="Source media" options={MEDIA_OPTIONS} selected={mediaTypes} onToggle={(value) => toggleListParam("media", mediaTypes, value)} />
+          <OptionPicker
+            label="Category"
+            placeholder="Add a category"
+            options={(filterOptions?.categories ?? []).map((category) => ({ value: String(category.id), label: category.label }))}
+            selected={categoryIds.map(String)}
+            onChange={(values) => updateParam("categories", values.join(","))}
+          />
+          <OptionPicker
+            label="Tags"
+            placeholder="Add a tag"
+            options={(filterOptions?.tags ?? []).map((tag) => ({ value: tag, label: `#${tag}` }))}
+            selected={tags}
+            onChange={(values) => updateParam("tags", values.join(","))}
+          />
           <div className="grid gap-3 md:grid-cols-4">
             <label className="space-y-1 text-xs text-muted-foreground">
               <span>Lifecycle</span>
@@ -137,10 +160,6 @@ export function SearchPage() {
                 <option value="stable">Stable Wiki</option>
                 <option value="archived">Archived</option>
               </select>
-            </label>
-            <label className="space-y-1 text-xs text-muted-foreground">
-              <span>Tags (comma separated)</span>
-              <Input value={tags.join(", ")} onChange={(event) => updateParam("tags", event.target.value)} placeholder="research, ai" />
             </label>
             <label className="space-y-1 text-xs text-muted-foreground">
               <span>From</span>
@@ -199,6 +218,47 @@ function FilterButtons<T extends string>({
       {options.map((option) => (
         <button key={option.value} type="button" onClick={() => onToggle(option.value)} className={`rounded-full border px-3 py-1 text-xs transition-colors ${selected.includes(option.value) ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:text-foreground"}`}>
           {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function OptionPicker({
+  label,
+  placeholder,
+  options,
+  selected,
+  onChange,
+}: {
+  label: string;
+  placeholder: string;
+  options: Array<{ value: string; label: string }>;
+  selected: string[];
+  onChange: (values: string[]) => void;
+}) {
+  const labels = new Map(options.map((option) => [option.value, option.label]));
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="w-24 text-xs text-muted-foreground">{label}</span>
+      <select
+        aria-label={`${label} filter`}
+        value=""
+        onChange={(event) => {
+          if (event.target.value && !selected.includes(event.target.value)) {
+            onChange([...selected, event.target.value]);
+          }
+        }}
+        className="h-9 min-w-48 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+      >
+        <option value="">{placeholder}</option>
+        {options.filter((option) => !selected.includes(option.value)).map((option) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+      {selected.map((value) => (
+        <button key={value} type="button" onClick={() => onChange(selected.filter((item) => item !== value))} className="flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2.5 py-1 text-xs text-primary">
+          {labels.get(value) ?? value} <X className="h-3 w-3" />
         </button>
       ))}
     </div>

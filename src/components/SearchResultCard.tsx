@@ -70,6 +70,7 @@ export function SearchResultCard({ result }: { result: LibrarySearchResult }) {
           <div className="mb-1 flex flex-wrap items-center gap-2">
             <Badge variant={result.entity_type === "source" ? "source" : "note"}>{result.entity_type}</Badge>
             {result.media_type && <Badge variant="outline">{result.media_type}</Badge>}
+            {result.category_label && <Badge variant="outline">{result.category_label}</Badge>}
             {result.lifecycle_status && <Badge variant="outline">{result.lifecycle_status}</Badge>}
             {result.updated_at && <span className="text-xs text-muted-foreground">{new Date(result.updated_at).toLocaleDateString()}</span>}
           </div>

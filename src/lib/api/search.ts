@@ -52,6 +52,9 @@ export interface LibrarySearchResult {
   updated_at?: string | null;
   tags: string[];
   lifecycle_status?: string | null;
+  category_id?: number | null;
+  category_name?: string | null;
+  category_label?: string | null;
   source_type?: string | null;
   thumbnail_url?: string | null;
   playback_url?: string | null;
@@ -67,6 +70,7 @@ export interface LibrarySearchRequest {
   entity_types?: LibraryEntityType[];
   media_types?: LibraryMediaType[];
   lifecycle_statuses?: string[];
+  category_ids?: number[];
   tags?: string[];
   date_from?: string;
   date_to?: string;
@@ -82,6 +86,11 @@ export interface LibrarySearchResponse {
   facets: Record<string, Record<string, number>>;
 }
 
+export interface LibraryFilterOptions {
+  categories: Array<{ id: number; name: string; label: string }>;
+  tags: string[];
+}
+
 export const libraryApi = {
   search: (body: LibrarySearchRequest) =>
     request<LibrarySearchResponse>("/library/search", {
@@ -89,4 +98,5 @@ export const libraryApi = {
       body: JSON.stringify(body),
     }),
   list: () => request<LibrarySearchResponse>("/library"),
+  filterOptions: () => request<LibraryFilterOptions>("/library/filter-options"),
 };

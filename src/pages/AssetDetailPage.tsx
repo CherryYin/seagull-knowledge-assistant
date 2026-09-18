@@ -14,7 +14,7 @@ import { MarkdownRenderer } from "@/components/markdown/MarkdownRenderer";
 import { ReferenceChips, type ReferenceItem } from "@/components/ReferenceChips";
 import { QuestionCard } from "@/components/QuestionCard";
 import { splitAssetContent } from "@/lib/asset-content";
-import { createAssetBlock, createAssetDocument, hasStableAssetDocument, loadAssetBlocks, locateAssetBlockSelection, reconcileAssetBlocks, serializeAssetBlocks, updateAssetBlock, updateAssetBlockClaimRefs, type AssetBlock } from "@/lib/asset-blocks";
+import { createAssetBlock, createAssetDocument, hasStableAssetDocument, loadAssetBlocks, locateAssetBlockRange, locateAssetBlockSelection, reconcileAssetBlocks, serializeAssetBlocks, updateAssetBlock, updateAssetBlockClaimRefs, type AssetBlock } from "@/lib/asset-blocks";
 import { answerHarnessQuestion, harnessChat, type HarnessQuestionAnswer, type HarnessQuestionItem } from "@/lib/api";
 import { useReturnNavigation } from "@/hooks/useReturnNavigation";
 import { useRouteScrollRestoration } from "@/hooks/useRouteScrollRestoration";
@@ -888,6 +888,7 @@ export function AssetDetailPage() {
   const backLabel = locationState?.backLabel || "Back to Assets";
   const returnToPrevious = useReturnNavigation(backTo, Boolean(locationState?.backTo));
   const requestedTab = new URLSearchParams(location.search).get("tab");
+  const requestedBlockId = new URLSearchParams(location.search).get("block");
   const routeTab = requestedTab && ASSET_DETAIL_TABS.includes(requestedTab as AssetDetailTab)
     ? requestedTab as AssetDetailTab
     : null;
@@ -895,6 +896,17 @@ export function AssetDetailPage() {
   const setActiveTab = (tab: AssetDetailTab) => {
     const next = new URLSearchParams(location.search);
     next.set("tab", tab);
+    next.delete("block");
+    navigate(
+      { pathname: location.pathname, search: `?${next.toString()}` },
+      { replace: true, state: location.state },
+    );
+  };
+
+  const openAssetBlockInEditor = (blockId: string) => {
+    const next = new URLSearchParams(location.search);
+    next.set("tab", "edit");
+    next.set("block", blockId);
     navigate(
       { pathname: location.pathname, search: `?${next.toString()}` },
       { replace: true, state: location.state },
@@ -1076,6 +1088,9 @@ export function AssetDetailPage() {
   });
 
   const asset = assetQuery.data;
+  const resolvedActiveTab = routeTab
+    ?? locationState?.initialTab
+    ?? (asset?.draft_content?.trim() ? "read" : workspaceQuery.data?.intent ? "intent" : "read");
   const { scrollRef, onScroll } = useRouteScrollRestoration<HTMLDivElement>(
     `asset-detail:${id || "unknown"}`,
     Boolean(asset),
@@ -1102,6 +1117,10 @@ export function AssetDetailPage() {
   const [editorSelection, setEditorSelection] = useState<AssetEditorSelection | null>(null);
   const [selectionInstruction, setSelectionInstruction] = useState("");
   const documentEditorRef = useRef<HTMLTextAreaElement | null>(null);
+  const [editorScrollTop, setEditorScrollTop] = useState(0);
+  const [editorHighlight, setEditorHighlight] = useState<{ blockId: string; start: number; end: number } | null>(null);
+  const editorHighlightMarkRef = useRef<HTMLElement | null>(null);
+  const consumedBlockRequestRef = useRef<string | null>(null);
   const [previewBlockIds, setPreviewBlockIds] = useState<Set<string>>(() => new Set());
   const [blockRevision, setBlockRevision] = useState<BlockRevisionState | null>(null);
   const blockRevisionAbortRef = useRef<AbortController | null>(null);
@@ -1160,6 +1179,60 @@ export function AssetDetailPage() {
     && !hasStableAssetDocument(asset.metadata_),
   );
   const editDocumentMarkdown = useMemo(() => serializeAssetBlocks(editBlocks), [editBlocks]);
+  useEffect(() => {
+    if (!requestedBlockId) {
+      consumedBlockRequestRef.current = null;
+      return;
+    }
+    if (resolvedActiveTab !== "edit" || consumedBlockRequestRef.current === requestedBlockId) return;
+    const range = locateAssetBlockRange(editBlocks, requestedBlockId);
+    if (!range) return;
+    consumedBlockRequestRef.current = requestedBlockId;
+    setEditorHighlight({ blockId: requestedBlockId, start: range.start, end: range.end });
+  }, [editBlocks, editDocumentMarkdown, requestedBlockId, resolvedActiveTab]);
+  useEffect(() => {
+    if (!editorHighlight) return;
+    const frame = window.requestAnimationFrame(() => {
+      const editor = documentEditorRef.current;
+      const mark = editorHighlightMarkRef.current;
+      if (!editor || !mark) return;
+
+      const markTop = mark.offsetTop;
+      const maxEditorScroll = Math.max(0, editor.scrollHeight - editor.clientHeight);
+      const nextEditorScroll = Math.min(
+        maxEditorScroll,
+        Math.max(0, markTop - editor.clientHeight / 3),
+      );
+      editor.scrollTop = nextEditorScroll;
+      setEditorScrollTop(nextEditorScroll);
+
+      const container = scrollRef.current;
+      if (container) {
+        const editorRect = editor.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
+        const targetTop = container.scrollTop
+          + editorRect.top
+          - containerRect.top
+          + markTop
+          - nextEditorScroll;
+        container.scrollTo({
+          top: Math.max(0, targetTop - container.clientHeight / 3),
+          behavior: "smooth",
+        });
+      } else {
+        editor.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+
+      editor.focus({ preventScroll: true });
+      editor.setSelectionRange(editorHighlight.start, editorHighlight.start);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [editorHighlight, scrollRef]);
+  useEffect(() => {
+    if (!editorHighlight) return;
+    const timer = window.setTimeout(() => setEditorHighlight(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [editorHighlight]);
   const editorSnapshot = useMemo<AssetEditorSnapshot>(() => ({
     title: editTitle,
     brief: editBrief,
@@ -1764,6 +1837,7 @@ export function AssetDetailPage() {
   };
 
   const changeDocumentMarkdown = (markdown: string) => {
+    setEditorHighlight(null);
     setEditBlocks((blocks) => reconcileAssetBlocks(blocks, markdown));
     setEditorSelection(null);
   };
@@ -2633,9 +2707,6 @@ export function AssetDetailPage() {
   const isExporting = exportMutation.isPending || exportHtmlMutation.isPending;
   const isBusy = statusMutation.isPending || isExporting || publishMutation.isPending || savePublishFeedbackMutation.isPending || attachReferencesMutation.isPending;
   const primaryAction = useMemo(() => (asset ? buildPrimaryAction(asset, readinessQuery.data) : null), [asset, readinessQuery.data]);
-  const resolvedActiveTab = routeTab
-    ?? locationState?.initialTab
-    ?? (asset?.draft_content?.trim() ? "read" : workspaceQuery.data?.intent ? "intent" : "read");
   const contentPresentation = useMemo(() => splitAssetContent(asset?.draft_content), [asset?.draft_content]);
   const headings = useMemo(() => markdownHeadings(contentPresentation.readerMarkdown), [contentPresentation.readerMarkdown]);
   const audience = typeof asset?.metadata_?.audience === "string" ? asset.metadata_.audience : null;
@@ -3112,17 +3183,40 @@ export function AssetDetailPage() {
                           <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Markdown</span>
                           <span className="text-xs text-muted-foreground">{editDocumentMarkdown.length.toLocaleString()} characters</span>
                         </div>
-                        <Textarea
-                          ref={documentEditorRef}
-                          aria-label="Asset document Markdown"
-                          className="min-h-[60rem] resize-y font-mono text-sm leading-6"
-                          value={editDocumentMarkdown}
-                          onChange={(event) => changeDocumentMarkdown(event.target.value)}
-                          onSelect={captureDocumentSelection}
-                          onKeyUp={captureDocumentSelection}
-                          onMouseUp={captureDocumentSelection}
-                          placeholder="Write the Asset as Markdown…"
-                        />
+                        {editorHighlight && (
+                          <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-400/50 bg-amber-400/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
+                            <span>Mind Map Block highlighted in the Markdown editor.</span>
+                            <button type="button" className="font-medium hover:underline" onClick={() => setEditorHighlight(null)}>Dismiss</button>
+                          </div>
+                        )}
+                        <div className="relative">
+                          {editorHighlight && (
+                            <div aria-hidden="true" className="pointer-events-none absolute inset-px z-0 overflow-hidden rounded-md">
+                              <pre
+                                className="m-0 min-h-[60rem] whitespace-pre-wrap break-words px-3 py-2 font-mono text-sm leading-6 text-transparent"
+                                style={{ transform: `translateY(-${editorScrollTop}px)` }}
+                              >
+                                {editDocumentMarkdown.slice(0, editorHighlight.start)}
+                                <mark ref={editorHighlightMarkRef} className="rounded-sm bg-amber-300/60 text-transparent dark:bg-amber-400/35">
+                                  {editDocumentMarkdown.slice(editorHighlight.start, editorHighlight.end)}
+                                </mark>
+                                {editDocumentMarkdown.slice(editorHighlight.end)}
+                              </pre>
+                            </div>
+                          )}
+                          <Textarea
+                            ref={documentEditorRef}
+                            aria-label="Asset document Markdown"
+                            className="relative z-10 min-h-[60rem] resize-y bg-transparent font-mono text-sm leading-6"
+                            value={editDocumentMarkdown}
+                            onChange={(event) => changeDocumentMarkdown(event.target.value)}
+                            onScroll={(event) => setEditorScrollTop(event.currentTarget.scrollTop)}
+                            onSelect={captureDocumentSelection}
+                            onKeyUp={captureDocumentSelection}
+                            onMouseUp={captureDocumentSelection}
+                            placeholder="Write the Asset as Markdown…"
+                          />
+                        </div>
                       </div>
                       <div className="space-y-2">
                         <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Live Preview</span>
@@ -3700,10 +3794,7 @@ export function AssetDetailPage() {
                       {assetMapSelectedId && (() => {
                         const blockReference = assetOutlineTreeQuery.data.references.find((reference) => reference.node_id === assetMapSelectedId && reference.ref_type === "asset_block");
                         if (!blockReference) return null;
-                        return <Button type="button" variant="outline" onClick={() => {
-                          setActiveTab("edit");
-                          window.requestAnimationFrame(() => document.querySelector(`[data-asset-block-id="${CSS.escape(blockReference.ref_id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }));
-                        }}>Open selected Block in Editor</Button>;
+                        return <Button type="button" variant="outline" onClick={() => openAssetBlockInEditor(blockReference.ref_id)}>Open selected Block in Editor</Button>;
                       })()}
                       {!assetOutlineStalenessQuery.data?.stale && (
                         <Button type="button" variant="outline" onClick={() => assetOutlineDocumentPatchMutation.mutate()} disabled={assetOutlineDocumentPatchMutation.isPending}>

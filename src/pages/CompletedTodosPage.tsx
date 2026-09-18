@@ -1,9 +1,12 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { CalendarCheck2, CheckCircle2, ChevronLeft, ChevronRight } from "lucide-react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { CalendarCheck2, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, FileText } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { calendarRemindersApi, type CalendarReminder } from "@/lib/api";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { calendarRemindersApi, notesApi, sourcesApi, type CalendarReminder } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 type Period = "week" | "month" | "year";
@@ -64,8 +67,11 @@ function groupByDate(items: CalendarReminder[]) {
 }
 
 export function CompletedTodosPage() {
+  const navigate = useNavigate();
+  const location = useLocation();
   const [period, setPeriod] = useState<Period>("week");
   const [anchor, setAnchor] = useState(() => new Date());
+  const [selected, setSelected] = useState<CalendarReminder | null>(null);
   const range = useMemo(() => rangeFor(anchor, period), [anchor, period]);
 
   const { data, isLoading, error } = useQuery({
@@ -78,6 +84,31 @@ export function CompletedTodosPage() {
     [data?.items]
   );
   const grouped = useMemo(() => groupByDate(completed), [completed]);
+  const selectedNoteIds = useMemo(() => {
+    if (!selected) return [];
+    return selected.note_ids.length > 0
+      ? selected.note_ids
+      : selected.note_id
+        ? [selected.note_id]
+        : [];
+  }, [selected]);
+  const detailQuery = useQuery({
+    queryKey: ["completed-todo-detail", selected?.id, selectedNoteIds],
+    enabled: selectedNoteIds.length > 0,
+    queryFn: async () => {
+      const noteResults = await Promise.allSettled(selectedNoteIds.map((noteId) => notesApi.get(noteId)));
+      const notes = noteResults.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+      const sourceIds = Array.from(new Set(notes.flatMap((note) => note.source_ids)));
+      const sourceResults = await Promise.allSettled(sourceIds.map((sourceId) => sourcesApi.get(sourceId)));
+      const sources = sourceResults.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+      return { notes, sources };
+    },
+  });
+  const sourceById = useMemo(
+    () => new Map((detailQuery.data?.sources ?? []).map((source) => [source.id, source])),
+    [detailQuery.data?.sources],
+  );
+  const backState = { backTo: `${location.pathname}${location.search}`, backLabel: "Back to Completed" };
 
   return (
     <div className="h-full overflow-y-auto bg-gradient-to-br from-background via-background to-emerald-500/5 p-6">
@@ -156,13 +187,18 @@ export function CompletedTodosPage() {
                     </div>
                     <div className="space-y-2">
                       {items.map((item) => (
-                        <div key={item.id} className="flex items-start gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3">
+                        <button key={item.id} type="button" onClick={() => setSelected(item)} className="flex w-full items-start gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-left transition-colors hover:border-emerald-500/40 hover:bg-emerald-500/15">
                           <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
                           <div className="min-w-0 flex-1">
                             <p className="text-sm font-medium">{item.text}</p>
-                            <p className="mt-1 text-xs text-muted-foreground">Completed {new Date(item.updated_at).toLocaleString()}</p>
+                            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                              <span>Completed {new Date(item.updated_at).toLocaleString()}</span>
+                              <span>·</span>
+                              <span>{item.linked_notes.length || item.note_ids.length} linked note(s)</span>
+                            </div>
                           </div>
-                        </div>
+                          <ExternalLink className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                        </button>
                       ))}
                     </div>
                   </section>
@@ -172,6 +208,77 @@ export function CompletedTodosPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Dialog open={selected !== null} onOpenChange={(open) => { if (!open) setSelected(null); }}>
+        <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Completed Todo</DialogTitle>
+          </DialogHeader>
+          {selected && (
+            <div className="space-y-5">
+              <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-4">
+                <div className="flex items-start gap-3">
+                  <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
+                  <div>
+                    <p className="font-medium">{selected.text}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Completed {new Date(selected.updated_at).toLocaleString()}</p>
+                  </div>
+                </div>
+              </div>
+
+              {selectedNoteIds.length === 0 && (
+                <div className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">
+                  This completed todo is not linked to a Note, so there are no related Sources to show.
+                </div>
+              )}
+              {detailQuery.isLoading && <p className="text-sm text-muted-foreground">Loading linked Notes and Sources...</p>}
+              {detailQuery.isError && <p className="text-sm text-destructive">Failed to load some linked knowledge.</p>}
+              {detailQuery.data?.notes.map((note) => (
+                <section key={note.id} className="rounded-xl border border-border p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="note">Note</Badge>
+                        <Badge variant="outline">{note.status}</Badge>
+                        {note.category_name && <Badge variant="outline">{note.category_name}</Badge>}
+                      </div>
+                      <h3 className="mt-2 font-medium">{note.title}</h3>
+                      {note.abstract && <p className="mt-1 text-sm text-muted-foreground">{note.abstract}</p>}
+                    </div>
+                    <Button type="button" size="sm" variant="outline" onClick={() => navigate(`/notes/${encodeURIComponent(note.id)}`, { state: backState })}>
+                      <ExternalLink className="h-3.5 w-3.5" /> Open Note
+                    </Button>
+                  </div>
+
+                  <div className="mt-4 border-t border-border pt-4">
+                    <div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      <FileText className="h-3.5 w-3.5" /> Related Sources
+                    </div>
+                    {note.source_ids.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">This Note has no related Sources.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {note.source_ids.map((sourceId) => {
+                          const source = sourceById.get(sourceId);
+                          return (
+                            <button key={sourceId} type="button" onClick={() => navigate(`/sources/${encodeURIComponent(sourceId)}`, { state: backState })} className="flex w-full items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 px-3 py-2 text-left transition-colors hover:border-primary/40">
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-medium">{source?.title ?? sourceId}</p>
+                                <p className="mt-0.5 text-xs text-muted-foreground">{source?.source_type ?? "Source"}{source?.category_name ? ` · ${source.category_name}` : ""}</p>
+                              </div>
+                              <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </section>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

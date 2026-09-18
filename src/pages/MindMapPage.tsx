@@ -288,6 +288,15 @@ export function MindMapPage() {
       },
     });
   };
+  const openAssetBlock = (reference: MindMapReferenceRead) => {
+    if (map.owner_type !== "asset" || reference.ref_type !== "asset_block" || !selectedNode) return;
+    navigate(`/assets/${encodeURIComponent(map.owner_id)}?tab=edit&block=${encodeURIComponent(reference.ref_id)}`, {
+      state: {
+        backTo: `/mind-maps/${encodeURIComponent(map.id)}?selected=${encodeURIComponent(selectedNode.id)}`,
+        backLabel: "Back to Mind Map",
+      },
+    });
+  };
   const resetView = () => {
     setCollapsedIds(new Set());
     setFocusId(null);
@@ -427,6 +436,11 @@ export function MindMapPage() {
                           {map.owner_type === "source" && reference.ref_type === "source_chunk" && (
                             <Button type="button" variant="outline" size="sm" className="mt-3 w-full" onClick={() => openSourceChunk(reference)}>
                               <ExternalLink className="h-3.5 w-3.5" />Open Source Chunk
+                            </Button>
+                          )}
+                          {map.owner_type === "asset" && reference.ref_type === "asset_block" && (
+                            <Button type="button" variant="outline" size="sm" className="mt-3 w-full" onClick={() => openAssetBlock(reference)}>
+                              <ExternalLink className="h-3.5 w-3.5" />Open Asset Block
                             </Button>
                           )}
                         </div>

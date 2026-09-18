@@ -142,6 +142,18 @@ export function locateAssetBlockSelection(blocks: AssetBlock[], start: number, e
   return null;
 }
 
+export function locateAssetBlockRange(blocks: AssetBlock[], blockId: string) {
+  let offset = 0;
+  for (const block of blocks) {
+    const markdown = block.markdown.trim();
+    const start = offset;
+    const end = start + markdown.length;
+    if (block.id === blockId) return { block, start, end };
+    offset = end + 2;
+  }
+  return null;
+}
+
 function isAssetBlock(value: unknown): value is AssetBlock {
   if (!value || typeof value !== "object") return false;
   const block = value as Record<string, unknown>;
