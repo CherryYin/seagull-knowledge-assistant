@@ -1,0 +1,3 @@
+name: Agent 辅助生成 Asset
+description: 先澄清真实交付需求，再自动检索本地知识并按需补充网络证据，最终生成可审核 Asset 草稿。
+order: 55

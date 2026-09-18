@@ -1,0 +1,66 @@
+# Headless profile: Qwen provider + pkg-client + kobo-client
+
+- id: llm-pi-ai
+  config:
+    defaultRoute: qwen
+    providers:
+      qwen:
+        api: openai-completions
+        baseURL: https://dashscope.aliyuncs.com/compatible-mode/v1
+        apiKeyEnv: QWEN_API_KEY
+        defaultModel: qwen-plus
+        models:
+          - id: qwen-plus
+            name: Qwen-Plus
+          - id: qwen-max
+            name: Qwen-Max
+          - id: qwen3.7-plus
+            name: Qwen-3.7-Plus
+
+- id: llm-deepseek
+  disabled: true
+
+- id: tool-web
+  disabled: true
+
+- id: session-persistence-jsonl
+  disabled: true
+
+- id: agent-default-model
+  config:
+    provider: qwen
+    model: qwen-plus
+
+- insert:
+    - id: pkg-client
+      name: ../../../plugins/pkg-client/src/index.js
+      inject: [tools]
+    - id: pkg-web-search
+      name: ../../../plugins/pkg-web-search/src/index.js
+      inject: [pkg, tools]
+    - id: asset-block-patch
+      name: ../../../plugins/asset-block-patch/src/index.js
+      inject: [tools]
+    - id: asset-evidence-proposal
+      name: ../../../plugins/asset-evidence-proposal/src/index.js
+      inject: [tools]
+    - id: asset-claim-proposal
+      name: ../../../plugins/asset-claim-proposal/src/index.js
+      inject: [tools]
+    - id: asset-knowledge-proposal
+      name: ../../../plugins/asset-knowledge-proposal/src/index.js
+      inject: [tools]
+    - id: asset-intent-proposal
+      name: ../../../plugins/asset-intent-proposal/src/index.js
+      inject: [tools]
+    - id: source-mind-map-proposal
+      name: ../../../plugins/source-mind-map-proposal/src/index.js
+      inject: [tools]
+    - id: kobo-client
+      name: ../../../plugins/kobo-client/src/index.js
+      inject: [tools]
+    - id: session-persistence-postgres
+      name: '@deepseek-ai/dsh-session-persistence-postgres'
+      config:
+        connectionString: !!js process.env.PKG_DATABASE_URL
+        schema: public

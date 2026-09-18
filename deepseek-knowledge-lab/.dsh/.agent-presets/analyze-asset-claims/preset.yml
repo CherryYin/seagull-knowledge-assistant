@@ -1,0 +1,3 @@
+name: Agent 分析 Asset Claims
+description: 基于已确认 Evidence 提取 Candidate Claims，标记支持、矛盾和置信度，交由用户执行 Claim Gate。
+order: 54

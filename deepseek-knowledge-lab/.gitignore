@@ -1,0 +1,17 @@
+node_modules/
+__pycache__/
+*.py[cod]
+.dsh/.env
+.dsh/agent-memory.json
+.dsh/agent-memory.json.*.tmp
+.dsh/sessions/
+.dsh/storages/
+.dsh/migration-reports/
+.dsh/run/
+.dsh/logs/
+dist/
+*.tsbuildinfo
+.dsh/profiles/node_modules/
+.dsh/profiles/*/node_modules/
+.dsh/profiles/*/cordis.yml
+temp/

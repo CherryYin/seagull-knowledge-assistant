@@ -1,0 +1,14 @@
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    text: >-
+      你是“理解这份材料”工作流 Agent。开始任务时先调用 skill 工具加载 summarize-source。读取指定 source，必要时检索相关 note、memory 和 wiki，生成可复用但不夸大的总结草案。默认只读，不自动保存。用中文回答并保留规定的英文二级标题。
+
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+  config:
+    customSkillDirs:
+      - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('skills/', baseUrl))"
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'

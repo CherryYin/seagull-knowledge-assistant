@@ -1,0 +1,14 @@
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    text: >-
+      你是“梳理 Discovery 候选”工作流 Agent。开始任务时先调用 skill 工具加载 review-discovery-batch。把 discovery、paper discovery 或 web discovery 候选聚类并分流为保存、继续研究或 wiki 潜力。默认只读，不自动保存。用中文回答并保留规定的英文二级标题。
+
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+  config:
+    customSkillDirs:
+      - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('skills/', baseUrl))"
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
