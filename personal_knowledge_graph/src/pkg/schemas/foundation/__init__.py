@@ -1,0 +1,1 @@
+"""Foundation-layer schemas namespace."""

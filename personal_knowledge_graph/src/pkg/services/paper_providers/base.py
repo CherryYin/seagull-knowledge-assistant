@@ -1,0 +1,13 @@
+from typing import Protocol
+
+from pkg.schemas.connector import ExternalPaper
+
+
+class PaperProvider(Protocol):
+    async def search(self, *, query: str, limit: int = 10, **filters) -> list[ExternalPaper]: ...
+
+    async def lookup_by_id(self, provider_id: str) -> ExternalPaper | None: ...
+
+    async def lookup_by_arxiv_id(self, arxiv_id: str) -> ExternalPaper | None: ...
+
+    async def recommend(self, *, seed_ids: list[str], limit: int = 10) -> list[ExternalPaper]: ...
