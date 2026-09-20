@@ -22,5 +22,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: deepseek-knowledge-lab/package-lock.json
+      - run: npm ci --prefix ../deepseek-knowledge-lab
       - run: npm install
       - run: npm test
