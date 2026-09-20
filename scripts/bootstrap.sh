@@ -18,7 +18,9 @@ require_command() {
 require_command git
 require_command python3
 require_command npm
-require_command pnpm
+require_command corepack
+
+corepack prepare pnpm@11.7.0 --activate
 
 git -C "$ROOT_DIR" submodule update --init --recursive
 
