@@ -45,6 +45,58 @@ async def load_generation_context(session: AsyncSession, *, asset: Asset) -> Gen
     )
 
 
+def render_generation_context(context: GenerationContext) -> str:
+    parts: list[str] = []
+    if context.asset.brief:
+        parts.append(f"## Editorial Brief\n\n{context.asset.brief.strip()}")
+
+    metadata = dict(context.asset.metadata_ or {})
+    opinion_notes = str(metadata.get("opinion_notes") or "").strip()
+    style_notes = str(metadata.get("style_notes") or "").strip()
+    if opinion_notes:
+        parts.append(f"## Author Point of View\n\n{opinion_notes}")
+    if style_notes:
+        parts.append(f"## Style Instructions\n\n{style_notes}")
+
+    raw_evidence_parts: list[str] = []
+    if context.sources:
+        source_sections = []
+        for source in context.sources[:8]:
+            body = (source.raw_content or "").strip()
+            preview = body[:1800] + ("…" if len(body) > 1800 else "")
+            source_sections.append(f"### Source: {source.title}\n\n{preview or '(empty source)'}")
+        raw_evidence_parts.append("## Sources\n\n" + "\n\n".join(source_sections))
+    if context.notes:
+        note_sections = []
+        for note in context.notes[:8]:
+            body = (note.content or note.abstract or "").strip()
+            preview = body[:1200] + ("…" if len(body) > 1200 else "")
+            note_sections.append(f"### Note: {note.title}\n\n{preview or '(empty note)'}")
+        raw_evidence_parts.append("## Notes\n\n" + "\n\n".join(note_sections))
+    if raw_evidence_parts:
+        parts.append("# Raw Evidence\n\n" + "\n\n".join(raw_evidence_parts))
+
+    if context.stable_wiki_pages:
+        wiki_sections = []
+        for wiki in context.stable_wiki_pages[:6]:
+            body = (wiki.content or wiki.summary or "").strip()
+            preview = body[:1000] + ("…" if len(body) > 1000 else "")
+            wiki_sections.append(f"### Stable Wiki: {wiki.title}\n\n{preview or '(empty wiki)'}")
+        parts.append("# Stable Wiki Context\n\n" + "\n\n".join(wiki_sections))
+
+    if context.candidate_wiki_pages:
+        candidate_sections = []
+        for wiki in context.candidate_wiki_pages[:6]:
+            body = (wiki.content or wiki.summary or "").strip()
+            preview = body[:1000] + ("…" if len(body) > 1000 else "")
+            candidate_sections.append(
+                f"### Candidate Wiki: {wiki.title}\n\n{preview or '(empty wiki)'}"
+            )
+        parts.append("# Candidate Wiki Context\n\n" + "\n\n".join(candidate_sections))
+
+    return "\n\n".join(parts).strip()
+
+
 def _asset_kind_label(asset_type: str) -> str:
     if asset_type == "research_brief":
         return "research brief"
