@@ -1,6 +1,7 @@
 name: Gateway
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - "bff/**"

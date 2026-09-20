@@ -1,6 +1,7 @@
 name: Knowledge Lab
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - "deepseek-knowledge-lab/**"

@@ -1,6 +1,7 @@
 name: PKG
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - "personal_knowledge_graph/**"

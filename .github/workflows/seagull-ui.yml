@@ -1,6 +1,7 @@
 name: Seagull UI
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - "seagull-ui/**"
