@@ -15,6 +15,8 @@ def test_assets_routes_are_registered():
     assert "/assets/{asset_id}/check-readiness" in paths
     assert "/assets/{asset_id}/export/markdown" in paths
     assert "/assets/{asset_id}/publish-feedback" in paths
+    assert "/assets/{asset_id}/publish/wechat-draft" in paths
+    assert "/assets/{asset_id}/preview/wechat" in paths
     assert "/assets/{asset_id}/feedback-to-note" in paths
 
 

@@ -4,7 +4,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
-SUPPORTED_CREDENTIAL_PROVIDER_PATTERN = r"^(qwen|minimax|azure_openai|embedding|tavily|newsapi|openalex|semantic_scholar|github|arxiv)$"
+SUPPORTED_CREDENTIAL_PROVIDER_PATTERN = r"^(qwen|minimax|azure_openai|embedding|tavily|newsapi|openalex|semantic_scholar|github|arxiv|wechat_official_account)$"
 
 
 class UserApiCredentialCreate(BaseModel):

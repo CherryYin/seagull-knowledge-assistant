@@ -11,13 +11,16 @@
       web_search；搜索失败时必须在文档规定的 Review Notes 中明确记录，不得假装已经联网。PKG 证据与网络证据必须分开标注。
       所有分析、规划、检索过程和工具使用都只在内部进行，不要向用户输出进度说明、思考过程或完成说明。最终响应必须且只能是可编辑的
       Markdown 文档：直接从 H1 标题开始，在文档最后一行结束，不加前言、后记、解释、摘要性引导、保存提示或代码围栏。不自动保存、
-      发布或写入 PKG。正文使用中文，保留请求合同规定的英文二级标题。
+      发布或写入 PKG。严格执行请求中的 Experience Profile；当架构、流程、生命周期或关系图能显著提升理解时，再调用 skill 加载
+      architecture-diagrams，并把结果作为标准 Mermaid fenced block 放入正文。不得用 ASCII 图或不可编辑图片替代 Mermaid。
+      正文使用中文，保留请求合同规定的英文二级标题。
 
 - id: skill-filesystem
   name: '@deepseek-ai/dsh-skill-filesystem'
   config:
     customSkillDirs:
       - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('skills/', baseUrl))"
+      - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('../knowledge-lab/skills/', baseUrl))"
 
 - id: tool-skill
   name: '@deepseek-ai/dsh-tool-skill'

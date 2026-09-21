@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, Link, useNavigate, useLocation } from "react-router-dom";
-import { BookOpen, CalendarDays, ChartNoAxesCombined, CheckCircle2, CircleAlert, Clock3, Copy, Download, Eye, FileSearch, LibraryBig, MailOpen, PenLine, Quote, Sparkles, Square, WandSparkles } from "lucide-react";
-import { assetsApi, authApi, notesApi, sourcesApi, wikiApi, type Asset, type AssetClaimProposalInput, type AssetContributionKind, type AssetEvidenceProposalInput, type AssetEvidenceRelation, type AssetKnowledgeProposalInput, type AssetMissingEvidenceRequest, type AssetQualityAuditResult, type AssetStatus, type AssetType, type ReadinessCheckResult } from "@/lib/api";
+import { BookOpen, CalendarDays, ChartNoAxesCombined, CheckCircle2, CircleAlert, Clock3, Copy, Download, Eye, FileSearch, LibraryBig, MailOpen, MessageSquareShare, PenLine, Quote, Sparkles, Square, WandSparkles } from "lucide-react";
+import { assetsApi, authApi, notesApi, sourcesApi, wikiApi, type Asset, type AssetClaimProposalInput, type AssetContributionKind, type AssetEvidenceProposalInput, type AssetEvidenceRelation, type AssetKnowledgeProposalInput, type AssetMissingEvidenceRequest, type AssetQualityAuditResult, type AssetStatus, type AssetStyleProfileId, type AssetType, type ReadinessCheckResult } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +25,8 @@ import { ProposalActions } from "@/components/interaction/ProposalActions";
 import { UnsavedChangesBanner } from "@/components/interaction/UnsavedChangesBanner";
 import { MindMapCanvas, type MindMapCanvasNode } from "@/components/mind-map/MindMapCanvas";
 import { mindMapsApi, type AssetOutlineDocumentPatchProposal, type AssetOutlinePatchOperation, type MindMapNodeRead } from "@/lib/api/mind-maps";
+import { ASSET_STYLE_PROFILES, defaultAssetStyleProfile } from "@/lib/asset-generation";
+import { renderMermaidDiagramsForWechat } from "@/lib/mermaid-export";
 
 type AssetOutlineRefreshOperation = "add" | "move" | "rename" | "delete";
 
@@ -691,6 +693,13 @@ function assetReaderPresentation(assetType?: AssetType) {
   };
 }
 
+function assetStylePresentation(styleProfileId: AssetStyleProfileId) {
+  if (styleProfileId === "executive_brief") return { shell: "border-sky-900 bg-[#10253a]", header: "from-slate-950/40", label: "Executive Brief" };
+  if (styleProfileId === "visual_digest") return { shell: "border-fuchsia-200 bg-gradient-to-br from-orange-50 via-fuchsia-50 to-indigo-50", header: "from-fuchsia-500/15", label: "Visual Digest" };
+  if (styleProfileId === "knowledge_atlas") return { shell: "border-emerald-200 bg-emerald-50/50 font-mono", header: "from-emerald-500/15", label: "Knowledge Atlas" };
+  return { shell: "border-stone-200 bg-[#fffdf8]", header: "from-amber-500/15", label: "Editorial Story" };
+}
+
 function AssetReaderIcon({ assetType, className = "h-5 w-5" }: { assetType?: AssetType; className?: string }) {
   if (assetType === "research_brief") return <FileSearch className={className} />;
   if (assetType === "knowledge_pack") return <LibraryBig className={className} />;
@@ -1100,15 +1109,23 @@ export function AssetDetailPage() {
   const publishingSettingsQuery = useQuery({ queryKey: ["publishing-settings"], queryFn: () => authApi.getMyPublishingSettings() });
   const publishingSettings = publishingSettingsQuery.data ?? { primary_site_url: "", default_channel: "" };
   const readerPresentation = assetReaderPresentation(asset?.asset_type);
+  const resolvedStyleProfileId = asset?.style_profile_id ?? defaultAssetStyleProfile(asset?.asset_type ?? "blog_post");
+  const wechatDraftReceipt = asset?.metadata_?.wechat_draft && typeof asset.metadata_.wechat_draft === "object"
+    ? asset.metadata_.wechat_draft as Record<string, unknown>
+    : null;
+  const stylePresentation = assetStylePresentation(resolvedStyleProfileId);
   const assetQueryError = assetQuery.error instanceof Error ? assetQuery.error.message : null;
 
   const [publishUrl, setPublishUrl] = useState("");
   const [publishChannel, setPublishChannel] = useState("");
   const [publishFeedback, setPublishFeedback] = useState("");
   const [deliveryFormat, setDeliveryFormat] = useState<"markdown" | "html">("markdown");
+  const [selectedStyleProfileId, setSelectedStyleProfileId] = useState<AssetStyleProfileId>("editorial_story");
   const [htmlPreview, setHtmlPreview] = useState("");
   const [htmlPreviewOpen, setHtmlPreviewOpen] = useState(false);
   const [htmlCopied, setHtmlCopied] = useState(false);
+  const [htmlPreviewTitle, setHtmlPreviewTitle] = useState("HTML Preview");
+  const [htmlPreviewDescription, setHtmlPreviewDescription] = useState("Sandboxed preview generated from the current Markdown Asset.");
   const [editTitle, setEditTitle] = useState("");
   const [editBrief, setEditBrief] = useState("");
   const [editOutline, setEditOutline] = useState("");
@@ -1160,6 +1177,10 @@ export function AssetDetailPage() {
     setHtmlPreviewOpen(false);
     setHtmlCopied(false);
   }, [asset?.id, asset?.metadata_?.delivery_format]);
+
+  useEffect(() => {
+    setSelectedStyleProfileId(resolvedStyleProfileId);
+  }, [asset?.id, resolvedStyleProfileId]);
 
   const serverEditorSnapshot = useMemo<AssetEditorSnapshot | null>(() => asset ? ({
     title: asset.title,
@@ -2465,6 +2486,7 @@ export function AssetDetailPage() {
           scope: intent.scope,
           constraints: intent.constraints,
           styleNotes: asset.style_notes || "",
+          styleProfileId: resolvedStyleProfileId,
           sourceRefs: asset.source_refs,
           noteRefs: asset.note_refs,
           wikiRefs: asset.wiki_refs,
@@ -2559,6 +2581,19 @@ export function AssetDetailPage() {
     onSuccess: (result) => {
       setHtmlPreview(result.content);
       setHtmlCopied(false);
+      setHtmlPreviewTitle("HTML Preview");
+      setHtmlPreviewDescription("Sandboxed preview generated from the current Markdown Asset.");
+      setHtmlPreviewOpen(true);
+    },
+  });
+
+  const previewWechatMutation = useMutation({
+    mutationFn: () => assetsApi.previewWechat(id),
+    onSuccess: (result) => {
+      setHtmlPreview(result.content);
+      setHtmlCopied(false);
+      setHtmlPreviewTitle("WeChat Draft Preview");
+      setHtmlPreviewDescription("Preview of the WeChat-safe inline HTML before images are uploaded to the Official Account.");
       setHtmlPreviewOpen(true);
     },
   });
@@ -2571,10 +2606,24 @@ export function AssetDetailPage() {
     },
   });
 
+  const wechatDraftMutation = useMutation({
+    mutationFn: async () => {
+      const diagramMarkdown = [asset?.outline, asset?.draft_content, asset?.reference_notes].filter(Boolean).join("\n\n");
+      const renderedDiagrams = await renderMermaidDiagramsForWechat(diagramMarkdown);
+      return assetsApi.sendToWechatDraft(id, { rendered_diagrams: renderedDiagrams });
+    },
+    onSuccess: refreshAsset,
+  });
+
   const saveDeliveryFormatMutation = useMutation({
     mutationFn: () => assetsApi.update(id, {
       metadata: { ...(asset?.metadata_ ?? {}), delivery_format: deliveryFormat },
     }),
+    onSuccess: refreshAsset,
+  });
+
+  const saveStyleProfileMutation = useMutation({
+    mutationFn: () => assetsApi.update(id, { style_profile_id: selectedStyleProfileId }),
     onSuccess: refreshAsset,
   });
 
@@ -2606,7 +2655,7 @@ export function AssetDetailPage() {
     mutationFn: () => assetsApi.feedbackToNote(id),
   });
 
-  const actionError = [statusMutation.error, exportMutation.error, exportHtmlMutation.error, previewHtmlMutation.error, saveDeliveryFormatMutation.error, publishMutation.error, savePublishFeedbackMutation.error, feedbackToNoteMutation.error]
+  const actionError = [statusMutation.error, exportMutation.error, exportHtmlMutation.error, wechatDraftMutation.error, previewHtmlMutation.error, previewWechatMutation.error, saveDeliveryFormatMutation.error, publishMutation.error, savePublishFeedbackMutation.error, feedbackToNoteMutation.error]
     .find((error): error is Error => error instanceof Error)?.message ?? null;
 
   const deleteMutation = useMutation({
@@ -2705,7 +2754,7 @@ export function AssetDetailPage() {
   }, [assetsListQuery.data, fallbackTitleCandidates]);
 
   const isExporting = exportMutation.isPending || exportHtmlMutation.isPending;
-  const isBusy = statusMutation.isPending || isExporting || publishMutation.isPending || savePublishFeedbackMutation.isPending || attachReferencesMutation.isPending;
+  const isBusy = statusMutation.isPending || isExporting || wechatDraftMutation.isPending || publishMutation.isPending || savePublishFeedbackMutation.isPending || attachReferencesMutation.isPending;
   const primaryAction = useMemo(() => (asset ? buildPrimaryAction(asset, readinessQuery.data) : null), [asset, readinessQuery.data]);
   const contentPresentation = useMemo(() => splitAssetContent(asset?.draft_content), [asset?.draft_content]);
   const headings = useMemo(() => markdownHeadings(contentPresentation.readerMarkdown), [contentPresentation.readerMarkdown]);
@@ -2881,9 +2930,9 @@ export function AssetDetailPage() {
             </TabsContent>
 
             <TabsContent value="read" className="mt-0 space-y-8">
-              <article data-reader-layout={readerPresentation.layout} className="overflow-hidden rounded-[2rem] border bg-card shadow-[0_24px_70px_-42px_rgba(15,23,42,0.45)]">
+              <article data-reader-layout={readerPresentation.layout} data-style-profile={resolvedStyleProfileId} className={`asset-reader overflow-hidden rounded-[2rem] border shadow-[0_24px_70px_-42px_rgba(15,23,42,0.45)] ${stylePresentation.shell}`}>
                 <div className={`h-1.5 bg-gradient-to-r ${readerPresentation.ruleTone}`} />
-                <header className={`relative overflow-hidden border-b bg-gradient-to-br ${readerPresentation.headerTone} via-background to-background px-6 py-10 sm:px-10 sm:py-14 lg:px-16`}>
+                <header className={`asset-reader-hero relative overflow-hidden border-b bg-gradient-to-br ${stylePresentation.header} via-background/80 to-background/50 px-6 py-10 sm:px-10 sm:py-14 lg:px-16`}>
                   <div className="pointer-events-none absolute -right-24 -top-32 h-80 w-80 rounded-full border border-foreground/5 bg-background/30" />
                   <div className="pointer-events-none absolute -right-8 top-8 h-36 w-36 rounded-full border border-foreground/5" />
                   <div className="relative mx-auto max-w-5xl">
@@ -2893,16 +2942,16 @@ export function AssetDetailPage() {
                           <AssetReaderIcon assetType={asset.asset_type} />
                         </div>
                         <div>
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">{readerPresentation.kicker}</p>
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">{readerPresentation.kicker} · {stylePresentation.label}</p>
                           <p className="mt-1 text-sm font-medium">{assetTypeLabel(asset.asset_type)}</p>
                         </div>
                       </div>
                       <Badge variant="outline" className="rounded-full bg-background/70 px-3 py-1 shadow-sm backdrop-blur">{STATUS_LABELS[asset.status]}</Badge>
                     </div>
 
-                    <h1 className="mt-9 max-w-4xl text-4xl font-semibold leading-[1.08] tracking-[-0.035em] text-foreground sm:text-5xl lg:text-6xl">{asset.title}</h1>
+                    <h1 className="asset-reader-title mt-9 max-w-4xl text-4xl font-semibold leading-[1.08] tracking-[-0.035em] text-foreground sm:text-5xl lg:text-6xl">{asset.title}</h1>
                     {asset.brief && (
-                      <div className="mt-8 flex max-w-4xl gap-4 border-l-2 border-foreground/10 pl-5 sm:pl-6">
+                      <div className="asset-reader-brief mt-8 flex max-w-4xl gap-4 border-l-2 border-foreground/10 pl-5 sm:pl-6">
                         <Quote className="mt-1 h-5 w-5 shrink-0 text-muted-foreground/70" />
                         <div>
                           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{readerPresentation.briefLabel}</p>
@@ -2911,7 +2960,7 @@ export function AssetDetailPage() {
                       </div>
                     )}
 
-                    <div className="mt-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <div className="asset-reader-metrics mt-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                       <div className="flex items-center gap-3 rounded-2xl border bg-background/60 px-4 py-3 backdrop-blur">
                         <Clock3 className="h-4 w-4 text-muted-foreground" />
                         <div><p className="text-xs text-muted-foreground">Reading time</p><p className="text-sm font-semibold">{readingMinutes} min</p></div>
@@ -2933,14 +2982,14 @@ export function AssetDetailPage() {
                   </div>
                 </header>
 
-                <div className="mx-auto grid max-w-6xl gap-10 px-6 py-10 sm:px-10 sm:py-14 lg:grid-cols-[minmax(0,1fr)_270px] lg:gap-14 lg:px-14">
+                <div className="asset-reader-layout mx-auto grid max-w-6xl gap-10 px-6 py-10 sm:px-10 sm:py-14 lg:grid-cols-[minmax(0,1fr)_270px] lg:gap-14 lg:px-14">
                   <div className="min-w-0">
                     <div className="mb-8 flex items-center gap-3">
                       <span className={`h-px w-8 bg-gradient-to-r ${readerPresentation.ruleTone}`} />
                       <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">{readerPresentation.documentLabel}</p>
                     </div>
                     {contentPresentation.readerMarkdown ? (
-                      <div className="prose prose-slate max-w-none text-base leading-8 dark:prose-invert prose-headings:scroll-mt-24 prose-headings:tracking-tight prose-h1:text-3xl prose-h2:mt-14 prose-h2:border-b prose-h2:border-border/70 prose-h2:pb-4 prose-h3:mt-9 prose-p:my-5 prose-li:my-2 prose-blockquote:rounded-r-xl prose-blockquote:border-primary/40 prose-blockquote:bg-muted/30 prose-blockquote:px-5 prose-blockquote:py-2 prose-blockquote:not-italic">
+                      <div className="asset-reader-prose prose prose-slate max-w-none text-base leading-8 dark:prose-invert prose-headings:scroll-mt-24 prose-headings:tracking-tight prose-h1:text-3xl prose-h2:mt-14 prose-h3:mt-9 prose-p:my-5 prose-li:my-2">
                         <MarkdownRenderer
                           evidenceLinks={evidenceLinks}
                           components={{
@@ -4087,6 +4136,25 @@ export function AssetDetailPage() {
                   {(saveDeliveryFormatMutation.isError || previewHtmlMutation.isError) && <p className="mt-3 text-xs text-destructive">Could not save or render the HTML delivery format.</p>}
                 </div>
 
+                <div className="rounded-2xl border bg-muted/10 p-4">
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                    <div className="max-w-2xl">
+                      <p className="text-sm font-semibold">Experience Style</p>
+                      <p className="mt-1 text-sm leading-6 text-muted-foreground">The profile controls generation rhythm, reader presentation, quality hints, and HTML theme while preserving the same Evidence and Claim gates.</p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <select aria-label="Asset experience style" className="h-9 rounded-md border border-input bg-background px-3 text-sm" value={selectedStyleProfileId} onChange={(event) => setSelectedStyleProfileId(event.target.value as AssetStyleProfileId)}>
+                        {ASSET_STYLE_PROFILES.map((profile) => <option key={profile.id} value={profile.id}>{profile.label}</option>)}
+                      </select>
+                      <Button type="button" variant="outline" size="sm" onClick={() => saveStyleProfileMutation.mutate()} disabled={saveStyleProfileMutation.isPending || selectedStyleProfileId === resolvedStyleProfileId}>
+                        {saveStyleProfileMutation.isPending ? "Saving…" : "Apply Style"}
+                      </Button>
+                    </div>
+                  </div>
+                  {saveStyleProfileMutation.isSuccess && <p className="mt-3 text-xs text-emerald-700">Experience style saved and export theme refreshed.</p>}
+                  {saveStyleProfileMutation.isError && <p className="mt-3 text-xs text-destructive">Could not update the experience style.</p>}
+                </div>
+
                 <div className="flex flex-col gap-3 rounded-2xl border bg-muted/10 p-4 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <p className="text-sm font-semibold">Reference Notes</p>
@@ -4125,13 +4193,39 @@ export function AssetDetailPage() {
                       Archive
                     </Button>
                   )}
+                  {(asset.status === "ready_to_export" || asset.status === "exported") && (
+                    <>
+                      <Button variant="outline" onClick={() => previewWechatMutation.mutate()} disabled={isBusy || previewWechatMutation.isPending}>
+                        <Eye className="mr-2 h-4 w-4" />{previewWechatMutation.isPending ? "Rendering…" : "Preview WeChat"}
+                      </Button>
+                      <Button variant="outline" onClick={() => { if (window.confirm("Send this Asset to the configured WeChat Official Account draft box? This creates an external draft but does not publish it.")) wechatDraftMutation.mutate(); }} disabled={isBusy || !readinessQuery.data?.ready}>
+                        <MessageSquareShare className="mr-2 h-4 w-4" />{wechatDraftMutation.isPending ? "Rendering diagrams and sending…" : "Send to WeChat Drafts"}
+                      </Button>
+                    </>
+                  )}
                 </div>
+                {(asset.status === "ready_to_export" || asset.status === "exported") && (
+                  <p className="text-xs text-muted-foreground">A permanent cover media ID is required. Inline article images and Mermaid diagrams are uploaded to WeChat and replaced with WeChat-hosted URLs during delivery.</p>
+                )}
 
                 {statusMutation.isError && (
                   <p className="text-sm text-destructive">Failed to update asset status. Check readiness and retry.</p>
                 )}
                 {(exportMutation.isError || exportHtmlMutation.isError) && (
                   <p className="text-sm text-destructive">Export failed. Make sure the asset is ready and has references.</p>
+                )}
+                {wechatDraftMutation.isSuccess && (
+                  <p className="text-sm text-emerald-700">Sent to the configured WeChat Official Account draft box.</p>
+                )}
+                {wechatDraftMutation.isError && (
+                  <p className="text-sm text-destructive">WeChat draft delivery failed: {wechatDraftMutation.error instanceof Error ? wechatDraftMutation.error.message : "Check the account credential and retry."}</p>
+                )}
+                {wechatDraftReceipt && (
+                  <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/5 p-3 text-sm">
+                    <p className="font-medium text-emerald-800">Latest WeChat draft</p>
+                    <p className="mt-1 text-muted-foreground">Account: {String(wechatDraftReceipt.account_label || "default")} · Media ID: <code>{String(wechatDraftReceipt.media_id || "unknown")}</code></p>
+                    {wechatDraftReceipt.sent_at ? <p className="mt-1 text-xs text-muted-foreground">Sent {new Date(String(wechatDraftReceipt.sent_at)).toLocaleString()}</p> : null}
+                  </div>
                 )}
                 {publishMutation.isError && (
                   <p className="text-sm text-destructive">Failed to mark asset as published. Add publish details and retry.</p>
@@ -4257,8 +4351,8 @@ export function AssetDetailPage() {
           <DialogContent className="flex h-[88vh] max-w-[min(1100px,calc(100vw-32px))] flex-col p-0">
             <DialogHeader className="mb-0 flex-row items-center justify-between border-b px-6 py-4 pr-12 text-left">
               <div>
-                <DialogTitle>HTML Preview</DialogTitle>
-                <p className="mt-1 text-xs text-muted-foreground">Sandboxed preview generated from the current Markdown Asset.</p>
+                <DialogTitle>{htmlPreviewTitle}</DialogTitle>
+                <p className="mt-1 text-xs text-muted-foreground">{htmlPreviewDescription}</p>
               </div>
               <Button
                 type="button"

@@ -26,6 +26,7 @@ from pkg.schemas.application.asset_workspace import (
 from pkg.services.application.assets import get_asset
 from pkg.services.cross_cutting.embedding import get_embedding_service
 from pkg.services.foundation.wiki_lifecycle import get_wiki_role
+from pkg.services.application.asset_experience import experience_from_metadata
 
 WORKSPACE_METADATA_KEY = "asset_workspace_v1"
 logger = logging.getLogger(__name__)
@@ -50,6 +51,9 @@ def audit_asset_workspace(asset: Asset, workspace: dict):
     }
     linked_candidates = [item for item in workspace.get("knowledge_candidates", []) if item.get("status") != "rejected"]
     candidates = [item for item in linked_candidates if item.get("status") != "promoted"]
+    experience = experience_from_metadata(asset.metadata_, asset_type=asset.asset_type)
+    draft = (asset.draft_content or "").strip()
+    diagram_count = draft.count("```mermaid") + draft.count("```mmd")
 
     def block(identifier: str, title: str, detail: str):
         blocking.append(AssetQualityFinding(id=identifier, severity="P0", title=title, detail=detail))
@@ -88,6 +92,12 @@ def audit_asset_workspace(asset: Asset, workspace: dict):
             if contradictions:
                 block("PKG-EVIDENCE-004", "Claim has unresolved contradicting evidence", f"Claim {claim_id} is contradicted by {', '.join(contradictions)}.")
 
+    style_id = experience["id"]
+    if style_id == "visual_digest" and draft and diagram_count == 0 and "|" not in draft and ">" not in draft:
+        warn("PKG-STYLE-001", "Visual Digest lacks visual structure", "Add a Mermaid diagram, compact table, metric block, or pull quote to create a scannable visual rhythm.")
+    if style_id == "knowledge_atlas" and draft and diagram_count == 0:
+        warn("PKG-STYLE-002", "Knowledge Atlas lacks a concept diagram", "Use a Mermaid flowchart when relationships or exploration paths are central to the Asset.")
+
     blocker_count = len(blocking)
     warning_count = len(warnings)
     score = max(0.0, round(5.0 - blocker_count * 1.5 - warning_count * 0.25, 1))
@@ -104,6 +114,8 @@ def audit_asset_workspace(asset: Asset, workspace: dict):
             "candidate_count": float(len(candidates)),
             "claim_count": float(len(claims)),
             "evidence_count": float(len(evidence)),
+            "diagram_count": float(diagram_count),
+            "style_profile_version": float(experience.get("version", 1)),
         },
     )
 

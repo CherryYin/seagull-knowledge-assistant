@@ -5,7 +5,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { assetsApi, notesApi, sourcesApi, wikiApi } from "@/lib/api";
 import { reviseAssetIntent } from "@/lib/api/assets";
 import { buildAssetGenerationSeed, type AssetHandoffState } from "@/lib/asset-handoff";
-import { MANUAL_ASSET_TYPES, type AssetGenerationRequest, type AssetIntentFormDraft, type AssetIntentProposal } from "@/lib/asset-generation";
+import { ASSET_STYLE_PROFILES, MANUAL_ASSET_TYPES, defaultAssetStyleProfile, type AssetGenerationRequest, type AssetIntentFormDraft, type AssetIntentProposal } from "@/lib/asset-generation";
 import {
   clearAssetIntakeRecovery,
   createAssetIntakeOperationId,
@@ -68,6 +68,7 @@ export function AssetGenerationPage() {
   const [scope, setScope] = useState(fillBlank(priorDraft?.scope ?? "", intentProposal?.scope.join("\n")));
   const [constraints, setConstraints] = useState(fillBlank(priorDraft?.constraints ?? "", intentProposal?.constraints.join("\n")));
   const [styleNotes, setStyleNotes] = useState(priorDraft?.styleNotes ?? initialSeed.styleNotes);
+  const [styleProfileId, setStyleProfileId] = useState(priorDraft?.styleProfileId ?? initialSeed.styleProfileId);
   const [sourceRefs, setSourceRefs] = useState<string[]>(priorDraft?.sourceRefs ?? initialSeed.sourceRefs);
   const [noteRefs, setNoteRefs] = useState<string[]>(priorDraft?.noteRefs ?? initialSeed.noteRefs);
   const [wikiRefs, setWikiRefs] = useState<string[]>(priorDraft?.wikiRefs ?? initialSeed.wikiRefs);
@@ -95,6 +96,7 @@ export function AssetGenerationPage() {
       scope,
       constraints,
       styleNotes,
+      styleProfileId,
       sourceRefs,
       noteRefs,
       wikiRefs,
@@ -122,6 +124,7 @@ export function AssetGenerationPage() {
       `Constraints: ${parseLines(constraints).join("; ") || "not provided"}`,
       `Selected evidence: ${evidenceCount} records`,
       `Delivery format: ${deliveryFormat === "html" ? "HTML" : "Markdown"}`,
+      `Style profile: ${ASSET_STYLE_PROFILES.find((profile) => profile.id === styleProfileId)?.label ?? styleProfileId}`,
     ].join("\n");
     navigate("/chat", {
       state: {
@@ -164,6 +167,7 @@ export function AssetGenerationPage() {
           note_refs: noteRefs,
           wiki_refs: wikiRefs,
           style_notes: styleNotes.trim() || undefined,
+          style_profile_id: styleProfileId,
           metadata: {
             audience: audience.trim() || null,
             generation_mode: "agent_assisted",
@@ -269,8 +273,20 @@ export function AssetGenerationPage() {
           <CardHeader><CardTitle>1. Choose the deliverable</CardTitle><CardDescription>Newsletter automation is intentionally deferred.</CardDescription></CardHeader>
           <CardContent className="grid gap-3 md:grid-cols-2">
             {MANUAL_ASSET_TYPES.map((item) => (
-              <button key={item.value} type="button" onClick={() => setAssetType(item.value)} className={`rounded-xl border p-4 text-left transition-colors ${assetType === item.value ? "border-primary bg-primary/5" : "hover:border-primary/40"}`}>
+              <button key={item.value} type="button" onClick={() => { setAssetType(item.value); setStyleProfileId(defaultAssetStyleProfile(item.value)); }} className={`rounded-xl border p-4 text-left transition-colors ${assetType === item.value ? "border-primary bg-primary/5" : "hover:border-primary/40"}`}>
                 <p className="font-medium">{item.label}</p><p className="mt-1 text-sm text-muted-foreground">{item.description}</p>
+              </button>
+            ))}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader><CardTitle>2. Choose the experience style</CardTitle><CardDescription>The profile changes generation structure, visual rhythm, preview, and HTML export without weakening Evidence or Claim requirements.</CardDescription></CardHeader>
+          <CardContent className="grid gap-3 md:grid-cols-2">
+            {ASSET_STYLE_PROFILES.map((profile) => (
+              <button key={profile.id} type="button" onClick={() => setStyleProfileId(profile.id)} className={`rounded-xl border p-4 text-left transition ${profile.accentClass} ${styleProfileId === profile.id ? "ring-2 ring-primary" : "opacity-80 hover:opacity-100"}`}>
+                <span className="font-semibold">{profile.label}</span>
+                <span className="mt-1 block text-sm text-muted-foreground">{profile.description}</span>
               </button>
             ))}
           </CardContent>
@@ -300,7 +316,7 @@ export function AssetGenerationPage() {
         )}
 
         <Card>
-          <CardHeader><CardTitle>2. Confirm the Intent</CardTitle><CardDescription>Question and goal are required because they anchor later Evidence and Claims.</CardDescription></CardHeader>
+          <CardHeader><CardTitle>3. Confirm the Intent</CardTitle><CardDescription>Question and goal are required because they anchor later Evidence and Claims.</CardDescription></CardHeader>
           <CardContent className="space-y-4">
             {intentProposal && <p className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-sm text-primary">Agent proposal applied to previously blank fields. Review every field before confirming Intent.</p>}
             <Input aria-label="Asset title" placeholder="Optional working title" value={title} onChange={(event) => setTitle(event.target.value)} />
@@ -330,7 +346,7 @@ export function AssetGenerationPage() {
         </Card>
 
         <Card>
-          <CardHeader><CardTitle>3. Add optional seed evidence</CardTitle><CardDescription>You no longer need to find everything yourself. Selected records are guaranteed starting points; the Agent searches for additional relevant PKG knowledge.</CardDescription></CardHeader>
+          <CardHeader><CardTitle>4. Add optional seed evidence</CardTitle><CardDescription>You no longer need to find everything yourself. Selected records are guaranteed starting points; the Agent searches for additional relevant PKG knowledge.</CardDescription></CardHeader>
           <CardContent className="grid gap-4 lg:grid-cols-3">
             <EvidenceColumn icon={<FileText className="h-4 w-4" />} title="Sources" items={(sources.data?.items ?? []).map((item) => ({ id: item.id, title: item.title, detail: item.source_type }))} selected={sourceRefs} onToggle={(id) => setSourceRefs((values) => toggle(values, id))} />
             <EvidenceColumn icon={<NotebookPen className="h-4 w-4" />} title="Notes" items={(notes.data?.items ?? []).map((item) => ({ id: item.id, title: item.title, detail: item.note_type }))} selected={noteRefs} onToggle={(id) => setNoteRefs((values) => toggle(values, id))} />

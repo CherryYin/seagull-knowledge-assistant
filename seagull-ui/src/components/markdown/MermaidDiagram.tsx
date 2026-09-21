@@ -24,6 +24,7 @@ export function MermaidDiagram({ chart }: MermaidDiagramProps) {
   const [svg, setSvg] = useState("");
   const [error, setError] = useState("");
   const [downloadError, setDownloadError] = useState("");
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -131,6 +132,12 @@ export function MermaidDiagram({ chart }: MermaidDiagramProps) {
     URL.revokeObjectURL(url);
   };
 
+  const copySource = async () => {
+    await navigator.clipboard.writeText(chart);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
+
   const downloadPng = async () => {
     if (!svg) return;
 
@@ -191,6 +198,7 @@ export function MermaidDiagram({ chart }: MermaidDiagramProps) {
       {svg ? (
         <>
           <div className="mermaid-diagram-actions">
+            <button type="button" onClick={copySource}>{copied ? "Copied" : "Mermaid"}</button>
             <button type="button" onClick={downloadSvg}>SVG</button>
             <button type="button" onClick={downloadPng}>PNG</button>
           </div>

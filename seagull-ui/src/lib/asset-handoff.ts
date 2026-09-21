@@ -1,4 +1,5 @@
-import type { AssetType } from "@/lib/api";
+import type { AssetStyleProfileId, AssetType } from "@/lib/api";
+import { defaultAssetStyleProfile } from "@/lib/asset-generation";
 
 export type ManualAssetType = Exclude<AssetType, "newsletter_issue">;
 
@@ -7,6 +8,7 @@ export interface AssetHandoffState {
   brief?: string;
   audience?: string;
   style_notes?: string;
+  style_profile_id?: AssetStyleProfileId;
   asset_type?: ManualAssetType;
   source_refs?: string[];
   note_refs?: string[];
@@ -19,6 +21,7 @@ export interface AssetGenerationSeed {
   brief: string;
   audience: string;
   styleNotes: string;
+  styleProfileId: AssetStyleProfileId;
   sourceRefs: string[];
   noteRefs: string[];
   wikiRefs: string[];
@@ -30,6 +33,7 @@ export function buildAssetHandoffState(input: AssetHandoffState): AssetHandoffSt
     brief: input.brief,
     audience: input.audience,
     style_notes: input.style_notes,
+    style_profile_id: input.style_profile_id,
     asset_type: input.asset_type,
     source_refs: input.source_refs ?? [],
     note_refs: input.note_refs ?? [],
@@ -44,6 +48,7 @@ export function buildAssetGenerationSeed(input?: AssetHandoffState): AssetGenera
     brief: input?.brief ?? "",
     audience: input?.audience ?? "",
     styleNotes: input?.style_notes ?? "",
+    styleProfileId: input?.style_profile_id ?? defaultAssetStyleProfile(input?.asset_type ?? "blog_post"),
     sourceRefs: input?.source_refs ?? [],
     noteRefs: input?.note_refs ?? [],
     wikiRefs: input?.wiki_refs ?? [],

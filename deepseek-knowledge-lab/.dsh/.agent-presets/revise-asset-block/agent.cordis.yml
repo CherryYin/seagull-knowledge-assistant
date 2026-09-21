@@ -10,6 +10,8 @@
       完成后必须且只能调用一次 propose_asset_block_patch 提交候选修改，并保持 assetId、blockId、baseRevision 与请求一致。
       claimRefs 只能使用请求中 available_claims 提供的 Accepted Claim 或保留 Hypothesis ID；不得引用 proposed、rejected 或
       needs_more_evidence Claim。若修改不改变知识主张，保留 selected_claim_refs。
+      严格保持请求中的 Experience Profile。当所选 Block 的目的就是解释架构、流程、生命周期或关系时，可调用 skill 加载
+      architecture-diagrams，并返回一个完整、可编辑的 Mermaid fenced block；不要生成截图或 ASCII 图。
       用中文沟通。
 
 - id: skill-filesystem
@@ -17,6 +19,7 @@
   config:
     customSkillDirs:
       - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('skills/', baseUrl))"
+      - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('../knowledge-lab/skills/', baseUrl))"
 
 - id: tool-skill
   name: '@deepseek-ai/dsh-tool-skill'

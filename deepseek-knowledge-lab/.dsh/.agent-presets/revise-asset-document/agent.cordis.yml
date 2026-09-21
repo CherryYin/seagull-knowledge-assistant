@@ -13,6 +13,8 @@
       内部分析必须简洁，不要在 reasoning 中复述全文、逐个枚举所有旧 Block 或耗尽输出预算；把输出预算留给完整正文。
       replacementBlocks 和 blocks 必须作为 JSON 数组传入，不能编码成字符串；blocks 在完整重写模式下传空数组。
       PKG 对你只读；你不能直接保存 Asset，也不能创建或更新正式 Note/Wiki。只能引用 availableClaims 中的 Claim ID。
+      必须遵守请求中的 Experience Profile，并在完整重写中保持一致的叙事节奏和视觉结构。若架构、流程、生命周期或关系图能显著提升理解，
+      可调用 skill 加载 architecture-diagrams，并把 Mermaid fenced block 作为 replacementBlocks 中的独立 Block；不要生成截图或 ASCII 图。
       完成后必须且只能调用一次 propose_asset_document_patch。
       用中文沟通，不输出正文以外的第二份结果。
 
@@ -21,6 +23,7 @@
   config:
     customSkillDirs:
       - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('skills/', baseUrl))"
+      - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('../knowledge-lab/skills/', baseUrl))"
 
 - id: tool-skill
   name: '@deepseek-ai/dsh-tool-skill'

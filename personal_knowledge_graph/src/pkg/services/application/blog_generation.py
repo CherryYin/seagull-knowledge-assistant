@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from html import escape
+import hashlib
+from html import escape, unescape
 import re
 
 import markdown
@@ -12,6 +13,7 @@ from pkg.models.application.asset import Asset
 from pkg.models.foundation.note import Note
 from pkg.models.foundation.source import Source
 from pkg.models.foundation.wiki import WikiPage
+from pkg.services.application.asset_experience import experience_from_metadata
 from pkg.services.foundation.wiki_lifecycle import get_wiki_role
 
 
@@ -531,8 +533,25 @@ def export_html(asset: Asset) -> str:
         extensions=["extra", "sane_lists", "toc"],
         output_format="html5",
     )
+    rendered_body = re.sub(r"\A<h1(?:\s[^>]*)?>.*?</h1>\s*", "", rendered_body, count=1, flags=re.DOTALL)
+    if asset.brief:
+        rendered_brief = f"<p>{escape(asset.brief, quote=False)}</p>"
+        if rendered_body.startswith(rendered_brief):
+            rendered_body = rendered_body[len(rendered_brief):].lstrip()
     title = escape(asset.title)
+    brief = escape(asset.brief or "")
     asset_kind = escape(_asset_kind_label(asset.asset_type))
+    experience = experience_from_metadata(asset.metadata_, asset_type=asset.asset_type)
+    style_id = experience["id"]
+    style_label = escape(str(experience.get("label") or style_id.replace("_", " ").title()))
+    word_count = len(re.findall(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]", markdown_content))
+    reading_minutes = max(1, round(word_count / 350))
+    theme_css = {
+        "editorial_story": "--ink:#29241f;--muted:#766b61;--line:#ded4c7;--accent:#8b5e3c;--accent-soft:#efe2d4;--paper:#fffdf8;--canvas:#eee7dd;--content-width:900px;--body-font:Georgia,'Times New Roman',serif;--display-font:Georgia,'Times New Roman',serif;",
+        "executive_brief": "--ink:#eaf4ff;--muted:#9fb6cc;--line:#28445f;--accent:#38bdf8;--accent-soft:#173a54;--paper:#10253a;--canvas:#07121e;--content-width:1080px;--body-font:Inter,ui-sans-serif,system-ui,sans-serif;--display-font:Inter,ui-sans-serif,system-ui,sans-serif;",
+        "visual_digest": "--ink:#312e81;--muted:#705b8b;--line:#ebcfe6;--accent:#c026d3;--accent-soft:#f9dff4;--paper:#fffafd;--canvas:#fff0f5;--content-width:1120px;--body-font:Inter,ui-sans-serif,system-ui,sans-serif;--display-font:Inter,ui-sans-serif,system-ui,sans-serif;",
+        "knowledge_atlas": "--ink:#17382a;--muted:#557566;--line:#b8d8c5;--accent:#15803d;--accent-soft:#dcefe2;--paper:#f8fff9;--canvas:#e7f2eb;--content-width:1060px;--body-font:Inter,ui-sans-serif,system-ui,sans-serif;--display-font:ui-monospace,SFMono-Regular,Menlo,monospace;",
+    }[style_id]
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -541,33 +560,215 @@ def export_html(asset: Asset) -> str:
   <meta name="generator" content="Seagull Asset Export">
   <title>{title}</title>
   <style>
-    :root {{ color-scheme: light; --ink: #18181b; --muted: #71717a; --line: #e4e4e7; --accent: #2563eb; --paper: #ffffff; --canvas: #f4f4f5; }}
+    :root {{ color-scheme: light; {theme_css} }}
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; background: var(--canvas); color: var(--ink); font: 17px/1.75 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
-    main {{ width: min(860px, calc(100% - 32px)); margin: 32px auto; padding: clamp(28px, 6vw, 72px); background: var(--paper); border: 1px solid var(--line); border-radius: 24px; box-shadow: 0 24px 70px -44px rgba(15, 23, 42, .45); }}
-    .asset-kind {{ margin: 0 0 28px; color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; }}
-    h1, h2, h3, h4 {{ line-height: 1.2; letter-spacing: -.02em; }}
-    h1 {{ margin: 0 0 32px; font-size: clamp(2.25rem, 7vw, 4.5rem); }}
-    h2 {{ margin-top: 2.5em; padding-bottom: .45em; border-bottom: 1px solid var(--line); font-size: 1.65rem; }}
-    h3 {{ margin-top: 2em; font-size: 1.25rem; }}
-    p, ul, ol, blockquote, pre, table {{ margin: 1.1em 0; }}
+    body {{ margin: 0; background: var(--canvas); color: var(--ink); font: 17px/1.75 var(--body-font); }}
+    main {{ width: min(var(--content-width), calc(100% - 32px)); margin: 32px auto; overflow: hidden; background: var(--paper); border: 1px solid var(--line); border-radius: 30px; box-shadow: 0 32px 90px -50px rgba(15,23,42,.55); }}
+    .asset-hero {{ position: relative; padding: clamp(36px,7vw,88px); border-bottom: 1px solid var(--line); overflow: hidden; }}
+    .asset-hero::after {{ content:""; position:absolute; inset:auto -8% -45% 42%; height:75%; border-radius:50%; background:var(--accent-soft); filter:blur(4px); opacity:.62; pointer-events:none; }}
+    .asset-kind {{ position:relative; z-index:1; margin:0 0 28px; color:var(--muted); font:700 11px/1.3 var(--body-font); letter-spacing:.2em; text-transform:uppercase; }}
+    .asset-title {{ position:relative; z-index:1; max-width:14ch; margin:0; font:700 clamp(2.6rem,7vw,5.8rem)/.98 var(--display-font); letter-spacing:-.055em; text-wrap:balance; }}
+    .asset-dek {{ position:relative; z-index:1; max-width:760px; margin:30px 0 0; color:var(--muted); font-size:clamp(1.05rem,2.4vw,1.35rem); line-height:1.65; }}
+    .asset-meta {{ position:relative; z-index:1; display:flex; flex-wrap:wrap; gap:10px; margin-top:34px; }}
+    .asset-meta span {{ padding:8px 12px; border:1px solid var(--line); border-radius:999px; background:color-mix(in srgb,var(--paper) 82%,transparent); color:var(--muted); font:700 11px/1 var(--body-font); letter-spacing:.08em; text-transform:uppercase; }}
+    .asset-body {{ padding:clamp(32px,7vw,82px); }}
+    .asset-body > :first-child {{ margin-top:0; }}
+    h1, h2, h3, h4 {{ font-family:var(--display-font); line-height:1.2; letter-spacing:-.025em; }}
+    h2 {{ margin-top:2.7em; font-size:clamp(1.6rem,3.2vw,2.15rem); }}
+    h3 {{ margin-top:2em; font-size:1.25rem; }}
+    p, ul, ol, blockquote, pre, table {{ margin:1.15em 0; }}
     a {{ color: var(--accent); text-underline-offset: 3px; }}
-    blockquote {{ margin-left: 0; padding: .25em 0 .25em 1.25em; border-left: 3px solid var(--accent); color: #3f3f46; }}
-    code {{ padding: .15em .35em; border-radius: 5px; background: #f4f4f5; font-size: .9em; }}
+    blockquote {{ margin-left:0; padding:20px 24px; border:1px solid var(--line); border-left:4px solid var(--accent); border-radius:0 16px 16px 0; background:var(--accent-soft); color:var(--ink); }}
+    code {{ padding:.15em .35em; border-radius:5px; background:var(--accent-soft); font-size:.9em; }}
     pre {{ overflow-x: auto; padding: 20px; border-radius: 14px; background: #18181b; color: #fafafa; }}
     pre code {{ padding: 0; background: transparent; color: inherit; }}
     table {{ width: 100%; border-collapse: collapse; font-size: .94em; }}
     th, td {{ padding: 10px 12px; border: 1px solid var(--line); text-align: left; vertical-align: top; }}
-    th {{ background: #f4f4f5; }}
+    th {{ background: var(--accent-soft); }}
     img {{ max-width: 100%; height: auto; border-radius: 12px; }}
+    .mermaid {{ margin: 1.5em 0; overflow-x: auto; border: 1px solid var(--line); border-radius: 16px; padding: 18px; background: color-mix(in srgb, var(--paper) 92%, white); }}
     hr {{ margin: 2.5em 0; border: 0; border-top: 1px solid var(--line); }}
-    @media print {{ body {{ background: white; }} main {{ width: 100%; margin: 0; padding: 0; border: 0; box-shadow: none; }} }}
+    [data-style-profile="editorial_story"] .asset-body {{ max-width:780px; margin:auto; }}
+    [data-style-profile="editorial_story"] .asset-body > p:first-of-type {{ font-size:1.18em; line-height:1.9; }}
+    [data-style-profile="editorial_story"] .asset-body > p:first-of-type::first-letter {{ float:left; margin:.1em .12em 0 0; color:var(--accent); font:700 4.4em/.72 var(--display-font); }}
+    [data-style-profile="editorial_story"] h2 {{ padding-bottom:.5em; border-bottom:1px solid var(--line); }}
+    [data-style-profile="executive_brief"] .asset-hero {{ background:linear-gradient(135deg,#0b1d2e,#12334d); }}
+    [data-style-profile="executive_brief"] .asset-title {{ max-width:18ch; text-transform:uppercase; letter-spacing:-.045em; }}
+    [data-style-profile="executive_brief"] .asset-body {{ display:grid; grid-template-columns:minmax(0,1fr); gap:0; }}
+    [data-style-profile="executive_brief"] h2 {{ padding:14px 18px; border-left:5px solid var(--accent); background:var(--accent-soft); text-transform:uppercase; font-size:1.35rem; letter-spacing:.04em; }}
+    [data-style-profile="executive_brief"] blockquote {{ border-radius:14px; }}
+    [data-style-profile="visual_digest"] .asset-hero {{ background:radial-gradient(circle at 90% 10%,#fde68a 0,transparent 25%),linear-gradient(135deg,#fff7ed,#fdf2f8 48%,#eef2ff); }}
+    [data-style-profile="visual_digest"] .asset-title {{ max-width:12ch; color:#312e81; }}
+    [data-style-profile="visual_digest"] h2 {{ display:inline-block; padding:10px 18px; border-radius:999px; background:var(--accent-soft); color:#86198f; }}
+    [data-style-profile="visual_digest"] blockquote {{ border:0; border-radius:22px; box-shadow:0 16px 40px -30px rgba(126,34,206,.65); }}
+    [data-style-profile="visual_digest"] table {{ overflow:hidden; border-radius:16px; box-shadow:0 12px 34px -28px rgba(49,46,129,.5); }}
+    [data-style-profile="knowledge_atlas"] main {{ background-image:linear-gradient(rgba(21,128,61,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(21,128,61,.035) 1px,transparent 1px); background-size:28px 28px; }}
+    [data-style-profile="knowledge_atlas"] .asset-hero {{ background:linear-gradient(135deg,#effcf3,#dff2e5); }}
+    [data-style-profile="knowledge_atlas"] .asset-title {{ max-width:18ch; font-size:clamp(2.3rem,6vw,5rem); }}
+    [data-style-profile="knowledge_atlas"] .asset-body {{ counter-reset:atlas-section; }}
+    [data-style-profile="knowledge_atlas"] h2 {{ display:grid; grid-template-columns:auto 1fr; align-items:center; gap:12px; padding-bottom:12px; border-bottom:1px dashed var(--line); }}
+    [data-style-profile="knowledge_atlas"] h2::before {{ counter-increment:atlas-section; content:counter(atlas-section,decimal-leading-zero); color:var(--accent); font:700 .7em/1 var(--display-font); }}
+    [data-style-profile="knowledge_atlas"] blockquote {{ border-radius:4px 18px 18px 4px; }}
+    @media (max-width:680px) {{ main {{ margin:0; width:100%; border:0; border-radius:0; }} .asset-hero,.asset-body {{ padding:28px 22px; }} .asset-title {{ font-size:2.65rem; }} }}
+    @media print {{ body {{ background:white; }} main {{ width:100%; margin:0; border:0; box-shadow:none; }} }}
   </style>
 </head>
 <body>
-  <main>
-    <p class="asset-kind">{asset_kind}</p>
-    {rendered_body}
+  <main data-style-profile="{style_id}" data-style-version="{experience.get('version', 1)}">
+    <header class="asset-hero">
+      <p class="asset-kind">{asset_kind} · {style_label}</p>
+      <h1 class="asset-title">{title}</h1>
+      {f'<p class="asset-dek">{brief}</p>' if brief else ''}
+      <div class="asset-meta"><span>{reading_minutes} min read</span><span>{word_count} units</span><span>Editable Mermaid</span></div>
+    </header>
+    <article class="asset-body">{rendered_body}</article>
+  </main>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({{ startOnLoad: false, securityLevel: "strict", theme: "neutral", flowchart: {{ htmlLabels: false }} }});
+    const blocks = [...document.querySelectorAll("pre > code.language-mermaid, pre > code.language-mmd")];
+    for (const [index, code] of blocks.entries()) {{
+      const host = document.createElement("div");
+      host.className = "mermaid";
+      try {{
+        const result = await mermaid.render(`asset-diagram-${{index}}`, code.textContent || "");
+        host.innerHTML = result.svg;
+        code.parentElement.replaceWith(host);
+      }} catch (error) {{
+        code.parentElement.insertAdjacentHTML("beforebegin", `<p class="asset-kind">Mermaid render failed</p>`);
+      }}
+    }}
+  </script>
+</body>
+</html>"""
+
+
+def export_wechat_html(asset: Asset, *, rendered_diagrams: dict[str, str] | None = None) -> str:
+    parts: list[str] = []
+    if asset.brief:
+        parts.extend([asset.brief, ""])
+    if asset.outline:
+        parts.extend(["## Outline", "", asset.outline, ""])
+    if asset.draft_content:
+        parts.append(asset.draft_content)
+    if asset.reference_notes:
+        parts.extend(["", "## References", "", asset.reference_notes])
+    markdown_content = "\n".join(parts).strip()
+    rendered = markdown.markdown(
+        escape(markdown_content, quote=False),
+        extensions=["extra", "sane_lists"],
+        output_format="html5",
+    )
+    experience = experience_from_metadata(asset.metadata_, asset_type=asset.asset_type)
+    style_id = str(experience.get("id") or "editorial_story")
+    style_label = escape(str(experience.get("label") or style_id.replace("_", " ").title()))
+    theme = {
+        "editorial_story": {
+            "accent": "#8b5e3c", "ink": "#302821", "muted": "#776a5f", "soft": "#f5eee5",
+            "heading": "padding-bottom:8px;border-bottom:1px solid #ddcfc0;",
+            "quote": "border-left:4px solid #8b5e3c;background:#f7f0e7;border-radius:0 12px 12px 0;",
+        },
+        "executive_brief": {
+            "accent": "#0369a1", "ink": "#172b3a", "muted": "#526879", "soft": "#e8f3f9",
+            "heading": "padding:10px 14px;border-left:5px solid #0284c7;background:#e8f3f9;text-transform:uppercase;letter-spacing:.04em;",
+            "quote": "border:1px solid #b8d9e8;border-left:5px solid #0284c7;background:#eef8fc;border-radius:12px;",
+        },
+        "visual_digest": {
+            "accent": "#a21caf", "ink": "#3b2861", "muted": "#715b86", "soft": "#fae8ff",
+            "heading": "display:inline-block;padding:8px 16px;border-radius:999px;background:#fae8ff;color:#86198f;",
+            "quote": "border:1px solid #efc8f3;background:#fff1f8;border-radius:18px;box-shadow:0 10px 28px rgba(126,34,206,.08);",
+        },
+        "knowledge_atlas": {
+            "accent": "#15803d", "ink": "#1f4732", "muted": "#587264", "soft": "#e4f4e8",
+            "heading": "padding:8px 0 10px;border-bottom:1px dashed #8fc6a0;font-family:monospace;color:#166534;",
+            "quote": "border:1px solid #b8d8c5;border-left:5px solid #16a34a;background:#effaf2;border-radius:4px 16px 16px 4px;",
+        },
+    }.get(style_id, {})
+    accent_candidate = str(theme.get("accent") or experience.get("presentation", {}).get("accent") or "#2563eb")
+    accent = accent_candidate if re.fullmatch(r"#[0-9a-fA-F]{6}", accent_candidate) else "#2563eb"
+    ink = str(theme.get("ink") or "#2f3437")
+    muted = str(theme.get("muted") or "#57606a")
+    soft = str(theme.get("soft") or "#f6f8fa")
+    rendered = re.sub(
+        r'<pre><code class="language-(?:mermaid|mmd)">(.*?)</code></pre>',
+        lambda match: _wechat_mermaid_block(
+            match.group(1),
+            rendered_diagrams=rendered_diagrams or {},
+            accent=accent,
+            soft=soft,
+        ),
+        rendered,
+        flags=re.DOTALL,
+    )
+    replacements = {
+        "<h1>": f'<h1 style="margin:28px 0 16px;font-size:26px;line-height:1.35;color:{accent};font-weight:700;">',
+        "<h2>": f'<h2 style="margin:30px 0 15px;font-size:22px;line-height:1.4;font-weight:700;{theme.get("heading", "")}">',
+        "<h3>": f'<h3 style="margin:24px 0 12px;font-size:19px;line-height:1.45;color:{ink};font-weight:700;">',
+        "<p>": f'<p style="margin:14px 0;font-size:16px;line-height:1.9;color:{ink};letter-spacing:.01em;">',
+        "<blockquote>": f'<blockquote style="margin:20px 0;padding:14px 18px;color:{muted};{theme.get("quote", "")}">',
+        "<ul>": '<ul style="margin:14px 0;padding-left:24px;line-height:1.8;">',
+        "<ol>": '<ol style="margin:14px 0;padding-left:24px;line-height:1.8;">',
+        "<li>": '<li style="margin:6px 0;">',
+        "<pre>": f'<pre style="margin:18px 0;padding:16px;overflow:auto;border:1px solid {soft};border-radius:10px;background:{soft};color:{ink};font-size:13px;line-height:1.65;white-space:pre-wrap;">',
+        "<table>": '<table style="width:100%;margin:18px 0;border-collapse:collapse;font-size:14px;line-height:1.6;">',
+        "<th>": f'<th style="padding:9px;border:1px solid #d8dee4;background:{soft};color:{ink};text-align:left;">',
+        "<td>": '<td style="padding:8px;border:1px solid #d8dee4;vertical-align:top;">',
+        "<hr>": '<hr style="margin:28px 0;border:0;border-top:1px solid #d8dee4;">',
+    }
+    for source, target in replacements.items():
+        rendered = rendered.replace(source, target)
+    rendered = re.sub(
+        r'href="(?!https?://)[^"]*"',
+        'href="#"',
+        rendered,
+        flags=re.IGNORECASE,
+    )
+    rendered = re.sub(
+        r'<a href="(https?://[^"]+)"',
+        lambda match: f'<a href="{match.group(1)}" style="color:{accent};text-decoration:underline;"',
+        rendered,
+        flags=re.IGNORECASE,
+    )
+    signature = (
+        f'<section style="margin:0 0 24px;padding:14px 16px;border-radius:14px;background:{soft};">'
+        f'<p style="margin:0;color:{accent};font-size:12px;font-weight:700;letter-spacing:.14em;">{style_label.upper()}</p>'
+        f'<p style="margin:7px 0 0;color:{muted};font-size:14px;line-height:1.65;">由 Seagull Asset 工作流生成，可在公众号草稿箱继续调整。</p>'
+        f'</section>'
+    )
+    return f'<section style="padding:4px 2px;background:#ffffff;">{signature}{rendered}</section>'
+
+
+def _wechat_mermaid_block(source_html: str, *, rendered_diagrams: dict[str, str], accent: str, soft: str) -> str:
+    source = unescape(unescape(source_html)).strip()
+    source_hash = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    rendered_url = rendered_diagrams.get(source_hash)
+    if rendered_url:
+        return (
+            f'<section style="margin:22px 0;padding:14px;border:1px solid {soft};border-radius:14px;background:{soft};">'
+            f'<p style="margin:0 0 10px;color:{accent};font-size:12px;font-weight:700;letter-spacing:.12em;">DIAGRAM · MERMAID</p>'
+            f'<img src="{escape(rendered_url, quote=True)}" alt="Mermaid diagram" style="display:block;width:100%;height:auto;border-radius:8px;background:#ffffff;" />'
+            f'</section>'
+        )
+    return (
+        f'<section style="margin:22px 0;padding:14px 16px;border:1px solid {soft};border-radius:14px;background:{soft};">'
+        f'<p style="margin:0 0 8px;color:{accent};font-size:12px;font-weight:700;letter-spacing:.12em;">EDITABLE DIAGRAM · MERMAID</p>'
+        f'<pre><code class="language-mermaid">{escape(source, quote=False)}</code></pre></section>'
+    )
+
+
+def export_wechat_preview_html(asset: Asset) -> str:
+    content = export_wechat_html(asset)
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escape(asset.title)}</title>
+</head>
+<body style="margin:0;background:#f3f4f6;color:#1f2937;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <main style="width:min(720px,calc(100% - 24px));margin:24px auto;padding:28px 24px;background:#ffffff;box-shadow:0 18px 50px rgba(15,23,42,.10);">
+    <h1 style="margin:0 0 12px;font-size:30px;line-height:1.35;">{escape(asset.title)}</h1>
+    {content}
   </main>
 </body>
 </html>"""

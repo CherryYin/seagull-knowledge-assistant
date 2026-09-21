@@ -17,6 +17,16 @@ from pkg.services.cross_cutting.user_api_credentials import (
 )
 
 
+def test_wechat_official_account_is_a_supported_credential_provider():
+    credential = UserApiCredentialCreate(
+        provider="wechat_official_account",
+        secret="app-secret",
+        config={"app_id": "wx-app", "default_thumb_media_id": "cover-media"},
+    )
+
+    assert credential.provider == "wechat_official_account"
+
+
 class MissingTableError(Exception):
     sqlstate = "42P01"
 

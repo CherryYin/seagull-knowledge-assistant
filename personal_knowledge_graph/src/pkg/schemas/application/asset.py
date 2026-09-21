@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 ASSET_TYPE_PATTERN = r"^(blog_post|research_brief|knowledge_pack|newsletter_issue|topic_report)$"
 ASSET_STATUS_PATTERN = r"^(draft|in_review|ready_to_export|exported|published|archived)$"
+ASSET_STYLE_PROFILE_PATTERN = r"^(editorial_story|executive_brief|visual_digest|knowledge_atlas)$"
 
 
 class AssetProvenance(BaseModel):
@@ -26,6 +27,7 @@ class AssetCreate(BaseModel):
     wiki_refs: list[str] = []
     opinion_notes: str | None = None
     style_notes: str | None = None
+    style_profile_id: str | None = Field(default=None, pattern=ASSET_STYLE_PROFILE_PATTERN)
     metadata: dict | None = None
     provenance: AssetProvenance | None = None
 
@@ -48,6 +50,7 @@ class AssetUpdate(BaseModel):
     wiki_refs: list[str] | None = None
     opinion_notes: str | None = None
     style_notes: str | None = None
+    style_profile_id: str | None = Field(default=None, pattern=ASSET_STYLE_PROFILE_PATTERN)
     export_format: str | None = None
     metadata: dict | None = None
 
@@ -70,6 +73,7 @@ class AssetRead(BaseModel):
     wiki_refs: list[str]
     opinion_notes: str | None = None
     style_notes: str | None = None
+    style_profile_id: str = "editorial_story"
     export_format: str | None = None
     exported_at: datetime | None = None
     published_at: datetime | None = None
@@ -131,6 +135,20 @@ class AssetQualityAuditResult(BaseModel):
     metrics: dict[str, float] = {}
 
 
+class AssetStyleProfileRead(BaseModel):
+    id: str
+    version: int
+    label: str
+    description: str
+    generation: dict
+    presentation: dict
+    diagram_policy: dict
+
+
+class AssetStyleProfileList(BaseModel):
+    items: list[AssetStyleProfileRead]
+
+
 class AssetExportResult(BaseModel):
     asset_id: str
     export_format: str
@@ -142,6 +160,26 @@ class AssetPublishFeedbackUpdate(BaseModel):
     channel: str | None = None
     published_at: datetime | None = None
     feedback: str | None = None
+
+
+class AssetWechatRenderedDiagram(BaseModel):
+    source_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    data_url: str = Field(max_length=8_000_000)
+
+
+class AssetWechatDraftRequest(BaseModel):
+    author: str | None = Field(default=None, max_length=64)
+    digest: str | None = Field(default=None, max_length=120)
+    content_source_url: str | None = Field(default=None, max_length=500)
+    thumb_media_id: str | None = Field(default=None, max_length=200)
+    rendered_diagrams: list[AssetWechatRenderedDiagram] = Field(default_factory=list, max_length=20)
+
+
+class AssetWechatDraftResult(BaseModel):
+    asset_id: str
+    media_id: str
+    account_label: str
+    sent_at: datetime
 
 
 class AssetFeedbackNoteResult(BaseModel):

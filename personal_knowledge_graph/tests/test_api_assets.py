@@ -12,6 +12,17 @@ def test_asset_api_models_exclude_memory_refs():
 
     assert "memory_refs" not in AssetCreate.model_fields
     assert "memory_refs" not in AssetUpdate.model_fields
+
+
+def test_asset_api_models_accept_versioned_style_profile():
+    from pkg.schemas.application.asset import AssetCreate, AssetRead, AssetUpdate
+
+    created = AssetCreate(title="Styled", style_profile_id="visual_digest")
+    updated = AssetUpdate(style_profile_id="knowledge_atlas")
+
+    assert created.style_profile_id == "visual_digest"
+    assert updated.style_profile_id == "knowledge_atlas"
+    assert AssetRead.model_fields["style_profile_id"].default == "editorial_story"
     assert "memory_refs" not in AssetRead.model_fields
 
 
@@ -295,6 +306,75 @@ async def test_export_html_route_marks_asset_exported_as_html():
     update_body = mock_update.await_args.kwargs["body"]
     assert update_body.status == "exported"
     assert update_body.export_format == "html"
+
+
+@pytest.mark.asyncio
+async def test_publish_wechat_draft_route_records_remote_draft():
+    from pkg.api.assets import publish_wechat_draft_route
+    from pkg.schemas.application.asset import AssetWechatDraftRequest
+    from pkg.services.application.wechat_publishing import WechatDraftReceipt
+
+    fake_user = MagicMock(id="user-1")
+    session = AsyncMock()
+    asset = _make_asset("asset-1", fake_user.id)
+    asset.status = "ready_to_export"
+    asset.reference_notes = "- Source: src-1"
+    credential = MagicMock(
+        id=7,
+        label="main-account",
+        secret_encrypted="encrypted-secret",
+        config={"app_id": "wx-app", "default_thumb_media_id": "cover-media"},
+    )
+    sent_at = datetime.now(timezone.utc)
+
+    with (
+        patch("pkg.api.assets.get_asset", new=AsyncMock(return_value=asset)),
+        patch("pkg.api.assets.check_readiness", return_value=(True, [], [], [])),
+        patch("pkg.api.assets.get_default_user_api_credential", new=AsyncMock(return_value=credential)),
+        patch("pkg.api.assets.decrypt_secret", return_value="app-secret"),
+        patch(
+            "pkg.api.assets.create_wechat_draft",
+            new=AsyncMock(return_value=WechatDraftReceipt(media_id="draft-media-1", sent_at=sent_at)),
+        ) as mock_create_draft,
+        patch("pkg.api.assets.update_asset", new=AsyncMock(return_value=asset)) as mock_update,
+    ):
+        request = AssetWechatDraftRequest(
+            rendered_diagrams=[{"source_hash": "a" * 64, "data_url": "data:image/png;base64,AAAA"}],
+        )
+        result = await publish_wechat_draft_route(
+            "asset-1",
+            request,
+            user=fake_user,
+            session=session,
+        )
+
+    assert result.media_id == "draft-media-1"
+    assert result.account_label == "main-account"
+    update_body = mock_update.await_args.kwargs["body"]
+    assert update_body.status == "exported"
+    assert update_body.export_format == "wechat_draft"
+    assert update_body.metadata["wechat_draft"]["media_id"] == "draft-media-1"
+    assert mock_create_draft.await_args.kwargs["rendered_diagrams"] == {
+        "a" * 64: "data:image/png;base64,AAAA",
+    }
+
+
+@pytest.mark.asyncio
+async def test_preview_wechat_route_returns_sandboxable_document():
+    from pkg.api.assets import preview_wechat_route
+
+    fake_user = MagicMock(id="user-1")
+    session = AsyncMock()
+    asset = _make_asset("asset-1", fake_user.id)
+
+    with (
+        patch("pkg.api.assets.get_asset", new=AsyncMock(return_value=asset)),
+        patch("pkg.api.assets.export_wechat_preview_html", return_value="<!doctype html><p>Preview</p>"),
+    ):
+        result = await preview_wechat_route("asset-1", user=fake_user, session=session)
+
+    assert result.export_format == "wechat_html"
+    assert "Preview" in result.content
 
 
 @pytest.mark.asyncio

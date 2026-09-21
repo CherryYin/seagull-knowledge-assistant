@@ -2,6 +2,7 @@ import { request } from "./client";
 
 export type AssetStatus = "draft" | "in_review" | "ready_to_export" | "exported" | "published" | "archived";
 export type AssetType = "blog_post" | "research_brief" | "knowledge_pack" | "newsletter_issue" | "topic_report";
+export type AssetStyleProfileId = "editorial_story" | "executive_brief" | "visual_digest" | "knowledge_atlas";
 
 export interface Asset {
   id: string;
@@ -19,6 +20,7 @@ export interface Asset {
   wiki_refs: string[];
   opinion_notes?: string | null;
   style_notes?: string | null;
+  style_profile_id: AssetStyleProfileId;
   export_format?: string | null;
   exported_at?: string | null;
   published_at?: string | null;
@@ -64,6 +66,7 @@ export interface AssetCreate {
   wiki_refs?: string[];
   opinion_notes?: string;
   style_notes?: string;
+  style_profile_id?: AssetStyleProfileId;
   metadata?: Record<string, unknown>;
   provenance?: {
     origin_type: "harness_session" | "user";
@@ -85,6 +88,7 @@ export interface AssetUpdate {
   wiki_refs?: string[];
   opinion_notes?: string;
   style_notes?: string;
+  style_profile_id?: AssetStyleProfileId;
   export_format?: string;
   metadata?: Record<string, unknown>;
 }
@@ -113,6 +117,16 @@ export interface AssetQualityAuditResult {
   metrics: Record<string, number>;
 }
 
+export interface AssetStyleProfile {
+  id: AssetStyleProfileId;
+  version: number;
+  label: string;
+  description: string;
+  generation: Record<string, unknown>;
+  presentation: Record<string, unknown>;
+  diagram_policy: Record<string, unknown>;
+}
+
 export interface AssetExportResult {
   asset_id: string;
   export_format: string;
@@ -124,6 +138,21 @@ export interface AssetPublishFeedbackUpdate {
   channel?: string | null;
   published_at?: string | null;
   feedback?: string | null;
+}
+
+export interface AssetWechatDraftRequest {
+  author?: string | null;
+  digest?: string | null;
+  content_source_url?: string | null;
+  thumb_media_id?: string | null;
+  rendered_diagrams?: Array<{ source_hash: string; data_url: string }>;
+}
+
+export interface AssetWechatDraftResult {
+  asset_id: string;
+  media_id: string;
+  account_label: string;
+  sent_at: string;
 }
 
 export interface AssetFeedbackNoteResult {
@@ -348,6 +377,7 @@ export const assetsApi = {
   get: (id: string) => request<Asset>(`/assets/${encodeURIComponent(id)}`),
   getWorkspace: (id: string) => request<AssetWorkspace>(`/assets/${encodeURIComponent(id)}/workspace`),
   getQualityAudit: (id: string) => request<AssetQualityAuditResult>(`/assets/${encodeURIComponent(id)}/quality-audit`),
+  listStyleProfiles: () => request<{ items: AssetStyleProfile[] }>("/assets/style-profiles"),
   create: (body: AssetCreate) => request<Asset>("/assets", { method: "POST", body: JSON.stringify(body) }),
   fork: (id: string, body: { title: string; brief?: string | null }) => request<Asset>(`/assets/${encodeURIComponent(id)}/fork`, { method: "POST", body: JSON.stringify(body) }),
   getNewsletterAutomation: () => request<NewsletterAutomationConfig>("/assets/newsletter/automation"),
@@ -369,6 +399,8 @@ export const assetsApi = {
   exportMarkdown: (id: string) => request<AssetExportResult>(`/assets/${encodeURIComponent(id)}/export/markdown`, { method: "POST" }),
   previewHtml: (id: string) => request<AssetExportResult>(`/assets/${encodeURIComponent(id)}/preview/html`),
   exportHtml: (id: string) => request<AssetExportResult>(`/assets/${encodeURIComponent(id)}/export/html`, { method: "POST" }),
+  previewWechat: (id: string) => request<AssetExportResult>(`/assets/${encodeURIComponent(id)}/preview/wechat`),
+  sendToWechatDraft: (id: string, body: AssetWechatDraftRequest = {}) => request<AssetWechatDraftResult>(`/assets/${encodeURIComponent(id)}/publish/wechat-draft`, { method: "POST", body: JSON.stringify(body) }),
   updatePublishFeedback: (id: string, body: AssetPublishFeedbackUpdate) => request<Asset>(`/assets/${encodeURIComponent(id)}/publish-feedback`, { method: "POST", body: JSON.stringify(body) }),
   feedbackToNote: (id: string) => request<AssetFeedbackNoteResult>(`/assets/${encodeURIComponent(id)}/feedback-to-note`, { method: "POST" }),
 };

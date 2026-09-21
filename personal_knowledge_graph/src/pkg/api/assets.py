@@ -17,7 +17,10 @@ from pkg.schemas.application.asset import (
     AssetList,
     AssetPublishFeedbackUpdate,
     AssetRead,
+    AssetStyleProfileList,
     AssetUpdate,
+    AssetWechatDraftRequest,
+    AssetWechatDraftResult,
     AttachReferencesRequest,
     NewsletterAutomationConfig,
     NewsletterAutomationRunResult,
@@ -56,15 +59,25 @@ from pkg.services.application.blog_generation import (
     check_readiness,
     export_html,
     export_markdown,
+    export_wechat_preview_html,
 )
 from pkg.services.application.newsletter_automation import (
     generate_newsletter,
     get_newsletter_config,
     update_newsletter_config,
 )
+from pkg.services.application.asset_experience import list_style_profiles
+from pkg.services.application.wechat_publishing import WechatPublishingError, create_wechat_draft
+from pkg.services.cross_cutting.credentials_crypto import CredentialsCryptoError, decrypt_secret
+from pkg.services.cross_cutting.user_api_credentials import get_default_user_api_credential
 from pkg.api.notes import persist_note
 
 router = APIRouter()
+
+
+@router.get("/style-profiles", response_model=AssetStyleProfileList)
+async def list_asset_style_profiles_route(user: User = Depends(get_current_user)):
+    return AssetStyleProfileList(items=list_style_profiles())
 
 
 @router.post("", response_model=AssetRead)
@@ -387,6 +400,76 @@ async def export_html_route(
         body=AssetUpdate(status="exported", export_format="html"),
     )
     return AssetExportResult(asset_id=asset_id, export_format="html", content=content)
+
+
+@router.get("/{asset_id}/preview/wechat", response_model=AssetExportResult)
+async def preview_wechat_route(
+    asset_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    asset = await get_asset(session, user_id=user.id, asset_id=asset_id)
+    return AssetExportResult(
+        asset_id=asset_id,
+        export_format="wechat_html",
+        content=export_wechat_preview_html(asset),
+    )
+
+
+@router.post("/{asset_id}/publish/wechat-draft", response_model=AssetWechatDraftResult)
+async def publish_wechat_draft_route(
+    asset_id: str,
+    body: AssetWechatDraftRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    asset = await get_asset(session, user_id=user.id, asset_id=asset_id)
+    ready, blocking_reasons, _, _ = check_readiness(asset)
+    if not ready:
+        raise HTTPException(status_code=409, detail="Asset is not ready for WeChat draft: " + "; ".join(blocking_reasons))
+    if not (asset.reference_notes or "").strip():
+        raise HTTPException(status_code=409, detail="WeChat draft requires a references section. Attach references first.")
+
+    credential = await get_default_user_api_credential(
+        session,
+        user_id=user.id,
+        provider="wechat_official_account",
+    )
+    if credential is None:
+        raise HTTPException(status_code=409, detail="Configure a WeChat Official Account credential in Settings > API Keys first")
+    try:
+        receipt = await create_wechat_draft(
+            asset,
+            app_secret=decrypt_secret(credential.secret_encrypted),
+            config=dict(credential.config or {}),
+            author=body.author,
+            digest=body.digest,
+            content_source_url=body.content_source_url,
+            thumb_media_id=body.thumb_media_id,
+            rendered_diagrams={item.source_hash: item.data_url for item in body.rendered_diagrams},
+        )
+    except (CredentialsCryptoError, WechatPublishingError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    metadata = dict(asset.metadata_ or {})
+    metadata["wechat_draft"] = {
+        "media_id": receipt.media_id,
+        "sent_at": receipt.sent_at.isoformat(),
+        "account_label": credential.label,
+        "credential_id": credential.id,
+    }
+    await update_asset(
+        session,
+        user_id=user.id,
+        asset_id=asset_id,
+        body=AssetUpdate(status="exported", export_format="wechat_draft", metadata=metadata),
+    )
+    return AssetWechatDraftResult(
+        asset_id=asset_id,
+        media_id=receipt.media_id,
+        account_label=credential.label,
+        sent_at=receipt.sent_at,
+    )
 
 
 @router.post("/{asset_id}/publish-feedback", response_model=AssetRead)

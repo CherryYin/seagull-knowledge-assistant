@@ -1,4 +1,4 @@
-import type { AssetType } from "@/lib/api";
+import type { AssetStyleProfileId, AssetType } from "@/lib/api";
 
 export interface AssetGenerationRequest {
   assetId?: string;
@@ -12,6 +12,7 @@ export interface AssetGenerationRequest {
   scope: string[];
   constraints: string[];
   styleNotes: string;
+  styleProfileId: AssetStyleProfileId;
   sourceRefs: string[];
   noteRefs: string[];
   wikiRefs: string[];
@@ -31,6 +32,7 @@ export interface AssetIntentFormDraft {
   scope: string;
   constraints: string;
   styleNotes: string;
+  styleProfileId: AssetStyleProfileId;
   sourceRefs: string[];
   noteRefs: string[];
   wikiRefs: string[];
@@ -77,6 +79,30 @@ export const MANUAL_ASSET_TYPES: Array<{
     description: "A systematic report that explains a topic, its gaps, risks, and next steps.",
   },
 ];
+
+export const ASSET_STYLE_PROFILES: Array<{
+  id: AssetStyleProfileId;
+  label: string;
+  description: string;
+  generationGuidance: string;
+  accentClass: string;
+}> = [
+  { id: "editorial_story", label: "Editorial Story", description: "Narrative, evidence-led, and magazine-like.", generationGuidance: "Use a strong opening, varied paragraph rhythm, natural transitions, and a memorable conclusion.", accentClass: "border-stone-300 bg-stone-50" },
+  { id: "executive_brief", label: "Executive Brief", description: "Decision-first, compact, and action oriented.", generationGuidance: "Lead with conclusions, separate findings from risks, and make recommendations directly actionable.", accentClass: "border-sky-300 bg-sky-50" },
+  { id: "visual_digest", label: "Visual Digest", description: "Scannable cards, metrics, diagrams, and short summaries.", generationGuidance: "Prefer compact sections, visual anchors, pull quotes, tables, and Mermaid diagrams when they improve comprehension.", accentClass: "border-fuchsia-300 bg-fuchsia-50" },
+  { id: "knowledge_atlas", label: "Knowledge Atlas", description: "Concepts, relationships, comparisons, and exploration paths.", generationGuidance: "Define concepts precisely, expose relationships, use comparisons, and add Mermaid concept flows when useful.", accentClass: "border-emerald-300 bg-emerald-50" },
+];
+
+export function defaultAssetStyleProfile(assetType: AssetType): AssetStyleProfileId {
+  if (assetType === "research_brief" || assetType === "topic_report") return "executive_brief";
+  if (assetType === "knowledge_pack") return "knowledge_atlas";
+  if (assetType === "newsletter_issue") return "visual_digest";
+  return "editorial_story";
+}
+
+export function assetStyleProfile(profileId: AssetStyleProfileId) {
+  return ASSET_STYLE_PROFILES.find((profile) => profile.id === profileId) ?? ASSET_STYLE_PROFILES[0];
+}
 
 export function assetTypeLabel(assetType: AssetType) {
   return MANUAL_ASSET_TYPES.find((item) => item.value === assetType)?.label
@@ -253,6 +279,7 @@ export function renderAssetGenerationContract(request: AssetGenerationRequest) {
     ...request.wikiRefs.map((id) => `[Wiki: ${id}]`),
   ];
 
+  const profile = assetStyleProfile(request.styleProfileId);
   return [
     `${assetTypeLabel(request.assetType)} delivery contract:`,
     `Confirmed Intent revision: ${request.assetId ? `stored on Asset ${request.assetId}` : "provided by the user"}.`,
@@ -300,6 +327,13 @@ export function renderAssetGenerationContract(request: AssetGenerationRequest) {
     "",
     "Type-specific quality criteria:",
     ...qualityCriteria.map((criterion) => `- ${criterion}`),
+    "",
+    "Experience profile:",
+    `- Profile: ${profile.label} (${profile.id}, version 1)`,
+    `- Generation guidance: ${profile.generationGuidance}`,
+    "- When an architecture, process, lifecycle, or relationship diagram materially improves comprehension, return it as a standard Mermaid fenced block.",
+    "- Prefer flowchart LR for architecture and data flow, flowchart TD for hierarchy, sequenceDiagram for interactions, stateDiagram-v2 for lifecycles, and erDiagram for data relationships.",
+    "- Keep high-level Mermaid diagrams focused at roughly 5–12 nodes.",
     "",
     "Completion checklist:",
     `- The document directly answers the user’s objective and fits ${request.audience.trim() ? `the named audience (${request.audience})` : "the audience confirmed during intake"}.`,

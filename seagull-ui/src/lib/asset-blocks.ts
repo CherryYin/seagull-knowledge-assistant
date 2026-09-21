@@ -1,4 +1,6 @@
 export type AssetBlockType = "heading" | "paragraph" | "list" | "quote" | "code" | "table" | "divider";
+export type AssetBlockRole = "content" | "diagram";
+export type AssetDiagramKind = "flowchart" | "sequence" | "state" | "er" | "c4" | "other";
 
 export interface AssetBlock {
   id: string;
@@ -6,6 +8,8 @@ export interface AssetBlock {
   markdown: string;
   revision: number;
   claimRefs: string[];
+  role?: AssetBlockRole;
+  diagramKind?: AssetDiagramKind;
 }
 
 export interface AssetDocument {
@@ -24,6 +28,23 @@ function blockType(markdown: string): AssetBlockType {
   const lines = markdown.split("\n");
   if (lines.length > 1 && lines[0].includes("|") && /^\s*\|?\s*:?-{3,}/.test(lines[1])) return "table";
   return "paragraph";
+}
+
+function diagramKind(markdown: string): AssetDiagramKind | undefined {
+  const source = markdown.trim();
+  if (!/^(```|~~~)(mermaid|mmd)\b/i.test(source)) return undefined;
+  const body = source.split("\n").slice(1).join("\n").trimStart();
+  if (/^(flowchart|graph)\b/.test(body)) return "flowchart";
+  if (/^sequenceDiagram\b/.test(body)) return "sequence";
+  if (/^stateDiagram(?:-v2)?\b/.test(body)) return "state";
+  if (/^erDiagram\b/.test(body)) return "er";
+  if (/^C4(?:Context|Container|Component|Deployment|Dynamic)\b/i.test(body)) return "c4";
+  return "other";
+}
+
+function blockSemantics(markdown: string) {
+  const kind = diagramKind(markdown);
+  return kind ? { role: "diagram" as const, diagramKind: kind } : { role: "content" as const };
 }
 
 function stableHash(value: string) {
@@ -93,6 +114,7 @@ export function parseAssetBlocks(content?: string | null): AssetBlock[] {
       markdown,
       revision: 1,
       claimRefs: [],
+      ...blockSemantics(markdown),
     };
   });
 }
@@ -162,7 +184,9 @@ function isAssetBlock(value: unknown): value is AssetBlock {
     && typeof block.markdown === "string"
     && typeof block.revision === "number"
     && (block.claim_refs === undefined || Array.isArray(block.claim_refs))
-    && (block.claimRefs === undefined || Array.isArray(block.claimRefs));
+    && (block.claimRefs === undefined || Array.isArray(block.claimRefs))
+    && (block.role === undefined || block.role === "content" || block.role === "diagram")
+    && (block.diagramKind === undefined || ["flowchart", "sequence", "state", "er", "c4", "other"].includes(String(block.diagramKind)));
 }
 
 export function hasStableAssetDocument(metadata: Record<string, unknown> | null | undefined) {
@@ -185,6 +209,8 @@ export function loadAssetBlocks(metadata: Record<string, unknown> | null | undef
         type: block.type,
         markdown: block.markdown,
         revision: block.revision,
+        role: block.role,
+        diagramKind: block.diagramKind,
         claimRefs: Array.isArray(block.claim_refs)
           ? block.claim_refs.filter((claimId): claimId is string => typeof claimId === "string")
           : Array.isArray(block.claimRefs) ? block.claimRefs.filter((claimId): claimId is string => typeof claimId === "string") : [],
@@ -204,7 +230,7 @@ export function createAssetDocument(blocks: AssetBlock[]): AssetDocument {
 }
 
 export function createAssetBlock(markdown = ""): AssetBlock {
-  return { id: newBlockId(), type: blockType(markdown), markdown, revision: 1, claimRefs: [] };
+  return { id: newBlockId(), type: blockType(markdown), markdown, revision: 1, claimRefs: [], ...blockSemantics(markdown) };
 }
 
 export function updateAssetBlock(block: AssetBlock, markdown: string): AssetBlock {
@@ -213,6 +239,7 @@ export function updateAssetBlock(block: AssetBlock, markdown: string): AssetBloc
     type: blockType(markdown),
     markdown,
     revision: block.revision + 1,
+    ...blockSemantics(markdown),
   };
 }
 

@@ -9,16 +9,42 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { authApi, type UserApiCredentialRecord } from "@/lib/api/auth";
 
-const PROVIDERS = [
-  { id: "newsapi", label: "NewsAPI", configLabel: "Base URL", configKey: "base_url", placeholder: "https://newsapi.org/v2" },
-  { id: "tavily", label: "Tavily", configLabel: "Base URL", configKey: "base_url", placeholder: "https://api.tavily.com" },
-  { id: "qwen", label: "Qwen", configLabel: "Base URL", configKey: "base_url", placeholder: "https://dashscope.aliyuncs.com/compatible-mode/v1" },
-  { id: "minimax", label: "MiniMax", configLabel: "Base URL", configKey: "base_url", placeholder: "https://api.minimax.io/v1" },
-  { id: "azure_openai", label: "Azure OpenAI", configLabel: "Base URL", configKey: "base_url", placeholder: "https://your-resource.openai.azure.com" },
-  { id: "github", label: "GitHub", configLabel: "Base URL", configKey: "base_url", placeholder: "https://api.github.com" },
-  { id: "openalex", label: "OpenAlex", configLabel: "Base URL", configKey: "base_url", placeholder: "https://api.openalex.org" },
-  { id: "semantic_scholar", label: "Semantic Scholar", configLabel: "Base URL", configKey: "base_url", placeholder: "https://api.semanticscholar.org/graph/v1" },
-  { id: "arxiv", label: "arXiv", configLabel: "User-Agent / contact", configKey: "user_agent", placeholder: "personal-knowledge-graph/0.1 your-email@example.com" },
+interface ProviderConfigField {
+  label: string;
+  key: string;
+  placeholder: string;
+  required?: boolean;
+}
+
+interface ProviderMetadata {
+  id: string;
+  label: string;
+  secretLabel?: string;
+  secretPlaceholder?: string;
+  configFields: ProviderConfigField[];
+}
+
+const PROVIDERS: ProviderMetadata[] = [
+  { id: "newsapi", label: "NewsAPI", configFields: [{ label: "Base URL", key: "base_url", placeholder: "https://newsapi.org/v2" }] },
+  { id: "tavily", label: "Tavily", configFields: [{ label: "Base URL", key: "base_url", placeholder: "https://api.tavily.com" }] },
+  { id: "qwen", label: "Qwen", configFields: [{ label: "Base URL", key: "base_url", placeholder: "https://dashscope.aliyuncs.com/compatible-mode/v1" }] },
+  { id: "minimax", label: "MiniMax", configFields: [{ label: "Base URL", key: "base_url", placeholder: "https://api.minimax.io/v1" }] },
+  { id: "azure_openai", label: "Azure OpenAI", configFields: [{ label: "Base URL", key: "base_url", placeholder: "https://your-resource.openai.azure.com" }] },
+  { id: "github", label: "GitHub", configFields: [{ label: "Base URL", key: "base_url", placeholder: "https://api.github.com" }] },
+  { id: "openalex", label: "OpenAlex", configFields: [{ label: "Base URL", key: "base_url", placeholder: "https://api.openalex.org" }] },
+  { id: "semantic_scholar", label: "Semantic Scholar", configFields: [{ label: "Base URL", key: "base_url", placeholder: "https://api.semanticscholar.org/graph/v1" }] },
+  { id: "arxiv", label: "arXiv", configFields: [{ label: "User-Agent / contact", key: "user_agent", placeholder: "personal-knowledge-graph/0.1 your-email@example.com" }] },
+  {
+    id: "wechat_official_account",
+    label: "WeChat Official Account",
+    secretLabel: "AppSecret",
+    secretPlaceholder: "Enter the Official Account AppSecret",
+    configFields: [
+      { label: "AppID", key: "app_id", placeholder: "wx...", required: true },
+      { label: "Default cover media ID", key: "default_thumb_media_id", placeholder: "Permanent image material media_id", required: true },
+      { label: "Default author", key: "author", placeholder: "Optional author name" },
+    ],
+  },
 ];
 
 const QUERY_KEY = ["user-api-credentials"] as const;
@@ -32,7 +58,7 @@ export function ApiKeysPage() {
   const [provider, setProvider] = useState("newsapi");
   const [label, setLabel] = useState("default");
   const [secret, setSecret] = useState("");
-  const [configValue, setConfigValue] = useState("");
+  const [configValues, setConfigValues] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -49,13 +75,13 @@ export function ApiKeysPage() {
       provider,
       label,
       secret,
-      config: configValue.trim() && providerMeta?.configKey ? { [providerMeta.configKey]: configValue.trim() } : {},
+      config: Object.fromEntries(Object.entries(configValues).map(([key, value]) => [key, value.trim()]).filter(([, value]) => value)),
       is_enabled: true,
       is_default: true,
     }),
     onSuccess: async () => {
       setSecret("");
-      setConfigValue("");
+      setConfigValues({});
       setLabel("default");
       setError(null);
       setSuccess("API key saved.");
@@ -84,7 +110,12 @@ export function ApiKeysPage() {
     setError(null);
     setSuccess(null);
     if (!secret.trim()) {
-      setError("Secret is required.");
+      setError(`${providerMeta?.secretLabel ?? "Secret"} is required.`);
+      return;
+    }
+    const missingConfig = providerMeta?.configFields.find((field) => field.required && !configValues[field.key]?.trim());
+    if (missingConfig) {
+      setError(`${missingConfig.label} is required.`);
       return;
     }
     createMutation.mutate();
@@ -119,7 +150,7 @@ export function ApiKeysPage() {
               <select
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                 value={provider}
-                onChange={(event) => setProvider(event.target.value)}
+                onChange={(event) => { setProvider(event.target.value); setConfigValues({}); }}
                 disabled={createMutation.isPending}
               >
                 {PROVIDERS.map((item) => (
@@ -132,13 +163,15 @@ export function ApiKeysPage() {
               <Input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="default" disabled={createMutation.isPending} />
             </div>
             <div className="space-y-2 md:col-span-2">
-              <label className="text-sm font-medium">Secret</label>
-              <Input value={secret} onChange={(event) => setSecret(event.target.value)} placeholder="Enter API key or token" disabled={createMutation.isPending} />
+              <label className="text-sm font-medium">{providerMeta?.secretLabel ?? "Secret"}</label>
+              <Input value={secret} onChange={(event) => setSecret(event.target.value)} placeholder={providerMeta?.secretPlaceholder ?? "Enter API key or token"} disabled={createMutation.isPending} />
             </div>
-            <div className="space-y-2 md:col-span-2">
-              <label className="text-sm font-medium">{providerMeta?.configLabel ?? "Provider config"} (optional)</label>
-              <Input value={configValue} onChange={(event) => setConfigValue(event.target.value)} placeholder={providerMeta?.placeholder ?? "https://api.example.com"} disabled={createMutation.isPending} />
-            </div>
+            {providerMeta?.configFields.map((field) => (
+              <div key={field.key} className="space-y-2 md:col-span-2">
+                <label className="text-sm font-medium">{field.label}{field.required ? "" : " (optional)"}</label>
+                <Input value={configValues[field.key] ?? ""} onChange={(event) => setConfigValues((current) => ({ ...current, [field.key]: event.target.value }))} placeholder={field.placeholder} disabled={createMutation.isPending} />
+              </div>
+            ))}
             <div className="md:col-span-2 flex justify-end">
               <Button onClick={submitNewCredential} disabled={createMutation.isPending}>
                 {createMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
@@ -181,6 +214,8 @@ function CredentialCard({ item, onDelete, deleting }: { item: UserApiCredentialR
           <div className="text-sm text-muted-foreground">Masked secret: <code>{item.secret_masked}</code></div>
           {item.config?.base_url ? <div className="text-sm text-muted-foreground">Base URL: <code>{String(item.config.base_url)}</code></div> : null}
           {item.config?.user_agent ? <div className="text-sm text-muted-foreground">User-Agent: <code>{String(item.config.user_agent)}</code></div> : null}
+          {item.config?.app_id ? <div className="text-sm text-muted-foreground">AppID: <code>{String(item.config.app_id)}</code></div> : null}
+          {item.config?.default_thumb_media_id ? <div className="text-sm text-muted-foreground">Default cover: <code>{String(item.config.default_thumb_media_id)}</code></div> : null}
         </div>
         <Button variant="destructive" size="sm" onClick={onDelete} disabled={deleting}>
           <Trash2 className="mr-2 h-4 w-4" /> Delete

@@ -129,7 +129,12 @@ function parseAssetIntentDraft(value: unknown): AssetIntentFormDraft | undefined
     || !Array.isArray(draft.wikiRefs)
     || typeof draft.allowWebResearch !== "boolean"
   ) return undefined;
-  return draft as unknown as AssetIntentFormDraft;
+  return {
+    ...(draft as unknown as AssetIntentFormDraft),
+    styleProfileId: ["editorial_story", "executive_brief", "visual_digest", "knowledge_atlas"].includes(String(draft.styleProfileId))
+      ? draft.styleProfileId as AssetIntentFormDraft["styleProfileId"]
+      : "editorial_story",
+  };
 }
 
 export function ChatPage() {

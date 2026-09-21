@@ -39,11 +39,17 @@ Skip this phase when a Structured drafting basis is supplied, even if the Asset 
 
 ## Phase 4: Produce
 1. Follow the Asset type's required H2 sections and quality criteria exactly.
-2. Return the complete editable Markdown deliverable, not an intake summary, plan, tool log, or save instruction.
-3. Put unsupported claims, uncertainty, source conflicts, and remaining editorial work in `Review Notes`.
-4. Never invent a citation, fact, or completed user confirmation.
-5. Keep analysis, planning, search narration, and tool-use commentary internal. Do not emit progress messages before the deliverable.
-6. Start the final response directly with the document H1 and stop at the document's final line. Do not add a preface, epilogue, explanation, completion message, or Markdown code fence.
+2. Treat the supplied Experience Profile as a concrete composition contract, not a loose tone suggestion:
+   - `editorial_story`: strong opening, varied paragraph rhythm, evidence-led narrative, memorable conclusion.
+   - `executive_brief`: conclusions first, compact findings, explicit risks, actionable recommendations.
+   - `visual_digest`: short sections, metrics, pull quotes, cards or tables, and Mermaid diagrams when useful.
+   - `knowledge_atlas`: precise definitions, relationships, comparisons, exploration paths, and Mermaid concept flows when useful.
+3. For architecture, process, lifecycle, or relationship explanations, use the existing `architecture-diagrams` skill and emit standard Mermaid fenced blocks. Prefer `flowchart LR`; use `flowchart TD`, `sequenceDiagram`, `stateDiagram-v2`, or `erDiagram` only when they better fit the information. Keep high-level diagrams focused at roughly 5–12 nodes.
+4. Return the complete editable Markdown deliverable, not an intake summary, plan, tool log, or save instruction.
+5. Put unsupported claims, uncertainty, source conflicts, and remaining editorial work in `Review Notes`.
+6. Never invent a citation, fact, or completed user confirmation.
+7. Keep analysis, planning, search narration, and tool-use commentary internal. Do not emit progress messages before the deliverable.
+8. Start the final response directly with the document H1 and stop at the document's final line. Do not add a preface, epilogue, explanation, completion message, or an outer Markdown code fence around the full deliverable.
 
 ## Interaction Rule
 Use questions only for decisions the user must make. Search for facts; ask for intent.

@@ -20,6 +20,11 @@ from pkg.schemas.application.asset import (
     AssetUpdate,
 )
 from pkg.services.application.blog_generation import check_readiness
+from pkg.services.application.asset_experience import (
+    EXPERIENCE_METADATA_KEY,
+    apply_asset_experience,
+    experience_from_metadata,
+)
 from pkg.services.application.production_memory import record_asset_production_event
 
 ALLOWED_ASSET_STATUSES = {"draft", "in_review", "ready_to_export", "exported", "published", "archived"}
@@ -30,10 +35,11 @@ logger = logging.getLogger(__name__)
 
 def _preserve_workspace_metadata(current_metadata: dict, candidate_metadata: dict) -> dict:
     metadata = deepcopy(candidate_metadata)
-    if WORKSPACE_METADATA_KEY in current_metadata:
-        metadata[WORKSPACE_METADATA_KEY] = deepcopy(current_metadata[WORKSPACE_METADATA_KEY])
-    else:
-        metadata.pop(WORKSPACE_METADATA_KEY, None)
+    for protected_key in (WORKSPACE_METADATA_KEY, EXPERIENCE_METADATA_KEY):
+        if protected_key in current_metadata:
+            metadata[protected_key] = deepcopy(current_metadata[protected_key])
+        else:
+            metadata.pop(protected_key, None)
     return metadata
 
 
@@ -111,6 +117,11 @@ async def create_asset(session: AsyncSession, *, user_id: str, body: AssetCreate
         metadata["opinion_notes"] = body.opinion_notes
     if body.style_notes is not None:
         metadata["style_notes"] = body.style_notes
+    metadata = apply_asset_experience(
+        metadata,
+        asset_type=body.asset_type,
+        style_profile_id=body.style_profile_id,
+    )
     metadata = await _inject_wiki_claims_metadata(
         session,
         user_id=user_id,
@@ -158,7 +169,7 @@ async def fork_asset(session: AsyncSession, *, user_id: str, asset_id: str, body
         }
     }
     source_metadata = source.metadata_ or {}
-    for key in ("audience", "delivery_format", "research_mode"):
+    for key in ("audience", "delivery_format", "research_mode", EXPERIENCE_METADATA_KEY):
         if key in source_metadata:
             metadata[key] = deepcopy(source_metadata[key])
     return await create_asset(
@@ -174,6 +185,7 @@ async def fork_asset(session: AsyncSession, *, user_id: str, asset_id: str, body
             wiki_refs=list(source.wiki_refs or []),
             opinion_notes=getattr(source, "opinion_notes", None),
             style_notes=getattr(source, "style_notes", None),
+            style_profile_id=experience_from_metadata(source_metadata, asset_type=source.asset_type)["id"],
             metadata=metadata,
             provenance=AssetProvenance(origin_type="user", origin_ref=source.id, action="save"),
         ),
@@ -188,7 +200,13 @@ async def list_assets(session: AsyncSession, *, user_id: str, asset_type: str | 
         filters.append(Asset.status == status)
     total = (await session.execute(select(func.count()).select_from(Asset).where(*filters))).scalar() or 0
     rows = await session.execute(select(Asset).where(*filters).order_by(Asset.updated_at.desc()).offset(offset).limit(limit))
-    return list(rows.scalars()), total
+    assets = list(rows.scalars())
+    for asset in assets:
+        metadata = dict(asset.metadata_ or {})
+        setattr(asset, "opinion_notes", metadata.get("opinion_notes"))
+        setattr(asset, "style_notes", metadata.get("style_notes"))
+        setattr(asset, "style_profile_id", experience_from_metadata(metadata, asset_type=asset.asset_type)["id"])
+    return assets, total
 
 
 async def list_asset_knowledge_lineage(
@@ -252,6 +270,7 @@ async def get_asset(session: AsyncSession, *, user_id: str, asset_id: str) -> As
     metadata = dict(asset.metadata_ or {})
     setattr(asset, "opinion_notes", metadata.get("opinion_notes"))
     setattr(asset, "style_notes", metadata.get("style_notes"))
+    setattr(asset, "style_profile_id", experience_from_metadata(metadata, asset_type=asset.asset_type)["id"])
     return asset
 
 
@@ -279,6 +298,12 @@ async def update_asset(session: AsyncSession, *, user_id: str, asset_id: str, bo
         effective_metadata["opinion_notes"] = data["opinion_notes"]
     if "style_notes" in data:
         effective_metadata["style_notes"] = data["style_notes"]
+    if "style_profile_id" in data:
+        effective_metadata = apply_asset_experience(
+            effective_metadata,
+            asset_type=data.get("asset_type", asset.asset_type),
+            style_profile_id=data["style_profile_id"],
+        )
     effective_metadata = await _inject_wiki_claims_metadata(
         session,
         user_id=user_id,
@@ -314,7 +339,7 @@ async def update_asset(session: AsyncSession, *, user_id: str, asset_id: str, bo
                 detail="Asset is not ready to export: " + "; ".join(blocking_reasons),
             )
     for key, value in data.items():
-        if key in {"metadata", "opinion_notes", "style_notes"}:
+        if key in {"metadata", "opinion_notes", "style_notes", "style_profile_id"}:
             metadata = dict(asset.metadata_ or {})
             if key == "metadata":
                 metadata = dict(effective_metadata or value or {})
@@ -323,7 +348,7 @@ async def update_asset(session: AsyncSession, *, user_id: str, asset_id: str, bo
             setattr(asset, "metadata_", metadata)
         else:
             setattr(asset, key, value)
-    if "metadata" not in data and {"wiki_refs", "opinion_notes", "style_notes"}.intersection(data.keys()):
+    if "metadata" not in data and {"wiki_refs", "opinion_notes", "style_notes", "style_profile_id"}.intersection(data.keys()):
         asset.metadata_ = effective_metadata
 
     event_type = None
