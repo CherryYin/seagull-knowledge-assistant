@@ -4,7 +4,7 @@ from pkg.models.application.asset import Asset
 from pkg.models.foundation.note import Note
 from pkg.models.foundation.source import Source
 from pkg.models.foundation.wiki import WikiPage
-from pkg.services.application.blog_generation import GenerationContext, render_generation_context
+from pkg.services.application.blog_generation import GenerationContext, export_wechat_html, render_generation_context
 
 
 def test_render_generation_context_groups_raw_stable_and_candidate_wiki():
@@ -112,3 +112,38 @@ def test_render_generation_context_groups_raw_stable_and_candidate_wiki():
     assert "# Candidate Wiki Context" in rendered
     assert "## Editorial Brief" in rendered
     assert "## Author Point of View" in rendered
+
+
+def test_export_wechat_html_matches_reader_body_without_outline_or_evidence():
+    now = datetime(2026, 9, 22, tzinfo=timezone.utc)
+    asset = Asset(
+        id="asset-wechat-reader",
+        user_id="user-1",
+        asset_type="blog_post",
+        status="ready_to_export",
+        title="Reader-aligned WeChat",
+        brief="Digest belongs outside the article body",
+        outline="Internal working outline",
+        draft_content=(
+            "## Main\n\nVisible body [Source: src-1]\n\n"
+            "## Evidence Notes\n\nInternal evidence commentary\n\n"
+            "## Review Notes\n\nInternal review commentary"
+        ),
+        reference_notes="Internal reference appendix",
+        source_refs=["src-1"],
+        note_refs=[],
+        wiki_refs=[],
+        metadata_={},
+        created_at=now,
+        updated_at=now,
+    )
+
+    rendered = export_wechat_html(asset)
+
+    assert "Visible body" in rendered
+    assert "Internal working outline" not in rendered
+    assert "Internal evidence commentary" not in rendered
+    assert "Internal review commentary" not in rendered
+    assert "Internal reference appendix" not in rendered
+    assert "Digest belongs outside the article body" not in rendered
+    assert "[Source: src-1]" not in rendered

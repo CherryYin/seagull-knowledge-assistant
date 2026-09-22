@@ -385,3 +385,52 @@ class TestUserApiCredentialApi:
         resp = auth_client.delete("/auth/me/api-credentials/1")
         assert resp.status_code == 204
         mock_session.delete.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_upload_wechat_cover_updates_default_media_id(self, mock_session, fake_user):
+        from pkg.api.auth import upload_api_credential_wechat_cover
+        from pkg.models.user_api_credential import UserApiCredential
+        from pkg.services.application.wechat_publishing import WechatPermanentImageReceipt
+
+        item = UserApiCredential(
+            id=1,
+            user_id=fake_user.id,
+            provider="wechat_official_account",
+            label="default",
+            secret_encrypted="enc",
+            secret_masked="****cret",
+            config={"app_id": "wx-app"},
+            is_enabled=True,
+            is_default=True,
+            created_at=datetime(2026, 6, 25, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 6, 25, tzinfo=timezone.utc),
+        )
+        mock_session.get.return_value = item
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = []
+        mock_session.execute.return_value = mock_result
+        image = MagicMock()
+        image.read = AsyncMock(return_value=b"image-bytes")
+
+        with (
+            patch("pkg.api.auth.decrypt_secret", return_value="app-secret"),
+            patch(
+                "pkg.api.auth.upload_wechat_permanent_image",
+                new=AsyncMock(return_value=WechatPermanentImageReceipt(media_id="cover-media-1", url="https://mmbiz.qpic.cn/cover")),
+            ) as upload_mock,
+        ):
+            result = await upload_api_credential_wechat_cover(
+                1,
+                image=image,
+                user=fake_user,
+                session=mock_session,
+            )
+
+        assert result.media_id == "cover-media-1"
+        assert result.credential.config["default_thumb_media_id"] == "cover-media-1"
+        assert result.credential.config["default_thumb_url"] == "https://mmbiz.qpic.cn/cover"
+        upload_mock.assert_awaited_once_with(
+            b"image-bytes",
+            app_secret="app-secret",
+            config={"app_id": "wx-app"},
+        )

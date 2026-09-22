@@ -137,6 +137,12 @@ export interface UserApiCredentialCreateRequest {
   is_default?: boolean;
 }
 
+export interface WechatCoverUploadResult {
+  media_id: string;
+  url: string;
+  credential: UserApiCredentialRecord;
+}
+
 export const authApi = {
   register: (body: RegisterRequest) =>
     request<RegisterResponse>("/auth/register", {
@@ -197,6 +203,14 @@ export const authApi = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  uploadMyWechatCover: (id: number, image: File) => {
+    const body = new FormData();
+    body.append("image", image);
+    return request<WechatCoverUploadResult>(`/auth/me/api-credentials/${id}/wechat-cover`, {
+      method: "POST",
+      body,
+    });
+  },
   deleteMyApiCredential: (id: number) =>
     request<void>(`/auth/me/api-credentials/${id}`, {
       method: "DELETE",

@@ -26,6 +26,19 @@ function localDateKey(date = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
+function downloadRawNote(note: Note) {
+  const safeTitle = note.title
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-")
+    .replace(/[. ]+$/g, "") || "note";
+  const url = URL.createObjectURL(new Blob([note.content ?? ""], { type: "text/markdown;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${safeTitle}.md`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 type ViewMode = "full" | "slices";
 
 /** Split note content into sections by markdown headings or --- separators. */
@@ -710,6 +723,14 @@ export function NoteDetailPage() {
                 onClick={() => notesApi.exportPdf(note.id, note.title)}
               >
                 <FileDown className="h-4 w-4" /> Export PDF
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => downloadRawNote(note)}
+                title="Download the original unrendered note content"
+              >
+                <Download className="h-4 w-4" /> Download Raw
               </Button>
               <Button variant="outline" size="sm" onClick={() => setVersionsOpen(true)} title="Version history">
                 <History className="h-4 w-4" /> History

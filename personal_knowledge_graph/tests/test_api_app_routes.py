@@ -28,6 +28,14 @@ def test_legacy_agent_persistence_routes_are_not_registered():
     assert "/knowledge/summarize-daily" not in paths
 
 
+def test_wechat_cover_upload_route_is_registered():
+    methods_by_path = {route.path: getattr(route, "methods", set()) for route in app.routes}
+
+    path = "/auth/me/api-credentials/{credential_id}/wechat-cover"
+    assert path in methods_by_path
+    assert "POST" in methods_by_path[path]
+
+
 def test_wiki_compile_route_is_not_registered():
     paths = {route.path for route in app.routes}
 

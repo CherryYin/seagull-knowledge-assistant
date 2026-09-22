@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Loader2, Plus, Save, Trash2 } from "lucide-react";
+import { ImageUp, KeyRound, Loader2, Plus, Save, Trash2 } from "lucide-react";
 
 import { ModuleSectionNav } from "@/components/SectionNav";
 import { Badge } from "@/components/ui/badge";
@@ -41,7 +41,7 @@ const PROVIDERS: ProviderMetadata[] = [
     secretPlaceholder: "Enter the Official Account AppSecret",
     configFields: [
       { label: "AppID", key: "app_id", placeholder: "wx...", required: true },
-      { label: "Default cover media ID", key: "default_thumb_media_id", placeholder: "Permanent image material media_id", required: true },
+      { label: "Default cover media ID", key: "default_thumb_media_id", placeholder: "Optional: upload a cover after saving this account" },
       { label: "Default author", key: "author", placeholder: "Optional author name" },
     ],
   },
@@ -103,6 +103,19 @@ export function ApiKeysPage() {
     onError: (err) => {
       setSuccess(null);
       setError(err instanceof Error ? err.message : "Failed to delete API key");
+    },
+  });
+
+  const uploadCoverMutation = useMutation({
+    mutationFn: ({ credentialId, file }: { credentialId: number; file: File }) => authApi.uploadMyWechatCover(credentialId, file),
+    onSuccess: async (result) => {
+      setError(null);
+      setSuccess(`WeChat default cover uploaded. Media ID: ${result.media_id}`);
+      await queryClient.invalidateQueries({ queryKey: QUERY_KEY });
+    },
+    onError: (err) => {
+      setSuccess(null);
+      setError(err instanceof Error ? err.message : "Failed to upload WeChat cover");
     },
   });
 
@@ -191,7 +204,16 @@ export function ApiKeysPage() {
             ) : items.length === 0 ? (
               <div className="rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground">No API credentials saved yet.</div>
             ) : (
-              items.map((item) => <CredentialCard key={item.id} item={item} onDelete={() => deleteMutation.mutate(item.id)} deleting={deleteMutation.isPending} />)
+              items.map((item) => (
+                <CredentialCard
+                  key={item.id}
+                  item={item}
+                  onDelete={() => deleteMutation.mutate(item.id)}
+                  deleting={deleteMutation.isPending}
+                  onUploadCover={(file) => uploadCoverMutation.mutate({ credentialId: item.id, file })}
+                  uploadingCover={uploadCoverMutation.isPending && uploadCoverMutation.variables?.credentialId === item.id}
+                />
+              ))
             )}
           </CardContent>
         </Card>
@@ -200,7 +222,20 @@ export function ApiKeysPage() {
   );
 }
 
-function CredentialCard({ item, onDelete, deleting }: { item: UserApiCredentialRecord; onDelete: () => void; deleting: boolean }) {
+function CredentialCard({
+  item,
+  onDelete,
+  deleting,
+  onUploadCover,
+  uploadingCover,
+}: {
+  item: UserApiCredentialRecord;
+  onDelete: () => void;
+  deleting: boolean;
+  onUploadCover: (file: File) => void;
+  uploadingCover: boolean;
+}) {
+  const [coverFile, setCoverFile] = useState<File | null>(null);
   return (
     <div className="rounded-lg border border-border bg-card p-4">
       <div className="flex items-start justify-between gap-4">
@@ -216,6 +251,22 @@ function CredentialCard({ item, onDelete, deleting }: { item: UserApiCredentialR
           {item.config?.user_agent ? <div className="text-sm text-muted-foreground">User-Agent: <code>{String(item.config.user_agent)}</code></div> : null}
           {item.config?.app_id ? <div className="text-sm text-muted-foreground">AppID: <code>{String(item.config.app_id)}</code></div> : null}
           {item.config?.default_thumb_media_id ? <div className="text-sm text-muted-foreground">Default cover: <code>{String(item.config.default_thumb_media_id)}</code></div> : null}
+          {item.provider === "wechat_official_account" ? (
+            <div className="flex flex-wrap items-center gap-2 pt-2">
+              <Input
+                type="file"
+                accept="image/png,image/jpeg,image/gif,image/webp"
+                className="max-w-sm"
+                onChange={(event) => setCoverFile(event.target.files?.[0] ?? null)}
+                disabled={uploadingCover}
+              />
+              <Button size="sm" variant="outline" onClick={() => coverFile && onUploadCover(coverFile)} disabled={!coverFile || uploadingCover}>
+                {uploadingCover ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ImageUp className="mr-2 h-4 w-4" />}
+                Upload Default Cover
+              </Button>
+              <span className="text-xs text-muted-foreground">PNG/JPEG/GIF/WebP, up to 5 MB.</span>
+            </div>
+          ) : null}
         </div>
         <Button variant="destructive" size="sm" onClick={onDelete} disabled={deleting}>
           <Trash2 className="mr-2 h-4 w-4" /> Delete

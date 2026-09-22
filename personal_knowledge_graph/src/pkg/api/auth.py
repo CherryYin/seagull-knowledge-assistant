@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,9 +30,11 @@ from pkg.schemas.user_api_credential import (
     UserApiCredentialList,
     UserApiCredentialRead,
     UserApiCredentialUpdate,
+    WechatCoverUploadResult,
 )
+from pkg.services.application.wechat_publishing import WechatPublishingError, upload_wechat_permanent_image
 from pkg.services.cross_cutting.auth import create_access_token, hash_password, verify_password
-from pkg.services.cross_cutting.credentials_crypto import CredentialsCryptoConfigError, CredentialsCryptoValueError
+from pkg.services.cross_cutting.credentials_crypto import CredentialsCryptoConfigError, CredentialsCryptoValueError, decrypt_secret
 from pkg.services.cross_cutting.user_api_credentials import (
     create_user_api_credential,
     delete_user_api_credential,
@@ -413,6 +415,50 @@ async def remove_api_credential(
     deleted = await delete_user_api_credential(session, user_id=user.id, credential_id=credential_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="API credential not found")
+
+
+@router.post("/me/api-credentials/{credential_id}/wechat-cover", response_model=WechatCoverUploadResult)
+async def upload_api_credential_wechat_cover(
+    credential_id: int,
+    image: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    credential = await get_user_api_credential(session, user_id=user.id, credential_id=credential_id)
+    if credential is None:
+        raise HTTPException(status_code=404, detail="API credential not found")
+    if credential.provider != "wechat_official_account":
+        raise HTTPException(status_code=409, detail="API credential is not a WeChat Official Account")
+    image_payload = await image.read(5_000_001)
+    if len(image_payload) > 5_000_000:
+        raise HTTPException(status_code=413, detail="Cover image exceeds the 5 MB upload limit")
+    try:
+        receipt = await upload_wechat_permanent_image(
+            image_payload,
+            app_secret=decrypt_secret(credential.secret_encrypted),
+            config=dict(credential.config or {}),
+        )
+    except (CredentialsCryptoConfigError, CredentialsCryptoValueError) as exc:
+        _raise_api_credential_crypto_error(exc)
+    except WechatPublishingError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    config = dict(credential.config or {})
+    config["default_thumb_media_id"] = receipt.media_id
+    if receipt.url:
+        config["default_thumb_url"] = receipt.url
+    updated = await update_user_api_credential(
+        session,
+        user_id=user.id,
+        credential_id=credential_id,
+        body=UserApiCredentialUpdate(config=config),
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="API credential not found")
+    return WechatCoverUploadResult(
+        media_id=receipt.media_id,
+        url=receipt.url,
+        credential=UserApiCredentialRead.model_validate(updated),
+    )
 
 
 # --- Activity Log ---

@@ -33,6 +33,12 @@ class WechatDraftReceipt:
     sent_at: datetime
 
 
+@dataclass(frozen=True)
+class WechatPermanentImageReceipt:
+    media_id: str
+    url: str
+
+
 def _required_config(config: dict[str, Any], key: str, label: str) -> str:
     value = str(config.get(key) or "").strip()
     if not value:
@@ -64,6 +70,23 @@ async def _response_json(response: httpx.Response, *, operation: str) -> dict[st
     if payload.get("errcode") not in (None, 0):
         raise _wechat_error(payload, operation=operation)
     return payload
+
+
+async def _get_access_token(
+    *,
+    app_id: str,
+    app_secret: str,
+    client: httpx.AsyncClient,
+) -> str:
+    token_response = await client.get(
+        f"{WECHAT_API_BASE}/cgi-bin/token",
+        params={"grant_type": "client_credential", "appid": app_id, "secret": app_secret},
+    )
+    token_payload = await _response_json(token_response, operation="access token")
+    access_token = str(token_payload.get("access_token") or "").strip()
+    if not access_token:
+        raise WechatPublishingError("WeChat access token response did not include access_token")
+    return access_token
 
 
 def _normalize_image(payload: bytes) -> tuple[bytes, str, str]:
@@ -185,6 +208,34 @@ async def _upload_content_images(content: str, *, access_token: str, client: htt
     )
 
 
+async def upload_wechat_permanent_image(
+    image_payload: bytes,
+    *,
+    app_secret: str,
+    config: dict[str, Any],
+    client: httpx.AsyncClient | None = None,
+) -> WechatPermanentImageReceipt:
+    app_id = _required_config(config, "app_id", "AppID")
+    payload, content_type, filename = _normalize_image(image_payload)
+    owns_client = client is None
+    http_client = client or httpx.AsyncClient(timeout=30)
+    try:
+        access_token = await _get_access_token(app_id=app_id, app_secret=app_secret, client=http_client)
+        response = await http_client.post(
+            f"{WECHAT_API_BASE}/cgi-bin/material/add_material",
+            params={"access_token": access_token, "type": "image"},
+            files={"media": (filename, payload, content_type)},
+        )
+        result = await _response_json(response, operation="permanent cover upload")
+        media_id = str(result.get("media_id") or "").strip()
+        if not media_id:
+            raise WechatPublishingError("WeChat permanent image response did not include media_id")
+        return WechatPermanentImageReceipt(media_id=media_id, url=str(result.get("url") or "").strip())
+    finally:
+        if owns_client:
+            await http_client.aclose()
+
+
 async def create_wechat_draft(
     asset: Asset,
     *,
@@ -211,14 +262,7 @@ async def create_wechat_draft(
     owns_client = client is None
     http_client = client or httpx.AsyncClient(timeout=30)
     try:
-        token_response = await http_client.get(
-            f"{WECHAT_API_BASE}/cgi-bin/token",
-            params={"grant_type": "client_credential", "appid": app_id, "secret": app_secret},
-        )
-        token_payload = await _response_json(token_response, operation="access token")
-        access_token = str(token_payload.get("access_token") or "").strip()
-        if not access_token:
-            raise WechatPublishingError("WeChat access token response did not include access_token")
+        access_token = await _get_access_token(app_id=app_id, app_secret=app_secret, client=http_client)
 
         content = await _upload_content_images(content, access_token=access_token, client=http_client)
 

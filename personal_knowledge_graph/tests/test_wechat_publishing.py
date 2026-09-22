@@ -13,6 +13,7 @@ from pkg.services.application.wechat_publishing import (
     WechatPublishingError,
     _load_inline_image,
     create_wechat_draft,
+    upload_wechat_permanent_image,
 )
 
 
@@ -77,6 +78,37 @@ async def test_create_wechat_draft_requests_token_and_creates_draft():
 
 
 @pytest.mark.asyncio
+async def test_upload_wechat_permanent_image_requests_token_and_material_upload():
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/cgi-bin/token":
+            return httpx.Response(200, json={"access_token": "token-1"})
+        if request.url.path == "/cgi-bin/material/add_material":
+            return httpx.Response(200, json={"media_id": "cover-media-1", "url": "https://mmbiz.qpic.cn/cover"})
+        return httpx.Response(404)
+
+    image_payload = base64.b64decode(_png_data_url().split(",", 1)[1])
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        receipt = await upload_wechat_permanent_image(
+            image_payload,
+            app_secret="app-secret",
+            config={"app_id": "wx-app"},
+            client=client,
+        )
+
+    assert receipt.media_id == "cover-media-1"
+    assert receipt.url == "https://mmbiz.qpic.cn/cover"
+    assert [request.url.path for request in requests] == [
+        "/cgi-bin/token",
+        "/cgi-bin/material/add_material",
+    ]
+    assert requests[1].url.params["type"] == "image"
+    assert b'filename="article-image.jpg"' in requests[1].content
+
+
+@pytest.mark.asyncio
 async def test_create_wechat_draft_surfaces_wechat_api_error_without_secret():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"errcode": 40125, "errmsg": "invalid appsecret"})
@@ -131,7 +163,8 @@ async def test_create_wechat_draft_uploads_inline_data_images_and_replaces_urls(
 async def test_create_wechat_draft_replaces_rendered_mermaid_with_uploaded_image():
     requests: list[httpx.Request] = []
     mermaid_source = "flowchart LR\n  Capture --> Curate\n  Curate --> Publish"
-    source_hash = hashlib.sha256(mermaid_source.encode("utf-8")).hexdigest()
+    reader_mermaid_source = "flowchart LR\n Capture --> Curate\n Curate --> Publish"
+    source_hash = hashlib.sha256(reader_mermaid_source.encode("utf-8")).hexdigest()
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)

@@ -644,16 +644,7 @@ def export_html(asset: Asset) -> str:
 
 
 def export_wechat_html(asset: Asset, *, rendered_diagrams: dict[str, str] | None = None) -> str:
-    parts: list[str] = []
-    if asset.brief:
-        parts.extend([asset.brief, ""])
-    if asset.outline:
-        parts.extend(["## Outline", "", asset.outline, ""])
-    if asset.draft_content:
-        parts.append(asset.draft_content)
-    if asset.reference_notes:
-        parts.extend(["", "## References", "", asset.reference_notes])
-    markdown_content = "\n".join(parts).strip()
+    markdown_content = _asset_reader_markdown(asset.draft_content)
     rendered = markdown.markdown(
         escape(markdown_content, quote=False),
         extensions=["extra", "sane_lists"],
@@ -736,6 +727,34 @@ def export_wechat_html(asset: Asset, *, rendered_diagrams: dict[str, str] | None
         f'</section>'
     )
     return f'<section style="padding:4px 2px;background:#ffffff;">{signature}{rendered}</section>'
+
+
+def _asset_reader_markdown(content: str | None) -> str:
+    if not (content or "").strip():
+        return ""
+    editorial_headings = {
+        "evidence notes",
+        "evidence and confidence",
+        "evidence index",
+        "review notes",
+    }
+    reader_lines: list[str] = []
+    editorial_section = False
+    for line in str(content).splitlines():
+        heading = re.fullmatch(r"##\s+(.+?)\s*", line)
+        if heading:
+            normalized = " ".join(
+                "".join(character if character.isalnum() else " " for character in heading.group(1).lower())
+                .split()
+            )
+            editorial_section = normalized in editorial_headings
+        if editorial_section:
+            continue
+        cleaned = re.sub(r"\[(?:Source|Note|Wiki):\s*[^\]\s]+\]", "", line)
+        cleaned = re.sub(r"[ \t]+([,.;:!?，。；：！？])", r"\1", cleaned)
+        cleaned = re.sub(r"[ \t]{2,}", " ", cleaned).rstrip()
+        reader_lines.append(cleaned)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(reader_lines)).strip()
 
 
 def _wechat_mermaid_block(source_html: str, *, rendered_diagrams: dict[str, str], accent: str, soft: str) -> str:

@@ -42,3 +42,9 @@ class UserApiCredentialRead(BaseModel):
 class UserApiCredentialList(BaseModel):
     items: list[UserApiCredentialRead]
     total: int
+
+
+class WechatCoverUploadResult(BaseModel):
+    media_id: str
+    url: str = ""
+    credential: UserApiCredentialRead

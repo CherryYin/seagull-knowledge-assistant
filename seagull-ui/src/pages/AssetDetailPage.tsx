@@ -2608,7 +2608,7 @@ export function AssetDetailPage() {
 
   const wechatDraftMutation = useMutation({
     mutationFn: async () => {
-      const diagramMarkdown = [asset?.outline, asset?.draft_content, asset?.reference_notes].filter(Boolean).join("\n\n");
+      const diagramMarkdown = splitAssetContent(asset?.draft_content).readerMarkdown;
       const renderedDiagrams = await renderMermaidDiagramsForWechat(diagramMarkdown);
       return assetsApi.sendToWechatDraft(id, { rendered_diagrams: renderedDiagrams });
     },
@@ -4193,20 +4193,22 @@ export function AssetDetailPage() {
                       Archive
                     </Button>
                   )}
-                  {(asset.status === "ready_to_export" || asset.status === "exported") && (
-                    <>
-                      <Button variant="outline" onClick={() => previewWechatMutation.mutate()} disabled={isBusy || previewWechatMutation.isPending}>
-                        <Eye className="mr-2 h-4 w-4" />{previewWechatMutation.isPending ? "Rendering…" : "Preview WeChat"}
-                      </Button>
-                      <Button variant="outline" onClick={() => { if (window.confirm("Send this Asset to the configured WeChat Official Account draft box? This creates an external draft but does not publish it.")) wechatDraftMutation.mutate(); }} disabled={isBusy || !readinessQuery.data?.ready}>
-                        <MessageSquareShare className="mr-2 h-4 w-4" />{wechatDraftMutation.isPending ? "Rendering diagrams and sending…" : "Send to WeChat Drafts"}
-                      </Button>
-                    </>
-                  )}
+                  <Button variant="outline" onClick={() => previewWechatMutation.mutate()} disabled={isBusy || previewWechatMutation.isPending}>
+                    <Eye className="mr-2 h-4 w-4" />{previewWechatMutation.isPending ? "Rendering…" : "Preview WeChat"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => { if (window.confirm("Send this Asset to the configured WeChat Official Account draft box? This creates an external draft but does not publish it.")) wechatDraftMutation.mutate(); }}
+                    disabled={isBusy || !readinessQuery.data?.ready || (asset.status !== "ready_to_export" && asset.status !== "exported")}
+                  >
+                    <MessageSquareShare className="mr-2 h-4 w-4" />{wechatDraftMutation.isPending ? "Rendering diagrams and sending…" : "Send to WeChat Drafts"}
+                  </Button>
                 </div>
-                {(asset.status === "ready_to_export" || asset.status === "exported") && (
-                  <p className="text-xs text-muted-foreground">A permanent cover media ID is required. Inline article images and Mermaid diagrams are uploaded to WeChat and replaced with WeChat-hosted URLs during delivery.</p>
-                )}
+                <p className="text-xs text-muted-foreground">
+                  {asset.status === "ready_to_export" || asset.status === "exported"
+                    ? "A permanent cover media ID is required. Inline article images and Mermaid diagrams are uploaded to WeChat and replaced with WeChat-hosted URLs during delivery."
+                    : "Preview is available now. Complete readiness checks and move this Asset to Ready to Export before sending it to WeChat Drafts."}
+                </p>
 
                 {statusMutation.isError && (
                   <p className="text-sm text-destructive">Failed to update asset status. Check readiness and retry.</p>
