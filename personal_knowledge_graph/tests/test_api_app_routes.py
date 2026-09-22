@@ -17,6 +17,10 @@ def test_assets_routes_are_registered():
     assert "/assets/{asset_id}/publish-feedback" in paths
     assert "/assets/{asset_id}/publish/wechat-draft" in paths
     assert "/assets/{asset_id}/preview/wechat" in paths
+    wechat_preview_methods = set().union(
+        *(getattr(route, "methods", set()) for route in app.routes if route.path == "/assets/{asset_id}/preview/wechat")
+    )
+    assert {"GET", "POST"}.issubset(wechat_preview_methods)
     assert "/assets/{asset_id}/feedback-to-note" in paths
 
 

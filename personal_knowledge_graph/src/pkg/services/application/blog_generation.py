@@ -775,8 +775,8 @@ def _wechat_mermaid_block(source_html: str, *, rendered_diagrams: dict[str, str]
     )
 
 
-def export_wechat_preview_html(asset: Asset) -> str:
-    content = export_wechat_html(asset)
+def export_wechat_preview_html(asset: Asset, *, rendered_diagrams: dict[str, str] | None = None) -> str:
+    content = export_wechat_html(asset, rendered_diagrams=rendered_diagrams)
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>

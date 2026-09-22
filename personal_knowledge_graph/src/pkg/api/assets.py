@@ -416,6 +416,24 @@ async def preview_wechat_route(
     )
 
 
+@router.post("/{asset_id}/preview/wechat", response_model=AssetExportResult)
+async def preview_wechat_rendered_route(
+    asset_id: str,
+    body: AssetWechatDraftRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    asset = await get_asset(session, user_id=user.id, asset_id=asset_id)
+    return AssetExportResult(
+        asset_id=asset_id,
+        export_format="wechat_html",
+        content=export_wechat_preview_html(
+            asset,
+            rendered_diagrams={item.source_hash: item.data_url for item in body.rendered_diagrams},
+        ),
+    )
+
+
 @router.post("/{asset_id}/publish/wechat-draft", response_model=AssetWechatDraftResult)
 async def publish_wechat_draft_route(
     asset_id: str,

@@ -399,7 +399,7 @@ export const assetsApi = {
   exportMarkdown: (id: string) => request<AssetExportResult>(`/assets/${encodeURIComponent(id)}/export/markdown`, { method: "POST" }),
   previewHtml: (id: string) => request<AssetExportResult>(`/assets/${encodeURIComponent(id)}/preview/html`),
   exportHtml: (id: string) => request<AssetExportResult>(`/assets/${encodeURIComponent(id)}/export/html`, { method: "POST" }),
-  previewWechat: (id: string) => request<AssetExportResult>(`/assets/${encodeURIComponent(id)}/preview/wechat`),
+  previewWechat: (id: string, body: AssetWechatDraftRequest = {}) => request<AssetExportResult>(`/assets/${encodeURIComponent(id)}/preview/wechat`, { method: "POST", body: JSON.stringify(body) }),
   sendToWechatDraft: (id: string, body: AssetWechatDraftRequest = {}) => request<AssetWechatDraftResult>(`/assets/${encodeURIComponent(id)}/publish/wechat-draft`, { method: "POST", body: JSON.stringify(body) }),
   updatePublishFeedback: (id: string, body: AssetPublishFeedbackUpdate) => request<Asset>(`/assets/${encodeURIComponent(id)}/publish-feedback`, { method: "POST", body: JSON.stringify(body) }),
   feedbackToNote: (id: string) => request<AssetFeedbackNoteResult>(`/assets/${encodeURIComponent(id)}/feedback-to-note`, { method: "POST" }),

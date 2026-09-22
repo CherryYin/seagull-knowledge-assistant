@@ -29,7 +29,9 @@ async function sha256(value: string) {
 }
 
 function normalizeSvg(svg: string) {
-  const documentNode = new DOMParser().parseFromString(svg, "image/svg+xml");
+  const xmlSafeSvg = svg.replace(/<br([^/>]*)>/gi, "<br$1 />");
+  const documentNode = new DOMParser().parseFromString(xmlSafeSvg, "image/svg+xml");
+  if (documentNode.querySelector("parsererror")) throw new Error("Mermaid generated invalid SVG markup.");
   const svgElement = documentNode.documentElement;
   svgElement.querySelectorAll("image, script, iframe").forEach((node) => node.remove());
   svgElement.querySelectorAll("*").forEach((node) => {
@@ -56,30 +58,25 @@ function normalizeSvg(svg: string) {
 
 async function svgToPngDataUrl(svg: string) {
   const normalized = normalizeSvg(svg);
-  const blob = new Blob([normalized.svg], { type: "image/svg+xml;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  try {
-    const image = new Image();
-    await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error("Failed to rasterize Mermaid diagram."));
-      image.src = url;
-    });
-    const maxDimension = 4096;
-    const scale = Math.min(2, maxDimension / normalized.width, maxDimension / normalized.height);
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.ceil(normalized.width * scale));
-    canvas.height = Math.max(1, Math.ceil(normalized.height * scale));
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("Canvas is not supported.");
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.scale(scale, scale);
-    context.drawImage(image, 0, 0, normalized.width, normalized.height);
-    return canvas.toDataURL("image/png");
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+  const image = new Image();
+  const svgUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(normalized.svg)}`;
+  await new Promise<void>((resolve, reject) => {
+    image.onload = () => resolve();
+    image.onerror = () => reject(new Error("Failed to rasterize Mermaid diagram."));
+    image.src = svgUrl;
+  });
+  const maxDimension = 4096;
+  const scale = Math.min(2, maxDimension / normalized.width, maxDimension / normalized.height);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.ceil(normalized.width * scale));
+  canvas.height = Math.max(1, Math.ceil(normalized.height * scale));
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Canvas is not supported.");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.scale(scale, scale);
+  context.drawImage(image, 0, 0, normalized.width, normalized.height);
+  return canvas.toDataURL("image/png");
 }
 
 export async function renderMermaidDiagramsForWechat(markdown?: string | null): Promise<RenderedMermaidDiagram[]> {

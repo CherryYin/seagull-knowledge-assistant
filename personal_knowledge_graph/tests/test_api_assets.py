@@ -378,6 +378,37 @@ async def test_preview_wechat_route_returns_sandboxable_document():
 
 
 @pytest.mark.asyncio
+async def test_preview_wechat_rendered_route_forwards_mermaid_images():
+    from pkg.api.assets import preview_wechat_rendered_route
+    from pkg.schemas.application.asset import AssetWechatDraftRequest
+
+    fake_user = MagicMock(id="user-1")
+    session = AsyncMock()
+    asset = _make_asset("asset-1", fake_user.id)
+    request = AssetWechatDraftRequest(
+        rendered_diagrams=[{"source_hash": "b" * 64, "data_url": "data:image/png;base64,BBBB"}],
+    )
+
+    with (
+        patch("pkg.api.assets.get_asset", new=AsyncMock(return_value=asset)),
+        patch("pkg.api.assets.export_wechat_preview_html", return_value="<!doctype html><p>Rendered diagram</p>") as mock_export,
+    ):
+        result = await preview_wechat_rendered_route(
+            "asset-1",
+            request,
+            user=fake_user,
+            session=session,
+        )
+
+    assert result.export_format == "wechat_html"
+    assert "Rendered diagram" in result.content
+    mock_export.assert_called_once_with(
+        asset,
+        rendered_diagrams={"b" * 64: "data:image/png;base64,BBBB"},
+    )
+
+
+@pytest.mark.asyncio
 async def test_update_publish_feedback_route_blocks_research_brief_without_references():
     from pkg.api.assets import update_publish_feedback_route
     from pkg.schemas.application.asset import AssetPublishFeedbackUpdate

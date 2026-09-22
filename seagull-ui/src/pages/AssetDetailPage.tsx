@@ -2588,12 +2588,16 @@ export function AssetDetailPage() {
   });
 
   const previewWechatMutation = useMutation({
-    mutationFn: () => assetsApi.previewWechat(id),
+    mutationFn: async () => {
+      const diagramMarkdown = splitAssetContent(asset?.draft_content).readerMarkdown;
+      const renderedDiagrams = await renderMermaidDiagramsForWechat(diagramMarkdown);
+      return assetsApi.previewWechat(id, { rendered_diagrams: renderedDiagrams });
+    },
     onSuccess: (result) => {
       setHtmlPreview(result.content);
       setHtmlCopied(false);
       setHtmlPreviewTitle("WeChat Draft Preview");
-      setHtmlPreviewDescription("Preview of the WeChat-safe inline HTML before images are uploaded to the Official Account.");
+      setHtmlPreviewDescription("WeChat-safe inline HTML with Mermaid diagrams rendered as article images.");
       setHtmlPreviewOpen(true);
     },
   });
@@ -4221,6 +4225,9 @@ export function AssetDetailPage() {
                 )}
                 {wechatDraftMutation.isError && (
                   <p className="text-sm text-destructive">WeChat draft delivery failed: {wechatDraftMutation.error instanceof Error ? wechatDraftMutation.error.message : "Check the account credential and retry."}</p>
+                )}
+                {previewWechatMutation.isError && (
+                  <p className="text-sm text-destructive">WeChat preview failed: {previewWechatMutation.error instanceof Error ? previewWechatMutation.error.message : "Refresh the page and retry."}</p>
                 )}
                 {wechatDraftReceipt && (
                   <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/5 p-3 text-sm">
