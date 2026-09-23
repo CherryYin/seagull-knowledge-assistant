@@ -1,6 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -701,6 +701,7 @@ async def test_run_news_auto_search_step_searches_en_and_zh_and_imports_articles
         patch("pkg.services.foundation.connectors.import_news_article", import_mock),
         patch("pkg.services.cross_cutting.scheduler.settings.NEWS_AUTO_SEARCH_QUERY", "AI, LLM, Agent, workflow"),
         patch("pkg.services.cross_cutting.scheduler.settings.NEWS_AUTO_SEARCH_WINDOW_HOURS", 24),
+        patch("pkg.services.cross_cutting.scheduler.settings.NEWS_AUTO_SEARCH_OVERLAP_HOURS", 24),
         patch("pkg.services.cross_cutting.scheduler.settings.NEWS_AUTO_SEARCH_EN_LIMIT", 20),
         patch("pkg.services.cross_cutting.scheduler.settings.NEWS_AUTO_SEARCH_ZH_LIMIT", 20),
     ):
@@ -714,6 +715,12 @@ async def test_run_news_auto_search_step_searches_en_and_zh_and_imports_articles
     assert result["updated"] == 1
     assert result["languages"] == {"en": 1, "zh": 2}
     assert result["reason"] is None
+    assert result["window_hours"] == 24
+    assert result["overlap_hours"] == 24
+    assert result["effective_window_hours"] == 48
+    assert datetime.fromisoformat(result["to_date"].replace("Z", "+00:00")) - datetime.fromisoformat(
+        result["from_date"].replace("Z", "+00:00")
+    ) == timedelta(hours=48)
 
 
 @pytest.mark.asyncio

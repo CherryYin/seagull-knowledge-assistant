@@ -304,7 +304,9 @@ async def run_news_auto_search_step() -> dict:
 
     now = datetime.now(timezone.utc)
     window_hours = max(int(settings.NEWS_AUTO_SEARCH_WINDOW_HOURS or 24), 1)
-    from_date = (now - timedelta(hours=window_hours)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    overlap_hours = max(int(settings.NEWS_AUTO_SEARCH_OVERLAP_HOURS or 0), 0)
+    effective_window_hours = window_hours + overlap_hours
+    from_date = (now - timedelta(hours=effective_window_hours)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     to_date = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
     searches = [
         ("en", max(int(settings.NEWS_AUTO_SEARCH_EN_LIMIT or 20), 1)),
@@ -321,6 +323,9 @@ async def run_news_auto_search_step() -> dict:
             "query": settings.NEWS_AUTO_SEARCH_QUERY,
             "from_date": from_date,
             "to_date": to_date,
+            "window_hours": window_hours,
+            "overlap_hours": overlap_hours,
+            "effective_window_hours": effective_window_hours,
             "active_users": 0,
             "searched": 0,
             "created": 0,
@@ -423,6 +428,9 @@ async def run_news_auto_search_step() -> dict:
         "query": settings.NEWS_AUTO_SEARCH_QUERY,
         "from_date": from_date,
         "to_date": to_date,
+        "window_hours": window_hours,
+        "overlap_hours": overlap_hours,
+        "effective_window_hours": effective_window_hours,
         "active_users": len(user_ids),
         "searched": searched,
         "created": created,

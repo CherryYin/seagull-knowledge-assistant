@@ -227,6 +227,7 @@ class Settings(BaseSettings):
     NEWS_AUTO_SEARCH_ENABLED: bool = False
     NEWS_AUTO_SEARCH_QUERY: str = "AI, LLM, Agent, workflow"
     NEWS_AUTO_SEARCH_WINDOW_HOURS: int = 24
+    NEWS_AUTO_SEARCH_OVERLAP_HOURS: int = 24
     NEWS_AUTO_SEARCH_EN_LIMIT: int = 20
     NEWS_AUTO_SEARCH_ZH_LIMIT: int = 20
     NEWS_AUTO_SEARCH_DAILY_TIME_UTC: str = "01:30"
