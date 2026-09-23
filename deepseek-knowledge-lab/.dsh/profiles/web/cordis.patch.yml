@@ -1,4 +1,4 @@
-# Web profile: Qwen provider + pkg-client + kobo-client + agent-presets
+# Web profile: Qwen/MiniMax providers + pkg-client + kobo-client + agent-presets
 
 - id: llm-pi-ai
   config:
@@ -16,6 +16,14 @@
             name: Qwen-Max
           - id: qwen3.7-plus
             name: Qwen-3.7-Plus
+      minimax:
+        api: openai-completions
+        baseURL: https://api.minimaxi.com/v1
+        apiKeyEnv: MINIMAX_API_KEY
+        defaultModel: MiniMax-M3
+        models:
+          - id: MiniMax-M3
+            name: MiniMax M3
 
 - id: llm-deepseek
   disabled: true

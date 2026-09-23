@@ -15,6 +15,12 @@ import {
   SessionContextStore,
   defaultSessionContextStorePath,
 } from "../../deepseek-knowledge-lab/plugins/session-context/src/index.js";
+import {
+  isSupportedMiniMaxModel,
+  isSupportedQwenModel,
+  startHarnessModelSyncLoop,
+  syncHarnessModels,
+} from "./harness-model-sync.js";
 
 const PORT = process.env.PORT || 4000;
 const HOST = process.env.HOST || "127.0.0.1";
@@ -42,6 +48,10 @@ export function resolveHarnessServiceToken(endpoint, configuredToken = process.e
 }
 
 const HARNESS_SERVICE_TOKEN = resolveHarnessServiceToken(`http://${HOST}`);
+const HARNESS_MODEL_SYNC_ENABLED = process.env.HARNESS_MODEL_SYNC_ENABLED !== "false";
+const HARNESS_MODEL_SYNC_INITIAL_DELAY_MS = Number(process.env.HARNESS_MODEL_SYNC_INITIAL_DELAY_MS || 10_000);
+const HARNESS_MODEL_SYNC_INTERVAL_MS = Number(process.env.HARNESS_MODEL_SYNC_INTERVAL_MS || 86_400_000);
+const HARNESS_MODEL_SYNC_RETRY_MS = Number(process.env.HARNESS_MODEL_SYNC_RETRY_MS || 900_000);
 const SESSION_AUTH_TTL_MS = Number(process.env.SESSION_AUTH_TTL_MS || 28_800_000);
 const sessionAuthRegistry = new Map();
 const agentMemoryDatabaseUrl = process.env.AGENT_MEMORY_DATABASE_URL || process.env.PKG_DATABASE_URL;
@@ -405,6 +415,26 @@ async function harnessRpc(method, payload, { signal, requestId } = {}) {
     throw new HarnessRpcError(method, envelope.result?.error);
   }
   return envelope.result.value;
+}
+
+export async function runHarnessModelSync() {
+  return syncHarnessModels({
+    harnessRpc,
+    providers: [
+      {
+        id: "qwen",
+        baseUrl: process.env.QWEN_API_BASE || "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        apiKey: process.env.QWEN_API_KEY || "",
+        accepts: isSupportedQwenModel,
+      },
+      {
+        id: "minimax",
+        baseUrl: process.env.MINIMAX_API_BASE || "https://api.minimaxi.com/v1",
+        apiKey: process.env.MINIMAX_API_KEY || "",
+        accepts: isSupportedMiniMaxModel,
+      },
+    ],
+  });
 }
 
 async function harnessRespond(message, { signal, requestId } = {}) {
@@ -1141,4 +1171,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   server.listen(PORT, HOST, () => {
     console.log(`[BFF] http://${HOST}:${PORT} → PKG ${PKG_BASE} | Harness ${HARNESS_BASE}`);
   });
+  if (HARNESS_MODEL_SYNC_ENABLED) {
+    const stopModelSync = startHarnessModelSyncLoop({
+      run: runHarnessModelSync,
+      initialDelayMs: HARNESS_MODEL_SYNC_INITIAL_DELAY_MS,
+      intervalMs: HARNESS_MODEL_SYNC_INTERVAL_MS,
+      retryDelayMs: HARNESS_MODEL_SYNC_RETRY_MS,
+    });
+    server.on("close", stopModelSync);
+  }
 }

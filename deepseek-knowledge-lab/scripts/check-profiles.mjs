@@ -31,9 +31,15 @@ for (const profile of ["headless", "web"]) {
   if (!result.stdout.includes("source-mind-map-proposal")) {
     throw new Error(`${profile} profile does not compose the Source Mind Map proposal plugin`);
   }
+  if (!result.stdout.includes("QWEN_API_KEY") || !result.stdout.includes("qwen3.7-plus")) {
+    throw new Error(`${profile} profile does not expose the configured Qwen provider`);
+  }
+  if (!result.stdout.includes("MINIMAX_API_KEY") || !result.stdout.includes("MiniMax-M3")) {
+    throw new Error(`${profile} profile does not expose the configured MiniMax provider`);
+  }
   if (result.stdout.includes("session-persistence-jsonl-shadow")) {
     throw new Error(`${profile} profile still composes JSONL shadow after Stage E`);
   }
 }
 
-console.log("headless and web profiles compose PostgreSQL persistence, PKG web_search, and Source Mind Map proposals without JSONL shadow");
+console.log("headless and web profiles compose Qwen/MiniMax, PostgreSQL persistence, PKG web_search, and Source Mind Map proposals without JSONL shadow");
