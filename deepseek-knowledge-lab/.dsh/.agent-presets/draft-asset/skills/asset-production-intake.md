@@ -49,7 +49,7 @@ Skip this phase when a Structured drafting basis is supplied, even if the Asset 
 5. Put unsupported claims, uncertainty, source conflicts, and remaining editorial work in `Review Notes`.
 6. Never invent a citation, fact, or completed user confirmation.
 7. Keep analysis, planning, search narration, and tool-use commentary internal. Do not emit progress messages before the deliverable.
-8. Start the final response directly with the document H1 and stop at the document's final line. Do not add a preface, epilogue, explanation, completion message, or an outer Markdown code fence around the full deliverable.
+8. Start the final response directly with the document H1 and stop at the document's final line. Do not add a preface, epilogue, explanation, completion message, or Markdown code fence.
 
 ## Interaction Rule
 Use questions only for decisions the user must make. Search for facts; ask for intent.
