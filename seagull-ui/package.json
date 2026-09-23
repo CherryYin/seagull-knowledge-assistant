@@ -2,6 +2,7 @@
   "name": "knowledge-graph-web",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "node ./node_modules/vite/bin/vite.js",

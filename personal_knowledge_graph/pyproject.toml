@@ -2,6 +2,7 @@
 name = "personal-knowledge-graph"
 version = "0.1.0"
 description = "Personal knowledge mining system with three-layer architecture"
+license = { text = "MIT" }
 requires-python = ">=3.12,<4.0"
 dependencies = [
     "fastapi~=0.115.0",
