@@ -748,15 +748,24 @@ function assetTypeReadinessIntro(assetType?: string) {
   return "Check whether this post has a clear angle, enough support, and readable references before export.";
 }
 
-function markdownHeadings(content?: string | null) {
+function markdownHeadings(content?: string | null, assetType?: string) {
   if (!content) return [];
-  return content
+  const headings = content
     .split("\n")
     .map((line) => line.match(/^(#{1,3})\s+(.+)$/))
     .filter((match): match is RegExpMatchArray => Boolean(match))
     .map((match) => {
-      const title = match[2].replace(/[*_`]/g, "").trim();
+      const title = match[2].replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/[*_`]/g, "").trim();
       return { level: match[1].length, title, id: markdownHeadingId(title) };
+    });
+  if (assetType !== "newsletter_issue") return headings.slice(0, 16);
+  let hasDocumentTitle = false;
+  return headings
+    .filter((heading) => {
+      if (heading.level !== 1) return true;
+      if (hasDocumentTitle) return false;
+      hasDocumentTitle = true;
+      return true;
     })
     .slice(0, 16);
 }
@@ -776,6 +785,11 @@ function markdownText(children: React.ReactNode): string {
     return markdownText((children as React.ReactElement<{ children?: React.ReactNode }>).props.children);
   }
   return "";
+}
+
+function newsletterLegacyDetailText(value: string) {
+  const summary = value.match(/(?:^|\s)##\s*Summary\s+([\s\S]*?)(?=\s+##\s*Content(?:\s|$)|$)/i)?.[1] ?? value;
+  return summary.replace(/\s+/g, " ").trim();
 }
 
 function estimateReadingMinutes(content: string) {
@@ -2761,7 +2775,7 @@ export function AssetDetailPage() {
   const isBusy = statusMutation.isPending || isExporting || wechatDraftMutation.isPending || publishMutation.isPending || savePublishFeedbackMutation.isPending || attachReferencesMutation.isPending;
   const primaryAction = useMemo(() => (asset ? buildPrimaryAction(asset, readinessQuery.data) : null), [asset, readinessQuery.data]);
   const contentPresentation = useMemo(() => splitAssetContent(asset?.draft_content), [asset?.draft_content]);
-  const headings = useMemo(() => markdownHeadings(contentPresentation.readerMarkdown), [contentPresentation.readerMarkdown]);
+  const headings = useMemo(() => markdownHeadings(contentPresentation.readerMarkdown, asset?.asset_type), [asset?.asset_type, contentPresentation.readerMarkdown]);
   const audience = typeof asset?.metadata_?.audience === "string" ? asset.metadata_.audience : null;
   const evidenceCount = sourceRefItems.length + noteRefItems.length + stableWikiItems.length + candidateWikiItems.length;
   const readingMinutes = useMemo(() => estimateReadingMinutes(contentPresentation.readerMarkdown), [contentPresentation.readerMarkdown]);
@@ -3006,7 +3020,11 @@ export function AssetDetailPage() {
                             },
                             h1({ children, node, ...props }) {
                               void node;
-                              return <h1 id={markdownHeadingId(markdownText(children))} {...props}>{children}</h1>;
+                              const title = markdownText(children);
+                              if (asset.asset_type === "newsletter_issue" && /\b(?:Source|Author|Published At|URL):/i.test(title)) {
+                                return <p {...props} className="newsletter-legacy-detail">{newsletterLegacyDetailText(title)}</p>;
+                              }
+                              return <h1 id={markdownHeadingId(title)} {...props}>{children}</h1>;
                             },
                             h2({ children, node, ...props }) {
                               void node;
@@ -3014,7 +3032,8 @@ export function AssetDetailPage() {
                             },
                             h3({ children, node, ...props }) {
                               void node;
-                              return <h3 id={markdownHeadingId(markdownText(children))} {...props}>{children}</h3>;
+                              const title = markdownText(children);
+                              return <h3 id={markdownHeadingId(title)} {...props} className={asset.asset_type === "newsletter_issue" && /^\d+\.\s/.test(title) ? "newsletter-detail-title" : undefined}>{children}</h3>;
                             },
                           }}
                         >

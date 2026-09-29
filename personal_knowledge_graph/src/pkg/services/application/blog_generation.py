@@ -6,6 +6,7 @@ from html import escape, unescape
 import re
 
 import markdown
+from markdown.extensions.toc import TocExtension
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -298,16 +299,19 @@ def _newsletter_issue_export_markdown(asset: Asset) -> str:
         parts.extend(["", "## Issue Overview", "", overview])
     elif brief:
         parts.extend(["", "## Issue Overview", "", brief])
-    if editors_note:
-        parts.extend(["", "## Editor’s Note", "", editors_note])
-    if featured:
-        parts.extend(["", "## Featured Items", "", featured])
-    if matters:
-        parts.extend(["", "## Why It Matters", "", matters])
-    if next_reads:
-        parts.extend(["", "## Recommended Next Reads", "", next_reads])
-    if draft:
+    if _markdown_section(draft, "In Depth"):
         parts.extend(["", "## Full Issue", "", draft])
+    else:
+        if editors_note:
+            parts.extend(["", "## Editor’s Note", "", editors_note])
+        if featured:
+            parts.extend(["", "## Featured Items", "", featured])
+        if matters:
+            parts.extend(["", "## Why It Matters", "", matters])
+        if next_reads:
+            parts.extend(["", "## Recommended Next Reads", "", next_reads])
+        if draft:
+            parts.extend(["", "## Full Issue", "", draft])
     if outline:
         parts.extend(["", "## Appendix A — Working Outline", "", outline])
     if asset.reference_notes:
@@ -526,14 +530,25 @@ def export_markdown(asset: Asset) -> str:
     return "\n".join(parts).strip()
 
 
+def _newsletter_heading_slug(value: str, separator: str) -> str:
+    return re.sub(r"[^\w]+", separator, value.lower(), flags=re.UNICODE).strip(separator).replace("_", separator) or "section"
+
+
 def export_html(asset: Asset) -> str:
     markdown_content = export_markdown(asset)
+    toc = TocExtension(slugify=_newsletter_heading_slug) if asset.asset_type == "newsletter_issue" else "toc"
     rendered_body = markdown.markdown(
         escape(markdown_content, quote=False),
-        extensions=["extra", "sane_lists", "toc"],
+        extensions=["extra", "sane_lists", toc],
         output_format="html5",
     )
     rendered_body = re.sub(r"\A<h1(?:\s[^>]*)?>.*?</h1>\s*", "", rendered_body, count=1, flags=re.DOTALL)
+    if asset.asset_type == "newsletter_issue":
+        rendered_body = re.sub(
+            r'(<h3 id="\d+-[^\"]+")>',
+            r'\1 class="newsletter-detail-title">',
+            rendered_body,
+        )
     if asset.brief:
         rendered_brief = f"<p>{escape(asset.brief, quote=False)}</p>"
         if rendered_body.startswith(rendered_brief):
@@ -602,6 +617,19 @@ def export_html(asset: Asset) -> str:
     [data-style-profile="visual_digest"] h2 {{ display:inline-block; padding:10px 18px; border-radius:999px; background:var(--accent-soft); color:#86198f; }}
     [data-style-profile="visual_digest"] blockquote {{ border:0; border-radius:22px; box-shadow:0 16px 40px -30px rgba(126,34,206,.65); }}
     [data-style-profile="visual_digest"] table {{ overflow:hidden; border-radius:16px; box-shadow:0 12px 34px -28px rgba(49,46,129,.5); }}
+    [data-style-profile] .asset-body h2#in-depth {{ display:grid; gap:7px; position:relative; margin-bottom:28px; padding:0 0 16px; border:0; border-radius:0; background:none; color:var(--ink); }}
+    [data-style-profile] .asset-body h2#in-depth::before {{ content:"FEATURED ANALYSIS"; color:var(--accent); font:750 .68rem/1 var(--body-font); letter-spacing:.2em; }}
+    [data-style-profile] .asset-body h2#in-depth::after {{ position:absolute; bottom:0; left:0; width:min(256px,72%); height:2px; content:""; background:linear-gradient(90deg,var(--accent),transparent); }}
+    .asset-body h3.newsletter-detail-title {{ margin:24px 0 0; padding:20px 24px 14px; border:1px solid var(--line); border-bottom:0; border-left:4px solid var(--accent); border-radius:16px 16px 0 0; background:linear-gradient(135deg,var(--accent-soft),var(--paper) 62%); box-shadow:0 18px 45px -38px rgba(15,23,42,.62); font-size:1.22rem; line-height:1.45; overflow-wrap:anywhere; }}
+    .asset-body h3.newsletter-detail-title a {{ color:var(--ink); text-decoration:none; }}
+    .asset-body h3.newsletter-detail-title a:hover {{ color:var(--accent); }}
+    .asset-body h3.newsletter-detail-title + p {{ margin:0; padding:0 24px 20px; border:1px solid var(--line); border-top:0; border-left-width:4px; border-radius:0 0 16px 16px; color:var(--muted); background:var(--paper); line-height:1.75; overflow-wrap:anywhere; }}
+    .asset-body h3.newsletter-detail-title + p:has(+ p > a) {{ padding-bottom:16px; border-bottom:0; border-radius:0; }}
+    .asset-body h3.newsletter-detail-title + p + p:has(> a) {{ margin:0; padding:0 24px 16px; border:1px solid var(--line); border-top:0; border-bottom:0; border-left-width:4px; border-radius:0; background:var(--paper); font-size:.85rem; }}
+    .asset-body h3.newsletter-detail-title + p + p:has(> a) > a {{ display:inline-flex; align-items:center; padding:7px 12px; border-radius:999px; background:var(--accent-soft); color:var(--accent); font-size:.76rem; font-weight:700; letter-spacing:.035em; text-decoration:none; }}
+    .asset-body h3.newsletter-detail-title + p + p:has(> a) > a:hover {{ background:var(--accent); color:white; }}
+    .asset-body h3.newsletter-detail-title + p + p + p,
+    .asset-body h3.newsletter-detail-title + p + p:not(:has(> a)) {{ margin:0 0 30px; padding:10px 24px 12px; border:1px solid var(--line); border-top:0; border-left-width:4px; border-radius:0 0 16px 16px; background:color-mix(in srgb,var(--paper) 86%,var(--line)); color:var(--muted); font:400 .7rem/1.45 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; letter-spacing:.025em; }}
     [data-style-profile="knowledge_atlas"] main {{ background-image:linear-gradient(rgba(21,128,61,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(21,128,61,.035) 1px,transparent 1px); background-size:28px 28px; }}
     [data-style-profile="knowledge_atlas"] .asset-hero {{ background:linear-gradient(135deg,#effcf3,#dff2e5); }}
     [data-style-profile="knowledge_atlas"] .asset-title {{ max-width:18ch; font-size:clamp(2.3rem,6vw,5rem); }}
@@ -609,7 +637,7 @@ def export_html(asset: Asset) -> str:
     [data-style-profile="knowledge_atlas"] h2 {{ display:grid; grid-template-columns:auto 1fr; align-items:center; gap:12px; padding-bottom:12px; border-bottom:1px dashed var(--line); }}
     [data-style-profile="knowledge_atlas"] h2::before {{ counter-increment:atlas-section; content:counter(atlas-section,decimal-leading-zero); color:var(--accent); font:700 .7em/1 var(--display-font); }}
     [data-style-profile="knowledge_atlas"] blockquote {{ border-radius:4px 18px 18px 4px; }}
-    @media (max-width:680px) {{ main {{ margin:0; width:100%; border:0; border-radius:0; }} .asset-hero,.asset-body {{ padding:28px 22px; }} .asset-title {{ font-size:2.65rem; }} }}
+    @media (max-width:680px) {{ main {{ margin:0; width:100%; border:0; border-radius:0; }} .asset-hero,.asset-body {{ padding:28px 22px; }} .asset-title {{ font-size:2.65rem; }} .asset-body h3.newsletter-detail-title {{ padding:17px 16px 12px; border-left-width:3px; }} .asset-body h3.newsletter-detail-title + p,.asset-body h3.newsletter-detail-title + p + p:has(> a),.asset-body h3.newsletter-detail-title + p + p + p,.asset-body h3.newsletter-detail-title + p + p:not(:has(> a)) {{ padding-left:16px; padding-right:16px; border-left-width:3px; }} }}
     @media print {{ body {{ background:white; }} main {{ width:100%; margin:0; border:0; box-shadow:none; }} }}
   </style>
 </head>
@@ -645,9 +673,12 @@ def export_html(asset: Asset) -> str:
 
 def export_wechat_html(asset: Asset, *, rendered_diagrams: dict[str, str] | None = None) -> str:
     markdown_content = _asset_reader_markdown(asset.draft_content)
+    extensions = ["extra", "sane_lists"]
+    if asset.asset_type == "newsletter_issue":
+        extensions.append(TocExtension(slugify=_newsletter_heading_slug))
     rendered = markdown.markdown(
         escape(markdown_content, quote=False),
-        extensions=["extra", "sane_lists"],
+        extensions=extensions,
         output_format="html5",
     )
     experience = experience_from_metadata(asset.metadata_, asset_type=asset.asset_type)
@@ -706,10 +737,19 @@ def export_wechat_html(asset: Asset, *, rendered_diagrams: dict[str, str] | None
         "<td>": '<td style="padding:8px;border:1px solid #d8dee4;vertical-align:top;">',
         "<hr>": '<hr style="margin:28px 0;border:0;border-top:1px solid #d8dee4;">',
     }
+    if asset.asset_type == "newsletter_issue":
+        for heading_tag in ("h1", "h2", "h3"):
+            styled_heading = replacements[f"<{heading_tag}>"]
+            rendered = re.sub(
+                rf'<{heading_tag} id="([^"]+)">',
+                lambda match: styled_heading.replace(f"<{heading_tag} ", f'<{heading_tag} id="{match.group(1)}" ', 1),
+                rendered,
+            )
     for source, target in replacements.items():
         rendered = rendered.replace(source, target)
+    allowed_anchor = r"|#[\w-]+" if asset.asset_type == "newsletter_issue" else ""
     rendered = re.sub(
-        r'href="(?!https?://)[^"]*"',
+        rf'href="(?!https?://{allowed_anchor})[^"]*"',
         'href="#"',
         rendered,
         flags=re.IGNORECASE,

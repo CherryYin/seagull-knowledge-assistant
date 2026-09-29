@@ -180,6 +180,12 @@ class Settings(BaseSettings):
     RSS_SUMMARY_MAX_ARTICLES: int = 12
     RSS_SUMMARY_MAX_CHARS_PER_ARTICLE: int = 1500
     RSS_FILTER_LOW_VALUE: bool = True
+    NEWSLETTER_DETAIL_LLM_ENABLED: bool = True
+    NEWSLETTER_DETAIL_LLM_PROVIDER_ID: str = ""
+    NEWSLETTER_DETAIL_LLM_MODEL: str = ""
+    NEWSLETTER_DETAIL_LLM_TIMEOUT: int = 120
+    NEWSLETTER_DETAIL_LLM_CONCURRENCY: int = 3
+    NEWSLETTER_DETAIL_SOURCE_MAX_CHARS: int = 6000
 
     # External connector trend discovery. Disabled by default so app startup does not fetch external sources.
     ARXIV_USER_AGENT: str = "personal-knowledge-graph/0.1"

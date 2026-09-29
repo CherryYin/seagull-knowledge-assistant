@@ -324,6 +324,162 @@ body {
   border-color: rgb(217 70 239 / 0.2);
 }
 
+.asset-reader[data-reader-layout="newsletter-issue"] .asset-reader-prose h2#in-depth {
+  display: grid;
+  gap: 0.45rem;
+  margin-bottom: 1.75rem;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--color-foreground);
+  padding: 0 0 1rem;
+  position: relative;
+}
+.asset-reader[data-reader-layout="newsletter-issue"] .asset-reader-prose h2#in-depth::before {
+  color: var(--color-primary);
+  content: "FEATURED ANALYSIS";
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.68rem;
+  font-weight: 750;
+  letter-spacing: 0.2em;
+  line-height: 1;
+}
+.asset-reader[data-reader-layout="newsletter-issue"] .asset-reader-prose h2#in-depth::after {
+  background: linear-gradient(90deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 22%, transparent), transparent 80%);
+  bottom: 0;
+  content: "";
+  height: 2px;
+  left: 0;
+  position: absolute;
+  width: min(16rem, 72%);
+}
+.asset-reader[data-reader-layout="newsletter-issue"] .asset-reader-prose h3.newsletter-detail-title {
+  margin: 1.5rem 0 0;
+  border: 1px solid var(--color-border);
+  border-bottom: 0;
+  border-left: 4px solid var(--color-primary);
+  border-radius: 1rem 1rem 0 0;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--color-primary) 8%, var(--color-card)), var(--color-card) 62%);
+  box-shadow: 0 18px 50px -38px rgb(15 23 42 / 0.62);
+  color: var(--color-foreground);
+  font-size: clamp(1.08rem, 2vw, 1.25rem);
+  line-height: 1.45;
+  padding: 1.25rem 1.4rem 0.85rem;
+  overflow-wrap: anywhere;
+}
+.asset-reader[data-reader-layout="newsletter-issue"] .asset-reader-prose h3.newsletter-detail-title a {
+  color: var(--color-foreground);
+  text-decoration: none;
+  transition: color 160ms ease;
+}
+.asset-reader[data-reader-layout="newsletter-issue"] .asset-reader-prose h3.newsletter-detail-title a:hover {
+  color: var(--color-primary);
+}
+.asset-reader[data-reader-layout="newsletter-issue"] .asset-reader-prose h3.newsletter-detail-title + p {
+  margin: 0;
+  border: 1px solid var(--color-border);
+  border-top: 0;
+  border-left-width: 4px;
+  border-radius: 0 0 1rem 1rem;
+  background: var(--color-card);
+  color: var(--color-muted-foreground);
+  font-size: 0.98rem;
+  line-height: 1.75;
+  padding: 0 1.4rem 1.25rem;
+  overflow-wrap: anywhere;
+}
+.asset-reader[data-reader-layout="newsletter-issue"] .asset-reader-prose h3.newsletter-detail-title + p:has(+ p > a) {
+  border-bottom: 0;
+  border-radius: 0;
+  padding-bottom: 1rem;
+}
+.asset-reader[data-reader-layout="newsletter-issue"] .asset-reader-prose h3.newsletter-detail-title + p + p:has(> a) {
+  margin: 0;
+  border: 1px solid var(--color-border);
+  border-top: 0;
+  border-left-width: 4px;
+  border-radius: 0 0 1rem 1rem;
+  background: var(--color-card);
+  font-size: 0.85rem;
+  padding: 0 1.4rem 1.2rem;
+}
+.asset-reader[data-reader-layout="newsletter-issue"] .asset-reader-prose h3.newsletter-detail-title + p + p:has(> a):has(+ p) {
+  border-bottom: 0;
+  border-radius: 0;
+  padding-bottom: 1rem;
+}
+.asset-reader[data-reader-layout="newsletter-issue"] .asset-reader-prose h3.newsletter-detail-title + p + p:has(> a) > a {
+  align-items: center;
+  border-radius: 999px;
+  display: inline-flex;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.035em;
+  padding: 0.45rem 0.75rem;
+  text-decoration: none;
+  transition: background-color 160ms ease, color 160ms ease, transform 160ms ease;
+  background: color-mix(in srgb, var(--color-primary) 11%, transparent);
+}
+.asset-reader[data-reader-layout="newsletter-issue"] .asset-reader-prose h3.newsletter-detail-title + p + p:has(> a) > a:hover {
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  transform: translateY(-1px);
+}
+.asset-reader[data-reader-layout="newsletter-issue"] .asset-reader-prose h3.newsletter-detail-title + p + p + p {
+  margin: 0 0 1.9rem;
+  border: 1px solid var(--color-border);
+  border-top: 0;
+  border-left-width: 4px;
+  border-radius: 0 0 1rem 1rem;
+  background: color-mix(in srgb, var(--color-muted) 42%, var(--color-card));
+  color: var(--color-muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.025em;
+  line-height: 1.45;
+  padding: 0.65rem 1.4rem 0.75rem;
+}
+.asset-reader[data-reader-layout="newsletter-issue"] .asset-reader-prose h3.newsletter-detail-title + p + p:not(:has(> a)) {
+  margin: 0 0 1.9rem;
+  border: 1px solid var(--color-border);
+  border-top: 0;
+  border-left-width: 4px;
+  border-radius: 0 0 1rem 1rem;
+  background: color-mix(in srgb, var(--color-muted) 42%, var(--color-card));
+  color: var(--color-muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.025em;
+  line-height: 1.45;
+  padding: 0.65rem 1.4rem 0.75rem;
+}
+.asset-reader[data-reader-layout="newsletter-issue"] .asset-reader-prose p.newsletter-legacy-detail {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 7;
+  overflow: hidden;
+}
+
+@media (max-width: 640px) {
+  .asset-reader[data-reader-layout="newsletter-issue"] .asset-reader-prose h2#in-depth {
+    margin-bottom: 1.25rem;
+  }
+  .asset-reader[data-reader-layout="newsletter-issue"] .asset-reader-prose h3.newsletter-detail-title {
+    border-left-width: 3px;
+    padding: 1rem 1rem 0.7rem;
+  }
+  .asset-reader[data-reader-layout="newsletter-issue"] .asset-reader-prose h3.newsletter-detail-title + p,
+  .asset-reader[data-reader-layout="newsletter-issue"] .asset-reader-prose h3.newsletter-detail-title + p + p:has(> a),
+  .asset-reader[data-reader-layout="newsletter-issue"] .asset-reader-prose h3.newsletter-detail-title + p + p + p,
+  .asset-reader[data-reader-layout="newsletter-issue"] .asset-reader-prose h3.newsletter-detail-title + p + p:not(:has(> a)) {
+    border-left-width: 3px;
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+}
+
 .asset-reader[data-style-profile="knowledge_atlas"] {
   background-image:
     linear-gradient(rgb(21 128 61 / 0.04) 1px, transparent 1px),
