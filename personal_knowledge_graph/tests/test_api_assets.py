@@ -484,3 +484,65 @@ async def test_convert_asset_feedback_to_note_route_returns_note_result():
 
     assert result.note_id == "note-1"
     mock_persist.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_asset_visual_routes_delegate_to_services():
+    from datetime import datetime, timezone
+
+    from pkg.api.assets import (
+        decide_asset_visual_route,
+        delete_asset_visual_route,
+        generate_asset_visual_route,
+        list_asset_visuals_route,
+    )
+    from pkg.schemas.application.asset import (
+        AssetVisualDecisionRequest,
+        AssetVisualGenerateRequest,
+        AssetVisualRead,
+    )
+
+    fake_user = MagicMock(id="user-1")
+    session = AsyncMock()
+    now = datetime(2026, 10, 8, tzinfo=timezone.utc)
+    visual = AssetVisualRead(
+        id="visual-1",
+        asset_id="asset-1",
+        role="cover",
+        status="ready",
+        prompt="Editorial cover",
+        model="qwen-image-3.0-pro",
+        width=1280,
+        height=720,
+        mime_type="image/png",
+        image_url="https://minio.example/cover.png",
+        created_at=now,
+        updated_at=now,
+    )
+
+    with patch("pkg.api.assets.list_asset_visuals", new=AsyncMock(return_value=[visual])) as list_mock:
+        listed = await list_asset_visuals_route("asset-1", user=fake_user, session=session)
+    assert listed.items == [visual]
+    list_mock.assert_awaited_once_with(session, user_id="user-1", asset_id="asset-1")
+
+    generate_body = AssetVisualGenerateRequest(prompt="A restrained editorial illustration")
+    with patch("pkg.api.assets.generate_asset_visual", new=AsyncMock(return_value=visual)) as generate_mock:
+        generated = await generate_asset_visual_route("asset-1", generate_body, user=fake_user, session=session)
+    assert generated.id == "visual-1"
+    generate_mock.assert_awaited_once_with(session, user_id="user-1", asset_id="asset-1", body=generate_body)
+
+    decision_body = AssetVisualDecisionRequest(decision="accept")
+    with patch("pkg.api.assets.decide_asset_visual", new=AsyncMock(return_value=visual)) as decide_mock:
+        await decide_asset_visual_route("asset-1", "visual-1", decision_body, user=fake_user, session=session)
+    decide_mock.assert_awaited_once_with(
+        session,
+        user_id="user-1",
+        asset_id="asset-1",
+        visual_id="visual-1",
+        decision="accept",
+    )
+
+    with patch("pkg.api.assets.delete_asset_visual", new=AsyncMock()) as delete_mock:
+        result = await delete_asset_visual_route("asset-1", "visual-1", user=fake_user, session=session)
+    assert result is None
+    delete_mock.assert_awaited_once_with(session, user_id="user-1", asset_id="asset-1", visual_id="visual-1")

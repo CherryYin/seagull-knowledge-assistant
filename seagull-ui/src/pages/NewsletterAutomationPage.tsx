@@ -26,6 +26,7 @@ const DEFAULT_FORM: NewsletterAutomationUpdate = {
   delivery_format: "html",
   audience: "Technology readers",
   style_notes: "Concise, evidence-led, and easy to scan.",
+  generate_cover_image: false,
 };
 
 const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -50,6 +51,7 @@ function editableConfig(config: NewsletterAutomationConfig): NewsletterAutomatio
     delivery_format: config.delivery_format,
     audience: config.audience,
     style_notes: config.style_notes,
+    generate_cover_image: config.generate_cover_image,
   };
 }
 
@@ -212,7 +214,7 @@ export function NewsletterAutomationPage() {
                 <Badge variant={form.enabled ? "default" : "outline"}>{form.enabled ? "Enabled" : "Paused"}</Badge>
                 {isDirty && <Badge variant="outline" className="border-amber-300 text-amber-700">Unsaved changes</Badge>}
               </div>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">Collect technology news and paper discoveries around your topics, then turn recent material into reviewable Newsletter Assets. Automation creates drafts only; export and publishing remain explicit user actions.</p>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">Collect technology news and paper discoveries into a reviewable draft: a short linked roundup first, then a more detailed section for each item with source-title links. Only newly generated issues use this format; export and publishing remain explicit user actions.</p>
             </div>
           </div>
           <Button variant={isDirty ? "default" : "outline"} onClick={() => void saveAndRun()} disabled={runActionPending || updateMutation.isPending || configQuery.isLoading || !payload.name}>
@@ -243,6 +245,7 @@ export function NewsletterAutomationPage() {
             <CardHeader><CardTitle>Schedule and limits</CardTitle><CardDescription>Times are entered in {timezoneName}; PKG stores the corresponding UTC schedule.</CardDescription></CardHeader>
             <CardContent className="space-y-4">
               <label className="flex items-center justify-between rounded-xl border p-4 text-sm"><span><span className="block font-medium">Enable scheduled generation</span><span className="mt-1 block text-xs text-muted-foreground">Paused automation can still be run manually.</span></span><input aria-label="Enable Newsletter automation" type="checkbox" className="h-4 w-4" checked={form.enabled} onChange={(event) => setForm({ ...form, enabled: event.target.checked })} /></label>
+              <label className="flex items-center justify-between rounded-xl border p-4 text-sm"><span><span className="block font-medium">Generate AI cover image</span><span className="mt-1 block text-xs text-muted-foreground">Generate one Qwen Image cover after the Newsletter draft succeeds. Cover failure never blocks the text draft.</span></span><input aria-label="Generate Newsletter cover image" type="checkbox" className="h-4 w-4" checked={form.generate_cover_image} onChange={(event) => setForm({ ...form, generate_cover_image: event.target.checked })} /></label>
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className="space-y-2 text-sm"><span className="font-medium">Frequency</span><select aria-label="Newsletter frequency" className="h-10 w-full rounded-md border border-input bg-background px-3" value={form.frequency} onChange={(event) => setForm({ ...form, frequency: event.target.value as NewsletterAutomationUpdate["frequency"] })}><option value="manual">Manual</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
                 <label className="space-y-2 text-sm"><span className="font-medium">Local hour</span><Input aria-label="Newsletter local hour" type="number" min={0} max={23} value={localSchedule.hour} onChange={(event) => setLocalHour(Number(event.target.value))} /></label>

@@ -87,6 +87,10 @@ class Settings(BaseSettings):
     QWEN_API_BASE: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     QWEN_API_KEY: str = ""
     QWEN_MODEL: str = "qwen-plus"
+    QWEN_IMAGE_API_BASE: str = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
+    QWEN_IMAGE_MODEL: str = "qwen-image-3.0-pro"
+    QWEN_IMAGE_TIMEOUT: int = 180
+    QWEN_IMAGE_ENABLED: bool = True
 
     # MiniMax API (OpenAI-compatible, recommended via LLM_PROVIDERS)
     MINIMAX_API_BASE: str = "https://api.minimax.io/v1"

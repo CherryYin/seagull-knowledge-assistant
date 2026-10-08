@@ -87,6 +87,38 @@ class AssetList(BaseModel):
     total: int
 
 
+class AssetVisualGenerateRequest(BaseModel):
+    prompt: str | None = Field(default=None, max_length=4000)
+    role: Literal["cover"] = "cover"
+    size: Literal["1024*1024", "1280*720", "720*1280"] = "1280*720"
+
+
+class AssetVisualDecisionRequest(BaseModel):
+    decision: Literal["accept", "reject"]
+
+
+class AssetVisualRead(BaseModel):
+    id: str
+    asset_id: str
+    role: str
+    status: str
+    prompt: str
+    model: str
+    width: int | None = None
+    height: int | None = None
+    mime_type: str | None = None
+    image_url: str | None = None
+    provider_request_id: str | None = None
+    error_message: str | None = None
+    metadata_: dict | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AssetVisualList(BaseModel):
+    items: list[AssetVisualRead] = Field(default_factory=list)
+
+
 class AssetKnowledgeLineageItem(BaseModel):
     asset_id: str
     asset_title: str
@@ -201,6 +233,7 @@ class NewsletterAutomationConfig(BaseModel):
     delivery_format: Literal["markdown", "html"] = "html"
     audience: str = "Technology readers"
     style_notes: str = "Concise, evidence-led, and easy to scan."
+    generate_cover_image: bool = False
     last_generated_at: datetime | None = None
     last_asset_id: str | None = None
     last_run_at: datetime | None = None
@@ -223,6 +256,7 @@ class NewsletterAutomationUpdate(BaseModel):
     delivery_format: Literal["markdown", "html"]
     audience: str = Field(default="", max_length=300)
     style_notes: str = Field(default="", max_length=2000)
+    generate_cover_image: bool = False
 
 
 class NewsletterAutomationRunSnapshot(BaseModel):
@@ -239,6 +273,7 @@ class NewsletterAutomationRunSnapshot(BaseModel):
     delivery_format: Literal["markdown", "html"]
     audience: str
     style_notes: str
+    generate_cover_image: bool
 
 
 class NewsletterAutomationRunResult(BaseModel):

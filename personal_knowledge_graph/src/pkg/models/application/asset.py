@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Index, String, Text, func
+from sqlalchemy import ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -35,4 +35,31 @@ class Asset(Base):
         Index("idx_assets_type", "asset_type"),
         Index("idx_assets_status", "status"),
         Index("idx_assets_updated_at", "updated_at"),
+    )
+
+
+class AssetVisual(Base):
+    __tablename__ = "asset_visuals"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    asset_id: Mapped[str] = mapped_column(String, ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    role: Mapped[str] = mapped_column(String(30), nullable=False, server_default="cover")
+    status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="generating")
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    model: Mapped[str] = mapped_column(String(120), nullable=False)
+    width: Mapped[int | None] = mapped_column(Integer)
+    height: Mapped[int | None] = mapped_column(Integer)
+    mime_type: Mapped[str | None] = mapped_column(String(120))
+    file_path: Mapped[str | None] = mapped_column(Text)
+    provider_request_id: Mapped[str | None] = mapped_column(String(160))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("idx_asset_visuals_asset_id", "asset_id"),
+        Index("idx_asset_visuals_user_id", "user_id"),
+        Index("idx_asset_visuals_status", "status"),
     )

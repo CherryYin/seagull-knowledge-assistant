@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, Link, useNavigate, useLocation } from "react-router-dom";
-import { BookOpen, CalendarDays, ChartNoAxesCombined, CheckCircle2, CircleAlert, Clock3, Copy, Download, Eye, FileSearch, LibraryBig, MailOpen, MessageSquareShare, PenLine, Quote, Sparkles, Square, WandSparkles } from "lucide-react";
+import { BookOpen, CalendarDays, ChartNoAxesCombined, CheckCircle2, CircleAlert, Clock3, Copy, Download, Eye, FileSearch, ImageIcon, LibraryBig, MailOpen, MessageSquareShare, PenLine, Quote, Sparkles, Square, Trash2, WandSparkles } from "lucide-react";
 import { assetsApi, authApi, notesApi, sourcesApi, wikiApi, type Asset, type AssetClaimProposalInput, type AssetContributionKind, type AssetEvidenceProposalInput, type AssetEvidenceRelation, type AssetKnowledgeProposalInput, type AssetMissingEvidenceRequest, type AssetQualityAuditResult, type AssetStatus, type AssetStyleProfileId, type AssetType, type ReadinessCheckResult } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -941,6 +941,11 @@ export function AssetDetailPage() {
     queryFn: () => assetsApi.get(id),
     enabled: Boolean(id),
   });
+  const assetVisualsQuery = useQuery({
+    queryKey: ["asset-visuals", id],
+    queryFn: () => assetsApi.listVisuals(id),
+    enabled: Boolean(id),
+  });
   const workspaceQuery = useQuery({
     queryKey: ["asset-workspace", id],
     queryFn: () => assetsApi.getWorkspace(id),
@@ -1138,6 +1143,7 @@ export function AssetDetailPage() {
   const [htmlPreview, setHtmlPreview] = useState("");
   const [htmlPreviewOpen, setHtmlPreviewOpen] = useState(false);
   const [htmlCopied, setHtmlCopied] = useState(false);
+  const [coverPrompt, setCoverPrompt] = useState("");
   const [htmlPreviewTitle, setHtmlPreviewTitle] = useState("HTML Preview");
   const [htmlPreviewDescription, setHtmlPreviewDescription] = useState("Sandboxed preview generated from the current Markdown Asset.");
   const [editTitle, setEditTitle] = useState("");
@@ -2672,6 +2678,31 @@ export function AssetDetailPage() {
   const feedbackToNoteMutation = useMutation({
     mutationFn: () => assetsApi.feedbackToNote(id),
   });
+  const generateVisualMutation = useMutation({
+    mutationFn: () => assetsApi.generateVisual(id, { prompt: coverPrompt.trim() || null, role: "cover", size: "1280*720" }),
+    onSuccess: () => {
+      setCoverPrompt("");
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["asset-visuals", id] }),
+  });
+  const decideVisualMutation = useMutation({
+    mutationFn: ({ visualId, decision }: { visualId: string; decision: "accept" | "reject" }) => assetsApi.decideVisual(id, visualId, decision),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["asset-visuals", id] }),
+        queryClient.invalidateQueries({ queryKey: ["asset", id] }),
+      ]);
+    },
+  });
+  const deleteVisualMutation = useMutation({
+    mutationFn: (visualId: string) => assetsApi.deleteVisual(id, visualId),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["asset-visuals", id] }),
+        queryClient.invalidateQueries({ queryKey: ["asset", id] }),
+      ]);
+    },
+  });
 
   const actionError = [statusMutation.error, exportMutation.error, exportHtmlMutation.error, wechatDraftMutation.error, previewHtmlMutation.error, previewWechatMutation.error, saveDeliveryFormatMutation.error, publishMutation.error, savePublishFeedbackMutation.error, feedbackToNoteMutation.error]
     .find((error): error is Error => error instanceof Error)?.message ?? null;
@@ -4130,6 +4161,44 @@ export function AssetDetailPage() {
             </TabsContent>
 
             <TabsContent value="production" className="mt-0 space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base"><ImageIcon className="h-4 w-4" />AI Cover Visual</CardTitle>
+                <CardDescription>Generate a reviewable cover with Qwen Image 3.0 Pro. Generated visuals are Asset publishing material, not evidence Sources.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <Textarea aria-label="Asset cover prompt" rows={4} placeholder="Optional art direction. Leave empty to generate from the Asset title, brief, and draft." value={coverPrompt} onChange={(event) => setCoverPrompt(event.target.value)} />
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button type="button" onClick={() => generateVisualMutation.mutate()} disabled={generateVisualMutation.isPending}>
+                    <WandSparkles className="mr-2 h-4 w-4" />{generateVisualMutation.isPending ? "Generating cover…" : "Generate cover"}
+                  </Button>
+                  <span className="text-xs text-muted-foreground">1280×720 · no text or logos · stored in MinIO</span>
+                </div>
+                {generateVisualMutation.isError && <ActionError title="Cover generation failed" impact="No cover was added to this Asset." recovery="Check the Qwen image configuration and retry generation." details={generateVisualMutation.error instanceof Error ? generateVisualMutation.error.message : "Unknown image generation error"} onRetry={() => generateVisualMutation.mutate()} />}
+                {assetVisualsQuery.isLoading ? <p className="text-sm text-muted-foreground">Loading visuals…</p> : null}
+                {assetVisualsQuery.isError ? <ActionError title="Cover visuals could not be loaded" impact="Existing generated covers are temporarily unavailable in this view." recovery="Retry loading the visual history." details={assetVisualsQuery.error instanceof Error ? assetVisualsQuery.error.message : "Unknown visual loading error"} onRetry={() => void assetVisualsQuery.refetch()} /> : null}
+                {decideVisualMutation.isError ? <ActionError title="Cover review decision failed" impact="The selected cover status was not changed." recovery="Reload the visual history and retry the decision." details={decideVisualMutation.error instanceof Error ? decideVisualMutation.error.message : "Unknown review error"} /> : null}
+                {deleteVisualMutation.isError ? <ActionError title="Cover deletion failed" impact="The generated cover remains attached to this Asset." recovery="Check MinIO availability and retry deletion." details={deleteVisualMutation.error instanceof Error ? deleteVisualMutation.error.message : "Unknown deletion error"} /> : null}
+                {!assetVisualsQuery.isLoading && !assetVisualsQuery.isError && (assetVisualsQuery.data?.items.length ?? 0) === 0 ? <div className="rounded-xl border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">No generated covers yet. Add optional art direction or generate directly from the Asset content.</div> : null}
+                <div className="grid gap-4 lg:grid-cols-2">
+                  {(assetVisualsQuery.data?.items ?? []).map((visual) => (
+                    <div key={visual.id} className="overflow-hidden rounded-xl border bg-muted/10">
+                      {visual.image_url ? <img src={visual.image_url} alt="Generated Asset cover" className="aspect-video w-full object-cover" /> : <div className="flex aspect-video items-center justify-center text-sm text-muted-foreground">{visual.status === "failed" ? "Generation failed" : "Image unavailable"}</div>}
+                      <div className="space-y-3 p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2"><Badge variant={visual.status === "accepted" ? "default" : "outline"}>{visual.status}</Badge><span className="text-xs text-muted-foreground">{visual.model}{visual.width && visual.height ? ` · ${visual.width}×${visual.height}` : ""}</span></div>
+                        <p className="line-clamp-3 text-xs leading-5 text-muted-foreground">{visual.prompt}</p>
+                        {visual.error_message ? <p className="text-xs text-destructive">{visual.error_message}</p> : null}
+                        <div className="flex flex-wrap gap-2">
+                          {visual.status !== "accepted" && visual.status !== "failed" ? <Button type="button" size="sm" onClick={() => decideVisualMutation.mutate({ visualId: visual.id, decision: "accept" })} disabled={decideVisualMutation.isPending}>Accept cover</Button> : null}
+                          {visual.status !== "rejected" && visual.status !== "failed" ? <Button type="button" size="sm" variant="outline" onClick={() => decideVisualMutation.mutate({ visualId: visual.id, decision: "reject" })} disabled={decideVisualMutation.isPending}>Reject</Button> : null}
+                          <Button type="button" size="sm" variant="ghost" onClick={() => { if (window.confirm("Delete this generated visual?")) deleteVisualMutation.mutate(visual.id); }} disabled={deleteVisualMutation.isPending}><Trash2 className="mr-2 h-4 w-4" />Delete</Button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Production Actions</CardTitle>

@@ -19,6 +19,10 @@ from pkg.schemas.application.asset import (
     AssetRead,
     AssetStyleProfileList,
     AssetUpdate,
+    AssetVisualDecisionRequest,
+    AssetVisualGenerateRequest,
+    AssetVisualList,
+    AssetVisualRead,
     AssetWechatDraftRequest,
     AssetWechatDraftResult,
     AttachReferencesRequest,
@@ -67,6 +71,12 @@ from pkg.services.application.newsletter_automation import (
     update_newsletter_config,
 )
 from pkg.services.application.asset_experience import list_style_profiles
+from pkg.services.application.asset_visuals import (
+    decide_asset_visual,
+    delete_asset_visual,
+    generate_asset_visual,
+    list_asset_visuals,
+)
 from pkg.services.application.wechat_publishing import WechatPublishingError, create_wechat_draft
 from pkg.services.cross_cutting.credentials_crypto import CredentialsCryptoError, decrypt_secret
 from pkg.services.cross_cutting.user_api_credentials import get_default_user_api_credential
@@ -140,6 +150,52 @@ async def get_asset_knowledge_lineage_route(
         target_type=target_type,
         target_id=target_id,
     )
+
+
+@router.get("/{asset_id}/visuals", response_model=AssetVisualList)
+async def list_asset_visuals_route(
+    asset_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return AssetVisualList(items=await list_asset_visuals(session, user_id=user.id, asset_id=asset_id))
+
+
+@router.post("/{asset_id}/visuals/generate", response_model=AssetVisualRead, status_code=201)
+async def generate_asset_visual_route(
+    asset_id: str,
+    body: AssetVisualGenerateRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await generate_asset_visual(session, user_id=user.id, asset_id=asset_id, body=body)
+
+
+@router.post("/{asset_id}/visuals/{visual_id}/decision", response_model=AssetVisualRead)
+async def decide_asset_visual_route(
+    asset_id: str,
+    visual_id: str,
+    body: AssetVisualDecisionRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await decide_asset_visual(
+        session,
+        user_id=user.id,
+        asset_id=asset_id,
+        visual_id=visual_id,
+        decision=body.decision,
+    )
+
+
+@router.delete("/{asset_id}/visuals/{visual_id}", status_code=204)
+async def delete_asset_visual_route(
+    asset_id: str,
+    visual_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await delete_asset_visual(session, user_id=user.id, asset_id=asset_id, visual_id=visual_id)
 
 
 @router.get("/{asset_id}", response_model=AssetRead)

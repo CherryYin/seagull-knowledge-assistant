@@ -1,0 +1,371 @@
+# Asset 生图功能 Plan & Roadmap
+
+> 状态：Active
+> 基线日期：2026-10-08
+> 首选模型：`qwen-image-3.0-pro`
+> 产品边界：生成图片属于 Asset 发布素材，不属于 Source，也不能作为事实证据进入检索链路。
+
+## 1. 目标
+
+为 Newsletter、博客和研究简报等 Asset 提供可控、可审核、可追踪的 AI 视觉生产能力：系统根据内容生成视觉方案，用户完成选择和审核，最终图片作为发布素材与 Asset 一起交付。
+
+核心目标：
+
+1. **内容相关**：图片能够表达 Asset 的主题和叙事重点，而不是只生成通用科技背景图。
+2. **人在回路**：生成、重试、接受、拒绝和删除均有明确状态；Agent 可以提出方案，但不能绕过审核。
+3. **发布导向**：支持 Newsletter 封面、文章头图、社交分享图和正文插图等真实发布场景。
+4. **稳定可控**：长耗时任务不阻塞 API，具备超时、重试、配额、审计和失败恢复能力。
+5. **领域隔离**：`AssetVisual` 与 Source、证据、知识检索保持边界，避免生成内容污染事实来源。
+
+## 2. 当前基线（MVP，已完成）
+
+当前系统已具备：
+
+- `AssetVisual` 持久化模型与 Alembic 迁移。
+- DashScope 原生接口适配，使用 `qwen-image-3.0-pro`。
+- 生成结果下载、图片格式识别、尺寸记录和 MinIO 持久化。
+- Asset Visual 的列表、生成、接受、拒绝和删除 API。
+- Asset Production 页面中的封面生成与审核界面。
+- Newsletter 可选自动生成封面，图片失败不阻塞文字草稿。
+- 当前支持 `cover` 角色以及 `1280×720`、`1024×1024`、`720×1280` 三种请求尺寸。
+- 已验证当前 Qwen Key 可真实生成 `1280×720` PNG 图片。
+
+当前主要限制：
+
+- 生成仍在 HTTP 请求内同步等待，供应商延迟会长时间占用 API 请求。
+- 默认 Prompt 主要由固定模板和 Asset 文本拼接组成，缺少结构化视觉策划。
+- Newsletter 开启自动封面后会自动接受结果，缺少“只生成待审核”的策略选项。
+- 只支持封面角色，没有正文插图、社交图和多尺寸派生关系。
+- 使用服务级 Qwen Key，尚无用户级凭据、用量预算和成本统计。
+- 缺少任务级重试、并发限制、幂等键、失败分类和管理端可观测性。
+
+## 3. 产品原则
+
+### 3.1 AssetVisual 不是 Source
+
+- 不进入 Source 列表、证据候选或知识检索。
+- 不参与 Claim 支撑关系。
+- 图片 Prompt 和模型信息可以审计，但不能伪装成来源引用。
+
+### 3.2 Agent 建议，用户决策
+
+- Agent 可以生成 Prompt、提出版式和发起生成任务。
+- 普通 Asset 的最终 `accepted` 状态由用户操作产生。
+- 自动化场景必须显式配置审核策略，不使用隐藏的自动接受。
+
+### 3.3 文本草稿优先
+
+- Newsletter 和其他自动化先成功创建文字 Asset，再独立处理视觉任务。
+- 图片失败、超时或额度不足不能回滚文字草稿。
+
+### 3.4 原图不可变，选择可变
+
+- 已生成图片文件视为不可变产物。
+- 重新生成创建新 `AssetVisual`，不覆盖旧记录。
+- 接受操作切换当前角色的选中版本，保留历史版本用于比较和审计。
+
+## 4. 目标领域模型
+
+### 4.1 AssetVisual
+
+建议逐步补齐以下字段：
+
+- `role`：`cover`、`social_square`、`social_portrait`、`inline_illustration`。
+- `status`：`queued`、`generating`、`ready`、`accepted`、`rejected`、`failed`、`cancelled`。
+- `prompt`、`negative_prompt`、`prompt_version`。
+- `model`、`provider`、`provider_request_id`。
+- `width`、`height`、`mime_type`、`file_path`、`sha256`。
+- `parent_visual_id`：记录变体、重绘和尺寸派生关系。
+- `source_block_ids`：正文插图对应的 Asset Block。
+- `alt_text`、`caption`、`focal_point`。
+- `generation_job_id`、`attempt_count`、`started_at`、`completed_at`。
+- `metadata`：风格预设、seed、供应商参数和安全审核结果。
+
+### 4.2 Asset 元数据
+
+短期继续兼容 `metadata.cover_visual_id`，中期改为结构化角色映射：
+
+```json
+{
+  "accepted_visuals": {
+    "cover": "visual-...",
+    "social_square": "visual-..."
+  }
+}
+```
+
+### 4.3 状态流转
+
+```text
+queued -> generating -> ready -> accepted
+                     |       -> rejected
+                     -> failed
+queued/generating -> cancelled
+```
+
+- 同一 Asset、同一角色最多只有一个 `accepted` 版本。
+- `failed` 和 `cancelled` 可以重试，但重试创建新 attempt 或新 visual，必须保留审计信息。
+- 删除已接受图片前，应先清除角色映射；已用于正式发布的图片默认只归档，不直接物理删除。
+
+## 5. 目标架构
+
+```text
+Seagull UI / Newsletter / Harness Tool
+                |
+                v
+        Asset Visual API
+                |
+                v
+     AssetVisual Application Service
+          |                 |
+          v                 v
+ Generation Job Queue   Prompt Planner
+          |                 |
+          v                 v
+        Worker ------> Image Provider Adapter
+                             |
+                             v
+                     Qwen Image / Future Providers
+                             |
+                             v
+                          MinIO
+```
+
+职责划分：
+
+- **PKG API**：鉴权、创建任务、查询状态、审核决策和元数据组装。
+- **PKG Worker**：调用供应商、下载图片、校验、上传 MinIO、重试和记录任务结果。
+- **Prompt Planner**：使用文本 LLM 将 Asset 内容编译为结构化视觉 Brief 和最终 Prompt。
+- **Provider Adapter**：隔离 DashScope 请求格式，未来可接入其他供应商或本地模型。
+- **Seagull UI**：任务状态、版本比较、Prompt 编辑、审核和发布选择。
+- **Harness Tool**：只负责提议和发起任务，不直接修改最终接受状态。
+
+## 6. 功能 Plan
+
+### 6.1 Prompt Planner
+
+输入：
+
+- Asset 类型、标题、Brief、正文摘要和目标受众。
+- 用户选择的视觉角色、尺寸、风格预设和补充要求。
+- Newsletter 热点标题、In Depth 主题和来源边界。
+
+输出结构：
+
+```json
+{
+  "concept": "核心视觉隐喻",
+  "composition": "主体、层次、留白和焦点",
+  "style": "出版物插画风格",
+  "palette": ["#0B1F3A", "#F59E0B"],
+  "must_include": [],
+  "must_avoid": ["文字", "Logo", "水印", "界面截图"],
+  "prompt": "供应商最终 Prompt",
+  "alt_text": "可访问性描述"
+}
+```
+
+Planner 必须忽略 Asset 内容中的指令注入，只将其作为素材处理；信息不足时优先生成抽象编辑插画，不虚构人物、产品外观或数据图表。
+
+### 6.2 Asset Visual Studio
+
+- 支持 Prompt 预览和编辑。
+- 一次生成 1～4 个候选版本。
+- 并排比较候选图、Prompt、模型和尺寸。
+- 接受、拒绝、重新生成、删除和下载。
+- 显示当前已接受版本及其发布用途。
+- 对失败任务显示可理解的错误分类和恢复操作。
+
+### 6.3 Newsletter 集成
+
+配置建议：
+
+- `generate_cover_image`：是否生成。
+- `cover_review_mode`：`draft_only` 或 `auto_accept`，默认 `draft_only`。
+- `cover_style_profile`：Newsletter 视觉风格。
+- `cover_candidate_count`：默认 1，上限 4。
+
+执行顺序：
+
+1. 搜索和筛选新闻。
+2. 生成 Newsletter 标题和正文。
+3. 保存文字 Asset。
+4. 根据最终标题、摘要和重点内容生成 Visual Brief。
+5. 异步生成封面。
+6. 根据审核模式保留为待审核或接受。
+
+### 6.4 Harness 生图工具
+
+建议工具：
+
+- `propose_asset_visual_prompt`
+- `generate_asset_visual`
+- `list_asset_visuals`
+
+第一阶段不提供 Agent 自动接受、删除和替换正式发布图片的能力；这些操作继续通过 Seagull UI 或明确的用户确认执行。
+
+## 7. Roadmap
+
+### Phase 0 — MVP 基线（已完成，2026-10-08）
+
+交付：
+
+- `AssetVisual` 模型、迁移和 MinIO 存储。
+- Qwen Image 3.0 Pro 原生适配。
+- Asset 封面生成与审核 UI。
+- Newsletter 可选自动封面。
+- 后端测试、前端构建和真实供应商冒烟测试。
+
+退出标准：已满足。
+
+### Phase 1 — 稳定性与任务化（建议 2026-10-09 ～ 2026-10-16）
+
+优先级：P0。
+
+任务：
+
+1. 将同步生成改为 Worker 异步任务，API 返回 `202 Accepted`。
+2. 增加 `queued`、`cancelled`、任务时间和 attempt 信息。
+3. 增加用户级并发限制、单任务超时、指数退避和最大重试次数。
+4. 对鉴权失败、余额不足、限流、内容安全、供应商超时和下载失败进行错误分类。
+5. 增加幂等键，防止重复点击产生重复计费任务。
+6. 增加卡死任务回收和 Worker 重启恢复。
+7. 在 System Jobs 或专用指标中记录成功率、延迟和失败原因。
+
+验收：
+
+- UI 刷新后仍可看到任务进度。
+- API 重启或 Worker 重启不会丢失任务状态。
+- 重复提交同一幂等键只生成一次。
+- 图片失败不影响 Asset 和 Newsletter 正文。
+- P95 任务状态查询接口小于 300ms，不等待供应商返回。
+
+### Phase 2 — 智能 Prompt 与视觉一致性（建议 2026-10-17 ～ 2026-10-30）
+
+优先级：P1。
+
+任务：
+
+1. 增加 Prompt Planner 和结构化 Visual Brief。
+2. 提供 Newsletter、深度科技文章、研究简报等风格预设。
+3. 支持 Prompt 预览、编辑和 2～4 个候选版本。
+4. 生成并保存 `alt_text`。
+5. 增加品牌色、禁止元素和构图留白配置。
+6. 对历史接受结果建立轻量风格记忆，但不得复用图片事实内容。
+
+验收：
+
+- 生成前可查看并修改视觉 Brief。
+- 同一风格预设在不同 Newsletter 中保持稳定的构图和配色倾向。
+- 用户可在候选版本间比较并明确接受一个版本。
+- 所有接受图片都有可编辑的 `alt_text`。
+
+### Phase 3 — 多发布位与视觉工作台（建议 2026-11-02 ～ 2026-11-20）
+
+优先级：P1。
+
+任务：
+
+1. 扩展 `cover`、`social_square`、`social_portrait` 和 `inline_illustration`。
+2. 增加角色级接受映射和历史版本比较。
+3. 支持基于已接受封面的尺寸派生或重绘。
+4. 支持焦点位置、裁切预览和下载命名规则。
+5. 正文插图与 Asset Block 建立关联。
+6. 导出 HTML/Newsletter 时按角色自动注入图片和 `alt_text`。
+
+验收：
+
+- 一个 Asset 可同时维护多个视觉角色。
+- 导出结果稳定引用已接受图片，不引用待审核或失败版本。
+- 正文插图可以追踪到对应 Block，Block 删除后提示处理孤立图片。
+
+### Phase 4 — Newsletter 与 Agent 工作流深化（建议 2026-11-23 ～ 2026-12-11）
+
+优先级：P2。
+
+任务：
+
+1. Newsletter 增加 `draft_only` / `auto_accept` 审核策略，默认待审核。
+2. 将生图任务状态展示在 Newsletter Run 详情中。
+3. 增加 Harness 生图工具，允许 Agent 提议 Prompt 和创建任务。
+4. 支持“正文完成后再生图”和“选定最热标题后再生图”的明确依赖。
+5. 支持失败后单独重跑视觉步骤，不重跑新闻搜索和正文生成。
+
+验收：
+
+- Newsletter 图片失败后可独立重试。
+- Agent 无法在缺少用户确认时接受或删除图片。
+- Run 记录能够追踪文字 Asset、Visual Brief、生成任务和最终图片。
+
+### Phase 5 — 成本、治理与多供应商（建议 2026-12-14 以后）
+
+优先级：P2。
+
+任务：
+
+1. 接入用户级 API Credential 或受控的组织级额度。
+2. 记录模型、尺寸、候选数、调用次数和估算成本。
+3. 增加日/月预算、角色权限和管理端开关。
+4. 增加内容安全策略、审计日志和发布后保留策略。
+5. 抽象 Provider Adapter，按需增加备用供应商或本地模型。
+6. 仅在明确业务需要时增加局部重绘、参考图和品牌模板能力。
+
+验收：
+
+- 可以按用户和时间范围查看用量。
+- 超预算任务在调用供应商前被阻止，并提供明确原因。
+- 切换供应商不改变 Asset Visual API 和审核流程。
+
+## 8. 优先级建议
+
+下一步不要立即扩展更多图片类型，应按以下顺序投入：
+
+1. **异步任务化与失败恢复**。
+2. **Prompt Planner 与候选版本**。
+3. **Newsletter 待审核模式**。
+4. **多发布位和导出集成**。
+5. **Agent 工具、成本治理和多供应商**。
+
+原因：当前供应商调用已经可用，最大的产品风险不是“不能生成”，而是长请求、重复计费、不可恢复以及生成结果缺少内容针对性。
+
+## 9. 衡量指标
+
+建议上线后记录：
+
+- 生成任务成功率、失败类型分布和 P50/P95 时延。
+- 每个 Asset 的平均候选数和重新生成次数。
+- `ready -> accepted` 转化率。
+- Newsletter 开启生图比例和图片失败对文字任务的影响次数。
+- 每张接受图片的调用次数与估算成本。
+- 用户从生成到接受的耗时。
+- 被删除、拒绝以及发布后替换的比例。
+
+初期目标建议：
+
+- 供应商可用时生成成功率不低于 95%。
+- 图片失败导致文字 Asset 创建失败的次数为 0。
+- 重复点击导致的重复计费任务为 0。
+- 80% 以上接受图片在不超过 3 个候选版本内产生。
+
+## 10. 非目标
+
+当前 Roadmap 不包含：
+
+- 将生成图片自动转为 Source 或证据。
+- 通用图片社区、素材市场或公开图库。
+- 视频生成、3D 资产和复杂图像编辑器。
+- 未经审核自动生成数据图表、产品 UI 截图或真实人物照片。
+- 同时维护大量供应商；多供应商只在稳定性、成本或合规需求明确后引入。
+
+## 11. 下一迭代建议
+
+建议立即启动 **Phase 1：稳定性与任务化**，拆成以下工程包：
+
+1. `AssetVisual` 任务字段与迁移。
+2. Worker 队列、重试和卡死回收。
+3. API `202 + polling` 合同。
+4. UI 任务状态和自动刷新。
+5. 幂等、并发和错误分类测试。
+6. Newsletter 异步触发适配。
+
+Phase 1 完成后再开发 Prompt Planner，避免把更多产品能力建立在同步长请求之上。
