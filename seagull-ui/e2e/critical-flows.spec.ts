@@ -1652,6 +1652,26 @@ test("Newsletter Automation saves dirty settings before running and keeps the re
   await expect(page.getByRole("heading", { name: "E2E Tech Weekly · 2026-09-03", exact: true }).last()).toBeVisible();
 });
 
+test("Newsletter summary links jump to linked source titles in the detailed section", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false, savedNoteBody: null, candidate: null, memory: null, sessionContext: null,
+    savedAssetBody: {
+      title: "E2E Tech Weekly", asset_type: "newsletter_issue", status: "draft",
+      draft_content: "# E2E Tech Weekly\n\n## Featured Items\n\n### Technology News\n\n- [1. AI chip launch](#1-ai-chip-launch) — A new accelerator launched.\n\n## In Depth\n\n### 1. [AI chip launch](https://example.com/news)\n\nThe full item offers more context on efficiency and availability.\n\n[Read the original ↗](https://example.com/news)\n\n[Source: source-input]",
+      source_refs: ["source-input"], note_refs: [], wiki_refs: [], metadata_: {},
+    },
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+  await page.goto("/assets/asset-e2e?tab=read");
+  const reader = page.locator('[data-reader-layout="newsletter-issue"]');
+  await expect(reader.locator('h3.newsletter-detail-title[id="1-ai-chip-launch"]')).toBeVisible();
+  await expect(reader.locator('h3[id="1-ai-chip-launch"] a[href="https://example.com/news"]')).toHaveText("AI chip launch");
+  await expect(reader.getByRole("link", { name: "Read the original ↗" })).toHaveAttribute("href", "https://example.com/news");
+  await reader.locator('a[href="#1-ai-chip-launch"]').first().click();
+  await expect.poll(() => page.evaluate(() => window.location.hash)).toBe("#1-ai-chip-launch");
+});
+
 test("Newsletter Automation explains skipped runs without leaving the page", async ({ page }) => {
   const state: MockState = {
     loggedIn: false,

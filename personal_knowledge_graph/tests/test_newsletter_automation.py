@@ -14,6 +14,8 @@ from pkg.services.application.blog_generation import export_html, export_markdow
 from pkg.services.application.newsletter_automation import (
     _rewrite_newsletter_details,
     _save_newsletter_config,
+    _select_newsletter_title,
+    _source_is_in_publication_window,
     build_newsletter_markdown,
     generate_newsletter,
     is_newsletter_due,
@@ -177,6 +179,55 @@ def test_newsletter_converts_traditional_chinese_content_to_simplified_chinese()
     assert "網路" not in content
 
 
+def test_newsletter_publication_window_rejects_republished_old_news():
+    cutoff = datetime(2026, 9, 24, tzinfo=timezone.utc)
+    current = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    source = Source(
+        id="news-republished-old",
+        user_id="user-1",
+        category_id=1,
+        title="旧访谈被重新抓取",
+        source_type="article",
+        raw_content="本文首发于 Founder Park 公众号 · 2024 年 9 月 19 日。这里是旧文章正文。",
+        metadata_={"kind": "news", "published_at": "2026-09-28T13:32:09+00:00"},
+    )
+
+    assert _source_is_in_publication_window(source, cutoff, current) is False
+
+
+def test_newsletter_publication_window_accepts_recent_news_metadata():
+    cutoff = datetime(2026, 9, 24, tzinfo=timezone.utc)
+    current = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    source = Source(
+        id="news-current",
+        user_id="user-1",
+        category_id=1,
+        title="近期新闻",
+        source_type="article",
+        raw_content="近期发布的新闻正文。",
+        metadata_={"kind": "news", "published_at": "2026-09-28T13:32:09Z"},
+    )
+
+    assert _source_is_in_publication_window(source, cutoff, current) is True
+
+
+def test_newsletter_excludes_existing_pypi_sources_from_news_selection():
+    source = Source(
+        id="news-pypi",
+        user_id="user-1",
+        category_id=1,
+        title="agent-package 1.2.3",
+        source_type="article",
+        url="https://pypi.org/project/agent-package/1.2.3/",
+        raw_content="An LLM agent package release.",
+        metadata_={"kind": "news", "published_at": "2026-10-01T01:00:00Z"},
+    )
+
+    from pkg.services.foundation.connectors import is_news_url_excluded
+
+    assert is_news_url_excluded(source.url) is True
+
+
 @pytest.mark.asyncio
 async def test_newsletter_ai_rewrites_each_detail_from_its_own_source_content():
     source = Source(
@@ -233,6 +284,49 @@ async def test_newsletter_ai_rewrites_each_detail_from_its_own_source_content():
 
 
 @pytest.mark.asyncio
+async def test_newsletter_ai_selects_hottest_news_title_from_candidates():
+    sources = [
+        Source(
+            id="news-1",
+            user_id="user-1",
+            category_id=1,
+            title="Routine SDK patch",
+            source_type="article",
+            raw_content="A small maintenance release with limited user impact.",
+            metadata_={"kind": "news", "published_at": "2026-10-01T01:00:00Z"},
+        ),
+        Source(
+            id="news-2",
+            user_id="user-1",
+            category_id=1,
+            title="Major agent platform launch",
+            source_type="article",
+            raw_content="A widely used platform introduced a new agent runtime with broad ecosystem impact.",
+            metadata_={"kind": "news", "published_at": "2026-10-01T02:00:00Z"},
+        ),
+    ]
+    response = MagicMock()
+    response.choices = [MagicMock(message=MagicMock(content="<think>There are 2 candidates. Candidate 2 has broader impact.</think>2"))]
+    client = MagicMock()
+    client.chat.completions.create = AsyncMock(return_value=response)
+
+    title, source_id, model, mode = await _select_newsletter_title(
+        sources,
+        config=NewsletterAutomationConfig(audience="技术负责人", topics=["AI agent"]),
+        generated_at=datetime(2026, 10, 1, tzinfo=timezone.utc),
+        llm_runtime=(client, "test-model"),
+    )
+
+    assert title == "Major agent platform launch · 2026-10-01"
+    assert source_id == "news-2"
+    assert model == "test-model"
+    assert mode == "llm"
+    request = client.chat.completions.create.await_args.kwargs
+    assert "Routine SDK patch" in request["messages"][1]["content"]
+    assert "Major agent platform launch" in request["messages"][1]["content"]
+
+
+@pytest.mark.asyncio
 async def test_saving_newsletter_config_syncs_news_query_and_paper_profile():
     settings = UserSettings(user_id="user-1", settings={"existing": True})
     profile_result = MagicMock()
@@ -282,7 +376,8 @@ async def test_updating_newsletter_config_increments_revision_and_preserves_last
 
 
 @pytest.mark.asyncio
-async def test_generate_newsletter_creates_draft_asset_from_recent_items():
+@pytest.mark.parametrize("cover_failure", [False, True])
+async def test_generate_newsletter_creates_draft_asset_from_recent_items(cover_failure):
     now = datetime(2026, 9, 3, 8, 0, tzinfo=timezone.utc)
     config = NewsletterAutomationConfig(
         config_revision=3,
@@ -293,6 +388,7 @@ async def test_generate_newsletter_creates_draft_asset_from_recent_items():
         hour_utc=7,
         max_news_items=3,
         max_paper_items=3,
+        generate_cover_image=True,
     )
     news = Source(id="news-1", user_id="user-1", category_id=1, title="Agent platform update", source_type="article", url="https://example.com/news", raw_content="Agent platform news.", metadata_={"kind": "news"})
     paper = DiscoveryItem(id=9, user_id="user-1", provider="openalex", item_key="paper-9", title="Agent evaluation paper", url="https://example.com/paper", summary="Agent evaluation results.", payload={"item_type": "paper"}, status="recommended")
@@ -311,6 +407,15 @@ async def test_generate_newsletter_creates_draft_asset_from_recent_items():
     ) as create_mock, patch(
         "pkg.services.application.newsletter_automation._save_newsletter_config", new=AsyncMock()
     ) as save_mock, patch(
+        "pkg.services.application.newsletter_automation.generate_asset_visual",
+        new=AsyncMock(side_effect=RuntimeError("provider unavailable") if cover_failure else None, return_value=MagicMock(id="visual-1")),
+    ) as generate_visual_mock, patch(
+        "pkg.services.application.newsletter_automation._newsletter_llm_runtime",
+        return_value=(MagicMock(), "test-model"),
+    ), patch(
+        "pkg.services.application.newsletter_automation._select_newsletter_title",
+        new=AsyncMock(return_value=("Agent platform update · 2026-09-03", "news-1", "test-model", "llm")),
+    ), patch(
         "pkg.services.application.newsletter_automation._rewrite_newsletter_details",
         new=AsyncMock(return_value=({
             "source:news-1": "这是根据新闻正文生成的详细解读，涵盖核心变化、关键机制、影响和信息边界。" * 4,
@@ -325,13 +430,20 @@ async def test_generate_newsletter_creates_draft_asset_from_recent_items():
     assert result.config_revision == 3
     assert result.config_snapshot is not None
     assert result.config_snapshot.topics == ["agent"]
+    assert result.config_snapshot.generate_cover_image is True
+    generate_visual_mock.assert_awaited_once()
+    assert generate_visual_mock.await_args.kwargs["auto_accept"] is True
     body = create_mock.await_args.kwargs["body"]
     assert body.asset_type == "newsletter_issue"
     assert body.status == "draft"
+    assert body.title == "Agent platform update · 2026-09-03"
     assert body.source_refs == ["news-1"]
     assert body.metadata["delivery_format"] == "html"
     assert body.metadata["newsletter_automation"]["config_revision"] == 3
     assert body.metadata["newsletter_automation"]["config_snapshot"]["max_news_items"] == 3
+    assert body.metadata["newsletter_automation"]["headline_source_id"] == "news-1"
+    assert body.metadata["newsletter_automation"]["headline_selection_model"] == "test-model"
+    assert body.metadata["newsletter_automation"]["headline_selection_mode"] == "llm"
     assert body.metadata["newsletter_automation"]["detail_rewrite_count"] == 2
     assert body.metadata["newsletter_automation"]["detail_rewrite_model"] == "test-model"
     assert "这是根据新闻正文生成的详细解读" in body.draft_content
@@ -354,14 +466,15 @@ async def test_generate_newsletter_creates_draft_asset_from_recent_items():
 
 
 @pytest.mark.asyncio
-async def test_forced_newsletter_collects_news_when_local_window_is_empty():
+async def test_scheduled_newsletter_collects_news_with_exact_window_when_local_news_is_empty():
     now = datetime(2026, 9, 16, 8, 0, tzinfo=timezone.utc)
     config = NewsletterAutomationConfig(
         config_revision=4,
         enabled=True,
         topics=[],
-        frequency="manual",
-        lookback_days=7,
+        frequency="daily",
+        hour_utc=1,
+        lookback_days=1,
         max_news_items=2,
         max_paper_items=0,
     )
@@ -423,15 +536,117 @@ async def test_forced_newsletter_collects_news_when_local_window_is_empty():
             new=AsyncMock(),
         ),
         patch(
+            "pkg.services.application.newsletter_automation._newsletter_llm_runtime",
+            return_value=None,
+        ),
+        patch(
+            "pkg.services.application.newsletter_automation._select_newsletter_title",
+            new=AsyncMock(return_value=("AI infrastructure update · 2026-09-16", "news-1", None, "fallback")),
+        ),
+        patch(
             "pkg.services.application.newsletter_automation._rewrite_newsletter_details",
             new=AsyncMock(return_value=({}, None)),
         ),
     ):
-        result = await generate_newsletter(session, user_id="user-1", force=True, now=now)
+        result = await generate_newsletter(session, user_id="user-1", now=now)
 
     assert result.status == "generated"
     assert result.news_count == 1
     assert result.paper_count == 0
     search_mock.assert_awaited_once()
     assert search_mock.await_args.kwargs["query"] == "AI, LLM, Agent, workflow"
+    assert search_mock.await_args.kwargs["from_date"] == "2026-09-15T00:00:00+00:00"
+    assert search_mock.await_args.kwargs["to_date"] == "2026-09-16T08:00:00+00:00"
     import_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_newsletter_retries_search_with_configured_topics_when_combined_query_is_empty():
+    now = datetime(2026, 10, 1, 8, 0, tzinfo=timezone.utc)
+    config = NewsletterAutomationConfig(
+        enabled=True,
+        topics=["AI agent", "LLM"],
+        frequency="daily",
+        hour_utc=1,
+        lookback_days=1,
+        max_news_items=1,
+        max_paper_items=0,
+    )
+    empty_sources = MagicMock()
+    empty_sources.scalars.return_value = []
+    empty_discoveries = MagicMock()
+    empty_discoveries.scalars.return_value = []
+    session = AsyncMock()
+    session.execute = AsyncMock(side_effect=[empty_sources, empty_discoveries])
+    article = NewsArticle(
+        provider="newsapi",
+        title="New AI agent platform",
+        url="https://example.com/agent-platform",
+        description="A current AI agent release.",
+        published_at=now,
+    )
+    source = Source(
+        id="news-agent",
+        user_id="user-1",
+        category_id=1,
+        title=article.title,
+        source_type="article",
+        url=article.url,
+        raw_content=article.description,
+        metadata_={"kind": "news", "published_at": now.isoformat()},
+    )
+    asset = Asset(
+        id="asset-newsletter-topics",
+        user_id="user-1",
+        asset_type="newsletter_issue",
+        status="draft",
+        title="New AI agent platform · 2026-10-01",
+        source_refs=[source.id],
+        note_refs=[],
+        wiki_refs=[],
+    )
+    asset.created_at = now
+    asset.updated_at = now
+
+    with (
+        patch(
+            "pkg.services.application.newsletter_automation.get_newsletter_config",
+            new=AsyncMock(return_value=config),
+        ),
+        patch(
+            "pkg.services.application.newsletter_automation.search_news_articles",
+            new=AsyncMock(side_effect=[[], [article], []]),
+        ) as search_mock,
+        patch(
+            "pkg.services.application.newsletter_automation.import_news_article",
+            new=AsyncMock(return_value=(source, True, "newsapi:agent")),
+        ),
+        patch(
+            "pkg.services.application.newsletter_automation.create_asset",
+            new=AsyncMock(return_value=asset),
+        ),
+        patch(
+            "pkg.services.application.newsletter_automation._save_newsletter_config",
+            new=AsyncMock(),
+        ),
+        patch(
+            "pkg.services.application.newsletter_automation._newsletter_llm_runtime",
+            return_value=None,
+        ),
+        patch(
+            "pkg.services.application.newsletter_automation._select_newsletter_title",
+            new=AsyncMock(return_value=(asset.title, source.id, None, "fallback")),
+        ),
+        patch(
+            "pkg.services.application.newsletter_automation._rewrite_newsletter_details",
+            new=AsyncMock(return_value=({}, None)),
+        ),
+    ):
+        result = await generate_newsletter(session, user_id="user-1", now=now)
+
+    assert result.status == "generated"
+    assert [call.kwargs["query"] for call in search_mock.await_args_list] == [
+        "AI agent, LLM",
+        "AI agent",
+        "LLM",
+    ]

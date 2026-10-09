@@ -4,8 +4,8 @@ import asyncio
 import json
 import logging
 import re
-from datetime import datetime, timedelta, timezone
-from typing import Iterable
+from datetime import datetime, time, timedelta, timezone
+from typing import Any, Iterable
 
 from opencc import OpenCC
 from sqlalchemy import select
@@ -28,7 +28,7 @@ from pkg.schemas.application.asset import (
 from pkg.services.application.assets import create_asset
 from pkg.services.application.asset_visuals import generate_asset_visual
 from pkg.services.cross_cutting.user_settings import get_user_settings_dict
-from pkg.services.foundation.connectors import import_news_article, search_news_articles
+from pkg.services.foundation.connectors import import_news_article, is_news_url_excluded, search_news_articles
 
 NEWSLETTER_SETTING_KEY = "newsletter_automation"
 NEWSLETTER_PAPER_PROFILE_NAME = "Newsletter Automation Papers"
@@ -43,6 +43,18 @@ NEWSLETTER_TERM_REPLACEMENTS = (
     ("网路", "网络"),
     ("资料库", "数据库"),
     ("资讯", "信息"),
+)
+ORIGINAL_PUBLICATION_DATE_PATTERNS = (
+    re.compile(
+        r"(?:本文|文章|原文)?(?:首发|首次发布|最初发布|原发布|发表于|发布于)"
+        r"[^\d]{0,80}(?P<year>20\d{2})\s*年\s*(?P<month>\d{1,2})\s*月\s*(?P<day>\d{1,2})\s*日",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:originally\s+published|first\s+published|published\s+originally)"
+        r"[^\d]{0,40}(?P<year>20\d{2})[-/](?P<month>\d{1,2})[-/](?P<day>\d{1,2})",
+        re.IGNORECASE,
+    ),
 )
 logger = logging.getLogger(__name__)
 
@@ -122,7 +134,7 @@ async def generate_newsletter(
             config_snapshot=run_snapshot,
         )
 
-    cutoff = current - timedelta(days=config.lookback_days)
+    cutoff = _newsletter_window_start(current, config.lookback_days)
     database_cutoff = cutoff.replace(tzinfo=None)
     source_rows = await session.execute(
         select(Source)
@@ -144,11 +156,17 @@ async def generate_newsletter(
     discoveries = list(discovery_rows.scalars())
 
     news_sources = _take_matching(
-        (source for source in sources if _source_kind(source) == "news"),
+        (
+            source
+            for source in sources
+            if _source_kind(source) == "news"
+            and not is_news_url_excluded(source.url)
+            and _source_is_in_publication_window(source, cutoff, current)
+        ),
         config.topics,
         config.max_news_items,
     )
-    if force and not news_sources and config.max_news_items > 0:
+    if not news_sources and config.max_news_items > 0:
         collected_news = await _collect_news_sources(
             session,
             user_id=user_id,
@@ -193,10 +211,17 @@ async def generate_newsletter(
             config_snapshot=run_snapshot,
         )
 
-    title = f"{config.name} · {current.date().isoformat()}"
+    llm_runtime = _newsletter_llm_runtime()
+    title, headline_source_id, headline_selection_model, headline_selection_mode = await _select_newsletter_title(
+        news_sources,
+        config=config,
+        generated_at=current,
+        llm_runtime=llm_runtime,
+    )
     detail_rewrites, detail_rewrite_model = await _rewrite_newsletter_details(
         [*news_sources, *paper_sources, *paper_discoveries],
         config=config,
+        llm_runtime=llm_runtime,
     )
     draft = build_newsletter_markdown(
         title=title,
@@ -232,6 +257,9 @@ async def generate_newsletter(
                     "news_count": len(news_sources),
                     "paper_count": len(paper_sources) + len(paper_discoveries),
                     "discovery_refs": [item.id for item in paper_discoveries],
+                    "headline_source_id": headline_source_id,
+                    "headline_selection_model": headline_selection_model,
+                    "headline_selection_mode": headline_selection_mode,
                     "detail_rewrite_count": len(detail_rewrites),
                     "detail_rewrite_model": detail_rewrite_model,
                 },
@@ -302,18 +330,40 @@ async def _collect_news_sources(
     query = ", ".join(config.topics) if config.topics else settings.NEWS_AUTO_SEARCH_QUERY
     if not query.strip():
         return []
-    try:
-        articles = await search_news_articles(
-            query=query,
-            language=settings.NEWS_DEFAULT_LANGUAGE or None,
-            from_date=cutoff.date().isoformat(),
-            to_date=current.date().isoformat(),
-            max_results=max(config.max_news_items * 2, config.max_news_items),
-            user_id=user_id,
-        )
-    except Exception as exc:
-        logger.warning("Newsletter news collection failed for user %s: %s", user_id, exc)
-        return []
+    max_results = max(config.max_news_items * 2, config.max_news_items)
+    search_queries = [query]
+    if config.topics:
+        search_queries.extend(topic.strip() for topic in config.topics if topic.strip() and topic.strip() != query)
+
+    articles = []
+    seen_urls = set()
+    for index, search_query in enumerate(search_queries):
+        try:
+            results = await search_news_articles(
+                query=search_query,
+                language=settings.NEWS_DEFAULT_LANGUAGE or None,
+                from_date=_ensure_utc(cutoff).isoformat(),
+                to_date=_ensure_utc(current).isoformat(),
+                max_results=max_results,
+                user_id=user_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Newsletter news collection failed for user %s and query %r: %s",
+                user_id,
+                search_query,
+                exc,
+            )
+            continue
+        for article in results:
+            if article.url in seen_urls:
+                continue
+            seen_urls.add(article.url)
+            articles.append(article)
+        if index == 0 and articles:
+            break
+        if len(articles) >= max_results:
+            break
 
     sources = []
     for article in articles:
@@ -326,6 +376,12 @@ async def _collect_news_sources(
             )
         except Exception as exc:
             logger.warning("Newsletter news import failed for user %s: %s", user_id, exc)
+            continue
+        if not _source_is_in_publication_window(source, cutoff, current):
+            logger.info("Newsletter excluded stale news source %s outside the publication window", source.id)
+            continue
+        if is_news_url_excluded(source.url):
+            logger.info("Newsletter excluded news source %s from a disabled domain", source.id)
             continue
         sources.append(source)
         if len(sources) >= config.max_news_items:
@@ -409,6 +465,49 @@ def _source_kind(source: Source) -> str | None:
     return None
 
 
+def _source_is_in_publication_window(source: Source, cutoff: datetime, current: datetime) -> bool:
+    published_at = _source_publication_time(source)
+    if published_at is None:
+        return True
+    return _ensure_utc(cutoff) <= published_at <= _ensure_utc(current)
+
+
+def _source_publication_time(source: Source) -> datetime | None:
+    original_date = _original_publication_time(source.raw_content or "")
+    if original_date is not None:
+        return original_date
+    metadata = source.metadata_ or {}
+    return _parse_publication_time(metadata.get("published_at") or metadata.get("publishedAt"))
+
+
+def _original_publication_time(value: str) -> datetime | None:
+    for pattern in ORIGINAL_PUBLICATION_DATE_PATTERNS:
+        match = pattern.search(value)
+        if match is None:
+            continue
+        try:
+            return datetime(
+                int(match.group("year")),
+                int(match.group("month")),
+                int(match.group("day")),
+                tzinfo=timezone.utc,
+            )
+        except ValueError:
+            continue
+    return None
+
+
+def _parse_publication_time(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return _ensure_utc(value)
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return _ensure_utc(datetime.fromisoformat(value.strip().replace("Z", "+00:00")))
+    except ValueError:
+        return None
+
+
 def _discovery_kind(item: DiscoveryItem) -> str | None:
     payload = item.payload or {}
     if item.provider in PAPER_PROVIDERS or payload.get("item_type") == "paper":
@@ -420,7 +519,9 @@ def _discovery_kind(item: DiscoveryItem) -> str | None:
 
 def _searchable_text(item) -> str:
     if isinstance(item, Source):
-        return " ".join([item.title or "", item.raw_content or "", json.dumps(item.metadata_ or {}, ensure_ascii=False)])
+        metadata = dict(item.metadata_ or {})
+        metadata.pop("query", None)
+        return " ".join([item.title or "", item.raw_content or "", json.dumps(metadata, ensure_ascii=False)])
     return " ".join([item.title or "", item.summary or "", json.dumps(item.payload or {}, ensure_ascii=False)])
 
 
@@ -461,23 +562,15 @@ async def _rewrite_newsletter_details(
     items: list[Source | DiscoveryItem],
     *,
     config: NewsletterAutomationConfig,
+    llm_runtime: tuple[Any, str] | None = None,
 ) -> tuple[dict[str, str], str | None]:
     if not items or not settings.NEWSLETTER_DETAIL_LLM_ENABLED:
         return {}, None
 
-    provider_id = settings.NEWSLETTER_DETAIL_LLM_PROVIDER_ID.strip() or None
-    model_id = settings.NEWSLETTER_DETAIL_LLM_MODEL.strip() or None
-    providers = settings.get_llm_providers()
-    configured_providers = [provider for provider in providers if provider.resolve_api_key().strip()]
-    if provider_id is None and configured_providers:
-        provider_id = configured_providers[0].id
-    if provider_id is None and not settings.QWEN_API_KEY and not settings.AZURE_OPENAI_API_KEY:
-        logger.info("Newsletter detail rewrite skipped because no LLM provider is configured")
+    runtime = llm_runtime or _newsletter_llm_runtime()
+    if runtime is None:
         return {}, None
-
-    from pkg.services.cross_cutting.llm import create_async_client
-
-    client, resolved_model = create_async_client(model_id=model_id, provider_id=provider_id)
+    client, resolved_model = runtime
     semaphore = asyncio.Semaphore(max(settings.NEWSLETTER_DETAIL_LLM_CONCURRENCY, 1))
 
     async def rewrite(item: Source | DiscoveryItem) -> tuple[str, str] | None:
@@ -515,6 +608,85 @@ async def _rewrite_newsletter_details(
     results = await asyncio.gather(*(rewrite(item) for item in items))
     rewrites = dict(result for result in results if result is not None)
     return rewrites, resolved_model
+
+
+def _newsletter_llm_runtime() -> tuple[Any, str] | None:
+    if not settings.NEWSLETTER_DETAIL_LLM_ENABLED:
+        return None
+    provider_id = settings.NEWSLETTER_DETAIL_LLM_PROVIDER_ID.strip() or None
+    model_id = settings.NEWSLETTER_DETAIL_LLM_MODEL.strip() or None
+    providers = settings.get_llm_providers()
+    configured_providers = [provider for provider in providers if provider.resolve_api_key().strip()]
+    if provider_id is None and configured_providers:
+        provider_id = configured_providers[0].id
+    if provider_id is None and not settings.QWEN_API_KEY and not settings.AZURE_OPENAI_API_KEY:
+        logger.info("Newsletter AI enrichment skipped because no LLM provider is configured")
+        return None
+
+    from pkg.services.cross_cutting.llm import create_async_client
+
+    return create_async_client(model_id=model_id, provider_id=provider_id)
+
+
+async def _select_newsletter_title(
+    news_sources: list[Source],
+    *,
+    config: NewsletterAutomationConfig,
+    generated_at: datetime,
+    llm_runtime: tuple[Any, str] | None = None,
+) -> tuple[str, str | None, str | None, str]:
+    date_suffix = generated_at.date().isoformat()
+    if not news_sources:
+        return f"{_clean_text(config.name)} · {date_suffix}", None, None, "fallback"
+
+    fallback = news_sources[0]
+    runtime = llm_runtime or _newsletter_llm_runtime()
+    if runtime is None:
+        return f"{_clean_text(fallback.title)} · {date_suffix}", fallback.id, None, "fallback"
+
+    client, resolved_model = runtime
+    candidates = []
+    for index, source in enumerate(news_sources, start=1):
+        metadata = source.metadata_ or {}
+        published_at = metadata.get("published_at") or metadata.get("publishedAt") or "未知"
+        candidates.append(
+            f"{index}. 标题：{_clean_text(source.title)}\n"
+            f"   发布时间：{published_at}\n"
+            f"   摘要：{_excerpt(_source_detail(source), 260)}"
+        )
+    prompt = (
+        "请从以下候选新闻中选出最适合作为本期 Newsletter 主标题的一条。\n"
+        "优先考虑：当前热度、影响范围、技术或商业重要性、时效性，以及对目标读者的吸引力；"
+        "不要只因为标题夸张而选择。\n"
+        f"目标读者：{_clean_text(config.audience or '技术读者')}\n"
+        f"关注主题：{_clean_text(', '.join(config.topics)) if config.topics else '科技与人工智能'}\n\n"
+        + "\n\n".join(candidates)
+        + "\n\n只输出候选序号，例如：2"
+    )
+    try:
+        response = await client.chat.completions.create(
+            model=resolved_model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "你是科技新闻主编。只能从候选新闻中选择，不得创造新标题，只输出一个候选序号。",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0,
+            timeout=settings.NEWSLETTER_DETAIL_LLM_TIMEOUT,
+        )
+        raw = response.choices[0].message.content or ""
+        visible_output = raw.rsplit("</think>", 1)[-1]
+        matches = re.findall(r"(?<!\d)\d+(?!\d)", visible_output)
+        selected_index = int(matches[-1]) if matches else 0
+        if not 1 <= selected_index <= len(news_sources):
+            raise ValueError(f"invalid candidate index: {raw!r}")
+        selected = news_sources[selected_index - 1]
+        return f"{_clean_text(selected.title)} · {date_suffix}", selected.id, resolved_model, "llm"
+    except Exception as exc:
+        logger.warning("Newsletter headline selection failed: %s", exc)
+        return f"{_clean_text(fallback.title)} · {date_suffix}", fallback.id, resolved_model, "fallback"
 
 
 def _newsletter_item_key(item: Source | DiscoveryItem) -> str:
@@ -618,6 +790,12 @@ def _ensure_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def _newsletter_window_start(current: datetime, lookback_days: int) -> datetime:
+    current_utc = _ensure_utc(current)
+    start_date = current_utc.date() - timedelta(days=lookback_days)
+    return datetime.combine(start_date, time.min, tzinfo=timezone.utc)
 
 
 async def _save_newsletter_config(session: AsyncSession, *, user_id: str, config: NewsletterAutomationConfig) -> None:

@@ -522,6 +522,8 @@ def test_canonicalize_news_url_removes_tracking_params():
 
 @pytest.mark.asyncio
 async def test_search_news_articles_maps_newsapi_payload(monkeypatch):
+    captured = {}
+
     class Response:
         status_code = 200
 
@@ -531,6 +533,12 @@ async def test_search_news_articles_maps_newsapi_payload(monkeypatch):
         def json(self):
             return {
                 "articles": [
+                    {
+                        "source": {"name": "PyPI"},
+                        "title": "package 1.2.3",
+                        "url": "https://pypi.org/project/package/1.2.3/",
+                        "publishedAt": "2026-06-20T12:01:00Z",
+                    },
                     {
                         "source": {"name": "Example News"},
                         "author": "Jane Doe",
@@ -555,6 +563,7 @@ async def test_search_news_articles_maps_newsapi_payload(monkeypatch):
             return None
 
         async def get(self, url, params):
+            captured.update(params)
             return Response()
 
     monkeypatch.setattr("pkg.services.foundation.connectors.httpx.AsyncClient", Client)
@@ -566,6 +575,7 @@ async def test_search_news_articles_maps_newsapi_payload(monkeypatch):
     assert items[0].source_name == "Example News"
     assert items[0].title == "Test headline"
     assert items[0].language == "en"
+    assert captured["excludeDomains"] == "pypi.org"
 
 
 @pytest.mark.asyncio

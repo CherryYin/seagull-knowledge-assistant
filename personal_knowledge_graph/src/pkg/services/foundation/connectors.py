@@ -538,8 +538,30 @@ def normalize_news_search_query(query: str) -> str:
     return " OR ".join(topics)
 
 
-async def search_news_articles(*, query: str, language: str | None = None, country: str | None = None, from_date: str | None = None, to_date: str | None = None, sources: list[str] | None = None, domains: list[str] | None = None, max_results: int | None = None, user_id: str | None = None) -> list[NewsArticle]:
+def news_excluded_domains() -> set[str]:
+    return {
+        domain.strip().lower().removeprefix("www.")
+        for domain in settings.NEWS_EXCLUDED_DOMAINS.split(",")
+        if domain.strip()
+    }
+
+
+def is_news_url_excluded(url: str | None, *, excluded_domains: set[str] | None = None) -> bool:
+    if not url:
+        return False
+    hostname = (urlsplit(url).hostname or "").lower().removeprefix("www.")
+    domains = excluded_domains if excluded_domains is not None else news_excluded_domains()
+    return any(hostname == domain or hostname.endswith(f".{domain}") for domain in domains)
+
+
+async def search_news_articles(*, query: str, language: str | None = None, country: str | None = None, from_date: str | None = None, to_date: str | None = None, sources: list[str] | None = None, domains: list[str] | None = None, exclude_domains: list[str] | None = None, max_results: int | None = None, user_id: str | None = None) -> list[NewsArticle]:
     query = normalize_news_search_query(query)
+    resolved_excluded_domains = news_excluded_domains()
+    resolved_excluded_domains.update(
+        domain.strip().lower().removeprefix("www.")
+        for domain in (exclude_domains or [])
+        if domain.strip()
+    )
     provider = (settings.NEWS_PROVIDER or "newsapi").strip().lower()
     if provider != "newsapi":
         raise ValueError(f"Unsupported news provider: {provider}")
@@ -564,6 +586,8 @@ async def search_news_articles(*, query: str, language: str | None = None, count
         params["sources"] = ",".join(sources)
     if domains:
         params["domains"] = ",".join(domains)
+    if resolved_excluded_domains:
+        params["excludeDomains"] = ",".join(sorted(resolved_excluded_domains))
     params = {key: value for key, value in params.items() if value not in (None, "", [])}
     async with httpx.AsyncClient(timeout=settings.NEWS_FETCH_TIMEOUT, headers=_news_headers(resolved_api_key)) as client:
         response = await client.get(f"{resolved_base_url}{NEWSAPI_EVERYTHING_PATH}", params=params)
@@ -574,7 +598,13 @@ async def search_news_articles(*, query: str, language: str | None = None, count
             raise _parse_newsapi_error(response)
     payload = response.json()
     articles = payload.get("articles") or []
-    return [parse_newsapi_article(item, query=query, language=language, country=country) for item in articles if item.get("title") and item.get("url")]
+    return [
+        parse_newsapi_article(item, query=query, language=language, country=country)
+        for item in articles
+        if item.get("title")
+        and item.get("url")
+        and not is_news_url_excluded(item.get("url"), excluded_domains=resolved_excluded_domains)
+    ]
 
 
 def news_raw_content(article: NewsArticle, extracted_text: str | None = None) -> str:
