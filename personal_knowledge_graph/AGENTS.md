@@ -18,6 +18,7 @@ The core product goal is a durable personal knowledge graph with deterministic r
 - Expose authenticated REST APIs that Harness tools use to search, read, and write user knowledge.
 - Delegate interactive Agent Chat and workflow execution to DeepSeek Harness through the shared gateway.
 - Persist a per-message Agent Run contract in Chat sessions so Workflow/Owner context, terminal status, allowed save actions, and saved receipts survive Workflow changes, reloads, and History review.
+- Retain the legacy optional `research_state` Chat Session field for sessions created during the withdrawn V2 research experiment. The Home entry now uses the existing Asset Intent workflow; do not write new research state or mistake old search previews for verified evidence.
 - Present Agent runs, Proposal actions, unsaved state, and recoverable errors through shared interaction components; user-facing copy explains impact and recovery while tool names, revisions, and raw contracts stay in diagnostic details.
 - Import or discover external knowledge from RSS, web pages, GitHub repositories, arXiv papers, and news providers.
 - Run recurring PKG automation through a single background Worker with PostgreSQL advisory locks, bounded task execution, short failed-run retries, startup-relative initial delays, and one batched job-history read per polling cycle. Media derivatives use a separate queue loop inside the same Worker, default to one item at a time, record System Jobs only when work exists, and retry failed Caption/thumbnail processing with exponential backoff.

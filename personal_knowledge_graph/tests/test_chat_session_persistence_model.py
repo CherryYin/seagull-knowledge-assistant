@@ -10,6 +10,7 @@ def test_chat_session_contains_harness_persistence_columns():
     assert str(columns.projection_seq.server_default.arg) == "-1"
     assert columns.materialized_at.nullable is True
     assert str(columns.is_ephemeral.server_default.arg) == "false"
+    assert columns.research_state.nullable is True
     assert str(columns.is_ephemeral.server_default.arg) == "false"
 
 

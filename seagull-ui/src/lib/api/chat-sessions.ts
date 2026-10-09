@@ -68,6 +68,7 @@ export interface ChatSessionRecord {
   id: string;
   title: string;
   messages: ChatSessionMessage[];
+  research_state?: { question: string } | null;
   profile_id?: string | null;
   created_at: string;
   updated_at: string;

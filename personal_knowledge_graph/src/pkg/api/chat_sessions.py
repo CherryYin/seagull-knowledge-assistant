@@ -30,6 +30,7 @@ async def create_session(
         user_id=user.id,
         title=body.title,
         messages=[m.model_dump() for m in body.messages],
+        research_state=body.research_state.model_dump(mode="json") if body.research_state else None,
         is_ephemeral=body.is_ephemeral,
     )
     db.add(obj)
@@ -91,6 +92,8 @@ async def update_session(
         obj.title = body.title
     if body.messages is not None:
         obj.messages = [m.model_dump() for m in body.messages]
+    if body.research_state is not None:
+        obj.research_state = body.research_state.model_dump(mode="json")
 
     await db.commit()
     await db.refresh(obj)

@@ -10,8 +10,15 @@ export interface AssetGenerationSessionContext {
   updatedAt?: string;
 }
 
+interface LegacyResearchSessionContext {
+  kind: "research_topic";
+  workflowId: "research-topic";
+  topic: string;
+  prompt: string;
+}
+
 interface SessionContextResponse {
-  context: AssetGenerationSessionContext | null;
+  context: AssetGenerationSessionContext | LegacyResearchSessionContext | null;
 }
 
 export const sessionContextsApi = {
