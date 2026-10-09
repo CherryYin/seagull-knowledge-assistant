@@ -72,6 +72,7 @@ from pkg.services.application.newsletter_automation import (
 )
 from pkg.services.application.asset_experience import list_style_profiles
 from pkg.services.application.asset_visuals import (
+    cancel_asset_visual,
     decide_asset_visual,
     delete_asset_visual,
     generate_asset_visual,
@@ -161,7 +162,7 @@ async def list_asset_visuals_route(
     return AssetVisualList(items=await list_asset_visuals(session, user_id=user.id, asset_id=asset_id))
 
 
-@router.post("/{asset_id}/visuals/generate", response_model=AssetVisualRead, status_code=201)
+@router.post("/{asset_id}/visuals/generate", response_model=AssetVisualRead, status_code=202)
 async def generate_asset_visual_route(
     asset_id: str,
     body: AssetVisualGenerateRequest,
@@ -185,6 +186,21 @@ async def decide_asset_visual_route(
         asset_id=asset_id,
         visual_id=visual_id,
         decision=body.decision,
+    )
+
+
+@router.post("/{asset_id}/visuals/{visual_id}/cancel", response_model=AssetVisualRead)
+async def cancel_asset_visual_route(
+    asset_id: str,
+    visual_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await cancel_asset_visual(
+        session,
+        user_id=user.id,
+        asset_id=asset_id,
+        visual_id=visual_id,
     )
 
 

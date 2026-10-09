@@ -19,12 +19,14 @@ async def test_worker_recovers_jobs_logs_disabled_tasks_and_starts_loop(caplog):
         patch("pkg.worker.get_scheduled_tasks", return_value=[enabled_task, disabled_task]),
         patch("pkg.worker.scheduled_pipeline_loop", AsyncMock()) as loop,
         patch("pkg.worker.media_processing_loop", AsyncMock()) as media_loop,
+        patch("pkg.worker.asset_visual_processing_loop", AsyncMock()) as visual_loop,
     ):
         await run_worker(poll_interval_seconds=7)
 
     recover.assert_awaited_once_with()
     loop.assert_awaited_once_with(poll_interval_seconds=7)
     media_loop.assert_awaited_once_with()
+    visual_loop.assert_awaited_once_with()
     assert "Recovered 2 stale running system job(s)" in caplog.text
     assert "Scheduled task paper_discovery disabled." in caplog.text
 
@@ -39,11 +41,13 @@ async def test_worker_continues_when_stale_job_recovery_fails(caplog):
         patch("pkg.worker.get_scheduled_tasks", return_value=[]),
         patch("pkg.worker.scheduled_pipeline_loop", AsyncMock()) as loop,
         patch("pkg.worker.media_processing_loop", AsyncMock()) as media_loop,
+        patch("pkg.worker.asset_visual_processing_loop", AsyncMock()) as visual_loop,
     ):
         await run_worker()
 
     loop.assert_awaited_once_with(poll_interval_seconds=30)
     media_loop.assert_awaited_once_with()
+    visual_loop.assert_awaited_once_with()
     assert "Failed to recover stale running system jobs" in caplog.text
 
 
@@ -55,12 +59,14 @@ async def test_worker_honors_disable_environment(monkeypatch):
         patch("pkg.worker.mark_stale_running_jobs_failed", AsyncMock()) as recover,
         patch("pkg.worker.scheduled_pipeline_loop", AsyncMock()) as loop,
         patch("pkg.worker.media_processing_loop", AsyncMock()) as media_loop,
+        patch("pkg.worker.asset_visual_processing_loop", AsyncMock()) as visual_loop,
     ):
         await run_worker()
 
     recover.assert_not_awaited()
     loop.assert_not_awaited()
     media_loop.assert_not_awaited()
+    visual_loop.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -73,6 +79,7 @@ async def test_worker_propagates_cancellation():
             AsyncMock(side_effect=asyncio.CancelledError),
         ),
         patch("pkg.worker.media_processing_loop", AsyncMock()),
+        patch("pkg.worker.asset_visual_processing_loop", AsyncMock()),
     ):
         with pytest.raises(asyncio.CancelledError):
             await run_worker()

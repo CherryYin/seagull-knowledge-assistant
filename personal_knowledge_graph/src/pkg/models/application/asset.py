@@ -54,6 +54,10 @@ class AssetVisual(Base):
     file_path: Mapped[str | None] = mapped_column(Text)
     provider_request_id: Mapped[str | None] = mapped_column(String(160))
     error_message: Mapped[str | None] = mapped_column(Text)
+    processing_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    next_retry_at: Mapped[datetime | None] = mapped_column()
+    started_at: Mapped[datetime | None] = mapped_column()
+    completed_at: Mapped[datetime | None] = mapped_column()
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
@@ -62,4 +66,5 @@ class AssetVisual(Base):
         Index("idx_asset_visuals_asset_id", "asset_id"),
         Index("idx_asset_visuals_user_id", "user_id"),
         Index("idx_asset_visuals_status", "status"),
+        Index("idx_asset_visuals_processing", "status", "next_retry_at"),
     )

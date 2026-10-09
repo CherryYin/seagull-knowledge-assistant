@@ -110,6 +110,10 @@ class AssetVisualRead(BaseModel):
     image_url: str | None = None
     provider_request_id: str | None = None
     error_message: str | None = None
+    processing_attempts: int = 0
+    next_retry_at: datetime | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
     metadata_: dict | None = None
     created_at: datetime
     updated_at: datetime

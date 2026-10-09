@@ -77,21 +77,9 @@ async def test_newsletter_cover_generation_is_optional_and_non_blocking(cover_fa
             side_effect=RuntimeError("provider unavailable") if cover_failure else None,
             return_value=MagicMock(id="visual-1"),
         ),
-    ) as generate_mock, patch(
-        "pkg.services.application.newsletter_automation.decide_asset_visual",
-        new=AsyncMock(),
-    ) as decide_mock:
+    ) as generate_mock:
         result = await generate_newsletter(session, user_id="user-1", now=now)
 
     assert result.status == "generated"
     generate_mock.assert_awaited_once()
-    if cover_failure:
-        decide_mock.assert_not_awaited()
-    else:
-        decide_mock.assert_awaited_once_with(
-            session,
-            user_id="user-1",
-            asset_id="asset-newsletter",
-            visual_id="visual-1",
-            decision="accept",
-        )
+    assert generate_mock.await_args.kwargs["auto_accept"] is True

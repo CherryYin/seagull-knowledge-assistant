@@ -91,6 +91,13 @@ class Settings(BaseSettings):
     QWEN_IMAGE_MODEL: str = "qwen-image-3.0-pro"
     QWEN_IMAGE_TIMEOUT: int = 180
     QWEN_IMAGE_ENABLED: bool = True
+    ASSET_VISUAL_PROCESSING_ENABLED: bool = True
+    ASSET_VISUAL_PROCESSING_INTERVAL_SECONDS: int = 5
+    ASSET_VISUAL_PROCESSING_BATCH_SIZE: int = 1
+    ASSET_VISUAL_MAX_ACTIVE_PER_USER: int = 2
+    ASSET_VISUAL_PROCESSING_MAX_ATTEMPTS: int = 3
+    ASSET_VISUAL_PROCESSING_RETRY_DELAY_SECONDS: int = 30
+    ASSET_VISUAL_PROCESSING_STALE_SECONDS: int = 300
 
     # MiniMax API (OpenAI-compatible, recommended via LLM_PROVIDERS)
     MINIMAX_API_BASE: str = "https://api.minimax.io/v1"

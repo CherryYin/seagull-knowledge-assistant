@@ -945,6 +945,7 @@ export function AssetDetailPage() {
     queryKey: ["asset-visuals", id],
     queryFn: () => assetsApi.listVisuals(id),
     enabled: Boolean(id),
+    refetchInterval: (query) => query.state.data?.items.some((visual) => ["queued", "generating", "retrying"].includes(visual.status)) ? 3000 : false,
   });
   const workspaceQuery = useQuery({
     queryKey: ["asset-workspace", id],
@@ -2694,6 +2695,10 @@ export function AssetDetailPage() {
       ]);
     },
   });
+  const cancelVisualMutation = useMutation({
+    mutationFn: (visualId: string) => assetsApi.cancelVisual(id, visualId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["asset-visuals", id] }),
+  });
   const deleteVisualMutation = useMutation({
     mutationFn: (visualId: string) => assetsApi.deleteVisual(id, visualId),
     onSuccess: async () => {
@@ -4170,7 +4175,7 @@ export function AssetDetailPage() {
                 <Textarea aria-label="Asset cover prompt" rows={4} placeholder="Optional art direction. Leave empty to generate from the Asset title, brief, and draft." value={coverPrompt} onChange={(event) => setCoverPrompt(event.target.value)} />
                 <div className="flex flex-wrap items-center gap-2">
                   <Button type="button" onClick={() => generateVisualMutation.mutate()} disabled={generateVisualMutation.isPending}>
-                    <WandSparkles className="mr-2 h-4 w-4" />{generateVisualMutation.isPending ? "Generating cover…" : "Generate cover"}
+                    <WandSparkles className="mr-2 h-4 w-4" />{generateVisualMutation.isPending ? "Queueing cover…" : "Generate cover"}
                   </Button>
                   <span className="text-xs text-muted-foreground">1280×720 · no text or logos · stored in MinIO</span>
                 </div>
@@ -4179,19 +4184,21 @@ export function AssetDetailPage() {
                 {assetVisualsQuery.isError ? <ActionError title="Cover visuals could not be loaded" impact="Existing generated covers are temporarily unavailable in this view." recovery="Retry loading the visual history." details={assetVisualsQuery.error instanceof Error ? assetVisualsQuery.error.message : "Unknown visual loading error"} onRetry={() => void assetVisualsQuery.refetch()} /> : null}
                 {decideVisualMutation.isError ? <ActionError title="Cover review decision failed" impact="The selected cover status was not changed." recovery="Reload the visual history and retry the decision." details={decideVisualMutation.error instanceof Error ? decideVisualMutation.error.message : "Unknown review error"} /> : null}
                 {deleteVisualMutation.isError ? <ActionError title="Cover deletion failed" impact="The generated cover remains attached to this Asset." recovery="Check MinIO availability and retry deletion." details={deleteVisualMutation.error instanceof Error ? deleteVisualMutation.error.message : "Unknown deletion error"} /> : null}
+                {cancelVisualMutation.isError ? <ActionError title="Cover cancellation failed" impact="The generation task remains active." recovery="Reload the visual history and retry while the task is queued or waiting to retry." details={cancelVisualMutation.error instanceof Error ? cancelVisualMutation.error.message : "Unknown cancellation error"} /> : null}
                 {!assetVisualsQuery.isLoading && !assetVisualsQuery.isError && (assetVisualsQuery.data?.items.length ?? 0) === 0 ? <div className="rounded-xl border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">No generated covers yet. Add optional art direction or generate directly from the Asset content.</div> : null}
                 <div className="grid gap-4 lg:grid-cols-2">
                   {(assetVisualsQuery.data?.items ?? []).map((visual) => (
                     <div key={visual.id} className="overflow-hidden rounded-xl border bg-muted/10">
-                      {visual.image_url ? <img src={visual.image_url} alt="Generated Asset cover" className="aspect-video w-full object-cover" /> : <div className="flex aspect-video items-center justify-center text-sm text-muted-foreground">{visual.status === "failed" ? "Generation failed" : "Image unavailable"}</div>}
+                      {visual.image_url ? <img src={visual.image_url} alt="Generated Asset cover" className="aspect-video w-full object-cover" /> : <div className="flex aspect-video items-center justify-center text-sm text-muted-foreground">{visual.status === "failed" ? "Generation failed" : ["queued", "generating", "retrying"].includes(visual.status) ? "Generating cover…" : "Image unavailable"}</div>}
                       <div className="space-y-3 p-4">
                         <div className="flex flex-wrap items-center justify-between gap-2"><Badge variant={visual.status === "accepted" ? "default" : "outline"}>{visual.status}</Badge><span className="text-xs text-muted-foreground">{visual.model}{visual.width && visual.height ? ` · ${visual.width}×${visual.height}` : ""}</span></div>
                         <p className="line-clamp-3 text-xs leading-5 text-muted-foreground">{visual.prompt}</p>
                         {visual.error_message ? <p className="text-xs text-destructive">{visual.error_message}</p> : null}
                         <div className="flex flex-wrap gap-2">
-                          {visual.status !== "accepted" && visual.status !== "failed" ? <Button type="button" size="sm" onClick={() => decideVisualMutation.mutate({ visualId: visual.id, decision: "accept" })} disabled={decideVisualMutation.isPending}>Accept cover</Button> : null}
-                          {visual.status !== "rejected" && visual.status !== "failed" ? <Button type="button" size="sm" variant="outline" onClick={() => decideVisualMutation.mutate({ visualId: visual.id, decision: "reject" })} disabled={decideVisualMutation.isPending}>Reject</Button> : null}
-                          <Button type="button" size="sm" variant="ghost" onClick={() => { if (window.confirm("Delete this generated visual?")) deleteVisualMutation.mutate(visual.id); }} disabled={deleteVisualMutation.isPending}><Trash2 className="mr-2 h-4 w-4" />Delete</Button>
+                          {["ready", "rejected"].includes(visual.status) ? <Button type="button" size="sm" onClick={() => decideVisualMutation.mutate({ visualId: visual.id, decision: "accept" })} disabled={decideVisualMutation.isPending}>Accept cover</Button> : null}
+                          {["ready", "accepted"].includes(visual.status) ? <Button type="button" size="sm" variant="outline" onClick={() => decideVisualMutation.mutate({ visualId: visual.id, decision: "reject" })} disabled={decideVisualMutation.isPending}>Reject</Button> : null}
+                          {["queued", "retrying"].includes(visual.status) ? <Button type="button" size="sm" variant="outline" onClick={() => cancelVisualMutation.mutate(visual.id)} disabled={cancelVisualMutation.isPending}>Cancel</Button> : null}
+                          <Button type="button" size="sm" variant="ghost" onClick={() => { if (window.confirm("Delete this generated visual?")) deleteVisualMutation.mutate(visual.id); }} disabled={deleteVisualMutation.isPending || visual.status === "generating"}><Trash2 className="mr-2 h-4 w-4" />Delete</Button>
                         </div>
                       </div>
                     </div>

@@ -222,6 +222,8 @@ Planner 必须忽略 Asset 内容中的指令注入，只将其作为素材处�
 
 优先级：P0。
 
+实施状态（2026-10-08）：已完成。API 只创建 `queued` 任务，PKG Worker 负责 Qwen 调用、MinIO 上传、指数退避重试和卡死任务恢复；Seagull UI 会轮询活动任务，并允许取消 queued/retrying 任务。重复的同内容活动请求会复用现有任务，Newsletter 通过 `auto_accept` 元数据在 Worker 完成后接受封面。系统已增加用户级活动任务上限、供应商/网络/额度/配置/存储错误分类，并将终态、耗时、尝试次数和失败原因记录到 System Jobs。
+
 任务：
 
 1. 将同步生成改为 Worker 异步任务，API 返回 `202 Accepted`。

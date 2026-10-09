@@ -26,7 +26,7 @@ from pkg.schemas.application.asset import (
     NewsletterAutomationUpdate,
 )
 from pkg.services.application.assets import create_asset
-from pkg.services.application.asset_visuals import decide_asset_visual, generate_asset_visual
+from pkg.services.application.asset_visuals import generate_asset_visual
 from pkg.services.cross_cutting.user_settings import get_user_settings_dict
 from pkg.services.foundation.connectors import import_news_article, search_news_articles
 
@@ -241,22 +241,15 @@ async def generate_newsletter(
     )
     if config.generate_cover_image:
         try:
-            visual = await generate_asset_visual(
+            await generate_asset_visual(
                 session,
                 user_id=user_id,
                 asset_id=asset.id,
                 body=AssetVisualGenerateRequest(role="cover", size="1280*720"),
+                auto_accept=True,
             )
-            await decide_asset_visual(
-                session,
-                user_id=user_id,
-                asset_id=asset.id,
-                visual_id=visual.id,
-                decision="accept",
-            )
-            await session.refresh(asset)
         except Exception:
-            logger.warning("Newsletter cover generation failed for asset %s", asset.id, exc_info=True)
+            logger.warning("Newsletter cover queueing failed for asset %s", asset.id, exc_info=True)
     news_count = len(news_sources)
     paper_count = len(paper_sources) + len(paper_discoveries)
     updated = config.model_copy(update={

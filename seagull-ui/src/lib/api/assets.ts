@@ -38,7 +38,7 @@ export interface AssetVisual {
   id: string;
   asset_id: string;
   role: "cover" | string;
-  status: "generating" | "ready" | "accepted" | "rejected" | "failed" | string;
+  status: "queued" | "generating" | "retrying" | "ready" | "accepted" | "rejected" | "failed" | "cancelled" | string;
   prompt: string;
   model: string;
   width?: number | null;
@@ -47,6 +47,10 @@ export interface AssetVisual {
   image_url?: string | null;
   provider_request_id?: string | null;
   error_message?: string | null;
+  processing_attempts: number;
+  next_retry_at?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
   metadata_?: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
@@ -409,6 +413,7 @@ export const assetsApi = {
   listVisuals: (id: string) => request<AssetVisualList>(`/assets/${encodeURIComponent(id)}/visuals`),
   generateVisual: (id: string, body: { prompt?: string | null; role?: "cover"; size?: "1024*1024" | "1280*720" | "720*1280" }) => request<AssetVisual>(`/assets/${encodeURIComponent(id)}/visuals/generate`, { method: "POST", body: JSON.stringify(body) }),
   decideVisual: (id: string, visualId: string, decision: "accept" | "reject") => request<AssetVisual>(`/assets/${encodeURIComponent(id)}/visuals/${encodeURIComponent(visualId)}/decision`, { method: "POST", body: JSON.stringify({ decision }) }),
+  cancelVisual: (id: string, visualId: string) => request<AssetVisual>(`/assets/${encodeURIComponent(id)}/visuals/${encodeURIComponent(visualId)}/cancel`, { method: "POST" }),
   deleteVisual: (id: string, visualId: string) => request<void>(`/assets/${encodeURIComponent(id)}/visuals/${encodeURIComponent(visualId)}`, { method: "DELETE" }),
   reviseIntent: reviseAssetIntent,
   proposeEvidence: (id: string, body: { base_workspace_revision: number; session_id?: string; proposals: AssetEvidenceProposalInput[] }) => request<AssetWorkspace>(`/assets/${encodeURIComponent(id)}/workspace/evidence/proposals`, { method: "POST", body: JSON.stringify(body) }),
