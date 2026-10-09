@@ -96,6 +96,7 @@ npm test               # 运行仓库检查
 
 ## 深入了解
 
+- [V2 优化历史与收口决策](docs/v2-progress.md)
 - [PKG 介绍](personal_knowledge_graph/README.zh-CN.md)
 - [平台架构](docs/platform/architecture.md)
 - [开发指南](docs/platform/development.md)
