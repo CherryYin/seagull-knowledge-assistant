@@ -173,6 +173,18 @@ function relevance(memory, query) {
   return hits / queryWords.size
 }
 
+function rankEligibleMemories(state, userId, { query, scopeType, scopeId, now }) {
+  return state.memories
+    .filter(memory => {
+      if (memory.userId !== userId || memory.status !== 'active') return false
+      if (memory.expiresAt && new Date(memory.expiresAt) <= now) return false
+      return memory.scopeType === 'global' || (memory.scopeType === scopeType && memory.scopeId === scopeId)
+    })
+    .map(memory => ({ memory, score: relevance(memory, query) + (memory.scopeType === 'global' ? 0 : 1) }))
+    .sort((left, right) => right.score - left.score
+      || String(right.memory.lastUsedAt ?? '').localeCompare(String(left.memory.lastUsedAt ?? '')))
+}
+
 export class AgentMemoryStore {
   #path
   #backend
@@ -362,25 +374,32 @@ export class AgentMemoryStore {
     })
   }
 
-  recall(userId, { query = '', scopeType = 'global', scopeId = null, limit = 5, sessionId }) {
+  async previewRecall(userId, { query = '', scopeType = 'global', scopeId = null, limit = 5 } = {}) {
+    const owner = requiredText(userId, 'userId')
+    const requestedScope = enumValue(scopeType, SCOPE_TYPES, 'scopeType')
+    const requestedScopeId = optionalText(scopeId, 'scopeId')
+    const safeLimit = Math.max(1, Math.min(5, Number(limit) || 5))
+    const state = await this.#read(owner)
+    const ranked = rankEligibleMemories(state, owner, {
+      query, scopeType: requestedScope, scopeId: requestedScopeId, now: this.#clock(),
+    }).slice(0, safeLimit)
+    return { memories: ranked.map(({ memory }) => memoryView(memory)) }
+  }
+
+  recall(userId, { query = '', scopeType = 'global', scopeId = null, limit = 5, sessionId, selectedIds }) {
     const owner = requiredText(userId, 'userId')
     const requestedScope = enumValue(scopeType, SCOPE_TYPES, 'scopeType')
     const requestedScopeId = optionalText(scopeId, 'scopeId')
     const recallSessionId = requiredText(sessionId, 'sessionId')
     const safeLimit = Math.max(1, Math.min(5, Number(limit) || 5))
+    const selected = selectedIds === undefined ? null : new Set(stringList(selectedIds, 'selectedIds'))
+    if (selected && selected.size > 5) throw new TypeError('selectedIds cannot exceed 5')
     return this.#mutate(owner, async (state) => {
       const now = this.#clock()
-      const eligible = state.memories.filter(memory => {
-        if (memory.userId !== owner || memory.status !== 'active') return false
-        if (memory.expiresAt && new Date(memory.expiresAt) <= now) return false
-        const global = memory.scopeType === 'global'
-        const exact = memory.scopeType === requestedScope && memory.scopeId === requestedScopeId
-        return global || exact
+      const ranked = rankEligibleMemories(state, owner, {
+        query, scopeType: requestedScope, scopeId: requestedScopeId, now,
       })
-      const ranked = eligible
-        .map(memory => ({ memory, score: relevance(memory, query) + (memory.scopeType === 'global' ? 0 : 1) }))
-        .sort((left, right) => right.score - left.score
-          || String(right.memory.lastUsedAt ?? '').localeCompare(String(left.memory.lastUsedAt ?? '')))
+        .filter(({ memory }) => selected === null || selected.has(memory.id))
         .slice(0, safeLimit)
       const usedAt = now.toISOString()
       for (const { memory } of ranked) memory.lastUsedAt = usedAt

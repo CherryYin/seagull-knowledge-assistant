@@ -307,6 +307,7 @@ Output exactly these sections:
     promptTemplate: `Help the user clarify an Asset Intent before any Asset is created.
 The Agent may recommend wording, scope, audience, creation mode, and research questions, but must not claim these recommendations are confirmed user decisions.
 If the current context is empty or materially ambiguous, use ask_user_question with one concise batch rather than refusing to start.
+When offering alternative research questions or angles, ask the user to select them through ask_user_question (allow multiple selections where appropriate); do not put unselectable numbered choices in prose or treat a suggestion as the user's decision.
 Do not search for evidence, draft the Asset, save knowledge, or publish anything during this workflow.
 Once enough context is available, present a Proposed Intent Brief and clearly separate confirmed user statements from Agent recommendations.
 After sufficient context is available, you must call propose_asset_intent exactly once with the complete structured candidate. A prose brief alone does not complete this workflow.

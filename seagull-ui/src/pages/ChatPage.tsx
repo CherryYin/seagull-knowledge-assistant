@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Cpu, GripHorizontal, History, MessageSquarePlus, Microscope, Send, Sparkles, Square, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { agentMemoryApi } from "@/lib/api";
+import { agentMemoryApi, type AgentMemory } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -62,6 +62,7 @@ type ChatLocationState = {
   objectRef?: AgentWorkflowContext["objectRef"];
   assetDraft?: AgentWorkflowContext["assetDraft"];
   assetIntentDraft?: AssetIntentFormDraft;
+  autoStartIntent?: boolean;
   backTo?: string;
   backLabel?: string;
 } | null;
@@ -150,6 +151,9 @@ export function ChatPage() {
   const [streaming, setStreaming] = useState(false);
   const [steps, setSteps] = useState<StepInfo[]>([]);
   const [deepResearch, setDeepResearch] = useState(false);
+  const [memoryPreview, setMemoryPreview] = useState<{ query: string; memories: AgentMemory[]; selectedIds: string[] } | null>(null);
+  const [memoryPreviewing, setMemoryPreviewing] = useState(false);
+  const [memoryPreviewError, setMemoryPreviewError] = useState<string | null>(null);
   const [pendingQuestion, setPendingQuestion] = useState<{
     rpcId: string;
     sessionId: string;
@@ -172,10 +176,16 @@ export function ChatPage() {
   const sessionSaveQueuesRef = useRef(new Map<string, Promise<void>>());
   const launchStateRef = useRef<ChatLocationState>(location.state as ChatLocationState);
   const launchContextPersistedRef = useRef(false);
+  const autoStartIntentRef = useRef(false);
   const launchState = launchStateRef.current;
   const backTo = launchState?.backTo || "/";
   const backLabel = launchState?.backLabel || "Back";
   const returnToPrevious = useReturnNavigation(backTo, Boolean(launchState?.backTo));
+
+  useEffect(() => {
+    setMemoryPreview(null);
+    setMemoryPreviewError(null);
+  }, [activeSessionId]);
 
   useEffect(() => {
     return () => {
@@ -191,7 +201,7 @@ export function ChatPage() {
       try {
         const loaded = await loadSessions();
         if (cancelled) return;
-        const resumableSessions = loaded.filter((session) => session.messages.length > 0);
+        const resumableSessions = loaded.filter((session) => session.messages.length > 0 || session.research_state);
         const launchState = launchStateRef.current;
         const requestedSessionId = initialNavigationParams.current.get("session");
         const requestedHistorySessionId = initialNavigationParams.current.get("history_session");
@@ -276,7 +286,7 @@ export function ChatPage() {
   const currentSession =
     sessions.find((s) => s.id === activeSessionId) ?? sessions[0] ?? null;
   const historySessions = [...sessions]
-    .filter((s) => s.messages.length > 0)
+    .filter((s) => s.messages.length > 0 || s.research_state)
     .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
   const selectedHistorySession =
     historySessions.find((s) => s.id === selectedHistorySessionId) ??
@@ -390,6 +400,12 @@ export function ChatPage() {
         setWorkflowContext({});
         return;
       }
+      if (context.kind !== "asset_generation") {
+        setSelectedWorkflowId(null);
+        setWorkflowContext({});
+        if (currentSession.messages.length === 0) setInput(context.topic);
+        return;
+      }
       const nextContext = {
         assetDraft: context.assetDraft,
         objectRef: context.assetDraft.assetId
@@ -464,7 +480,7 @@ export function ChatPage() {
   }, []);
 
   const sendMessage = useCallback(
-    async (task: string, truncateAfterIndex?: number) => {
+    async (task: string, truncateAfterIndex?: number, memoryIds?: string[]) => {
       const sessionAtStart = sessionsRef.current.find((session) => session.id === activeSessionId) ?? currentSession;
       if (!sessionAtStart || streaming) return;
       setPendingQuestion(null);
@@ -472,6 +488,7 @@ export function ChatPage() {
       const sessionId = sessionAtStart.id;
       const createHarnessSession = sessionAtStart.messages.length === 0;
       const harnessPreset = selectedWorkflowId ?? "knowledge-lab";
+      const selectedMemoryIds = memoryIds ?? (["clarify-asset-intent", "draft-asset", "draft-blog-asset"].includes(harnessPreset) ? [] : undefined);
       const workflowAtStart = findAgentWorkflowTemplate(selectedWorkflowId);
       const contextAtStart: AgentWorkflowContext = {
         ...workflowContext,
@@ -556,6 +573,7 @@ export function ChatPage() {
           sessionId,
           createSession: createHarnessSession,
           clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          memoryIds: selectedMemoryIds,
           signal: abortController.signal,
         });
 
@@ -710,11 +728,36 @@ export function ChatPage() {
 
   const handleSubmit = async () => {
     const raw = input.trim();
-    if (!raw || streaming) return;
+    if (!raw || streaming || memoryPreviewing) return;
+    if (["clarify-asset-intent", "draft-asset", "draft-blog-asset"].includes(selectedWorkflowId ?? "") && memoryPreview?.query !== raw) {
+      setMemoryPreviewing(true);
+      setMemoryPreviewError(null);
+      try {
+        const preview = await agentMemoryApi.preview(raw);
+        const memories = preview.memories.slice(0, 5);
+        setMemoryPreview({ query: raw, memories, selectedIds: memories.map((memory) => memory.id) });
+        if (memories.length === 0) {
+          setInput("");
+          void sendMessage(deepResearch ? `/deep-research ${raw}` : raw, undefined, []);
+        }
+      } catch {
+        setMemoryPreviewError("Unable to preview confirmed memories. Retry, or continue without memory.");
+      } finally {
+        setMemoryPreviewing(false);
+      }
+      return;
+    }
     setInput("");
     const task = deepResearch ? `/deep-research ${raw}` : raw;
-    sendMessage(task);
+    sendMessage(task, undefined, memoryPreview?.query === raw ? memoryPreview.selectedIds : undefined);
   };
+
+  useEffect(() => {
+    if (!launchStateRef.current?.autoStartIntent || autoStartIntentRef.current || !seedApplied || !currentSession
+      || currentSession.messages.length > 0 || selectedWorkflowId !== "clarify-asset-intent" || !input.trim()) return;
+    autoStartIntentRef.current = true;
+    void handleSubmit();
+  }, [currentSession, input, seedApplied, selectedWorkflowId]);
 
   const handleRetryIntentProposal = useCallback(() => {
     void sendMessage(
@@ -724,6 +767,8 @@ export function ChatPage() {
 
   const handleSelectWorkflow = useCallback(
     (workflow: AgentWorkflowTemplate) => {
+      setMemoryPreview(null);
+      setMemoryPreviewError(null);
       const currentInput = input.trim();
       const userInput = selectedWorkflowId ? undefined : currentInput || undefined;
       setSelectedWorkflowId(workflow.id);
@@ -735,6 +780,8 @@ export function ChatPage() {
   );
 
   const handleClearWorkflow = useCallback(() => {
+    setMemoryPreview(null);
+    setMemoryPreviewError(null);
     setSelectedWorkflowId(null);
     setInput((value) => value.trim());
     setTimeout(() => textareaRef.current?.focus(), 0);
@@ -1140,6 +1187,43 @@ export function ChatPage() {
                     </div>
                   )}
                 </div>
+                {["clarify-asset-intent", "draft-asset", "draft-blog-asset"].includes(selectedWorkflowId ?? "") && input.trim() && (
+                  <div className="mx-auto mb-3 max-w-3xl rounded-lg border border-border bg-card px-4 py-3 text-sm">
+                    <p className="font-medium">Confirmed memory for this Asset</p>
+                    {memoryPreview?.query === input.trim() ? (
+                      <>
+                        <p className="mt-1 text-xs text-muted-foreground">Choose which preferences guide the Agent. Memory is not evidence; review the result before saving.</p>
+                        <div className="mt-2 space-y-2">
+                          {memoryPreview.memories.map((memory) => (
+                            <label key={memory.id} className="flex items-start gap-2 text-xs">
+                              <input type="checkbox" checked={memoryPreview.selectedIds.includes(memory.id)}
+                                onChange={(event) => setMemoryPreview((current) => current && {
+                                  ...current,
+                                  selectedIds: event.target.checked
+                                    ? [...current.selectedIds, memory.id]
+                                    : current.selectedIds.filter((id) => id !== memory.id),
+                                })}
+                              />
+                              <span>{memory.title} · {memory.content}</span>
+                            </label>
+                          ))}
+                        </div>
+                        {memoryPreview.memories.length === 0 && <p className="mt-1 text-xs text-muted-foreground">Continue without memory.</p>}
+                      </>
+                    ) : (
+                      <p className="mt-1 text-xs text-muted-foreground">First send previews relevant memories; the next send uses your selection. No Asset is created until you confirm its Intent.</p>
+                    )}
+                    {memoryPreviewError && (
+                      <div role="alert" className="mt-2 text-xs text-destructive">
+                        <p>{memoryPreviewError}</p>
+                        <Button type="button" size="sm" variant="outline" className="mt-2" onClick={() => {
+                          setMemoryPreview({ query: input.trim(), memories: [], selectedIds: [] });
+                          setMemoryPreviewError(null);
+                        }}>Continue without memory</Button>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="mx-auto flex max-w-3xl items-end gap-3">
                   <div className="min-w-0 flex-1">
                     <button
@@ -1173,7 +1257,8 @@ export function ChatPage() {
                       <Square className="h-4 w-4 fill-current" />
                     </Button>
                   ) : (
-                    <Button size="icon" onClick={handleSubmit} disabled={!input.trim()}>
+                    <Button size="icon" onClick={handleSubmit} disabled={!input.trim() || memoryPreviewing}
+                      aria-label={memoryPreviewing ? "Previewing memory" : "Send message"}>
                       <Send className="h-4 w-4" />
                     </Button>
                   )}

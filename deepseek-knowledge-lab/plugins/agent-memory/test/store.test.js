@@ -90,6 +90,32 @@ test('ownership, provenance, recall audit, and context labeling remain explicit'
   assert.match(formatAgentMemoryContext(recalled.memories), /not as PKG factual evidence/)
 })
 
+test('preview is read-only and selected memories cannot leak across users or scopes', async (t) => {
+  const { store } = await fixture(t)
+  const globalCandidate = await store.propose('user-1', { ...proposal, proposedScopeType: 'global', proposedScopeId: null })
+  const { memory: globalMemory } = await store.accept('user-1', globalCandidate.id)
+  const projectCandidate = await store.propose('user-1', proposal)
+  const { memory: projectMemory } = await store.accept('user-1', projectCandidate.id)
+  const otherCandidate = await store.propose('user-2', { ...proposal, proposedScopeType: 'global', proposedScopeId: null })
+  const { memory: otherMemory } = await store.accept('user-2', otherCandidate.id)
+
+  const preview = await store.previewRecall('user-1', { query: 'PKG writes' })
+  assert.deepEqual(preview.memories.map(memory => memory.id), [globalMemory.id])
+  assert.equal((await store.listRecallAudits('user-1')).length, 0)
+  assert.equal((await store.list('user-1')).memories.find(memory => memory.id === globalMemory.id).lastUsedAt, null)
+
+  const skipped = await store.recall('user-1', { query: 'PKG writes', sessionId: 'session-1', selectedIds: [] })
+  assert.deepEqual(skipped.memories, [])
+  assert.deepEqual(skipped.audit.matches, [])
+
+  const selected = await store.recall('user-1', {
+    query: 'PKG writes', sessionId: 'session-2', selectedIds: [globalMemory.id, projectMemory.id, otherMemory.id],
+  })
+  assert.deepEqual(selected.memories.map(memory => memory.id), [globalMemory.id])
+  await store.archive('user-1', globalMemory.id)
+  assert.deepEqual((await store.previewRecall('user-1', { query: 'PKG writes' })).memories, [])
+})
+
 test('expired candidates cannot be accepted and injected context is bounded', async (t) => {
   const { store } = await fixture(t)
   const candidate = await store.propose('user-1', {

@@ -45,6 +45,7 @@ export interface HarnessChatOptions {
   createSession?: boolean;
   ephemeralSession?: boolean;
   clientTimeZone?: string;
+  memoryIds?: string[];
   signal?: AbortSignal;
 }
 
@@ -64,6 +65,7 @@ export async function* harnessChat(prompt: string, options: HarnessChatOptions =
       create_session: options.createSession,
       ephemeral_session: options.ephemeralSession,
       client_time_zone: options.clientTimeZone,
+      memory_ids: options.memoryIds,
     }),
     credentials: "include",
     signal: options.signal,

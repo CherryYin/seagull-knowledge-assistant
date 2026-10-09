@@ -28,6 +28,10 @@ type MockState = {
   savedAssetBody: Record<string, unknown> | null;
   candidate: Record<string, unknown> | null;
   memory: Record<string, unknown> | null;
+  memoryPreviewItems?: Array<Record<string, unknown>>;
+  memoryPreviewStatus?: number;
+  memoryPreviewQueries?: string[];
+  questionAnswers?: Array<Record<string, unknown>>;
   sessionContext: Record<string, unknown> | null;
   chatResponse?: string;
   chatPrompts?: string[];
@@ -316,6 +320,10 @@ async function installMockBff(page: Page, state: MockState) {
         state.sessionContext = null;
         return json(route, {}, 204);
       }
+    }
+    if (path === "/api/harness/questions/respond" && method === "POST") {
+      state.questionAnswers = [...(state.questionAnswers ?? []), request.postDataJSON() as Record<string, unknown>];
+      return json(route, { accepted: true });
     }
 
     if (path === "/api/harness/models") return json(route, { models: [], failures: [] });
@@ -639,6 +647,11 @@ async function installMockBff(page: Page, state: MockState) {
       };
       return json(route, { candidate: state.candidate, memory: state.memory });
     }
+    if (path === "/api/harness/memory-preview" && method === "POST") {
+      const body = request.postDataJSON() as { query: string };
+      state.memoryPreviewQueries = [...(state.memoryPreviewQueries ?? []), body.query];
+      return json(route, state.memoryPreviewStatus ? { error: "Preview unavailable" } : { memories: state.memoryPreviewItems ?? [] }, state.memoryPreviewStatus ?? 200);
+    }
     if (path === "/api/harness/memories") {
       return json(route, {
         candidates: state.candidate ? [state.candidate] : [],
@@ -896,6 +909,105 @@ test("critical knowledge journey: login, chat, explicit save, decisions, and Age
   await expect(page.locator("main").getByRole("link", { name: "Settings", exact: true })).toBeVisible();
   await expect(page.getByText("E2E Memory")).toBeVisible();
   await expect(page.getByText("Remember this E2E preference")).toBeVisible();
+});
+
+test("Home research uses Asset Intent and selected memory without creating an Asset", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null,
+    memoryPreviewItems: [
+      { id: "memory-relevant", title: "Preferred audience", content: "Engineering leads" },
+      { id: "memory-unwanted", title: "Old preference", content: "Avoid this angle" },
+    ],
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/");
+  await page.getByLabel("Research a topic").fill("How should we evaluate new vector databases?");
+  await page.getByRole("button", { name: "Start research" }).click();
+  await expect(page).toHaveURL(/\/chat\?session=/);
+  const input = page.getByPlaceholder("Ask anything about your knowledge base...");
+  await expect(input).toContainText("How should we evaluate new vector databases?");
+  await expect(page.getByText("Preferred audience")).toBeVisible();
+  expect(state.chatRequests).toBeUndefined();
+  await page.getByLabel("Old preference · Avoid this angle").uncheck();
+  await input.press("Enter");
+  await expect(page.getByRole("button", { name: "Apply Intent Proposal to Form" })).toBeVisible();
+  expect(state.chatRequests?.at(-1)).toMatchObject({ preset: "clarify-asset-intent", memory_ids: ["memory-relevant"] });
+  expect(state.memoryPreviewQueries?.at(-1)).toContain("How should we evaluate new vector databases?");
+  expect(state.savedAssetBody).toBeNull();
+  await page.getByRole("button", { name: "Apply Intent Proposal to Form" }).click();
+  await expect(page).toHaveURL(/\/assets\/new$/);
+});
+
+test("Home research starts Asset Intent immediately when no memory matches", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null,
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+  await page.goto("/");
+  await page.getByLabel("Research a topic").fill("Investigate a new database technology");
+  await page.getByRole("button", { name: "Start research" }).click();
+  await expect(page.getByRole("button", { name: "Apply Intent Proposal to Form" })).toBeVisible();
+  expect(state.chatRequests?.at(-1)).toMatchObject({ preset: "clarify-asset-intent", memory_ids: [] });
+  expect(state.chatPrompts?.at(-1)).toContain("Investigate a new database technology");
+  expect(state.savedAssetBody).toBeNull();
+});
+
+test("Home Asset Intent lets users select structured research questions", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null,
+    nextChatEvents: [
+      { type: "session", session_id: "session-e2e" },
+      { type: "question", rpc_id: "research-options", session_id: "session-e2e", questions: [{
+        id: "focus", question: "Which research directions matter?", multiSelect: true,
+        options: [{ label: "Compare approaches" }, { label: "Evaluate risks" }],
+      }] },
+    ],
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+  await page.goto("/");
+  await page.getByLabel("Research a topic").fill("Investigate retrieval architectures");
+  await page.getByRole("button", { name: "Start research" }).click();
+  await expect(page.getByText("Which research directions matter?")).toBeVisible();
+  await page.getByRole("button", { name: "Compare approaches" }).click();
+  await page.getByRole("button", { name: "Evaluate risks" }).click();
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect.poll(() => state.questionAnswers?.length).toBe(1);
+  expect(state.questionAnswers?.[0]).toMatchObject({ rpc_id: "research-options", session_id: "session-e2e", answers: [{ id: "focus", selected: ["Compare approaches", "Evaluate risks"] }] });
+});
+
+test("withdrawn research sessions keep their unsent topic without restarting the old workflow", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null,
+    sessionContext: { kind: "research_topic", topic: "Old research topic", prompt: "Old research prompt", workflowId: "research-topic" },
+    chatSessions: [{ id: "legacy-research", title: "Old research topic", messages: [], research_state: { question: "Old research topic", status: "prepared" }, created_at: now, updated_at: now }],
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+  await page.goto("/chat?session=legacy-research");
+  await expect(page.getByPlaceholder("Ask anything about your knowledge base...")).toContainText("Old research topic");
+  await expect(page.getByText("Research plan", { exact: true })).toHaveCount(0);
+  expect(state.chatRequests).toBeUndefined();
+});
+
+test("Asset Intent can continue without memory when preview fails", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null,
+    memoryPreviewStatus: 503,
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+  await page.goto("/");
+  await page.getByLabel("Research a topic").fill("Compare two design choices");
+  await page.getByRole("button", { name: "Start research" }).click();
+  await expect(page.getByRole("button", { name: "Continue without memory" })).toBeVisible();
+  await page.getByRole("button", { name: "Continue without memory" }).click();
+  await page.getByPlaceholder("Ask anything about your knowledge base...").press("Enter");
+  await expect(page.getByRole("button", { name: "Apply Intent Proposal to Form" })).toBeVisible();
+  expect(state.chatRequests?.at(-1)).toMatchObject({ preset: "clarify-asset-intent", memory_ids: [] });
 });
 
 test("Asset Intent Agent starts a fresh session and restores its apply action", async ({ page }) => {
