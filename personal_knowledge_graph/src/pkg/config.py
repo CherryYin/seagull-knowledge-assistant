@@ -100,7 +100,7 @@ class Settings(BaseSettings):
     ASSET_VISUAL_PROCESSING_STALE_SECONDS: int = 300
 
     # MiniMax API (OpenAI-compatible, recommended via LLM_PROVIDERS)
-    MINIMAX_API_BASE: str = "https://api.minimax.io/v1"
+    MINIMAX_API_BASE: str = "https://api.minimaxi.com/v1"
     MINIMAX_API_KEY: str = ""
     MINIMAX_MODEL: str = ""
 
@@ -272,7 +272,15 @@ class Settings(BaseSettings):
         except (json.JSONDecodeError, TypeError):
             raw = []
         if raw:
-            return [LLMProviderConfig(**entry) for entry in raw]
+            providers = [LLMProviderConfig(**entry) for entry in raw]
+            return [
+                provider.model_copy(update={
+                    "api_key": getattr(self, provider.api_key_env, provider.api_key),
+                })
+                if provider.api_key_env and not provider.api_key
+                else provider
+                for provider in providers
+            ]
         if self.QWEN_API_KEY:
             return [LLMProviderConfig(
                 id="qwen",

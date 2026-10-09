@@ -28,7 +28,7 @@ const PROVIDERS: ProviderMetadata[] = [
   { id: "newsapi", label: "NewsAPI", configFields: [{ label: "Base URL", key: "base_url", placeholder: "https://newsapi.org/v2" }] },
   { id: "tavily", label: "Tavily", configFields: [{ label: "Base URL", key: "base_url", placeholder: "https://api.tavily.com" }] },
   { id: "qwen", label: "Qwen", configFields: [{ label: "Base URL", key: "base_url", placeholder: "https://dashscope.aliyuncs.com/compatible-mode/v1" }] },
-  { id: "minimax", label: "MiniMax", configFields: [{ label: "Base URL", key: "base_url", placeholder: "https://api.minimax.io/v1" }] },
+  { id: "minimax", label: "MiniMax", configFields: [{ label: "Base URL", key: "base_url", placeholder: "https://api.minimaxi.com/v1" }] },
   { id: "azure_openai", label: "Azure OpenAI", configFields: [{ label: "Base URL", key: "base_url", placeholder: "https://your-resource.openai.azure.com" }] },
   { id: "github", label: "GitHub", configFields: [{ label: "Base URL", key: "base_url", placeholder: "https://api.github.com" }] },
   { id: "openalex", label: "OpenAlex", configFields: [{ label: "Base URL", key: "base_url", placeholder: "https://api.openalex.org" }] },
