@@ -278,16 +278,16 @@ Phase 2E 轻量风格记忆（2026-10-10）：Visual Planner 会按用户、角�
 
 优先级：P1。
 
-实施状态（2026-10-10）：Phase 3A 已完成。Asset Visual 契约和 Production 工作台支持 `cover`、`social_square`、`social_portrait`，分别使用横向、方形和竖版尺寸；候选历史按当前发布位筛选，预览采用对应宽高比。接受结果写入 `metadata.accepted_visuals[role]`，封面同时继续维护 `cover_visual_id` 以兼容现有读取链路。
+实施状态（2026-10-10）：Phase 3 已完成。Asset Visual 契约和 Production 工作台支持 `cover`、`social_square`、`social_portrait`、`inline_illustration`；正文插图通过 `source_block_ids` 关联 Asset Block，并按 Block 维护接受映射。社交图和正文插图可通过 `parent_visual_id` 基于已接受封面进行同系列重绘，不对原图做裁切。Markdown、HTML 和微信公众号草稿会自动注入已接受视觉及 `alt_text`；正式导出或发布把引用写入 `metadata.visual_delivery_snapshot`，已接受或已交付视觉不能被物理删除。HTML 与微信交付使用内嵌图片数据避免 MinIO 临时签名过期，预览仍使用短期签名 URL。Production 会提示已删除 Block 形成的孤立插图，并提供稳定下载文件名。焦点位置与交互式裁切不再纳入当前产品范围。
 
 任务：
 
-1. 扩展 `cover`、`social_square`、`social_portrait` 和 `inline_illustration`。（前三种已完成 Phase 3A）
-2. 增加角色级接受映射和历史版本比较。（角色级映射已完成 Phase 3A）
-3. 支持基于已接受封面的尺寸派生或重绘。
-4. 支持焦点位置、裁切预览和下载命名规则。
-5. 正文插图与 Asset Block 建立关联。
-6. 导出 HTML/Newsletter 时按角色自动注入图片和 `alt_text`。
+1. 扩展 `cover`、`social_square`、`social_portrait` 和 `inline_illustration`。（已完成）
+2. 增加角色级接受映射和历史版本比较。（已完成）
+3. 支持基于已接受封面的尺寸派生或重绘。（已完成：采用重绘）
+4. 提供稳定下载命名规则；焦点位置和裁切预览明确不做。（已完成）
+5. 正文插图与 Asset Block 建立关联。（已完成）
+6. 导出 HTML/Newsletter 时按角色自动注入图片和 `alt_text`。（已完成）
 
 验收：
 

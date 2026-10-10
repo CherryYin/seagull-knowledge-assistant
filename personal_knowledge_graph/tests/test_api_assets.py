@@ -237,9 +237,21 @@ async def test_export_markdown_route_marks_asset_exported():
     asset.outline = "# Outline"
     asset.draft_content = "# Draft post\n\ncontent"
     asset.reference_notes = "## References\n\n- Source: src-1"
+    visual = {
+        "visual_id": "visual-1",
+        "role": "cover",
+        "file_path": "minio://pkg/cover.png",
+        "image_url": "https://cdn.example/cover.png",
+        "alt_text": "Editorial cover",
+        "model": "qwen-image-3.0-pro",
+        "width": 1600,
+        "height": 900,
+        "mime_type": "image/png",
+    }
 
     with (
         patch("pkg.api.assets.get_asset", new=AsyncMock(return_value=asset)),
+        patch("pkg.api.assets.resolve_accepted_visuals", new=AsyncMock(return_value={"cover": visual})),
         patch("pkg.api.assets.export_markdown", return_value="# Draft post\n\ncontent"),
         patch("pkg.api.assets.update_asset", new=AsyncMock(return_value=asset)) as mock_update,
     ):
@@ -249,6 +261,10 @@ async def test_export_markdown_route_marks_asset_exported():
     assert result.export_format == "markdown"
     assert "# Draft post" in result.content
     mock_update.assert_awaited_once()
+    update_body = mock_update.await_args.kwargs["body"]
+    assert update_body.metadata["visual_delivery_snapshot"]["latest"]["markdown"]["visual_ids"] == {
+        "cover": "visual-1",
+    }
 
 
 @pytest.mark.asyncio
@@ -334,12 +350,25 @@ async def test_publish_wechat_draft_route_records_remote_draft():
         config={"app_id": "wx-app", "default_thumb_media_id": "cover-media"},
     )
     sent_at = datetime.now(timezone.utc)
+    visual = {
+        "visual_id": "visual-1",
+        "role": "cover",
+        "file_path": "minio://pkg/cover.png",
+        "image_url": "https://cdn.example/cover.png",
+        "data_url": "data:image/png;base64,AAAA",
+        "alt_text": "Editorial cover",
+        "model": "qwen-image-3.0-pro",
+        "width": 1600,
+        "height": 900,
+        "mime_type": "image/png",
+    }
 
     with (
         patch("pkg.api.assets.get_asset", new=AsyncMock(return_value=asset)),
         patch("pkg.api.assets.check_readiness", return_value=(True, [], [], [])),
         patch("pkg.api.assets.get_default_user_api_credential", new=AsyncMock(return_value=credential)),
         patch("pkg.api.assets.decrypt_secret", return_value="app-secret"),
+        patch("pkg.api.assets.resolve_accepted_visuals", new=AsyncMock(return_value={"cover": visual})),
         patch(
             "pkg.api.assets.create_wechat_draft",
             new=AsyncMock(return_value=WechatDraftReceipt(media_id="draft-media-1", sent_at=sent_at)),
@@ -362,6 +391,10 @@ async def test_publish_wechat_draft_route_records_remote_draft():
     assert update_body.status == "exported"
     assert update_body.export_format == "wechat_draft"
     assert update_body.metadata["wechat_draft"]["media_id"] == "draft-media-1"
+    assert update_body.metadata["visual_delivery_snapshot"]["latest"]["wechat_draft"]["visual_ids"] == {
+        "cover": "visual-1",
+    }
+    assert mock_create_draft.await_args.kwargs["cover_image_url"] == "data:image/png;base64,AAAA"
     assert mock_create_draft.await_args.kwargs["rendered_diagrams"] == {
         "a" * 64: "data:image/png;base64,AAAA",
     }
@@ -413,6 +446,9 @@ async def test_preview_wechat_rendered_route_forwards_mermaid_images():
     mock_export.assert_called_once_with(
         asset,
         rendered_diagrams={"b" * 64: "data:image/png;base64,BBBB"},
+        cover_image_url=None,
+        cover_alt_text=None,
+        inline_visuals=[],
     )
 
 

@@ -509,33 +509,92 @@ def check_readiness(asset: Asset) -> tuple[bool, list[str], list[str], list[str]
     return len(blocking) == 0, blocking, warnings, suggestions
 
 
-def export_markdown(asset: Asset) -> str:
+def _markdown_cover(image_url: str | None, alt_text: str | None) -> str | None:
+    if not (image_url or "").strip():
+        return None
+    safe_alt = re.sub(r"[\[\]\r\n]+", " ", (alt_text or "Asset cover")).strip() or "Asset cover"
+    return f"![{safe_alt}](<{image_url.strip()}>)"
+
+
+def _markdown_inline_image(image_url: str | None, alt_text: str | None) -> str | None:
+    if not (image_url or "").strip():
+        return None
+    safe_alt = re.sub(r"[\[\]\r\n]+", " ", (alt_text or "Inline illustration")).strip() or "Inline illustration"
+    safe_url = image_url.strip().replace("(", "%28").replace(")", "%29")
+    return f"![{safe_alt}]({safe_url})"
+
+
+def _inject_inline_visuals(asset: Asset, content: str, inline_visuals: list[dict] | None) -> str:
+    if not inline_visuals:
+        return content
+    document = (asset.metadata_ or {}).get("asset_document")
+    blocks = document.get("blocks") if isinstance(document, dict) else None
+    if not isinstance(blocks, list):
+        return content
+    block_markdown = {
+        str(block.get("id")): str(block.get("markdown"))
+        for block in blocks
+        if isinstance(block, dict) and block.get("id") and isinstance(block.get("markdown"), str)
+    }
+    updated = content
+    for visual in inline_visuals:
+        image = _markdown_inline_image(visual.get("image_url"), visual.get("alt_text"))
+        source_block_ids = visual.get("source_block_ids")
+        if not image or not isinstance(source_block_ids, list):
+            continue
+        target = next((block_markdown.get(str(block_id)) for block_id in source_block_ids if block_markdown.get(str(block_id))), None)
+        if not target or target not in updated:
+            continue
+        updated = updated.replace(target, f"{target}\n\n{image}", 1)
+    return updated
+
+
+def export_markdown(
+    asset: Asset,
+    *,
+    cover_image_url: str | None = None,
+    cover_alt_text: str | None = None,
+    inline_visuals: list[dict] | None = None,
+) -> str:
     if asset.asset_type == "research_brief":
-        return _research_brief_export_markdown(asset)
-    if asset.asset_type == "knowledge_pack":
-        return _knowledge_pack_export_markdown(asset)
-    if asset.asset_type == "newsletter_issue":
-        return _newsletter_issue_export_markdown(asset)
-    if asset.asset_type == "topic_report":
-        return _topic_report_export_markdown(asset)
-    parts = [f"# {asset.title}"]
-    if asset.brief:
-        parts.extend(["", asset.brief])
-    if asset.outline:
-        parts.extend(["", "## Outline", "", asset.outline])
-    if asset.draft_content:
-        parts.extend(["", asset.draft_content])
-    if asset.reference_notes:
-        parts.extend(["", "## References", "", asset.reference_notes])
-    return "\n".join(parts).strip()
+        content = _research_brief_export_markdown(asset)
+    elif asset.asset_type == "knowledge_pack":
+        content = _knowledge_pack_export_markdown(asset)
+    elif asset.asset_type == "newsletter_issue":
+        content = _newsletter_issue_export_markdown(asset)
+    elif asset.asset_type == "topic_report":
+        content = _topic_report_export_markdown(asset)
+    else:
+        parts = [f"# {asset.title}"]
+        if asset.brief:
+            parts.extend(["", asset.brief])
+        if asset.outline:
+            parts.extend(["", "## Outline", "", asset.outline])
+        if asset.draft_content:
+            parts.extend(["", asset.draft_content])
+        if asset.reference_notes:
+            parts.extend(["", "## References", "", asset.reference_notes])
+        content = "\n".join(parts).strip()
+    content = _inject_inline_visuals(asset, content, inline_visuals)
+    cover = _markdown_cover(cover_image_url, cover_alt_text)
+    if not cover:
+        return content
+    lines = content.splitlines()
+    return "\n".join([lines[0], "", cover, "", *lines[1:]]).strip() if lines else cover
 
 
 def _newsletter_heading_slug(value: str, separator: str) -> str:
     return re.sub(r"[^\w]+", separator, value.lower(), flags=re.UNICODE).strip(separator).replace("_", separator) or "section"
 
 
-def export_html(asset: Asset) -> str:
-    markdown_content = export_markdown(asset)
+def export_html(
+    asset: Asset,
+    *,
+    cover_image_url: str | None = None,
+    cover_alt_text: str | None = None,
+    inline_visuals: list[dict] | None = None,
+) -> str:
+    markdown_content = export_markdown(asset, inline_visuals=inline_visuals)
     toc = TocExtension(slugify=_newsletter_heading_slug) if asset.asset_type == "newsletter_issue" else "toc"
     rendered_body = markdown.markdown(
         escape(markdown_content, quote=False),
@@ -567,6 +626,14 @@ def export_html(asset: Asset) -> str:
         "visual_digest": "--ink:#312e81;--muted:#705b8b;--line:#ebcfe6;--accent:#c026d3;--accent-soft:#f9dff4;--paper:#fffafd;--canvas:#fff0f5;--content-width:1120px;--body-font:Inter,ui-sans-serif,system-ui,sans-serif;--display-font:Inter,ui-sans-serif,system-ui,sans-serif;",
         "knowledge_atlas": "--ink:#17382a;--muted:#557566;--line:#b8d8c5;--accent:#15803d;--accent-soft:#dcefe2;--paper:#f8fff9;--canvas:#e7f2eb;--content-width:1060px;--body-font:Inter,ui-sans-serif,system-ui,sans-serif;--display-font:ui-monospace,SFMono-Regular,Menlo,monospace;",
     }[style_id]
+    cover_html = ""
+    if (cover_image_url or "").strip():
+        cover_html = (
+            '<figure class="asset-cover">'
+            f'<img src="{escape(cover_image_url.strip(), quote=True)}" '
+            f'alt="{escape((cover_alt_text or "Asset cover").strip(), quote=True)}">'
+            "</figure>"
+        )
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -586,6 +653,8 @@ def export_html(asset: Asset) -> str:
     .asset-dek {{ position:relative; z-index:1; max-width:760px; margin:30px 0 0; color:var(--muted); font-size:clamp(1.05rem,2.4vw,1.35rem); line-height:1.65; }}
     .asset-meta {{ position:relative; z-index:1; display:flex; flex-wrap:wrap; gap:10px; margin-top:34px; }}
     .asset-meta span {{ padding:8px 12px; border:1px solid var(--line); border-radius:999px; background:color-mix(in srgb,var(--paper) 82%,transparent); color:var(--muted); font:700 11px/1 var(--body-font); letter-spacing:.08em; text-transform:uppercase; }}
+    .asset-cover {{ margin:0; border-bottom:1px solid var(--line); background:var(--accent-soft); }}
+    .asset-cover img {{ display:block; width:100%; max-height:620px; object-fit:cover; }}
     .asset-body {{ padding:clamp(32px,7vw,82px); }}
     .asset-body > :first-child {{ margin-top:0; }}
     h1, h2, h3, h4 {{ font-family:var(--display-font); line-height:1.2; letter-spacing:-.025em; }}
@@ -649,6 +718,7 @@ def export_html(asset: Asset) -> str:
       {f'<p class="asset-dek">{brief}</p>' if brief else ''}
       <div class="asset-meta"><span>{reading_minutes} min read</span><span>{word_count} units</span><span>Editable Mermaid</span></div>
     </header>
+    {cover_html}
     <article class="asset-body">{rendered_body}</article>
   </main>
   <script type="module">
@@ -671,8 +741,19 @@ def export_html(asset: Asset) -> str:
 </html>"""
 
 
-def export_wechat_html(asset: Asset, *, rendered_diagrams: dict[str, str] | None = None) -> str:
-    markdown_content = _asset_reader_markdown(asset.draft_content)
+def export_wechat_html(
+    asset: Asset,
+    *,
+    rendered_diagrams: dict[str, str] | None = None,
+    cover_image_url: str | None = None,
+    cover_alt_text: str | None = None,
+    inline_visuals: list[dict] | None = None,
+) -> str:
+    markdown_content = _inject_inline_visuals(
+        asset,
+        _asset_reader_markdown(asset.draft_content),
+        inline_visuals,
+    )
     extensions = ["extra", "sane_lists"]
     if asset.asset_type == "newsletter_issue":
         extensions.append(TocExtension(slugify=_newsletter_heading_slug))
@@ -766,7 +847,16 @@ def export_wechat_html(asset: Asset, *, rendered_diagrams: dict[str, str] | None
         f'<p style="margin:7px 0 0;color:{muted};font-size:14px;line-height:1.65;">由 Seagull Asset 工作流生成，可在公众号草稿箱继续调整。</p>'
         f'</section>'
     )
-    return f'<section style="padding:4px 2px;background:#ffffff;">{signature}{rendered}</section>'
+    cover = ""
+    if (cover_image_url or "").strip():
+        cover = (
+            '<figure style="margin:0 0 24px;">'
+            f'<img src="{escape(cover_image_url.strip(), quote=True)}" '
+            f'alt="{escape((cover_alt_text or "Asset cover").strip(), quote=True)}" '
+            'style="display:block;width:100%;height:auto;border-radius:14px;" />'
+            "</figure>"
+        )
+    return f'<section style="padding:4px 2px;background:#ffffff;">{cover}{signature}{rendered}</section>'
 
 
 def _asset_reader_markdown(content: str | None) -> str:
@@ -815,8 +905,21 @@ def _wechat_mermaid_block(source_html: str, *, rendered_diagrams: dict[str, str]
     )
 
 
-def export_wechat_preview_html(asset: Asset, *, rendered_diagrams: dict[str, str] | None = None) -> str:
-    content = export_wechat_html(asset, rendered_diagrams=rendered_diagrams)
+def export_wechat_preview_html(
+    asset: Asset,
+    *,
+    rendered_diagrams: dict[str, str] | None = None,
+    cover_image_url: str | None = None,
+    cover_alt_text: str | None = None,
+    inline_visuals: list[dict] | None = None,
+) -> str:
+    content = export_wechat_html(
+        asset,
+        rendered_diagrams=rendered_diagrams,
+        cover_image_url=cover_image_url,
+        cover_alt_text=cover_alt_text,
+        inline_visuals=inline_visuals,
+    )
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>

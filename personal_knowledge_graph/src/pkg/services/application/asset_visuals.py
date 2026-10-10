@@ -25,6 +25,7 @@ from pkg.schemas.application.asset import (
     AssetVisualRead,
     AssetVisualStyleMemoryRead,
 )
+from pkg.services.application.asset_visual_delivery import is_visual_in_delivery_snapshot
 from pkg.services.cross_cutting.storage import get_storage_service
 from pkg.services.cross_cutting.system_jobs import record_system_event
 from pkg.services.foundation.image_generation import generate_qwen_image
@@ -48,11 +49,50 @@ _VISUAL_ROLE_GUIDANCE = {
     "cover": "横向文章或 Newsletter 封面",
     "social_square": "适合社交平台信息流的方形分享图",
     "social_portrait": "适合移动端社交平台的竖版分享图",
+    "inline_illustration": "与正文段落直接关联的横向编辑插图",
 }
 
 
 def _utc_now_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _download_name(asset: Asset, *, role: str, visual_id: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", asset.title.lower()).strip("-")[:80] or "asset"
+    return f"{slug}-{role.replace('_', '-')}-{visual_id[-8:]}.png"
+
+
+def _asset_blocks(asset: Asset) -> dict[str, str]:
+    document = (asset.metadata_ or {}).get("asset_document")
+    blocks = document.get("blocks") if isinstance(document, dict) else None
+    if not isinstance(blocks, list):
+        return {}
+    return {
+        str(block.get("id")): str(block.get("markdown"))
+        for block in blocks
+        if isinstance(block, dict) and block.get("id") and isinstance(block.get("markdown"), str)
+    }
+
+
+async def _visual_generation_context(
+    session: AsyncSession,
+    *,
+    asset: Asset,
+    parent_visual_id: str | None,
+    source_block_ids: list[str],
+) -> tuple[AssetVisual | None, list[str]]:
+    blocks = _asset_blocks(asset)
+    missing = [block_id for block_id in source_block_ids if block_id not in blocks]
+    if missing:
+        raise HTTPException(status_code=422, detail=f"Unknown Asset Block IDs: {', '.join(missing)}")
+    parent = None
+    if parent_visual_id:
+        parent = await session.get(AssetVisual, parent_visual_id)
+        if parent is None or parent.asset_id != asset.id or parent.user_id != asset.user_id:
+            raise HTTPException(status_code=404, detail="Parent Asset visual not found")
+        if parent.status != "accepted":
+            raise HTTPException(status_code=409, detail="Visual derivation requires an accepted parent visual")
+    return parent, [blocks[block_id] for block_id in source_block_ids]
 
 
 def _set_accepted_visual(metadata: dict, *, role: str, visual_id: str) -> dict:
@@ -67,11 +107,36 @@ def _set_accepted_visual(metadata: dict, *, role: str, visual_id: str) -> dict:
     return updated
 
 
+def _set_accepted_inline_visual(metadata: dict, *, visual_id: str, source_block_ids: list[str]) -> dict:
+    updated = deepcopy(metadata)
+    accepted_visuals = updated.get("accepted_visuals")
+    if not isinstance(accepted_visuals, dict):
+        accepted_visuals = {}
+    inline_visuals = accepted_visuals.get("inline_illustration")
+    if not isinstance(inline_visuals, dict):
+        inline_visuals = {}
+    for block_id in source_block_ids:
+        inline_visuals[block_id] = visual_id
+    accepted_visuals["inline_illustration"] = inline_visuals
+    updated["accepted_visuals"] = accepted_visuals
+    return updated
+
+
 def _clear_accepted_visual(metadata: dict, *, role: str, visual_id: str) -> dict:
     updated = deepcopy(metadata)
     accepted_visuals = updated.get("accepted_visuals")
-    if isinstance(accepted_visuals, dict) and accepted_visuals.get(role) == visual_id:
+    if isinstance(accepted_visuals, dict) and role == "inline_illustration":
+        inline_visuals = accepted_visuals.get(role)
+        if isinstance(inline_visuals, dict):
+            remaining = {block_id: item for block_id, item in inline_visuals.items() if item != visual_id}
+            accepted_visuals = dict(accepted_visuals)
+            if remaining:
+                accepted_visuals[role] = remaining
+            else:
+                accepted_visuals.pop(role, None)
+    elif isinstance(accepted_visuals, dict) and accepted_visuals.get(role) == visual_id:
         accepted_visuals = {key: value for key, value in accepted_visuals.items() if key != role}
+    if isinstance(accepted_visuals, dict):
         if accepted_visuals:
             updated["accepted_visuals"] = accepted_visuals
         else:
@@ -100,6 +165,8 @@ def _fallback_visual_brief(
     asset: Asset,
     body: AssetVisualPlanRequest,
     style_memory: AssetVisualStyleMemoryRead | None = None,
+    source_blocks: list[str] | None = None,
+    parent_visual: AssetVisual | None = None,
 ) -> AssetVisualBrief:
     style = _VISUAL_STYLE_GUIDANCE[body.style_preset]
     role_guidance = _VISUAL_ROLE_GUIDANCE[body.role]
@@ -120,6 +187,10 @@ def _fallback_visual_brief(
         )
     if instructions:
         prompt += f"补充艺术指导：{instructions}。"
+    if source_blocks:
+        prompt += f"插图只表达以下正文片段的核心概念：{' '.join(source_blocks)[:1800]}。"
+    if parent_visual:
+        prompt += "基于已接受视觉的构图语言、配色和材质进行同系列重绘，但不要简单裁切原图。"
     return AssetVisualBrief(
         concept=f"以抽象视觉隐喻表达“{topic}”的核心变化与影响",
         composition=f"单一视觉中心与清晰空间层次，{title_safe_area} 区域保持低细节标题安全区",
@@ -219,6 +290,12 @@ async def plan_asset_visual(
     body: AssetVisualPlanRequest,
 ) -> AssetVisualPlanRead:
     asset = await _owned_asset(session, user_id=user_id, asset_id=asset_id)
+    parent_visual, source_blocks = await _visual_generation_context(
+        session,
+        asset=asset,
+        parent_visual_id=body.parent_visual_id,
+        source_block_ids=body.source_block_ids,
+    )
     style_memory = await _accepted_style_memory(
         session,
         user_id=user_id,
@@ -226,7 +303,13 @@ async def plan_asset_visual(
         role=body.role,
         style_preset=body.style_preset,
     )
-    fallback = _fallback_visual_brief(asset, body, style_memory)
+    fallback = _fallback_visual_brief(
+        asset,
+        body,
+        style_memory,
+        source_blocks=source_blocks,
+        parent_visual=parent_visual,
+    )
     runtime = _planner_runtime()
     if runtime is None:
         return AssetVisualPlanRead(
@@ -235,6 +318,8 @@ async def plan_asset_visual(
             style_preset=body.style_preset,
             planner_mode="fallback",
             style_memory=style_memory,
+            parent_visual_id=body.parent_visual_id,
+            source_block_ids=body.source_block_ids,
             brief=fallback,
         )
 
@@ -247,6 +332,13 @@ async def plan_asset_visual(
             f"Brief：{asset.brief}" if asset.brief else "",
             f"目标风格：{_VISUAL_STYLE_GUIDANCE[body.style_preset]}",
             f"补充要求：{body.instructions}" if body.instructions else "",
+            f"关联正文 Block：{' '.join(source_blocks)[:4000]}" if source_blocks else "",
+            (
+                "已接受父视觉的重绘参考："
+                f"role={parent_visual.role}；prompt={parent_visual.prompt[:1600]}；"
+                f"视觉 brief={(parent_visual.metadata_ or {}).get('visual_brief')}。"
+                "只继承构图语言、配色和材质，不得把原图当作裁切素材。"
+            ) if parent_visual else "",
             (
                 "历史已接受封面的非事实型风格偏好："
                 f"色板={style_memory.palette or '未形成稳定偏好'}；"
@@ -284,6 +376,8 @@ async def plan_asset_visual(
             planner_mode="llm",
             planner_model=model,
             style_memory=style_memory,
+            parent_visual_id=body.parent_visual_id,
+            source_block_ids=body.source_block_ids,
             brief=brief,
         )
     except Exception:
@@ -295,6 +389,8 @@ async def plan_asset_visual(
             planner_mode="fallback",
             planner_model=model,
             style_memory=style_memory,
+            parent_visual_id=body.parent_visual_id,
+            source_block_ids=body.source_block_ids,
             brief=fallback,
         )
 def _file_extension(content_type: str) -> str:
@@ -372,6 +468,7 @@ async def _visual_read(visual: AssetVisual) -> AssetVisualRead:
     image_url = None
     if visual.file_path:
         image_url = await get_storage_service().generate_download_url(visual.file_path)
+    metadata = visual.metadata_ or {}
     return AssetVisualRead(
         id=visual.id,
         asset_id=visual.asset_id,
@@ -383,6 +480,9 @@ async def _visual_read(visual: AssetVisual) -> AssetVisualRead:
         height=visual.height,
         mime_type=visual.mime_type,
         image_url=image_url,
+        download_name=str(metadata.get("download_name") or "") or None,
+        parent_visual_id=str(metadata.get("parent_visual_id") or "") or None,
+        source_block_ids=[str(item) for item in metadata.get("source_block_ids", []) if isinstance(item, str)],
         provider_request_id=visual.provider_request_id,
         error_message=visual.error_message,
         processing_attempts=visual.processing_attempts or 0,
@@ -414,7 +514,20 @@ async def generate_asset_visual(
     auto_accept: bool = False,
 ) -> AssetVisualRead:
     asset = await _owned_asset(session, user_id=user_id, asset_id=asset_id)
+    parent_visual, source_blocks = await _visual_generation_context(
+        session,
+        asset=asset,
+        parent_visual_id=body.parent_visual_id,
+        source_block_ids=body.source_block_ids,
+    )
     prompt = (body.prompt or "").strip() or _default_cover_prompt(asset, role=body.role)
+    if source_blocks:
+        prompt += f"\n\n只表达以下正文片段：{' '.join(source_blocks)[:1800]}"
+    if parent_visual:
+        prompt += (
+            "\n\n使用以下已接受视觉作为同系列重绘参考，只继承构图语言、配色与材质，不做裁切："
+            f"{parent_visual.prompt[:1600]}"
+        )
     active_rows = await session.execute(
         select(AssetVisual).where(
             AssetVisual.asset_id == asset.id,
@@ -425,7 +538,12 @@ async def generate_asset_visual(
     )
     for existing in active_rows.scalars():
         metadata = existing.metadata_ or {}
-        if existing.prompt == prompt and metadata.get("size") == body.size:
+        if (
+            existing.prompt == prompt
+            and metadata.get("size") == body.size
+            and metadata.get("parent_visual_id") == body.parent_visual_id
+            and (metadata.get("source_block_ids") or []) == body.source_block_ids
+        ):
             return await _visual_read(existing)
 
     max_active = max(settings.ASSET_VISUAL_MAX_ACTIVE_PER_USER, 0)
@@ -446,8 +564,9 @@ async def generate_asset_visual(
                 detail=f"At most {max_active} image generation tasks may be active at once",
             )
 
+    visual_id = f"visual-{uuid4().hex}"
     visual = AssetVisual(
-        id=f"visual-{uuid4().hex}",
+        id=visual_id,
         asset_id=asset.id,
         user_id=user_id,
         role=body.role,
@@ -460,6 +579,10 @@ async def generate_asset_visual(
             "provider": "dashscope",
             "auto_accept": auto_accept,
             "alt_text": f"{asset.title} 的 AI 生成{_VISUAL_ROLE_GUIDANCE.get(body.role, '发布视觉')}。",
+            "parent_visual_id": body.parent_visual_id,
+            "derivation_mode": "redraw" if body.parent_visual_id else None,
+            "source_block_ids": body.source_block_ids,
+            "download_name": _download_name(asset, role=body.role, visual_id=visual_id),
         },
     )
     session.add(visual)
@@ -479,6 +602,12 @@ async def generate_asset_visual_candidates(
     if auto_accept and body.candidate_count != 1:
         raise HTTPException(status_code=422, detail="Auto-accept requires exactly one visual candidate")
     asset = await _owned_asset(session, user_id=user_id, asset_id=asset_id)
+    await _visual_generation_context(
+        session,
+        asset=asset,
+        parent_visual_id=body.parent_visual_id,
+        source_block_ids=body.source_block_ids,
+    )
     max_active = max(settings.ASSET_VISUAL_MAX_ACTIVE_PER_USER, 0)
     active_count = (
         await session.execute(
@@ -513,8 +642,9 @@ async def generate_asset_visual_candidates(
             f"生成要求：{body.brief.prompt}\n"
             f"候选构图方向：{variation}。"
         )
+        visual_id = f"visual-{uuid4().hex}"
         visual = AssetVisual(
-            id=f"visual-{uuid4().hex}",
+            id=visual_id,
             asset_id=asset.id,
             user_id=user_id,
             role=body.role,
@@ -533,6 +663,10 @@ async def generate_asset_visual_candidates(
                 "style_memory": body.style_memory.model_dump(mode="json") if body.style_memory else None,
                 "visual_brief": brief_payload,
                 "alt_text": body.brief.alt_text,
+                "parent_visual_id": body.parent_visual_id,
+                "derivation_mode": "redraw" if body.parent_visual_id else None,
+                "source_block_ids": body.source_block_ids,
+                "download_name": _download_name(asset, role=body.role, visual_id=visual_id),
             },
         )
         session.add(visual)
@@ -571,6 +705,8 @@ async def regenerate_asset_visual_batch(
             style_preset=metadata.get("style_preset", "editorial_technology"),
             candidate_count=len(batch),
             style_memory=metadata.get("style_memory"),
+            parent_visual_id=metadata.get("parent_visual_id"),
+            source_block_ids=metadata.get("source_block_ids") or [],
             brief=AssetVisualBrief.model_validate(brief_payload),
         )
     except ValueError as exc:
@@ -783,23 +919,56 @@ async def decide_asset_visual(
         alt_text = (visual.metadata_ or {}).get("alt_text")
         if not isinstance(alt_text, str) or not alt_text.strip():
             raise HTTPException(status_code=409, detail="Alt text is required before accepting an Asset visual")
-        await session.execute(
-            update(AssetVisual)
-            .where(
-                AssetVisual.asset_id == asset.id,
-                AssetVisual.user_id == user_id,
-                AssetVisual.role == visual.role,
-                AssetVisual.id != visual.id,
-                AssetVisual.status == "accepted",
+        source_block_ids = [
+            str(item) for item in (visual.metadata_ or {}).get("source_block_ids", []) if isinstance(item, str)
+        ]
+        if visual.role == "inline_illustration":
+            if not source_block_ids:
+                raise HTTPException(status_code=409, detail="Inline illustration requires an Asset Block association")
+            rows = await session.execute(
+                select(AssetVisual).where(
+                    AssetVisual.asset_id == asset.id,
+                    AssetVisual.user_id == user_id,
+                    AssetVisual.role == visual.role,
+                    AssetVisual.id != visual.id,
+                    AssetVisual.status == "accepted",
+                )
             )
-            .values(status="ready")
-        )
+            target_blocks = set(source_block_ids)
+            for existing in rows.scalars():
+                existing_blocks = set((existing.metadata_ or {}).get("source_block_ids") or [])
+                if target_blocks.intersection(existing_blocks):
+                    existing.status = "ready"
+                    asset.metadata_ = _clear_accepted_visual(
+                        asset.metadata_ or {},
+                        role=existing.role,
+                        visual_id=existing.id,
+                    )
+        else:
+            await session.execute(
+                update(AssetVisual)
+                .where(
+                    AssetVisual.asset_id == asset.id,
+                    AssetVisual.user_id == user_id,
+                    AssetVisual.role == visual.role,
+                    AssetVisual.id != visual.id,
+                    AssetVisual.status == "accepted",
+                )
+                .values(status="ready")
+            )
         visual.status = "accepted"
-        asset.metadata_ = _set_accepted_visual(
-            asset.metadata_ or {},
-            role=visual.role,
-            visual_id=visual.id,
-        )
+        if visual.role == "inline_illustration":
+            asset.metadata_ = _set_accepted_inline_visual(
+                asset.metadata_ or {},
+                visual_id=visual.id,
+                source_block_ids=source_block_ids,
+            )
+        else:
+            asset.metadata_ = _set_accepted_visual(
+                asset.metadata_ or {},
+                role=visual.role,
+                visual_id=visual.id,
+            )
     else:
         visual.status = "rejected"
         metadata = _clear_accepted_visual(
@@ -847,6 +1016,21 @@ async def delete_asset_visual(
         raise HTTPException(status_code=404, detail="Asset visual not found")
     if visual.status == "generating":
         raise HTTPException(status_code=409, detail="Generating visual cannot be deleted")
+    accepted_visuals = (asset.metadata_ or {}).get("accepted_visuals")
+    accepted_values: list[object] = []
+    if isinstance(accepted_visuals, dict):
+        for value in accepted_visuals.values():
+            accepted_values.extend(value.values() if isinstance(value, dict) else [value])
+    if visual.id in accepted_values:
+        raise HTTPException(
+            status_code=409,
+            detail="Accepted visual cannot be deleted. Reject or replace it first.",
+        )
+    if is_visual_in_delivery_snapshot(asset.metadata_, visual_id=visual.id):
+        raise HTTPException(
+            status_code=409,
+            detail="Delivered visual cannot be deleted because an export or publication references it.",
+        )
     if visual.file_path:
         await get_storage_service().delete_object(visual.file_path)
     metadata = _clear_accepted_visual(

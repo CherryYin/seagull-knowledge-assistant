@@ -54,6 +54,7 @@ const VISUAL_ROLE_OPTIONS: Record<AssetVisualRole, { label: string; description:
   cover: { label: "cover", description: "Landscape article and Newsletter cover", size: "1280*720", aspectClass: "aspect-video" },
   social_square: { label: "square social image", description: "Square social feed sharing image", size: "1024*1024", aspectClass: "aspect-square" },
   social_portrait: { label: "portrait social image", description: "Portrait mobile social sharing image", size: "720*1280", aspectClass: "aspect-[9/16]" },
+  inline_illustration: { label: "inline illustration", description: "Landscape illustration attached to a specific Asset Block", size: "1280*720", aspectClass: "aspect-video" },
 };
 
 function parseVisualConstraintList(value: string, limit: number): string[] {
@@ -1179,6 +1180,8 @@ export function AssetDetailPage() {
   const [htmlCopied, setHtmlCopied] = useState(false);
   const [visualStylePreset, setVisualStylePreset] = useState<AssetVisualStylePreset>("editorial_technology");
   const [visualRole, setVisualRole] = useState<AssetVisualRole>("cover");
+  const [visualSourceBlockId, setVisualSourceBlockId] = useState("");
+  const [deriveFromAcceptedCover, setDeriveFromAcceptedCover] = useState(false);
   const [visualInstructions, setVisualInstructions] = useState("");
   const [visualCandidateCount, setVisualCandidateCount] = useState(2);
   const [visualPlan, setVisualPlan] = useState<AssetVisualPlan | null>(null);
@@ -1187,6 +1190,13 @@ export function AssetDetailPage() {
   const [visualMustAvoidInput, setVisualMustAvoidInput] = useState("");
   const [visualAltTextDrafts, setVisualAltTextDrafts] = useState<Record<string, string>>({});
   const visualRoleConfig = VISUAL_ROLE_OPTIONS[visualRole];
+  const acceptedVisuals = asset?.metadata_?.accepted_visuals && typeof asset.metadata_.accepted_visuals === "object"
+    ? asset.metadata_.accepted_visuals as Record<string, unknown>
+    : {};
+  const acceptedCoverVisualId = typeof acceptedVisuals.cover === "string" ? acceptedVisuals.cover : null;
+  const visualSourceBlockIds = visualRole === "inline_illustration" && visualSourceBlockId ? [visualSourceBlockId] : [];
+  const visualParentId = deriveFromAcceptedCover && visualRole !== "cover" ? acceptedCoverVisualId : null;
+  const visualContextMissing = visualRole === "inline_illustration" && !visualSourceBlockId;
   const visualBatches = useMemo(
     () => groupAssetVisualBatches((assetVisualsQuery.data?.items ?? []).filter((visual) => visual.role === visualRole)),
     [assetVisualsQuery.data?.items, visualRole],
@@ -2744,6 +2754,8 @@ export function AssetDetailPage() {
       size: visualRoleConfig.size,
       style_preset: visualStylePreset,
       instructions: visualInstructions.trim() || null,
+      parent_visual_id: visualParentId,
+      source_block_ids: visualSourceBlockIds,
     }),
     onSuccess: (plan) => {
       setVisualPlan(plan);
@@ -2761,6 +2773,8 @@ export function AssetDetailPage() {
         style_preset: visualPlan.style_preset,
         candidate_count: visualCandidateCount,
         style_memory: visualPlan.style_memory,
+        parent_visual_id: visualPlan.parent_visual_id,
+        source_block_ids: visualPlan.source_block_ids,
         brief: visualPlan.brief,
       });
     },
@@ -2773,6 +2787,8 @@ export function AssetDetailPage() {
         size: visualRoleConfig.size,
         style_preset: visualStylePreset,
         instructions: visualInstructions.trim() || null,
+        parent_visual_id: visualParentId,
+        source_block_ids: visualSourceBlockIds,
       });
       setVisualPlan(plan);
       setVisualPaletteInput(plan.brief.palette.join("\n"));
@@ -2784,6 +2800,8 @@ export function AssetDetailPage() {
         style_preset: plan.style_preset,
         candidate_count: visualCandidateCount,
         style_memory: plan.style_memory,
+        parent_visual_id: plan.parent_visual_id,
+        source_block_ids: plan.source_block_ids,
         brief: plan.brief,
       });
     },
@@ -4290,6 +4308,7 @@ export function AssetDetailPage() {
                       <option value="cover">Cover · 1280×720</option>
                       <option value="social_square">Social square · 1024×1024</option>
                       <option value="social_portrait">Social portrait · 720×1280</option>
+                      <option value="inline_illustration">Inline illustration · 1280×720</option>
                     </select>
                     <p className="text-xs text-muted-foreground">{visualRoleConfig.description}</p>
                   </div>
@@ -4311,13 +4330,33 @@ export function AssetDetailPage() {
                       {[1, 2, 3, 4].map((count) => <option key={count} value={count}>{count} image{count > 1 ? "s" : ""}</option>)}
                     </select>
                   </div>
-                  <Button type="button" variant="outline" onClick={() => planVisualMutation.mutate()} disabled={planVisualMutation.isPending}>
+                  <Button type="button" variant="outline" onClick={() => planVisualMutation.mutate()} disabled={planVisualMutation.isPending || visualContextMissing}>
                     <Sparkles className="mr-2 h-4 w-4" />{planVisualMutation.isPending ? "Planning…" : "Plan and edit"}
                   </Button>
-                  <Button type="button" onClick={() => quickGenerateVisualMutation.mutate()} disabled={quickGenerateVisualMutation.isPending || planVisualMutation.isPending || generateVisualMutation.isPending}>
+                  <Button type="button" onClick={() => quickGenerateVisualMutation.mutate()} disabled={quickGenerateVisualMutation.isPending || planVisualMutation.isPending || generateVisualMutation.isPending || visualContextMissing}>
                     <WandSparkles className="mr-2 h-4 w-4" />{quickGenerateVisualMutation.isPending ? "Planning and queueing…" : `Generate AI ${visualRoleConfig.label} candidates`}
                   </Button>
                 </div>
+                {(visualRole === "inline_illustration" || (visualRole !== "cover" && acceptedCoverVisualId)) ? (
+                  <div className="grid gap-4 rounded-xl border bg-muted/10 p-4 lg:grid-cols-2">
+                    {visualRole === "inline_illustration" ? (
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium" htmlFor="visual-source-block">Source Asset Block</label>
+                        <select id="visual-source-block" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={visualSourceBlockId} onChange={(event) => { setVisualSourceBlockId(event.target.value); setVisualPlan(null); }}>
+                          <option value="">Select a Block</option>
+                          {editBlocks.filter((block) => block.role !== "diagram").map((block) => <option key={block.id} value={block.id}>{block.markdown.replace(/\s+/g, " ").slice(0, 100)}</option>)}
+                        </select>
+                        <p className="text-xs text-muted-foreground">The accepted illustration is inserted immediately after this Block during export. Deleted Blocks leave the visual orphaned instead of inserting it elsewhere.</p>
+                      </div>
+                    ) : <div />}
+                    {acceptedCoverVisualId ? (
+                      <label className="flex items-start gap-3 rounded-lg border bg-background p-3 text-sm">
+                        <input type="checkbox" className="mt-1" checked={deriveFromAcceptedCover} onChange={(event) => { setDeriveFromAcceptedCover(event.target.checked); setVisualPlan(null); }} />
+                        <span><span className="font-medium">Redraw from accepted cover</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">Reuse the approved composition language, palette, and material treatment. Qwen redraws for this role; it does not crop the original image.</span></span>
+                      </label>
+                    ) : null}
+                  </div>
+                ) : null}
                 {planVisualMutation.isError && <ActionError title="Visual planning failed" impact="No generation task was created." recovery="Check the configured planning LLM or retry with the deterministic fallback." details={planVisualMutation.error instanceof Error ? planVisualMutation.error.message : "Unknown visual planning error"} onRetry={() => planVisualMutation.mutate()} />}
                 {quickGenerateVisualMutation.isError && <ActionError title="Visual generation failed" impact={`No ${visualRoleConfig.label} candidates were created for this Asset.`} recovery="Check the Qwen image configuration and retry, or create and edit a Visual Brief before generating." details={quickGenerateVisualMutation.error instanceof Error ? quickGenerateVisualMutation.error.message : "Unknown image generation error"} onRetry={() => quickGenerateVisualMutation.mutate()} />}
                 {visualPlan ? (
@@ -4385,11 +4424,14 @@ export function AssetDetailPage() {
                           {batch.items.map((visual) => {
                             const storedAltText = typeof visual.metadata_?.alt_text === "string" ? visual.metadata_.alt_text : "";
                             const altText = visualAltTextDrafts[visual.id] ?? storedAltText;
+                            const sourceBlockIds = visual.source_block_ids ?? [];
+                            const orphaned = visual.role === "inline_illustration" && sourceBlockIds.some((blockId) => !editBlocks.some((block) => block.id === blockId));
                             return (
                               <div key={visual.id} className="overflow-hidden rounded-xl border bg-background">
                                 {visual.image_url ? <a href={visual.image_url} target="_blank" rel="noreferrer" title="Open full-size candidate"><img src={visual.image_url} alt={storedAltText || `Generated Asset ${visualRoleConfig.label}`} className={`${visualRoleConfig.aspectClass} w-full object-cover transition-opacity hover:opacity-90`} /></a> : <div className={`flex ${visualRoleConfig.aspectClass} items-center justify-center text-sm text-muted-foreground`}>{visual.status === "failed" ? "Generation failed" : ["queued", "generating", "retrying"].includes(visual.status) ? `Generating ${visualRoleConfig.label}…` : "Image unavailable"}</div>}
                                 <div className="space-y-3 p-4">
                                   <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><Badge variant={visual.status === "accepted" ? "default" : "outline"}>{visual.status}</Badge>{typeof visual.metadata_?.candidate_index === "number" ? <span className="text-xs text-muted-foreground">Candidate {String(visual.metadata_.candidate_index)}</span> : null}</div><span className="text-xs text-muted-foreground">{visual.model}{visual.width && visual.height ? ` · ${visual.width}×${visual.height}` : ""}</span></div>
+                                  {(visual.parent_visual_id || sourceBlockIds.length > 0) ? <div className="flex flex-wrap gap-2 text-xs"><Badge variant="outline">{visual.parent_visual_id ? "Redrawn from accepted visual" : "Original composition"}</Badge>{sourceBlockIds.map((blockId) => <Badge key={blockId} variant={orphaned ? "outline" : "secondary"} className={orphaned ? "border-amber-500 text-amber-700" : undefined}>{orphaned ? "Orphaned Block" : `Block ${blockId.slice(-8)}`}</Badge>)}</div> : null}
                                   <p className="line-clamp-3 text-xs leading-5 text-muted-foreground">{visual.prompt}</p>
                                   <div className="space-y-2"><label className="text-xs font-medium" htmlFor={`visual-alt-${visual.id}`}>Alt text</label><Textarea id={`visual-alt-${visual.id}`} rows={2} value={altText} onChange={(event) => setVisualAltTextDrafts((current) => ({ ...current, [visual.id]: event.target.value }))} /><Button type="button" size="sm" variant="outline" onClick={() => updateVisualMutation.mutate({ visualId: visual.id, altText: altText.trim() })} disabled={!altText.trim() || altText.trim() === storedAltText || updateVisualMutation.isPending}>Save alt text</Button></div>
                                   {visual.error_message ? <p className="text-xs text-destructive">{visual.error_message}</p> : null}
@@ -4397,8 +4439,10 @@ export function AssetDetailPage() {
                                     {["ready", "rejected"].includes(visual.status) ? <Button type="button" size="sm" onClick={() => decideVisualMutation.mutate({ visualId: visual.id, decision: "accept" })} disabled={decideVisualMutation.isPending || !storedAltText.trim()}>Accept {visualRoleConfig.label}</Button> : null}
                                     {["ready", "accepted"].includes(visual.status) ? <Button type="button" size="sm" variant="outline" onClick={() => decideVisualMutation.mutate({ visualId: visual.id, decision: "reject" })} disabled={decideVisualMutation.isPending}>Reject</Button> : null}
                                     {["queued", "retrying"].includes(visual.status) ? <Button type="button" size="sm" variant="outline" onClick={() => cancelVisualMutation.mutate(visual.id)} disabled={cancelVisualMutation.isPending}>Cancel</Button> : null}
-                                    <Button type="button" size="sm" variant="ghost" onClick={() => { if (window.confirm("Delete this generated visual?")) deleteVisualMutation.mutate(visual.id); }} disabled={deleteVisualMutation.isPending || visual.status === "generating"}><Trash2 className="mr-2 h-4 w-4" />Delete</Button>
+                                    {visual.image_url ? <Button type="button" size="sm" variant="outline" asChild><a href={visual.image_url} download={visual.download_name ?? undefined}><Download className="mr-2 h-4 w-4" />Download</a></Button> : null}
+                                    <Button type="button" size="sm" variant="ghost" onClick={() => { if (window.confirm("Delete this generated visual?")) deleteVisualMutation.mutate(visual.id); }} disabled={deleteVisualMutation.isPending || visual.status === "generating" || visual.status === "accepted"}><Trash2 className="mr-2 h-4 w-4" />Delete</Button>
                                   </div>
+                                  {orphaned ? <p className="text-xs text-amber-700">The linked Asset Block no longer exists. This illustration will not be injected during export; reject it or create a replacement for another Block.</p> : null}
                                   {!storedAltText.trim() && ["ready", "rejected"].includes(visual.status) ? <p className="text-xs text-amber-700">Save Alt Text before accepting this visual.</p> : null}
                                 </div>
                               </div>

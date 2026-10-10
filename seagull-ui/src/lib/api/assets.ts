@@ -34,7 +34,7 @@ export interface AssetList {
   total: number;
 }
 
-export type AssetVisualRole = "cover" | "social_square" | "social_portrait";
+export type AssetVisualRole = "cover" | "social_square" | "social_portrait" | "inline_illustration";
 
 export interface AssetVisual {
   id: string;
@@ -47,6 +47,9 @@ export interface AssetVisual {
   height?: number | null;
   mime_type?: string | null;
   image_url?: string | null;
+  download_name?: string | null;
+  parent_visual_id?: string | null;
+  source_block_ids: string[];
   provider_request_id?: string | null;
   error_message?: string | null;
   processing_attempts: number;
@@ -91,6 +94,8 @@ export interface AssetVisualPlan {
   planner_mode: "llm" | "fallback";
   planner_model?: string | null;
   style_memory?: AssetVisualStyleMemory | null;
+  parent_visual_id?: string | null;
+  source_block_ids: string[];
   brief: AssetVisualBrief;
 }
 
@@ -458,9 +463,9 @@ export const assetsApi = {
   runNewsletterAutomation: () => request<NewsletterAutomationRunResult>("/assets/newsletter/automation/run", { method: "POST" }),
   retryNewsletterCover: () => request<NewsletterVisualRunResult>("/assets/newsletter/automation/cover/retry", { method: "POST" }),
   listVisuals: (id: string) => request<AssetVisualList>(`/assets/${encodeURIComponent(id)}/visuals`),
-  planVisual: (id: string, body: { role?: AssetVisualRole; size?: "1024*1024" | "1280*720" | "720*1280"; style_preset: AssetVisualStylePreset; instructions?: string | null }) => request<AssetVisualPlan>(`/assets/${encodeURIComponent(id)}/visuals/plan`, { method: "POST", body: JSON.stringify(body) }),
-  generateVisual: (id: string, body: { prompt?: string | null; role?: AssetVisualRole; size?: "1024*1024" | "1280*720" | "720*1280" }) => request<AssetVisual>(`/assets/${encodeURIComponent(id)}/visuals/generate`, { method: "POST", body: JSON.stringify(body) }),
-  generateVisualBatch: (id: string, body: { role?: AssetVisualRole; size?: "1024*1024" | "1280*720" | "720*1280"; style_preset: AssetVisualStylePreset; candidate_count: number; style_memory?: AssetVisualStyleMemory | null; brief: AssetVisualBrief }) => request<AssetVisualList>(`/assets/${encodeURIComponent(id)}/visuals/generate-batch`, { method: "POST", body: JSON.stringify(body) }),
+  planVisual: (id: string, body: { role?: AssetVisualRole; size?: "1024*1024" | "1280*720" | "720*1280"; style_preset: AssetVisualStylePreset; instructions?: string | null; parent_visual_id?: string | null; source_block_ids?: string[] }) => request<AssetVisualPlan>(`/assets/${encodeURIComponent(id)}/visuals/plan`, { method: "POST", body: JSON.stringify(body) }),
+  generateVisual: (id: string, body: { prompt?: string | null; role?: AssetVisualRole; size?: "1024*1024" | "1280*720" | "720*1280"; parent_visual_id?: string | null; source_block_ids?: string[] }) => request<AssetVisual>(`/assets/${encodeURIComponent(id)}/visuals/generate`, { method: "POST", body: JSON.stringify(body) }),
+  generateVisualBatch: (id: string, body: { role?: AssetVisualRole; size?: "1024*1024" | "1280*720" | "720*1280"; style_preset: AssetVisualStylePreset; candidate_count: number; style_memory?: AssetVisualStyleMemory | null; parent_visual_id?: string | null; source_block_ids?: string[]; brief: AssetVisualBrief }) => request<AssetVisualList>(`/assets/${encodeURIComponent(id)}/visuals/generate-batch`, { method: "POST", body: JSON.stringify(body) }),
   regenerateVisualBatch: (id: string, batchId: string) => request<AssetVisualList>(`/assets/${encodeURIComponent(id)}/visuals/batches/${encodeURIComponent(batchId)}/regenerate`, { method: "POST" }),
   updateVisual: (id: string, visualId: string, body: { alt_text: string }) => request<AssetVisual>(`/assets/${encodeURIComponent(id)}/visuals/${encodeURIComponent(visualId)}`, { method: "PATCH", body: JSON.stringify(body) }),
   decideVisual: (id: string, visualId: string, decision: "accept" | "reject") => request<AssetVisual>(`/assets/${encodeURIComponent(id)}/visuals/${encodeURIComponent(visualId)}/decision`, { method: "POST", body: JSON.stringify({ decision }) }),

@@ -96,6 +96,53 @@ def test_social_visual_roles_require_matching_dimensions():
         AssetVisualBatchGenerateRequest(role="social_portrait", size="1024*1024", brief=_brief())
 
 
+def test_inline_visual_requires_landscape_size_and_source_block():
+    request = AssetVisualPlanRequest(
+        role="inline_illustration",
+        size="1280*720",
+        source_block_ids=["block-1", "block-1"],
+    )
+
+    assert request.source_block_ids == ["block-1"]
+    with pytest.raises(ValueError, match="source_block_id"):
+        AssetVisualPlanRequest(role="inline_illustration", size="1280*720")
+    with pytest.raises(ValueError, match="1280\\*720"):
+        AssetVisualPlanRequest(role="inline_illustration", size="1024*1024", source_block_ids=["block-1"])
+
+
+@pytest.mark.asyncio
+async def test_plan_inline_visual_uses_block_and_accepted_parent_context():
+    asset = _asset(metadata={
+        "asset_document": {
+            "schemaVersion": 1,
+            "blocks": [{"id": "block-1", "markdown": "Agents need isolated stateful sandboxes."}],
+        },
+    })
+    parent = _visual(status="accepted")
+    session = AsyncMock()
+    session.get = AsyncMock(side_effect=[asset, parent])
+    memory_rows = MagicMock()
+    memory_rows.scalars.return_value = []
+    session.execute = AsyncMock(return_value=memory_rows)
+
+    with patch("pkg.services.application.asset_visuals._planner_runtime", return_value=None):
+        result = await plan_asset_visual(
+            session,
+            user_id="user-1",
+            asset_id="asset-1",
+            body=AssetVisualPlanRequest(
+                role="inline_illustration",
+                source_block_ids=["block-1"],
+                parent_visual_id="visual-1",
+            ),
+        )
+
+    assert result.parent_visual_id == "visual-1"
+    assert result.source_block_ids == ["block-1"]
+    assert "Agents need isolated stateful sandboxes" in result.brief.prompt
+    assert "不要简单裁切原图" in result.brief.prompt
+
+
 @pytest.mark.asyncio
 async def test_plan_asset_visual_uses_llm_structured_brief():
     asset = _asset()
@@ -584,6 +631,40 @@ async def test_accept_social_visual_sets_role_mapping_without_changing_cover():
 
 
 @pytest.mark.asyncio
+async def test_accept_inline_visual_maps_each_source_block():
+    asset = _asset(metadata={"accepted_visuals": {"cover": "visual-cover"}})
+    visual = _visual()
+    visual.id = "visual-inline"
+    visual.role = "inline_illustration"
+    visual.metadata_ = {
+        "alt_text": "Inline illustration.",
+        "source_block_ids": ["block-1", "block-2"],
+    }
+    session = AsyncMock()
+    session.get = AsyncMock(side_effect=[asset, visual])
+    accepted_rows = MagicMock()
+    accepted_rows.scalars.return_value = []
+    session.execute = AsyncMock(return_value=accepted_rows)
+    storage = MagicMock()
+    storage.generate_download_url = AsyncMock(return_value="https://minio.example/inline.png")
+
+    with patch("pkg.services.application.asset_visuals.get_storage_service", return_value=storage):
+        result = await decide_asset_visual(
+            session,
+            user_id="user-1",
+            asset_id="asset-1",
+            visual_id="visual-inline",
+            decision="accept",
+        )
+
+    assert result.status == "accepted"
+    assert asset.metadata_["accepted_visuals"]["inline_illustration"] == {
+        "block-1": "visual-inline",
+        "block-2": "visual-inline",
+    }
+
+
+@pytest.mark.asyncio
 async def test_accept_asset_visual_requires_alt_text():
     asset = _asset()
     visual = _visual()
@@ -627,7 +708,6 @@ async def test_reject_and_delete_visual_clear_selected_cover():
     assert rejected.status == "rejected"
     assert asset.metadata_ is None
 
-    asset.metadata_ = {"cover_visual_id": "visual-1", "accepted_visuals": {"cover": "visual-1"}}
     session.get = AsyncMock(side_effect=[asset, visual])
     storage.delete_object = AsyncMock()
     with patch("pkg.services.application.asset_visuals.get_storage_service", return_value=storage):
@@ -636,3 +716,37 @@ async def test_reject_and_delete_visual_clear_selected_cover():
     storage.delete_object.assert_awaited_once_with("minio://pkg/asset-visuals/cover.png")
     session.delete.assert_awaited_once_with(visual)
     assert asset.metadata_ is None
+
+
+@pytest.mark.asyncio
+async def test_delete_asset_visual_rejects_currently_accepted_visual():
+    asset = _asset(metadata={"accepted_visuals": {"cover": "visual-1"}})
+    visual = _visual(status="accepted")
+    session = AsyncMock()
+    session.get = AsyncMock(side_effect=[asset, visual])
+
+    with pytest.raises(HTTPException) as exc_info:
+        await delete_asset_visual(session, user_id="user-1", asset_id="asset-1", visual_id="visual-1")
+
+    assert exc_info.value.status_code == 409
+    assert "Reject or replace" in exc_info.value.detail
+    session.delete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_delete_asset_visual_rejects_delivered_visual():
+    asset = _asset(metadata={
+        "visual_delivery_snapshot": {
+            "references": {"visual-1": {"role": "cover", "deliveries": ["html"]}},
+        },
+    })
+    visual = _visual(status="rejected")
+    session = AsyncMock()
+    session.get = AsyncMock(side_effect=[asset, visual])
+
+    with pytest.raises(HTTPException) as exc_info:
+        await delete_asset_visual(session, user_id="user-1", asset_id="asset-1", visual_id="visual-1")
+
+    assert exc_info.value.status_code == 409
+    assert "export or publication" in exc_info.value.detail
+    session.delete.assert_not_awaited()

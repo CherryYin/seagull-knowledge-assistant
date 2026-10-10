@@ -87,13 +87,20 @@ class AssetList(BaseModel):
     total: int
 
 
-AssetVisualRole = Literal["cover", "social_square", "social_portrait"]
+AssetVisualRole = Literal["cover", "social_square", "social_portrait", "inline_illustration"]
+
+
+def _validate_visual_context(role: AssetVisualRole, source_block_ids: list[str]) -> None:
+    if role == "inline_illustration" and not source_block_ids:
+        raise ValueError("inline_illustration visuals require at least one source_block_id")
 
 
 class AssetVisualGenerateRequest(BaseModel):
     prompt: str | None = Field(default=None, max_length=4000)
     role: AssetVisualRole = "cover"
     size: Literal["1024*1024", "1280*720", "720*1280"] = "1280*720"
+    parent_visual_id: str | None = Field(default=None, min_length=1)
+    source_block_ids: list[str] = Field(default_factory=list, max_length=8)
 
     @model_validator(mode="after")
     def validate_role_size(self) -> Self:
@@ -101,6 +108,10 @@ class AssetVisualGenerateRequest(BaseModel):
             raise ValueError("social_square visuals require size 1024*1024")
         if self.role == "social_portrait" and self.size != "720*1280":
             raise ValueError("social_portrait visuals require size 720*1280")
+        if self.role == "inline_illustration" and self.size != "1280*720":
+            raise ValueError("inline_illustration visuals require size 1280*720")
+        _validate_visual_context(self.role, self.source_block_ids)
+        self.source_block_ids = list(dict.fromkeys(self.source_block_ids))
         return self
 
 
@@ -112,6 +123,8 @@ class AssetVisualPlanRequest(BaseModel):
     size: Literal["1024*1024", "1280*720", "720*1280"] = "1280*720"
     style_preset: AssetVisualStylePreset = "editorial_technology"
     instructions: str | None = Field(default=None, max_length=2000)
+    parent_visual_id: str | None = Field(default=None, min_length=1)
+    source_block_ids: list[str] = Field(default_factory=list, max_length=8)
 
     @model_validator(mode="after")
     def validate_role_size(self) -> Self:
@@ -119,6 +132,10 @@ class AssetVisualPlanRequest(BaseModel):
             raise ValueError("social_square visuals require size 1024*1024")
         if self.role == "social_portrait" and self.size != "720*1280":
             raise ValueError("social_portrait visuals require size 720*1280")
+        if self.role == "inline_illustration" and self.size != "1280*720":
+            raise ValueError("inline_illustration visuals require size 1280*720")
+        _validate_visual_context(self.role, self.source_block_ids)
+        self.source_block_ids = list(dict.fromkeys(self.source_block_ids))
         return self
 
 
@@ -149,6 +166,8 @@ class AssetVisualPlanRead(BaseModel):
     planner_mode: Literal["llm", "fallback"]
     planner_model: str | None = None
     style_memory: AssetVisualStyleMemoryRead | None = None
+    parent_visual_id: str | None = None
+    source_block_ids: list[str] = Field(default_factory=list)
     brief: AssetVisualBrief
 
 
@@ -158,6 +177,8 @@ class AssetVisualBatchGenerateRequest(BaseModel):
     style_preset: AssetVisualStylePreset = "editorial_technology"
     candidate_count: int = Field(default=2, ge=1, le=4)
     style_memory: AssetVisualStyleMemoryRead | None = None
+    parent_visual_id: str | None = Field(default=None, min_length=1)
+    source_block_ids: list[str] = Field(default_factory=list, max_length=8)
     brief: AssetVisualBrief
 
     @model_validator(mode="after")
@@ -166,6 +187,10 @@ class AssetVisualBatchGenerateRequest(BaseModel):
             raise ValueError("social_square visuals require size 1024*1024")
         if self.role == "social_portrait" and self.size != "720*1280":
             raise ValueError("social_portrait visuals require size 720*1280")
+        if self.role == "inline_illustration" and self.size != "1280*720":
+            raise ValueError("inline_illustration visuals require size 1280*720")
+        _validate_visual_context(self.role, self.source_block_ids)
+        self.source_block_ids = list(dict.fromkeys(self.source_block_ids))
         return self
 
 
@@ -188,6 +213,9 @@ class AssetVisualRead(BaseModel):
     height: int | None = None
     mime_type: str | None = None
     image_url: str | None = None
+    download_name: str | None = None
+    parent_visual_id: str | None = None
+    source_block_ids: list[str] = Field(default_factory=list)
     provider_request_id: str | None = None
     error_message: str | None = None
     processing_attempts: int = 0
