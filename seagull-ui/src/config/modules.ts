@@ -322,21 +322,6 @@ export const APP_MODULES: AppModuleConfig[] = [
     },
   },
   {
-    id: "skills",
-    label: "Skills",
-    group: "agent",
-    route: "/settings/skills",
-    icon: Sparkles,
-    description: "Manage reusable skills.",
-    nav: { section: true, parent: "settings", order: 60 },
-    visibility: { defaultEnabled: false, configurable: true, advanced: true },
-    dependencies: ["agent-chat"],
-    settingsCard: {
-      description: "Manage reusable chat skills.",
-      order: 60,
-    },
-  },
-  {
     id: "system-jobs",
     label: "Jobs",
     group: "system",

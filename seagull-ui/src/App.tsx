@@ -14,7 +14,6 @@ const NoteDetailPage = lazy(() => import("./pages/NoteDetailPage").then((m) => (
 const SourcesPage = lazy(() => import("./pages/SourcesPage").then((m) => ({ default: m.SourcesPage })));
 const SourceDetailPage = lazy(() => import("./pages/SourceDetailPage").then((m) => ({ default: m.SourceDetailPage })));
 const MindMapPage = lazy(() => import("./pages/MindMapPage").then((m) => ({ default: m.MindMapPage })));
-const SkillsPage = lazy(() => import("./pages/SkillsPage").then((m) => ({ default: m.SkillsPage })));
 const StatsPage = lazy(() => import("./pages/StatsPage").then((m) => ({ default: m.StatsPage })));
 const CalendarPage = lazy(() => import("./pages/CalendarPage").then((m) => ({ default: m.CalendarPage })));
 const CompletedTodosPage = lazy(() => import("./pages/CompletedTodosPage").then((m) => ({ default: m.CompletedTodosPage })));
@@ -122,10 +121,8 @@ export default function App() {
             <Route path="/settings" element={<LazyPage><SettingsPage /></LazyPage>} />
             <Route path="/settings/api-keys" element={<LazyPage><ApiKeysPage /></LazyPage>} />
             <Route path="/settings/connectors" element={<LazyPage><ConnectorSettingsPage /></LazyPage>} />
-            <Route path="/settings/skills" element={<LazyPage><SkillsPage /></LazyPage>} />
             <Route path="/settings/jobs" element={<LazyPage><SystemJobsPage /></LazyPage>} />
             <Route path="/settings/profile" element={<LazyPage><UserProfilePage /></LazyPage>} />
-            <Route path="/skills" element={<Navigate to="/settings/skills" replace />} />
             <Route path="/profile" element={<Navigate to="/settings/profile" replace />} />
             <Route path="/wiki" element={<LazyPage><WikiPage /></LazyPage>} />
             <Route path="/wiki/:id" element={<LazyPage><WikiDetailPage /></LazyPage>} />

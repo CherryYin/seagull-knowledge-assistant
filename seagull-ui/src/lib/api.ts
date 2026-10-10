@@ -5,7 +5,6 @@ export * from "./api/categories";
 export * from "./api/search";
 export * from "./api/action";
 export * from "./api/sync";
-export * from "./api/skills";
 export * from "./api/chat-sessions";
 export * from "./api/knowledge";
 export * from "./api/auth";
