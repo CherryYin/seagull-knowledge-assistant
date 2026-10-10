@@ -1,0 +1,9 @@
+{
+  "name": "@deepseek-knowledge-lab/asset-visual-tools",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/plugin.test.js"
+  }
+}

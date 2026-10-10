@@ -47,6 +47,9 @@
     - id: pkg-web-search
       name: ../../../plugins/pkg-web-search/src/index.js
       inject: [pkg, tools]
+    - id: asset-visual-tools
+      name: ../../../plugins/asset-visual-tools/src/index.js
+      inject: [pkg, tools]
     - id: asset-block-patch
       name: ../../../plugins/asset-block-patch/src/index.js
       inject: [tools]

@@ -35,6 +35,9 @@ system_prompt: |
   - pkg_list_sources / pkg_read_source — 浏览/阅读知识源
   - pkg_search_memory — 搜索记忆图谱
   - pkg_knowledge_stats — 统计
+  - pkg_plan_asset_visual — 为已有 Asset 规划可编辑 Visual Brief，不创建图片
+  - pkg_generate_asset_visual_candidates — 在用户明确要求后创建待审核图片候选
+  - pkg_list_asset_visuals — 查询图片任务与审核状态；不能接受或删除
 
   ### Kobo（企业知识平台）
   - kobo_login — 设置 token
@@ -57,6 +60,9 @@ tools:
   - pkg_read_source
   - pkg_search_memory
   - pkg_knowledge_stats
+  - pkg_plan_asset_visual
+  - pkg_generate_asset_visual_candidates
+  - pkg_list_asset_visuals
   - kobo_login
   - kobo_list_spaces
   - kobo_list_knowledge_sets

@@ -21,6 +21,10 @@ declare class PkgClient {
     }): Promise<SourceList>;
     readSource(sessionId: string, sourceId: string): Promise<SourceRead>;
     dashboard(sessionId: string): Promise<DashboardResponse>;
+    webSearch(sessionId: string, query: string, maxResults?: number): Promise<unknown>;
+    listAssetVisuals(sessionId: string, assetId: string): Promise<AssetVisualList>;
+    planAssetVisual(sessionId: string, assetId: string, body: Record<string, unknown>): Promise<AssetVisualPlan>;
+    generateAssetVisualCandidates(sessionId: string, assetId: string, body: Record<string, unknown>): Promise<AssetVisualList>;
 }
 interface SearchResult {
     id: string;
@@ -63,6 +67,15 @@ interface DashboardResponse {
         chats: number;
         digest_pending: number;
     };
+}
+interface AssetVisualList {
+    items: Array<Record<string, unknown>>;
+}
+interface AssetVisualPlan extends Record<string, unknown> {
+    role: string;
+    size: string;
+    style_preset: string;
+    brief: Record<string, unknown>;
 }
 declare module "@deepseek-ai/cordis" {
     interface Context {

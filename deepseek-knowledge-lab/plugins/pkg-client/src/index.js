@@ -52,6 +52,15 @@ class PkgClient {
       max_results: maxResults || 8,
     });
   }
+  listAssetVisuals(sessionId, assetId) {
+    return this.request(sessionId, "GET", `/assets/${encodeURIComponent(assetId)}/visuals`);
+  }
+  planAssetVisual(sessionId, assetId, body) {
+    return this.request(sessionId, "POST", `/assets/${encodeURIComponent(assetId)}/visuals/plan`, body);
+  }
+  generateAssetVisualCandidates(sessionId, assetId, body) {
+    return this.request(sessionId, "POST", `/assets/${encodeURIComponent(assetId)}/visuals/generate-batch`, body);
+  }
 }
 
 const LOOPBACK_SERVICE_TOKEN = "seagull-loopback-harness";

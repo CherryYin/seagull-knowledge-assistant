@@ -36,6 +36,7 @@ deepseek-knowledge-lab/
 9. **Asset Claims**：`analyze-asset-claims` preset 只引用 Workspace Evidence，通过 `propose_asset_claims` 返回 Agent 署名的 Candidate Claim；接受、编辑、拒绝或保留为假设必须在 Seagull Claim Gate 完成。
 10. **Asset 整篇优化**：`revise-asset-document` preset 在当前 Intent 已确认、Evidence 与 Claim 决策已完成后使用；Contribution 与 Knowledge Candidate 可为优化提供上下文，但不阻塞正文润色。Agent 通过 `propose_asset_document_patch` 返回完整文档替换候选，Seagull 校验 Workspace revision、文档签名与 Claim 引用；用户确认后仅应用到本地编辑态，仍需显式保存才写入 PKG。后续优化轮次会携带最新确定性质量审计和上一轮记录，只有应用并保存后才计为完成一轮。
 11. **PDF Source Mind Map**：`generate-source-mind-map` preset 只接收 Source Metadata、Source basis、最多 40 个章节摘要和 80 个均匀抽样的 Chunk 摘要；禁止传入整篇 PDF 原文。Agent 必须直接通过 `propose_source_mind_map` 返回目标 18–28、最多 32 个节点的结构化候选，不得在工具参数中回显输入摘要；事实节点只能引用输入中提供的 Chunk，Chunk 归属与引文真实性由 PKG 基于当前 Source 验证，且候选仍需用户确认，不能直接创建或覆盖正式 Map。Selected Branch Expansion 还必须保持当前 `map_id`、`base_version`、`target_node_id`，Proposal 根只作为现有节点锚点，确认后只在该锚点下安全合并后代。
+12. **Asset 发布视觉**：`asset-visual-tools` 通过 Session-scoped Gateway 调用 PKG Visual Planner、候选生成和状态查询。Agent 可规划 Brief，并在用户明确要求后创建待审核候选；插件不得暴露 Accept、Reject、Cancel、Delete 或 Publish 能力，最终审核继续在 Seagull Production 完成。
 
 ## PKG API 对接要点
 

@@ -16,6 +16,7 @@
     "sessions:stage-e-status": "npm run sessions:verify-shadow && node scripts/check-stage-e-readiness.mjs",
     "test:pkg-client": "node --test scripts/pkg-client-readonly.test.mjs",
     "test:pkg-web-search": "node --test plugins/pkg-web-search/test/plugin.test.js",
+    "test:asset-visual-tools": "node --test plugins/asset-visual-tools/test/plugin.test.js",
     "test:asset-block-patch": "node --test plugins/asset-block-patch/test/plugin.test.js",
     "test:asset-evidence-proposal": "node --test plugins/asset-evidence-proposal/test/plugin.test.js",
     "test:asset-claim-proposal": "node --test plugins/asset-claim-proposal/test/plugin.test.js",
