@@ -898,7 +898,22 @@ async function harnessMemories(req, res, path, url, requestId, agentMemoryStore)
   } catch (error) {
     if (error.status === 401) return respondAuthExpired(req, res, authorization);
     if (path === "/api/harness/memory-preview") {
-      console.error(`[${requestId}] Agent Memory preview failed (${error?.name || "Error"}, status ${error?.status || memoryErrorStatus(error)})`);
+      const status = error?.status || memoryErrorStatus(error);
+      console.error(
+        `[${requestId}] Agent Memory preview failed; continuing without memory`,
+        {
+          name: error?.name || "Error",
+          code: error?.code || null,
+          status,
+          message: error?.message || "Unknown error",
+        },
+      );
+      if (status >= 500) {
+        return json(req, res, 200, {
+          memories: [],
+          unavailable: true,
+        });
+      }
     }
     return json(req, res, error.status || memoryErrorStatus(error), { error: error.message });
   }

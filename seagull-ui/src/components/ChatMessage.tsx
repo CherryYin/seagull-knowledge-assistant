@@ -11,20 +11,21 @@ import { assessAssetDraft, renderAssetDraftRepairRequest, type AssetGenerationRe
 import { getMessageRunContract } from "@/lib/chat-message-contract";
 import { AgentRunStatus } from "@/components/interaction/AgentRunStatus";
 import { ActionError } from "@/components/interaction/ActionError";
+import { stripModelThinking } from "@/lib/model-output";
 
-const CITATION_RE = /\[来源[：:]\s*((?:note|src|source)-[^\]]+)\]/g;
+const CITATION_RE = new RegExp(`\\[(?:Source|\\u6765\\u6e90)[\\uFF1A:\\s]+((?:note|src|source)-[^\\]]+)\\]`, "gi");
 
 function linkifyCitations(text: string): string {
   return text.replace(CITATION_RE, (_match, id: string) => {
     const trimmed = id.trim();
     if (trimmed.startsWith("note-")) {
-      return `[来源: ${trimmed}](/notes/${encodeURIComponent(trimmed)})`;
+      return `[Source: ${trimmed}](/notes/${encodeURIComponent(trimmed)})`;
     }
     // Normalize "source-xxx" to "src-xxx" for the route
     const sourceId = trimmed.startsWith("source-")
       ? "src-" + trimmed.slice("source-".length)
       : trimmed;
-    return `[来源: ${trimmed}](/sources/${encodeURIComponent(sourceId)})`;
+    return `[Source: ${trimmed}](/sources/${encodeURIComponent(sourceId)})`;
   });
 }
 
@@ -63,10 +64,11 @@ export function ChatMessage({
   const isUser = role === "user";
   const navigate = useNavigate();
   const runContract = getMessageRunContract(metadata);
+  const cleanContent = isUser ? content : stripModelThinking(content);
   const failedRunErrorMarker = "\n\nError:";
-  const failedRunErrorIndex = runContract?.run_status === "failed" ? content.lastIndexOf(failedRunErrorMarker) : -1;
-  const displayedContent = failedRunErrorIndex >= 0 ? content.slice(0, failedRunErrorIndex).trim() : content;
-  const failedRunDetails = failedRunErrorIndex >= 0 ? content.slice(failedRunErrorIndex + failedRunErrorMarker.length).trim() : runContract?.run_status === "failed" ? content : null;
+  const failedRunErrorIndex = runContract?.run_status === "failed" ? cleanContent.lastIndexOf(failedRunErrorMarker) : -1;
+  const displayedContent = failedRunErrorIndex >= 0 ? cleanContent.slice(0, failedRunErrorIndex).trim() : cleanContent;
+  const failedRunDetails = failedRunErrorIndex >= 0 ? cleanContent.slice(failedRunErrorIndex + failedRunErrorMarker.length).trim() : runContract?.run_status === "failed" ? cleanContent : null;
   const [retryLoading, setRetryLoading] = useState(false);
   const [saveState, setSaveState] = useState<Partial<Record<WorkflowResultSaveTarget, "loading" | "done">>>(() => {
     const receipts = metadata?.save_receipts ?? {};
@@ -74,7 +76,7 @@ export function ChatMessage({
   });
   const [actionError, setActionError] = useState<string | null>(null);
   const assetQuality = !isUser && assetDraft && saveTargets.includes("asset")
-    ? assessAssetDraft(metadata?.document_content || content, assetDraft)
+    ? assessAssetDraft(stripModelThinking(metadata?.document_content || content), assetDraft)
     : null;
 
   const markdownComponents: Components = {
@@ -186,7 +188,7 @@ export function ChatMessage({
           {/* Reference footer */}
           {!isUser && metadata?.references && metadata.references.length > 0 && (
             <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-border/50 pt-2">
-              <span className="text-[10px] text-muted-foreground mr-0.5">引用:</span>
+              <span className="text-[10px] text-muted-foreground mr-0.5">Citations:</span>
               {metadata.references.map((ref) => {
                 if (ref.type === "web") {
                   return (

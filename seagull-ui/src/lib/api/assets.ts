@@ -60,6 +60,29 @@ export interface AssetVisualList {
   items: AssetVisual[];
 }
 
+export type AssetVisualStylePreset = "editorial_technology" | "minimal_abstract" | "research_brief";
+
+export interface AssetVisualBrief {
+  concept: string;
+  composition: string;
+  style: string;
+  palette: string[];
+  must_include: string[];
+  must_avoid: string[];
+  title_safe_area: "left" | "right" | "top" | "bottom" | "center" | "none";
+  prompt: string;
+  alt_text: string;
+}
+
+export interface AssetVisualPlan {
+  role: "cover";
+  size: "1024*1024" | "1280*720" | "720*1280";
+  style_preset: AssetVisualStylePreset;
+  planner_mode: "llm" | "fallback";
+  planner_model?: string | null;
+  brief: AssetVisualBrief;
+}
+
 export interface AssetKnowledgeLineageItem {
   asset_id: string;
   asset_title: string;
@@ -201,6 +224,9 @@ export interface NewsletterAutomationConfig {
   audience: string;
   style_notes: string;
   generate_cover_image: boolean;
+  cover_review_mode: "draft_only" | "auto_accept";
+  cover_style_profile: AssetVisualStylePreset;
+  cover_candidate_count: number;
   last_generated_at?: string | null;
   last_asset_id?: string | null;
   last_run_at?: string | null;
@@ -411,7 +437,11 @@ export const assetsApi = {
   updateNewsletterAutomation: (body: NewsletterAutomationUpdate) => request<NewsletterAutomationConfig>("/assets/newsletter/automation", { method: "PUT", body: JSON.stringify(body) }),
   runNewsletterAutomation: () => request<NewsletterAutomationRunResult>("/assets/newsletter/automation/run", { method: "POST" }),
   listVisuals: (id: string) => request<AssetVisualList>(`/assets/${encodeURIComponent(id)}/visuals`),
+  planVisual: (id: string, body: { role?: "cover"; size?: "1024*1024" | "1280*720" | "720*1280"; style_preset: AssetVisualStylePreset; instructions?: string | null }) => request<AssetVisualPlan>(`/assets/${encodeURIComponent(id)}/visuals/plan`, { method: "POST", body: JSON.stringify(body) }),
   generateVisual: (id: string, body: { prompt?: string | null; role?: "cover"; size?: "1024*1024" | "1280*720" | "720*1280" }) => request<AssetVisual>(`/assets/${encodeURIComponent(id)}/visuals/generate`, { method: "POST", body: JSON.stringify(body) }),
+  generateVisualBatch: (id: string, body: { role?: "cover"; size?: "1024*1024" | "1280*720" | "720*1280"; style_preset: AssetVisualStylePreset; candidate_count: number; brief: AssetVisualBrief }) => request<AssetVisualList>(`/assets/${encodeURIComponent(id)}/visuals/generate-batch`, { method: "POST", body: JSON.stringify(body) }),
+  regenerateVisualBatch: (id: string, batchId: string) => request<AssetVisualList>(`/assets/${encodeURIComponent(id)}/visuals/batches/${encodeURIComponent(batchId)}/regenerate`, { method: "POST" }),
+  updateVisual: (id: string, visualId: string, body: { alt_text: string }) => request<AssetVisual>(`/assets/${encodeURIComponent(id)}/visuals/${encodeURIComponent(visualId)}`, { method: "PATCH", body: JSON.stringify(body) }),
   decideVisual: (id: string, visualId: string, decision: "accept" | "reject") => request<AssetVisual>(`/assets/${encodeURIComponent(id)}/visuals/${encodeURIComponent(visualId)}/decision`, { method: "POST", body: JSON.stringify({ decision }) }),
   cancelVisual: (id: string, visualId: string) => request<AssetVisual>(`/assets/${encodeURIComponent(id)}/visuals/${encodeURIComponent(visualId)}/cancel`, { method: "POST" }),
   deleteVisual: (id: string, visualId: string) => request<void>(`/assets/${encodeURIComponent(id)}/visuals/${encodeURIComponent(visualId)}`, { method: "DELETE" }),

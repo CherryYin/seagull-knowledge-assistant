@@ -19,14 +19,15 @@ from pkg.config import settings
 from pkg.schemas.application.asset import (
     AssetCreate,
     AssetProvenance,
-    AssetVisualGenerateRequest,
+    AssetVisualBatchGenerateRequest,
+    AssetVisualPlanRequest,
     NewsletterAutomationConfig,
     NewsletterAutomationRunResult,
     NewsletterAutomationRunSnapshot,
     NewsletterAutomationUpdate,
 )
 from pkg.services.application.assets import create_asset
-from pkg.services.application.asset_visuals import generate_asset_visual
+from pkg.services.application.asset_visuals import generate_asset_visual_candidates, plan_asset_visual
 from pkg.services.cross_cutting.user_settings import get_user_settings_dict
 from pkg.services.foundation.connectors import import_news_article, is_news_url_excluded, search_news_articles
 
@@ -269,12 +270,29 @@ async def generate_newsletter(
     )
     if config.generate_cover_image:
         try:
-            await generate_asset_visual(
+            visual_plan = await plan_asset_visual(
                 session,
                 user_id=user_id,
                 asset_id=asset.id,
-                body=AssetVisualGenerateRequest(role="cover", size="1280*720"),
-                auto_accept=True,
+                body=AssetVisualPlanRequest(
+                    role="cover",
+                    size="1280*720",
+                    style_preset=config.cover_style_profile,
+                    instructions=config.style_notes or None,
+                ),
+            )
+            await generate_asset_visual_candidates(
+                session,
+                user_id=user_id,
+                asset_id=asset.id,
+                body=AssetVisualBatchGenerateRequest(
+                    role="cover",
+                    size=visual_plan.size,
+                    style_preset=visual_plan.style_preset,
+                    candidate_count=config.cover_candidate_count,
+                    brief=visual_plan.brief,
+                ),
+                auto_accept=config.cover_review_mode == "auto_accept",
             )
         except Exception:
             logger.warning("Newsletter cover queueing failed for asset %s", asset.id, exc_info=True)
@@ -316,6 +334,9 @@ def _newsletter_run_snapshot(config: NewsletterAutomationConfig) -> NewsletterAu
         audience=config.audience,
         style_notes=config.style_notes,
         generate_cover_image=config.generate_cover_image,
+        cover_review_mode=config.cover_review_mode,
+        cover_style_profile=config.cover_style_profile,
+        cover_candidate_count=config.cover_candidate_count,
     )
 
 

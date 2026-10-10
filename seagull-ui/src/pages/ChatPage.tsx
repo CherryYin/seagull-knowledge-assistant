@@ -55,6 +55,7 @@ import type { AssetIntentFormDraft, AssetIntentProposal } from "@/lib/asset-gene
 import { useReturnNavigation } from "@/hooks/useReturnNavigation";
 import { useRouteScrollRestoration } from "@/hooks/useRouteScrollRestoration";
 import { ProposalActions } from "@/components/interaction/ProposalActions";
+import { stripModelThinking } from "@/lib/model-output";
 
 type ChatLocationState = {
   promptSeed?: string;
@@ -537,6 +538,7 @@ export function ChatPage() {
       setSteps([]);
 
       let fullResponse = "";
+      let rawResponse = "";
       let stopped = false;
       let runFailed = false;
       let runError: string | undefined;
@@ -583,11 +585,14 @@ export function ChatPage() {
               break;
             case "text": {
               const text = event.content ?? "";
-              fullResponse += text;
+              rawResponse += text;
+              fullResponse = workflowAtStart?.saveTargets.includes("asset")
+                ? stripModelThinking(rawResponse)
+                : rawResponse;
               updateSessionLocal(sessionId, (s) => {
                 const nextMessages = s.messages.map((m) =>
                   m.id === assistantMsg.id
-                    ? { ...m, content: m.content + text }
+                    ? { ...m, content: fullResponse }
                     : m
                 );
                 return {
@@ -633,11 +638,14 @@ export function ChatPage() {
               runFailed = true;
               runError = event.content ?? "Harness error";
               const errorText = `\n\nError: ${runError}`;
-              fullResponse += errorText;
+              rawResponse += errorText;
+              fullResponse = workflowAtStart?.saveTargets.includes("asset")
+                ? stripModelThinking(rawResponse)
+                : rawResponse;
               updateSessionLocal(sessionId, (s) => {
                 const nextMessages = s.messages.map((m) =>
                   m.id === assistantMsg.id
-                    ? { ...m, content: m.content + errorText }
+                    ? { ...m, content: fullResponse }
                     : m
                 );
                 return { ...s, messages: nextMessages, updated_at: new Date().toISOString() };
@@ -810,7 +818,7 @@ export function ChatPage() {
         target,
         sessionId: session.id,
         workflowId: runContract?.workflow_id,
-        content: assistantMsg.metadata?.document_content || assistantMsg.content,
+        content: stripModelThinking(assistantMsg.metadata?.document_content || assistantMsg.content),
         title: assistantMsg.metadata?.document_title,
         categoryId: defaultCategoryId,
         objectRef: runContract?.object_ref,

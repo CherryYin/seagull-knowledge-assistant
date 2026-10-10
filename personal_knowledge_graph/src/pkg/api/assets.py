@@ -20,9 +20,13 @@ from pkg.schemas.application.asset import (
     AssetStyleProfileList,
     AssetUpdate,
     AssetVisualDecisionRequest,
+    AssetVisualBatchGenerateRequest,
     AssetVisualGenerateRequest,
     AssetVisualList,
+    AssetVisualPlanRead,
+    AssetVisualPlanRequest,
     AssetVisualRead,
+    AssetVisualUpdateRequest,
     AssetWechatDraftRequest,
     AssetWechatDraftResult,
     AttachReferencesRequest,
@@ -76,7 +80,11 @@ from pkg.services.application.asset_visuals import (
     decide_asset_visual,
     delete_asset_visual,
     generate_asset_visual,
+    generate_asset_visual_candidates,
     list_asset_visuals,
+    plan_asset_visual,
+    regenerate_asset_visual_batch,
+    update_asset_visual_alt_text,
 )
 from pkg.services.application.wechat_publishing import WechatPublishingError, create_wechat_draft
 from pkg.services.cross_cutting.credentials_crypto import CredentialsCryptoError, decrypt_secret
@@ -170,6 +178,62 @@ async def generate_asset_visual_route(
     session: AsyncSession = Depends(get_session),
 ):
     return await generate_asset_visual(session, user_id=user.id, asset_id=asset_id, body=body)
+
+
+@router.post("/{asset_id}/visuals/plan", response_model=AssetVisualPlanRead)
+async def plan_asset_visual_route(
+    asset_id: str,
+    body: AssetVisualPlanRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await plan_asset_visual(session, user_id=user.id, asset_id=asset_id, body=body)
+
+
+@router.post("/{asset_id}/visuals/generate-batch", response_model=AssetVisualList, status_code=202)
+async def generate_asset_visual_batch_route(
+    asset_id: str,
+    body: AssetVisualBatchGenerateRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return AssetVisualList(
+        items=await generate_asset_visual_candidates(session, user_id=user.id, asset_id=asset_id, body=body)
+    )
+
+
+@router.post("/{asset_id}/visuals/batches/{batch_id}/regenerate", response_model=AssetVisualList, status_code=202)
+async def regenerate_asset_visual_batch_route(
+    asset_id: str,
+    batch_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return AssetVisualList(
+        items=await regenerate_asset_visual_batch(
+            session,
+            user_id=user.id,
+            asset_id=asset_id,
+            batch_id=batch_id,
+        )
+    )
+
+
+@router.patch("/{asset_id}/visuals/{visual_id}", response_model=AssetVisualRead)
+async def update_asset_visual_route(
+    asset_id: str,
+    visual_id: str,
+    body: AssetVisualUpdateRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await update_asset_visual_alt_text(
+        session,
+        user_id=user.id,
+        asset_id=asset_id,
+        visual_id=visual_id,
+        alt_text=body.alt_text,
+    )
 
 
 @router.post("/{asset_id}/visuals/{visual_id}/decision", response_model=AssetVisualRead)

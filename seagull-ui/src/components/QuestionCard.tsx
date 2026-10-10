@@ -91,7 +91,7 @@ export function QuestionCard({ questions, onSubmit }: QuestionCardProps) {
                 <Input
                   value={draft.custom}
                   onChange={(event) => update(question.id, (current) => ({ ...current, custom: event.target.value }))}
-                  placeholder={question.options?.length ? "补充说明或输入其他答案…" : "输入你的回复…"}
+                  placeholder={question.options?.length ? "Add details or enter another answer…" : "Enter your response…"}
                 />
               </div>
             );

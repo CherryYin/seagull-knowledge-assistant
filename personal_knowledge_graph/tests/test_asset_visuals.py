@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -6,13 +7,22 @@ import httpx
 from fastapi import HTTPException
 
 from pkg.models.application.asset import Asset, AssetVisual
-from pkg.schemas.application.asset import AssetVisualGenerateRequest
+from pkg.schemas.application.asset import (
+    AssetVisualBatchGenerateRequest,
+    AssetVisualBrief,
+    AssetVisualGenerateRequest,
+    AssetVisualPlanRequest,
+)
 from pkg.services.application.asset_visuals import (
     cancel_asset_visual,
     decide_asset_visual,
     delete_asset_visual,
     generate_asset_visual,
+    generate_asset_visual_candidates,
+    plan_asset_visual,
     process_asset_visual,
+    regenerate_asset_visual_batch,
+    update_asset_visual_alt_text,
 )
 from pkg.services.foundation.image_generation import GeneratedImage
 
@@ -48,11 +58,180 @@ def _visual(*, status: str = "ready", file_path: str | None = "minio://pkg/asset
         height=720,
         mime_type="image/png",
         file_path=file_path,
-        metadata_={"provider": "dashscope"},
+        metadata_={"provider": "dashscope", "alt_text": "Abstract editorial cover."},
     )
     visual.created_at = now
     visual.updated_at = now
     return visual
+
+
+def _brief() -> AssetVisualBrief:
+    return AssetVisualBrief(
+        concept="Layered infrastructure",
+        composition="A central abstract system with editorial whitespace",
+        style="Modern editorial technology illustration",
+        palette=["#0B1F3A", "#F59E0B"],
+        must_include=["clear focal point"],
+        must_avoid=["text", "logos"],
+        title_safe_area="right",
+        prompt="Create a restrained editorial technology cover without text, logos, watermarks, or UI screenshots.",
+        alt_text="Abstract layered infrastructure illustration.",
+    )
+
+
+@pytest.mark.asyncio
+async def test_plan_asset_visual_uses_llm_structured_brief():
+    asset = _asset()
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=asset)
+    client = MagicMock()
+    client.chat.completions.create = AsyncMock(return_value=SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=_brief().model_dump_json()))]
+    ))
+
+    with patch("pkg.services.application.asset_visuals._planner_runtime", return_value=(client, "qwen3.8-max")):
+        result = await plan_asset_visual(
+            session,
+            user_id="user-1",
+            asset_id="asset-1",
+            body=AssetVisualPlanRequest(style_preset="research_brief"),
+        )
+
+    assert result.planner_mode == "llm"
+    assert result.planner_model == "qwen3.8-max"
+    assert result.brief.alt_text == "Abstract layered infrastructure illustration."
+    assert result.brief.title_safe_area == "right"
+    client.chat.completions.create.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_plan_asset_visual_falls_back_when_planner_is_unavailable():
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=_asset())
+
+    with patch("pkg.services.application.asset_visuals._planner_runtime", return_value=None):
+        result = await plan_asset_visual(
+            session,
+            user_id="user-1",
+            asset_id="asset-1",
+            body=AssetVisualPlanRequest(instructions="Use warm highlights"),
+        )
+
+    assert result.planner_mode == "fallback"
+    assert "Use warm highlights" in result.brief.prompt
+    assert "文字" in result.brief.must_avoid
+    assert result.brief.title_safe_area == "left"
+
+
+@pytest.mark.asyncio
+async def test_generate_asset_visual_candidates_queues_shared_brief_batch():
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.get = AsyncMock(return_value=_asset())
+    count_result = MagicMock()
+    count_result.scalar.return_value = 0
+    session.execute = AsyncMock(return_value=count_result)
+
+    async def refresh(instance):
+        now = datetime(2026, 10, 9, tzinfo=timezone.utc)
+        instance.created_at = now
+        instance.updated_at = now
+
+    session.refresh = AsyncMock(side_effect=refresh)
+    result = await generate_asset_visual_candidates(
+        session,
+        user_id="user-1",
+        asset_id="asset-1",
+        body=AssetVisualBatchGenerateRequest(candidate_count=2, brief=_brief()),
+    )
+
+    queued = [call.args[0] for call in session.add.call_args_list]
+    assert len(result) == 2
+    assert len(queued) == 2
+    assert queued[0].metadata_["batch_id"] == queued[1].metadata_["batch_id"]
+    assert queued[0].metadata_["candidate_index"] == 1
+    assert queued[1].metadata_["candidate_index"] == 2
+    assert queued[0].metadata_["alt_text"] == "Abstract layered infrastructure illustration."
+    assert queued[0].metadata_["visual_brief"]["title_safe_area"] == "right"
+    assert "标题留白：right" in queued[0].prompt
+    assert queued[0].prompt != queued[1].prompt
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_regenerate_asset_visual_batch_reuses_stored_brief_and_candidate_count():
+    first = _visual()
+    first.id = "visual-1"
+    first.metadata_ = {
+        "batch_id": "visual-batch-1",
+        "size": "1280*720",
+        "style_preset": "research_brief",
+        "visual_brief": _brief().model_dump(mode="json"),
+    }
+    second = _visual()
+    second.id = "visual-2"
+    second.metadata_ = {**first.metadata_, "candidate_index": 2}
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=_asset())
+    rows = MagicMock()
+    rows.scalars.return_value = [first, second]
+    session.execute = AsyncMock(return_value=rows)
+
+    with patch(
+        "pkg.services.application.asset_visuals.generate_asset_visual_candidates",
+        new=AsyncMock(return_value=[]),
+    ) as generate_mock:
+        result = await regenerate_asset_visual_batch(
+            session,
+            user_id="user-1",
+            asset_id="asset-1",
+            batch_id="visual-batch-1",
+        )
+
+    assert result == []
+    body = generate_mock.await_args.kwargs["body"]
+    assert body.candidate_count == 2
+    assert body.style_preset == "research_brief"
+    assert body.brief.title_safe_area == "right"
+
+
+@pytest.mark.asyncio
+async def test_regenerate_asset_visual_batch_rejects_missing_batch():
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=_asset())
+    rows = MagicMock()
+    rows.scalars.return_value = []
+    session.execute = AsyncMock(return_value=rows)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await regenerate_asset_visual_batch(
+            session,
+            user_id="user-1",
+            asset_id="asset-1",
+            batch_id="missing",
+        )
+
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_update_asset_visual_alt_text_preserves_metadata():
+    asset = _asset()
+    visual = _visual()
+    visual.metadata_ = {"provider": "dashscope", "alt_text": "Old description"}
+    session = AsyncMock()
+    session.get = AsyncMock(side_effect=[asset, visual])
+
+    result = await update_asset_visual_alt_text(
+        session,
+        user_id="user-1",
+        asset_id="asset-1",
+        visual_id="visual-1",
+        alt_text="Updated accessible description",
+    )
+
+    assert result.metadata_["provider"] == "dashscope"
+    assert result.metadata_["alt_text"] == "Updated accessible description"
 
 
 @pytest.mark.asyncio
@@ -178,7 +357,7 @@ async def test_generate_asset_visual_limits_active_tasks_per_user():
     active_result = MagicMock()
     active_result.scalars.return_value = []
     count_result = MagicMock()
-    count_result.scalar.return_value = 2
+    count_result.scalar.return_value = 4
     session.execute = AsyncMock(side_effect=[active_result, count_result])
 
     with pytest.raises(HTTPException) as exc_info:
@@ -260,6 +439,29 @@ async def test_accept_asset_visual_sets_cover_and_demotes_previous_acceptance():
     assert asset.metadata_ == {"existing": True, "cover_visual_id": "visual-1"}
     session.execute.assert_awaited_once()
     session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_accept_asset_visual_requires_alt_text():
+    asset = _asset()
+    visual = _visual()
+    visual.metadata_ = {"provider": "dashscope"}
+    session = AsyncMock()
+    session.get = AsyncMock(side_effect=[asset, visual])
+
+    with pytest.raises(HTTPException) as exc_info:
+        await decide_asset_visual(
+            session,
+            user_id="user-1",
+            asset_id="asset-1",
+            visual_id="visual-1",
+            decision="accept",
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "Alt text" in exc_info.value.detail
+    session.execute.assert_not_awaited()
+    session.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio

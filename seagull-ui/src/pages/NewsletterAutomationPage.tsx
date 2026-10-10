@@ -27,6 +27,9 @@ const DEFAULT_FORM: NewsletterAutomationUpdate = {
   audience: "Technology readers",
   style_notes: "Concise, evidence-led, and easy to scan.",
   generate_cover_image: false,
+  cover_review_mode: "draft_only",
+  cover_style_profile: "editorial_technology",
+  cover_candidate_count: 1,
 };
 
 const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -52,6 +55,9 @@ function editableConfig(config: NewsletterAutomationConfig): NewsletterAutomatio
     audience: config.audience,
     style_notes: config.style_notes,
     generate_cover_image: config.generate_cover_image,
+    cover_review_mode: config.cover_review_mode,
+    cover_style_profile: config.cover_style_profile,
+    cover_candidate_count: config.cover_candidate_count,
   };
 }
 
@@ -245,7 +251,14 @@ export function NewsletterAutomationPage() {
             <CardHeader><CardTitle>Schedule and limits</CardTitle><CardDescription>Times are entered in {timezoneName}; PKG stores the corresponding UTC schedule.</CardDescription></CardHeader>
             <CardContent className="space-y-4">
               <label className="flex items-center justify-between rounded-xl border p-4 text-sm"><span><span className="block font-medium">Enable scheduled generation</span><span className="mt-1 block text-xs text-muted-foreground">Paused automation can still be run manually.</span></span><input aria-label="Enable Newsletter automation" type="checkbox" className="h-4 w-4" checked={form.enabled} onChange={(event) => setForm({ ...form, enabled: event.target.checked })} /></label>
-              <label className="flex items-center justify-between rounded-xl border p-4 text-sm"><span><span className="block font-medium">Generate AI cover image</span><span className="mt-1 block text-xs text-muted-foreground">Generate one Qwen Image cover after the Newsletter draft succeeds. Cover failure never blocks the text draft.</span></span><input aria-label="Generate Newsletter cover image" type="checkbox" className="h-4 w-4" checked={form.generate_cover_image} onChange={(event) => setForm({ ...form, generate_cover_image: event.target.checked })} /></label>
+              <label className="flex items-center justify-between rounded-xl border p-4 text-sm"><span><span className="block font-medium">Generate AI cover image</span><span className="mt-1 block text-xs text-muted-foreground">Plan and queue Qwen Image candidates after the text draft succeeds. Image failure never blocks the Newsletter.</span></span><input aria-label="Generate Newsletter cover image" type="checkbox" className="h-4 w-4" checked={form.generate_cover_image} onChange={(event) => setForm({ ...form, generate_cover_image: event.target.checked })} /></label>
+              {form.generate_cover_image && (
+                <div className="grid gap-4 rounded-xl border bg-muted/10 p-4 sm:grid-cols-3">
+                  <label className="space-y-2 text-sm"><span className="font-medium">Cover review</span><select aria-label="Newsletter cover review mode" className="h-10 w-full rounded-md border border-input bg-background px-3" value={form.cover_review_mode} onChange={(event) => { const mode = event.target.value as NewsletterAutomationUpdate["cover_review_mode"]; setForm({ ...form, cover_review_mode: mode, cover_candidate_count: mode === "auto_accept" ? 1 : form.cover_candidate_count }); }}><option value="draft_only">Generate for review</option><option value="auto_accept">Auto-accept one cover</option></select><span className="block text-xs text-muted-foreground">Review mode is safer and remains the default.</span></label>
+                  <label className="space-y-2 text-sm"><span className="font-medium">Cover style</span><select aria-label="Newsletter cover style" className="h-10 w-full rounded-md border border-input bg-background px-3" value={form.cover_style_profile} onChange={(event) => setForm({ ...form, cover_style_profile: event.target.value as NewsletterAutomationUpdate["cover_style_profile"] })}><option value="editorial_technology">Editorial technology</option><option value="minimal_abstract">Minimal abstract</option><option value="research_brief">Research brief</option></select></label>
+                  <label className="space-y-2 text-sm"><span className="font-medium">Candidates</span><select aria-label="Newsletter cover candidate count" className="h-10 w-full rounded-md border border-input bg-background px-3" value={form.cover_candidate_count} disabled={form.cover_review_mode === "auto_accept"} onChange={(event) => setForm({ ...form, cover_candidate_count: Number(event.target.value) })}>{[1, 2, 3, 4].map((count) => <option key={count} value={count}>{count}</option>)}</select><span className="block text-xs text-muted-foreground">Auto-accept always uses exactly one candidate.</span></label>
+                </div>
+              )}
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className="space-y-2 text-sm"><span className="font-medium">Frequency</span><select aria-label="Newsletter frequency" className="h-10 w-full rounded-md border border-input bg-background px-3" value={form.frequency} onChange={(event) => setForm({ ...form, frequency: event.target.value as NewsletterAutomationUpdate["frequency"] })}><option value="manual">Manual</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
                 <label className="space-y-2 text-sm"><span className="font-medium">Local hour</span><Input aria-label="Newsletter local hour" type="number" min={0} max={23} value={localSchedule.hour} onChange={(event) => setLocalHour(Number(event.target.value))} /></label>

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, Link, useNavigate, useLocation } from "react-router-dom";
 import { BookOpen, CalendarDays, ChartNoAxesCombined, CheckCircle2, CircleAlert, Clock3, Copy, Download, Eye, FileSearch, ImageIcon, LibraryBig, MailOpen, MessageSquareShare, PenLine, Quote, Sparkles, Square, Trash2, WandSparkles } from "lucide-react";
-import { assetsApi, authApi, notesApi, sourcesApi, wikiApi, type Asset, type AssetClaimProposalInput, type AssetContributionKind, type AssetEvidenceProposalInput, type AssetEvidenceRelation, type AssetKnowledgeProposalInput, type AssetMissingEvidenceRequest, type AssetQualityAuditResult, type AssetStatus, type AssetStyleProfileId, type AssetType, type ReadinessCheckResult } from "@/lib/api";
+import { assetsApi, authApi, notesApi, sourcesApi, wikiApi, type Asset, type AssetClaimProposalInput, type AssetContributionKind, type AssetEvidenceProposalInput, type AssetEvidenceRelation, type AssetKnowledgeProposalInput, type AssetMissingEvidenceRequest, type AssetQualityAuditResult, type AssetStatus, type AssetStyleProfileId, type AssetType, type AssetVisual, type AssetVisualPlan, type AssetVisualStylePreset, type ReadinessCheckResult } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -49,6 +49,33 @@ type ProductionEvent = {
 
 type AssetDetailTab = "intent" | "evidence" | "claims" | "read" | "edit" | "map" | "knowledge" | "production";
 const ASSET_DETAIL_TABS: AssetDetailTab[] = ["intent", "evidence", "claims", "read", "edit", "map", "knowledge", "production"];
+
+function parseVisualConstraintList(value: string, limit: number): string[] {
+  return value
+    .split(/[\n,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+interface AssetVisualBatchGroup {
+  id: string;
+  items: AssetVisual[];
+  reusable: boolean;
+}
+
+function groupAssetVisualBatches(items: AssetVisual[]): AssetVisualBatchGroup[] {
+  const groups = new Map<string, AssetVisualBatchGroup>();
+  items.forEach((visual) => {
+    const storedBatchId = typeof visual.metadata_?.batch_id === "string" ? visual.metadata_.batch_id : null;
+    const groupId = storedBatchId ?? `single-${visual.id}`;
+    const current = groups.get(groupId) ?? { id: groupId, items: [], reusable: false };
+    current.items.push(visual);
+    current.reusable = Boolean(storedBatchId && visual.metadata_?.visual_brief && typeof visual.metadata_.visual_brief === "object");
+    groups.set(groupId, current);
+  });
+  return Array.from(groups.values());
+}
 
 interface AssetBlockPatch {
   assetId: string;
@@ -945,7 +972,7 @@ export function AssetDetailPage() {
     queryKey: ["asset-visuals", id],
     queryFn: () => assetsApi.listVisuals(id),
     enabled: Boolean(id),
-    refetchInterval: (query) => query.state.data?.items.some((visual) => ["queued", "generating", "retrying"].includes(visual.status)) ? 3000 : false,
+    refetchInterval: (query) => query.state.data?.items?.some((visual) => ["queued", "generating", "retrying"].includes(visual.status)) ? 3000 : false,
   });
   const workspaceQuery = useQuery({
     queryKey: ["asset-workspace", id],
@@ -1144,7 +1171,15 @@ export function AssetDetailPage() {
   const [htmlPreview, setHtmlPreview] = useState("");
   const [htmlPreviewOpen, setHtmlPreviewOpen] = useState(false);
   const [htmlCopied, setHtmlCopied] = useState(false);
-  const [coverPrompt, setCoverPrompt] = useState("");
+  const [visualStylePreset, setVisualStylePreset] = useState<AssetVisualStylePreset>("editorial_technology");
+  const [visualInstructions, setVisualInstructions] = useState("");
+  const [visualCandidateCount, setVisualCandidateCount] = useState(2);
+  const [visualPlan, setVisualPlan] = useState<AssetVisualPlan | null>(null);
+  const [visualPaletteInput, setVisualPaletteInput] = useState("");
+  const [visualMustIncludeInput, setVisualMustIncludeInput] = useState("");
+  const [visualMustAvoidInput, setVisualMustAvoidInput] = useState("");
+  const [visualAltTextDrafts, setVisualAltTextDrafts] = useState<Record<string, string>>({});
+  const visualBatches = useMemo(() => groupAssetVisualBatches(assetVisualsQuery.data?.items ?? []), [assetVisualsQuery.data?.items]);
   const [htmlPreviewTitle, setHtmlPreviewTitle] = useState("HTML Preview");
   const [htmlPreviewDescription, setHtmlPreviewDescription] = useState("Sandboxed preview generated from the current Markdown Asset.");
   const [editTitle, setEditTitle] = useState("");
@@ -1943,7 +1978,7 @@ export function AssetDetailPage() {
     setBlockRevision((current) => current ? {
       ...current,
       streaming: true,
-      agentStatus: "Agent 正在理解修改要求…",
+      agentStatus: "The Agent is interpreting the revision request…",
       pendingQuestion: undefined,
       proposal: undefined,
       error: undefined,
@@ -1951,7 +1986,7 @@ export function AssetDetailPage() {
 
     try {
       for await (const event of harnessChat(
-        `请按 revise-asset-block 工作流处理以下 JSON 合同：\n\n${JSON.stringify(request, null, 2)}`,
+        `Process the following JSON contract using the revise-asset-block workflow:\n\n${JSON.stringify(request, null, 2)}`,
         {
           preset: "revise-asset-block",
           createSession: true,
@@ -1979,13 +2014,13 @@ export function AssetDetailPage() {
               setBlockRevision((current) => current ? {
                 ...current,
                 proposal,
-                agentStatus: proposal.explanation || "Agent 已生成候选修改，请检查 Diff。",
+                agentStatus: proposal.explanation || "The Agent generated a candidate revision. Review the diff.",
               } : current);
             } else {
-              setBlockRevision((current) => current ? { ...current, error: "Agent 返回的 Block 提案与当前修订合同不匹配。" } : current);
+              setBlockRevision((current) => current ? { ...current, error: "The Agent's Block proposal does not match the current revision contract." } : current);
             }
           } else {
-            setBlockRevision((current) => current ? { ...current, agentStatus: "Agent 正在生成候选修改…", diagnostic: `Tool: ${event.tool || "unknown"}` } : current);
+            setBlockRevision((current) => current ? { ...current, agentStatus: "The Agent is generating a candidate revision…", diagnostic: `Tool: ${event.tool || "unknown"}` } : current);
           }
         } else if (event.type === "question" && event.rpc_id && event.session_id && event.questions?.length) {
           const pendingQuestion: PendingBlockQuestion = {
@@ -1996,17 +2031,17 @@ export function AssetDetailPage() {
           setBlockRevision((current) => current ? {
             ...current,
             pendingQuestion,
-            agentStatus: "Agent 需要你确认几个修改细节。",
+            agentStatus: "The Agent needs clarification on a few revision details.",
           } : current);
         } else if (event.type === "error") {
-          setBlockRevision((current) => current ? { ...current, error: event.content || "Agent 修改失败。" } : current);
+          setBlockRevision((current) => current ? { ...current, error: event.content || "Agent revision failed." } : current);
         }
       }
     } catch (error) {
       if (!abortController.signal.aborted) {
         setBlockRevision((current) => current ? {
           ...current,
-          error: error instanceof Error ? error.message : "Agent 修改失败。",
+          error: error instanceof Error ? error.message : "Agent revision failed.",
         } : current);
       }
     } finally {
@@ -2021,7 +2056,7 @@ export function AssetDetailPage() {
     if (!currentBlock || currentBlock.revision !== blockRevision.proposal.baseRevision) {
       setBlockRevision((current) => current ? {
         ...current,
-        error: "该段在 Agent 工作期间已经发生变化，请重新生成或手动合并。",
+        error: "This Block changed while the Agent was working. Regenerate the revision or merge it manually.",
       } : current);
       return;
     }
@@ -2029,7 +2064,7 @@ export function AssetDetailPage() {
       .filter((claim) => claim.status === "accepted" || claim.status === "hypothesis")
       .map((claim) => claim.id));
     if (blockRevision.proposal.claimRefs?.some((claimId) => !allowedClaims.has(claimId))) {
-      setBlockRevision((current) => current ? { ...current, error: "Agent Patch 引用了未接受或不存在的 Claim。" } : current);
+      setBlockRevision((current) => current ? { ...current, error: "The Agent patch references a Claim that is missing or not accepted." } : current);
       return;
     }
     setEditBlocks((blocks) => blocks.map((block) => {
@@ -2166,7 +2201,7 @@ export function AssetDetailPage() {
     }, DOCUMENT_OPTIMIZATION_TIMEOUT_MS);
     try {
       for await (const event of harnessChat(
-        `请按 revise-asset-document 工作流处理以下 JSON 合同：\n\n${JSON.stringify(request, null, 2)}`,
+        `Process the following JSON contract using the revise-asset-document workflow:\n\n${JSON.stringify(request, null, 2)}`,
         {
           preset: "revise-asset-document",
           createSession: true,
@@ -2332,7 +2367,7 @@ export function AssetDetailPage() {
     }));
     try {
       for await (const event of harnessChat(
-        `请按 collect-asset-evidence 工作流处理以下 JSON 合同：\n\n${JSON.stringify(request, null, 2)}`,
+        `Process the following JSON contract using the collect-asset-evidence workflow:\n\n${JSON.stringify(request, null, 2)}`,
         {
           preset: "collect-asset-evidence",
           sessionId: resumeSessionId ?? undefined,
@@ -2412,9 +2447,11 @@ export function AssetDetailPage() {
     claimAgentAbortRef.current?.abort();
     claimAgentAbortRef.current = abortController;
     setClaimAgent((current) => ({ ...current, streaming: true, status: "Agent is analyzing Evidence…", proposal: undefined, error: undefined }));
+    let validProposalSeen = false;
+    let invalidProposalSeen = false;
     try {
       for await (const event of harnessChat(
-        `请按 analyze-asset-claims 工作流处理以下 JSON 合同：\n\n${JSON.stringify(request, null, 2)}`,
+        `Process the following JSON contract using the analyze-asset-claims workflow:\n\n${JSON.stringify(request, null, 2)}`,
         {
           preset: "analyze-asset-claims",
           createSession: true,
@@ -2426,7 +2463,9 @@ export function AssetDetailPage() {
         if (event.type === "session" && event.session_id) {
           setClaimAgent((current) => ({ ...current, sessionId: event.session_id }));
         } else if (event.type === "text" && event.content) {
-          setClaimAgent((current) => ({ ...current, status: `${current.status}${event.content}`.slice(-1200) }));
+          if (!validProposalSeen) {
+            setClaimAgent((current) => ({ ...current, status: `${current.status}${event.content}`.slice(-1200) }));
+          }
         } else if (event.type === "tool_call") {
           if (event.tool === "propose_asset_claims") {
             const proposal = parseAgentClaimProposal(event.args);
@@ -2436,13 +2475,22 @@ export function AssetDetailPage() {
               && proposal.baseWorkspaceRevision === workspace.workspace_revision
               && proposal.intentRevision === intent.revision
             ) {
-              setClaimAgent((current) => ({ ...current, proposal, status: "Agent produced Candidate Claims. Apply the Claim Gate before accepting conclusions." }));
+              validProposalSeen = true;
+              setClaimAgent((current) => ({ ...current, proposal, error: undefined, diagnostic: undefined, status: "Agent produced Candidate Claims. Apply the Claim Gate before accepting conclusions." }));
             } else {
-              setClaimAgent((current) => ({ ...current, error: "Agent Claim proposal does not match the current Workspace and Intent revisions." }));
+              invalidProposalSeen = true;
+              setClaimAgent((current) => ({ ...current, status: "Agent returned an invalid Claim proposal and is attempting to correct it…", diagnostic: "The latest propose_asset_claims call did not match the current Workspace contract." }));
             }
           } else {
             setClaimAgent((current) => ({ ...current, status: "Agent is drafting and validating Claim candidates…", diagnostic: `Tool: ${event.tool || "unknown"}` }));
           }
+        } else if (event.type === "done" && !validProposalSeen) {
+          setClaimAgent((current) => ({
+            ...current,
+            error: invalidProposalSeen
+              ? "Agent could not produce a valid Claim proposal after retrying."
+              : "Agent completed without returning a Claim proposal.",
+          }));
         } else if (event.type === "error") {
           setClaimAgent((current) => ({ ...current, error: event.content || "Claim analysis failed." }));
         }
@@ -2554,7 +2602,7 @@ export function AssetDetailPage() {
     setKnowledgeAgent((current) => ({ ...current, streaming: true, status: "Agent is identifying the Asset contribution…", proposal: undefined, error: undefined }));
     try {
       for await (const event of harnessChat(
-        `请按 distill-asset-knowledge 工作流处理以下 JSON 合同：\n\n${JSON.stringify(request, null, 2)}`,
+        `Process the following JSON contract using the distill-asset-knowledge workflow:\n\n${JSON.stringify(request, null, 2)}`,
         {
           preset: "distill-asset-knowledge",
           createSession: true,
@@ -2679,12 +2727,62 @@ export function AssetDetailPage() {
   const feedbackToNoteMutation = useMutation({
     mutationFn: () => assetsApi.feedbackToNote(id),
   });
+  const planVisualMutation = useMutation({
+    mutationFn: () => assetsApi.planVisual(id, {
+      role: "cover",
+      size: "1280*720",
+      style_preset: visualStylePreset,
+      instructions: visualInstructions.trim() || null,
+    }),
+    onSuccess: (plan) => {
+      setVisualPlan(plan);
+      setVisualPaletteInput(plan.brief.palette.join("\n"));
+      setVisualMustIncludeInput(plan.brief.must_include.join("\n"));
+      setVisualMustAvoidInput(plan.brief.must_avoid.join("\n"));
+    },
+  });
   const generateVisualMutation = useMutation({
-    mutationFn: () => assetsApi.generateVisual(id, { prompt: coverPrompt.trim() || null, role: "cover", size: "1280*720" }),
-    onSuccess: () => {
-      setCoverPrompt("");
+    mutationFn: () => {
+      if (!visualPlan) throw new Error("Plan the visual before generating candidates.");
+      return assetsApi.generateVisualBatch(id, {
+        role: "cover",
+        size: visualPlan.size,
+        style_preset: visualPlan.style_preset,
+        candidate_count: visualCandidateCount,
+        brief: visualPlan.brief,
+      });
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["asset-visuals", id] }),
+  });
+  const quickGenerateVisualMutation = useMutation({
+    mutationFn: async () => {
+      const plan = await assetsApi.planVisual(id, {
+        role: "cover",
+        size: "1280*720",
+        style_preset: visualStylePreset,
+        instructions: visualInstructions.trim() || null,
+      });
+      setVisualPlan(plan);
+      setVisualPaletteInput(plan.brief.palette.join("\n"));
+      setVisualMustIncludeInput(plan.brief.must_include.join("\n"));
+      setVisualMustAvoidInput(plan.brief.must_avoid.join("\n"));
+      return assetsApi.generateVisualBatch(id, {
+        role: "cover",
+        size: plan.size,
+        style_preset: plan.style_preset,
+        candidate_count: visualCandidateCount,
+        brief: plan.brief,
+      });
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["asset-visuals", id] }),
+  });
+  const regenerateVisualBatchMutation = useMutation({
+    mutationFn: (batchId: string) => assetsApi.regenerateVisualBatch(id, batchId),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["asset-visuals", id] }),
+  });
+  const updateVisualMutation = useMutation({
+    mutationFn: ({ visualId, altText }: { visualId: string; altText: string }) => assetsApi.updateVisual(id, visualId, { alt_text: altText }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["asset-visuals", id] }),
   });
   const decideVisualMutation = useMutation({
     mutationFn: ({ visualId, decision }: { visualId: string; decision: "accept" | "reject" }) => assetsApi.decideVisual(id, visualId, decision),
@@ -3426,7 +3524,7 @@ export function AssetDetailPage() {
                           <div className="flex items-center gap-2"><Badge variant="outline">{index + 1}</Badge><Badge variant="secondary">{block.type}</Badge><span className="text-xs text-muted-foreground">revision {block.revision}</span></div>
                           <div className="flex flex-wrap gap-2">
                             <Button type="button" variant={previewing ? "secondary" : "outline"} size="sm" aria-label={`${previewing ? "Hide preview for" : "Preview"} block ${index + 1}`} onClick={() => toggleBlockPreview(block.id)}>{previewing ? "Hide Preview" : "Preview"}</Button>
-                            <Button type="button" variant={revision ? "secondary" : "outline"} size="sm" onClick={() => revision ? discardBlockRevision() : openBlockRevision(block)}>{revision ? "关闭 Agent" : "让 Agent 修改"}</Button>
+                            <Button type="button" variant={revision ? "secondary" : "outline"} size="sm" onClick={() => revision ? discardBlockRevision() : openBlockRevision(block)}>{revision ? "Close Agent" : "Revise with Agent"}</Button>
                             <Button type="button" variant="outline" size="sm" onClick={() => moveBlock(block.id, -1)} disabled={index === 0}>Move Up</Button>
                             <Button type="button" variant="outline" size="sm" onClick={() => moveBlock(block.id, 1)} disabled={index === editBlocks.length - 1}>Move Down</Button>
                             <Button type="button" variant="outline" size="sm" onClick={() => insertBlockAfter(block.id)}>Add Below</Button>
@@ -3461,24 +3559,24 @@ export function AssetDetailPage() {
                           <div className="mt-4 space-y-4 rounded-lg border border-primary/20 bg-background p-4" data-agent-block-revision={block.id}>
                             <div>
                               <p className="text-sm font-semibold">Agent Block Revision</p>
-                              <p className="text-xs text-muted-foreground">可以直接启动 Agent 获取建议，也可以先写具体要求。Agent 只生成候选补丁；点击应用后仍需 Save Changes 才会写入 Asset。</p>
+                              <p className="text-xs text-muted-foreground">Start the Agent for a recommendation or provide specific instructions first. The Agent only generates a candidate patch; you must still select Save Changes to persist it to the Asset.</p>
                             </div>
                             <div className="space-y-2">
-                              <label className="text-sm font-medium" htmlFor={`agent-block-instruction-${block.id}`}>你希望怎么修改这一段？（可选）</label>
+                              <label className="text-sm font-medium" htmlFor={`agent-block-instruction-${block.id}`}>How should this Block change? (optional)</label>
                               <Textarea
                                 id={`agent-block-instruction-${block.id}`}
                                 aria-label={`Agent instruction for block ${index + 1}`}
                                 rows={3}
                                 value={revision.instruction}
                                 disabled={revision.streaming}
-                                placeholder="留空时，Agent 会根据 Intent、上下文和已确认 Claim 主动提出改进。"
+                                placeholder="Leave blank to let the Agent suggest improvements from the Intent, context, and confirmed Claims."
                                 onChange={(event) => setBlockRevision((current) => current ? { ...current, instruction: event.target.value } : current)}
                               />
                               <div className="flex flex-wrap gap-2">
                                 <Button type="button" size="sm" onClick={() => void startBlockRevision()} disabled={revision.streaming}>
-                                  {revision.streaming ? "Agent 工作中…" : revision.proposal ? "重新生成" : revision.instruction.trim() ? "按要求修改" : "让 Agent 建议"}
+                                  {revision.streaming ? "Agent working…" : revision.proposal ? "Regenerate" : revision.instruction.trim() ? "Revise as instructed" : "Ask Agent for suggestions"}
                                 </Button>
-                                {revision.streaming && <Button type="button" variant="outline" size="sm" onClick={discardBlockRevision}>停止并丢弃</Button>}
+                                {revision.streaming && <Button type="button" variant="outline" size="sm" onClick={discardBlockRevision}>Stop and discard</Button>}
                               </div>
                             </div>
                             {revision.agentStatus && <AgentRunStatus status={revision.error ? "failed" : revision.proposal ? "completed" : revision.pendingQuestion ? "awaiting_input" : revision.streaming ? "running" : "completed"} message={revision.agentStatus} details={revision.diagnostic} />}
@@ -3491,7 +3589,7 @@ export function AssetDetailPage() {
                                     setBlockRevision((current) => current ? {
                                       ...current,
                                       pendingQuestion: undefined,
-                                      agentStatus: "已提交澄清信息，Agent 正在继续修改…",
+                                      agentStatus: "Clarification submitted. The Agent is continuing the revision…",
                                     } : current);
                                   }}
                                 />
@@ -3500,7 +3598,7 @@ export function AssetDetailPage() {
                             {revision.proposal && (
                               <div className="space-y-3" data-agent-diff-preview>
                                 <div className="flex flex-wrap items-center justify-between gap-2">
-                                  <div><p className="text-sm font-semibold">Diff Preview</p><p className="text-xs text-muted-foreground">绿色为新增，红色为删除。应用前不会改动当前 Block。</p></div>
+                                  <div><p className="text-sm font-semibold">Diff Preview</p><p className="text-xs text-muted-foreground">Green indicates additions and red indicates deletions. The current Block remains unchanged until you apply the patch.</p></div>
                                   <Badge variant="outline">base revision {revision.proposal.baseRevision}</Badge>
                                 </div>
                                 {revision.proposal.explanation && <p className="rounded-md bg-muted/50 p-3 text-sm">{revision.proposal.explanation}</p>}
@@ -4172,37 +4270,118 @@ export function AssetDetailPage() {
                 <CardDescription>Generate a reviewable cover with Qwen Image 3.0 Pro. Generated visuals are Asset publishing material, not evidence Sources.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <Textarea aria-label="Asset cover prompt" rows={4} placeholder="Optional art direction. Leave empty to generate from the Asset title, brief, and draft." value={coverPrompt} onChange={(event) => setCoverPrompt(event.target.value)} />
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button type="button" onClick={() => generateVisualMutation.mutate()} disabled={generateVisualMutation.isPending}>
-                    <WandSparkles className="mr-2 h-4 w-4" />{generateVisualMutation.isPending ? "Queueing cover…" : "Generate cover"}
+                <div className="grid gap-3 rounded-xl border bg-muted/10 p-4 lg:grid-cols-[200px_1fr_150px_auto_auto] lg:items-end">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium" htmlFor="visual-style-preset">Visual style</label>
+                    <select id="visual-style-preset" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={visualStylePreset} onChange={(event) => { setVisualStylePreset(event.target.value as AssetVisualStylePreset); setVisualPlan(null); }}>
+                      <option value="editorial_technology">Editorial technology</option>
+                      <option value="minimal_abstract">Minimal abstract</option>
+                      <option value="research_brief">Research brief</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium" htmlFor="visual-instructions">Optional art direction</label>
+                    <Input id="visual-instructions" placeholder="Brand colors, mood, composition, or elements to avoid" value={visualInstructions} onChange={(event) => { setVisualInstructions(event.target.value); setVisualPlan(null); }} />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium" htmlFor="quick-visual-candidate-count">Candidate count</label>
+                    <select id="quick-visual-candidate-count" aria-label="Quick visual candidate count" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={visualCandidateCount} onChange={(event) => setVisualCandidateCount(Number(event.target.value))}>
+                      {[1, 2, 3, 4].map((count) => <option key={count} value={count}>{count} image{count > 1 ? "s" : ""}</option>)}
+                    </select>
+                  </div>
+                  <Button type="button" variant="outline" onClick={() => planVisualMutation.mutate()} disabled={planVisualMutation.isPending}>
+                    <Sparkles className="mr-2 h-4 w-4" />{planVisualMutation.isPending ? "Planning…" : "Plan and edit"}
                   </Button>
-                  <span className="text-xs text-muted-foreground">1280×720 · no text or logos · stored in MinIO</span>
+                  <Button type="button" onClick={() => quickGenerateVisualMutation.mutate()} disabled={quickGenerateVisualMutation.isPending || planVisualMutation.isPending || generateVisualMutation.isPending}>
+                    <WandSparkles className="mr-2 h-4 w-4" />{quickGenerateVisualMutation.isPending ? "Planning and queueing…" : "Generate AI cover candidates"}
+                  </Button>
                 </div>
+                {planVisualMutation.isError && <ActionError title="Visual planning failed" impact="No generation task was created." recovery="Check the configured planning LLM or retry with the deterministic fallback." details={planVisualMutation.error instanceof Error ? planVisualMutation.error.message : "Unknown visual planning error"} onRetry={() => planVisualMutation.mutate()} />}
+                {quickGenerateVisualMutation.isError && <ActionError title="Cover generation failed" impact="No cover candidates were created for this Asset." recovery="Check the Qwen image configuration and retry, or create and edit a Visual Brief before generating." details={quickGenerateVisualMutation.error instanceof Error ? quickGenerateVisualMutation.error.message : "Unknown image generation error"} onRetry={() => quickGenerateVisualMutation.mutate()} />}
+                {visualPlan ? (
+                  <div className="space-y-4 rounded-xl border p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div><p className="font-medium">Visual Brief</p><p className="text-xs text-muted-foreground">{visualPlan.planner_mode === "llm" ? `Planned by ${visualPlan.planner_model ?? "LLM"}` : "Deterministic fallback plan"} · edit before generation</p></div>
+                      <Badge variant="outline">{visualPlan.style_preset.replace(/_/g, " ")}</Badge>
+                    </div>
+                    <div className="grid gap-3 lg:grid-cols-2">
+                      <div className="space-y-2"><label className="text-xs font-medium" htmlFor="visual-concept">Concept</label><Textarea id="visual-concept" rows={3} value={visualPlan.brief.concept} onChange={(event) => setVisualPlan((current) => current ? { ...current, brief: { ...current.brief, concept: event.target.value } } : current)} /></div>
+                      <div className="space-y-2"><label className="text-xs font-medium" htmlFor="visual-composition">Composition</label><Textarea id="visual-composition" rows={3} value={visualPlan.brief.composition} onChange={(event) => setVisualPlan((current) => current ? { ...current, brief: { ...current.brief, composition: event.target.value } } : current)} /></div>
+                    </div>
+                    <div className="grid gap-3 lg:grid-cols-2">
+                      <div className="space-y-2"><label className="text-xs font-medium" htmlFor="visual-style">Style direction</label><Textarea id="visual-style" rows={3} value={visualPlan.brief.style} onChange={(event) => setVisualPlan((current) => current ? { ...current, brief: { ...current.brief, style: event.target.value } } : current)} /></div>
+                      <div className="space-y-2">
+                        <label className="text-xs font-medium" htmlFor="visual-title-safe-area">Title safe area</label>
+                        <select id="visual-title-safe-area" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={visualPlan.brief.title_safe_area} onChange={(event) => setVisualPlan((current) => current ? { ...current, brief: { ...current.brief, title_safe_area: event.target.value as AssetVisualPlan["brief"]["title_safe_area"] } } : current)}>
+                          <option value="left">Left</option><option value="right">Right</option><option value="top">Top</option><option value="bottom">Bottom</option><option value="center">Center</option><option value="none">No reserved area</option>
+                        </select>
+                        <p className="text-xs text-muted-foreground">Keeps the selected region low-detail for a publication title overlay.</p>
+                      </div>
+                    </div>
+                    <div className="grid gap-3 lg:grid-cols-3">
+                      <div className="space-y-2"><label className="text-xs font-medium" htmlFor="visual-palette">Brand palette</label><Textarea id="visual-palette" rows={4} placeholder="#0B1F3A&#10;#2563EB" value={visualPaletteInput} onChange={(event) => { const value = event.target.value; setVisualPaletteInput(value); setVisualPlan((current) => current ? { ...current, brief: { ...current.brief, palette: parseVisualConstraintList(value, 8) } } : current); }} /><p className="text-xs text-muted-foreground">One color or color direction per line, up to 8.</p></div>
+                      <div className="space-y-2"><label className="text-xs font-medium" htmlFor="visual-must-include">Must include</label><Textarea id="visual-must-include" rows={4} value={visualMustIncludeInput} onChange={(event) => { const value = event.target.value; setVisualMustIncludeInput(value); setVisualPlan((current) => current ? { ...current, brief: { ...current.brief, must_include: parseVisualConstraintList(value, 8) } } : current); }} /><p className="text-xs text-muted-foreground">Required visual elements, one per line.</p></div>
+                      <div className="space-y-2"><label className="text-xs font-medium" htmlFor="visual-must-avoid">Must avoid</label><Textarea id="visual-must-avoid" rows={4} value={visualMustAvoidInput} onChange={(event) => { const value = event.target.value; setVisualMustAvoidInput(value); setVisualPlan((current) => current ? { ...current, brief: { ...current.brief, must_avoid: parseVisualConstraintList(value, 12) } } : current); }} /><p className="text-xs text-muted-foreground">Forbidden elements or treatments, one per line.</p></div>
+                    </div>
+                    <div className="space-y-2"><label className="text-xs font-medium" htmlFor="visual-prompt">Generation prompt</label><Textarea id="visual-prompt" rows={5} value={visualPlan.brief.prompt} onChange={(event) => setVisualPlan((current) => current ? { ...current, brief: { ...current.brief, prompt: event.target.value } } : current)} /></div>
+                    <div className="space-y-2"><label className="text-xs font-medium" htmlFor="visual-alt-text">Alt text</label><Input id="visual-alt-text" value={visualPlan.brief.alt_text} onChange={(event) => setVisualPlan((current) => current ? { ...current, brief: { ...current.brief, alt_text: event.target.value } } : current)} /></div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <select aria-label="Visual candidate count" className="h-9 rounded-md border border-input bg-background px-3 text-sm" value={visualCandidateCount} onChange={(event) => setVisualCandidateCount(Number(event.target.value))}>
+                        {[1, 2, 3, 4].map((count) => <option key={count} value={count}>{count} candidate{count > 1 ? "s" : ""}</option>)}
+                      </select>
+                      <Button type="button" onClick={() => generateVisualMutation.mutate()} disabled={generateVisualMutation.isPending || !visualPlan.brief.prompt.trim() || !visualPlan.brief.alt_text.trim()}>
+                        <WandSparkles className="mr-2 h-4 w-4" />{generateVisualMutation.isPending ? "Queueing candidates…" : "Generate candidates"}
+                      </Button>
+                      <span className="text-xs text-muted-foreground">1280×720 · queued asynchronously · review required</span>
+                    </div>
+                  </div>
+                ) : <p className="text-sm text-muted-foreground">Plan a structured visual brief before generating. Asset text is treated as content, not executable instructions.</p>}
                 {generateVisualMutation.isError && <ActionError title="Cover generation failed" impact="No cover was added to this Asset." recovery="Check the Qwen image configuration and retry generation." details={generateVisualMutation.error instanceof Error ? generateVisualMutation.error.message : "Unknown image generation error"} onRetry={() => generateVisualMutation.mutate()} />}
                 {assetVisualsQuery.isLoading ? <p className="text-sm text-muted-foreground">Loading visuals…</p> : null}
                 {assetVisualsQuery.isError ? <ActionError title="Cover visuals could not be loaded" impact="Existing generated covers are temporarily unavailable in this view." recovery="Retry loading the visual history." details={assetVisualsQuery.error instanceof Error ? assetVisualsQuery.error.message : "Unknown visual loading error"} onRetry={() => void assetVisualsQuery.refetch()} /> : null}
                 {decideVisualMutation.isError ? <ActionError title="Cover review decision failed" impact="The selected cover status was not changed." recovery="Reload the visual history and retry the decision." details={decideVisualMutation.error instanceof Error ? decideVisualMutation.error.message : "Unknown review error"} /> : null}
+                {updateVisualMutation.isError ? <ActionError title="Alt text was not saved" impact="The generated image is unchanged, but its accessible description was not updated." recovery="Reload the visual history and retry saving the description." details={updateVisualMutation.error instanceof Error ? updateVisualMutation.error.message : "Unknown visual update error"} /> : null}
                 {deleteVisualMutation.isError ? <ActionError title="Cover deletion failed" impact="The generated cover remains attached to this Asset." recovery="Check MinIO availability and retry deletion." details={deleteVisualMutation.error instanceof Error ? deleteVisualMutation.error.message : "Unknown deletion error"} /> : null}
                 {cancelVisualMutation.isError ? <ActionError title="Cover cancellation failed" impact="The generation task remains active." recovery="Reload the visual history and retry while the task is queued or waiting to retry." details={cancelVisualMutation.error instanceof Error ? cancelVisualMutation.error.message : "Unknown cancellation error"} /> : null}
-                {!assetVisualsQuery.isLoading && !assetVisualsQuery.isError && (assetVisualsQuery.data?.items.length ?? 0) === 0 ? <div className="rounded-xl border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">No generated covers yet. Add optional art direction or generate directly from the Asset content.</div> : null}
-                <div className="grid gap-4 lg:grid-cols-2">
-                  {(assetVisualsQuery.data?.items ?? []).map((visual) => (
-                    <div key={visual.id} className="overflow-hidden rounded-xl border bg-muted/10">
-                      {visual.image_url ? <img src={visual.image_url} alt="Generated Asset cover" className="aspect-video w-full object-cover" /> : <div className="flex aspect-video items-center justify-center text-sm text-muted-foreground">{visual.status === "failed" ? "Generation failed" : ["queued", "generating", "retrying"].includes(visual.status) ? "Generating cover…" : "Image unavailable"}</div>}
-                      <div className="space-y-3 p-4">
-                        <div className="flex flex-wrap items-center justify-between gap-2"><Badge variant={visual.status === "accepted" ? "default" : "outline"}>{visual.status}</Badge><span className="text-xs text-muted-foreground">{visual.model}{visual.width && visual.height ? ` · ${visual.width}×${visual.height}` : ""}</span></div>
-                        <p className="line-clamp-3 text-xs leading-5 text-muted-foreground">{visual.prompt}</p>
-                        {visual.error_message ? <p className="text-xs text-destructive">{visual.error_message}</p> : null}
-                        <div className="flex flex-wrap gap-2">
-                          {["ready", "rejected"].includes(visual.status) ? <Button type="button" size="sm" onClick={() => decideVisualMutation.mutate({ visualId: visual.id, decision: "accept" })} disabled={decideVisualMutation.isPending}>Accept cover</Button> : null}
-                          {["ready", "accepted"].includes(visual.status) ? <Button type="button" size="sm" variant="outline" onClick={() => decideVisualMutation.mutate({ visualId: visual.id, decision: "reject" })} disabled={decideVisualMutation.isPending}>Reject</Button> : null}
-                          {["queued", "retrying"].includes(visual.status) ? <Button type="button" size="sm" variant="outline" onClick={() => cancelVisualMutation.mutate(visual.id)} disabled={cancelVisualMutation.isPending}>Cancel</Button> : null}
-                          <Button type="button" size="sm" variant="ghost" onClick={() => { if (window.confirm("Delete this generated visual?")) deleteVisualMutation.mutate(visual.id); }} disabled={deleteVisualMutation.isPending || visual.status === "generating"}><Trash2 className="mr-2 h-4 w-4" />Delete</Button>
+                {regenerateVisualBatchMutation.isError ? <ActionError title="Batch regeneration failed" impact="No replacement candidate batch was queued." recovery="Wait for active image tasks to finish or verify the saved Visual Brief, then retry." details={regenerateVisualBatchMutation.error instanceof Error ? regenerateVisualBatchMutation.error.message : "Unknown batch regeneration error"} /> : null}
+                {!assetVisualsQuery.isLoading && !assetVisualsQuery.isError && (assetVisualsQuery.data?.items?.length ?? 0) === 0 ? <div className="rounded-xl border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">No generated covers yet. Add optional art direction or generate directly from the Asset content.</div> : null}
+                <div className="space-y-5">
+                  {visualBatches.map((batch, batchIndex) => {
+                    const completedCount = batch.items.filter((visual) => ["ready", "accepted", "rejected"].includes(visual.status)).length;
+                    const stylePreset = typeof batch.items[0]?.metadata_?.style_preset === "string" ? batch.items[0].metadata_.style_preset.replace(/_/g, " ") : "legacy visual";
+                    return (
+                      <section key={batch.id} data-visual-batch={batch.id} className="space-y-3 rounded-2xl border bg-muted/5 p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div><p className="text-sm font-semibold">Candidate batch {visualBatches.length - batchIndex}</p><p className="text-xs text-muted-foreground">{batch.items.length} candidate{batch.items.length === 1 ? "" : "s"} · {completedCount} reviewable · {stylePreset}</p></div>
+                          {batch.reusable ? <Button type="button" size="sm" variant="outline" onClick={() => regenerateVisualBatchMutation.mutate(batch.id)} disabled={regenerateVisualBatchMutation.isPending}><WandSparkles className="mr-2 h-4 w-4" />{regenerateVisualBatchMutation.isPending ? "Queueing batch…" : "Regenerate batch"}</Button> : <Badge variant="outline">Legacy batch</Badge>}
                         </div>
-                      </div>
-                    </div>
-                  ))}
+                        <div className="grid gap-4 xl:grid-cols-2">
+                          {batch.items.map((visual) => {
+                            const storedAltText = typeof visual.metadata_?.alt_text === "string" ? visual.metadata_.alt_text : "";
+                            const altText = visualAltTextDrafts[visual.id] ?? storedAltText;
+                            return (
+                              <div key={visual.id} className="overflow-hidden rounded-xl border bg-background">
+                                {visual.image_url ? <a href={visual.image_url} target="_blank" rel="noreferrer" title="Open full-size candidate"><img src={visual.image_url} alt={storedAltText || "Generated Asset cover"} className="aspect-video w-full object-cover transition-opacity hover:opacity-90" /></a> : <div className="flex aspect-video items-center justify-center text-sm text-muted-foreground">{visual.status === "failed" ? "Generation failed" : ["queued", "generating", "retrying"].includes(visual.status) ? "Generating cover…" : "Image unavailable"}</div>}
+                                <div className="space-y-3 p-4">
+                                  <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><Badge variant={visual.status === "accepted" ? "default" : "outline"}>{visual.status}</Badge>{typeof visual.metadata_?.candidate_index === "number" ? <span className="text-xs text-muted-foreground">Candidate {String(visual.metadata_.candidate_index)}</span> : null}</div><span className="text-xs text-muted-foreground">{visual.model}{visual.width && visual.height ? ` · ${visual.width}×${visual.height}` : ""}</span></div>
+                                  <p className="line-clamp-3 text-xs leading-5 text-muted-foreground">{visual.prompt}</p>
+                                  <div className="space-y-2"><label className="text-xs font-medium" htmlFor={`visual-alt-${visual.id}`}>Alt text</label><Textarea id={`visual-alt-${visual.id}`} rows={2} value={altText} onChange={(event) => setVisualAltTextDrafts((current) => ({ ...current, [visual.id]: event.target.value }))} /><Button type="button" size="sm" variant="outline" onClick={() => updateVisualMutation.mutate({ visualId: visual.id, altText: altText.trim() })} disabled={!altText.trim() || altText.trim() === storedAltText || updateVisualMutation.isPending}>Save alt text</Button></div>
+                                  {visual.error_message ? <p className="text-xs text-destructive">{visual.error_message}</p> : null}
+                                  <div className="flex flex-wrap gap-2">
+                                    {["ready", "rejected"].includes(visual.status) ? <Button type="button" size="sm" onClick={() => decideVisualMutation.mutate({ visualId: visual.id, decision: "accept" })} disabled={decideVisualMutation.isPending || !storedAltText.trim()}>Accept cover</Button> : null}
+                                    {["ready", "accepted"].includes(visual.status) ? <Button type="button" size="sm" variant="outline" onClick={() => decideVisualMutation.mutate({ visualId: visual.id, decision: "reject" })} disabled={decideVisualMutation.isPending}>Reject</Button> : null}
+                                    {["queued", "retrying"].includes(visual.status) ? <Button type="button" size="sm" variant="outline" onClick={() => cancelVisualMutation.mutate(visual.id)} disabled={cancelVisualMutation.isPending}>Cancel</Button> : null}
+                                    <Button type="button" size="sm" variant="ghost" onClick={() => { if (window.confirm("Delete this generated visual?")) deleteVisualMutation.mutate(visual.id); }} disabled={deleteVisualMutation.isPending || visual.status === "generating"}><Trash2 className="mr-2 h-4 w-4" />Delete</Button>
+                                  </div>
+                                  {!storedAltText.trim() && ["ready", "rejected"].includes(visual.status) ? <p className="text-xs text-amber-700">Save Alt Text before accepting this cover.</p> : null}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </section>
+                    );
+                  })}
                 </div>
               </CardContent>
             </Card>

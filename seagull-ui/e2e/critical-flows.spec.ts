@@ -62,6 +62,11 @@ type MockState = {
   searchResults?: Array<Record<string, unknown>>;
   searchRequests?: Array<Record<string, unknown>>;
   calendarReminders?: Array<Record<string, unknown>>;
+  assetVisuals?: Array<Record<string, unknown>>;
+  visualBatchRegenerateCalls?: number;
+  visualPlanCalls?: number;
+  visualGenerateCalls?: number;
+  claimSelfCorrection?: boolean;
 };
 
 const intentProposal = {
@@ -200,24 +205,34 @@ async function installMockBff(page: Page, state: MockState) {
       if (body.preset === "analyze-asset-claims") {
         const contractText = body.prompt?.match(/\{[\s\S]*\}$/)?.[0] ?? "{}";
         const contract = JSON.parse(contractText) as { assetId?: string; baseWorkspaceRevision?: number; intentRevision?: number; evidence?: Array<{ id: string }> };
+        const validProposal = {
+          assetId: contract.assetId,
+          baseWorkspaceRevision: contract.baseWorkspaceRevision,
+          intentRevision: contract.intentRevision,
+          proposals: [{
+            content: "The selected evidence supports a focused architecture decision.",
+            kind: "recommendation",
+            supportingEvidence: [contract.evidence?.[0]?.id],
+            contradictingEvidence: [],
+            agentConfidence: "medium",
+          }],
+        };
+        const correctionEvents = state.claimSelfCorrection ? [
+          `data: ${JSON.stringify({ type: "tool_call", tool: "propose_asset_claims", args: { ...validProposal, proposals: [{ ...validProposal.proposals[0], agentConfidence: undefined }] } })}`,
+          "",
+          `data: ${JSON.stringify({ type: "tool_result", tool: "propose_asset_claims", result: "Error: proposals[0].agentConfidence is invalid", error: true })}`,
+          "",
+        ] : [];
         return route.fulfill({
           status: 200,
           contentType: "text/event-stream",
           body: [
             'data: {"type":"session","session_id":"claim-session-e2e"}',
             "",
-            `data: ${JSON.stringify({ type: "tool_call", tool: "propose_asset_claims", args: {
-              assetId: contract.assetId,
-              baseWorkspaceRevision: contract.baseWorkspaceRevision,
-              intentRevision: contract.intentRevision,
-              proposals: [{
-                content: "The selected evidence supports a focused architecture decision.",
-                kind: "recommendation",
-                supportingEvidence: [contract.evidence?.[0]?.id],
-                contradictingEvidence: [],
-                agentConfidence: "medium",
-              }],
-            } })}`,
+            ...correctionEvents,
+            `data: ${JSON.stringify({ type: "tool_call", tool: "propose_asset_claims", args: validProposal })}`,
+            "",
+            ...(state.claimSelfCorrection ? [`data: ${JSON.stringify({ type: "text", content: "<think>Corrected the tool call.</think>" })}`, ""] : []),
             "",
             'data: {"type":"done","session_id":"claim-session-e2e"}',
             "",
@@ -392,6 +407,10 @@ async function installMockBff(page: Page, state: MockState) {
         delivery_format: "html",
         audience: "Technology readers",
         style_notes: "Concise, evidence-led, and easy to scan.",
+        generate_cover_image: false,
+        cover_review_mode: "draft_only",
+        cover_style_profile: "editorial_technology",
+        cover_candidate_count: 1,
         last_generated_at: null,
         last_asset_id: null,
         last_run_at: null,
@@ -438,6 +457,10 @@ async function installMockBff(page: Page, state: MockState) {
         delivery_format: config.delivery_format ?? "html",
         audience: config.audience ?? "Technology readers",
         style_notes: config.style_notes ?? "",
+        generate_cover_image: config.generate_cover_image ?? false,
+        cover_review_mode: config.cover_review_mode ?? "draft_only",
+        cover_style_profile: config.cover_style_profile ?? "editorial_technology",
+        cover_candidate_count: config.cover_candidate_count ?? 1,
       };
       if (state.newsletterRunMode === "skipped") {
         state.newsletterAutomation = { ...config, last_run_at: now, last_run_status: "skipped", last_run_reason: "no_matching_items", last_news_count: 0, last_paper_count: 0 };
@@ -463,6 +486,39 @@ async function installMockBff(page: Page, state: MockState) {
         config_snapshot: configSnapshot,
         asset: { id: "asset-e2e", user_id: "user-e2e", ...state.savedAssetBody, created_at: now, updated_at: now },
       });
+    }
+    if (path === "/api/assets/asset-e2e/visuals" && method === "GET") {
+      return json(route, { items: state.assetVisuals ?? [] });
+    }
+    if (path === "/api/assets/asset-e2e/visuals/plan" && method === "POST") {
+      state.visualPlanCalls = (state.visualPlanCalls ?? 0) + 1;
+      return json(route, {
+        role: "cover",
+        size: "1280*720",
+        style_preset: "editorial_technology",
+        planner_mode: "llm",
+        planner_model: "qwen-plus",
+        brief: {
+          concept: "Layered AI infrastructure",
+          composition: "Central system with left title space",
+          style: "Editorial technology",
+          palette: ["#0B1F3A", "#2563EB"],
+          must_include: ["clear focal point"],
+          must_avoid: ["text", "logo"],
+          title_safe_area: "left",
+          prompt: "Create an editorial technology cover without text.",
+          alt_text: "Abstract layered AI infrastructure cover.",
+        },
+      });
+    }
+    if (path === "/api/assets/asset-e2e/visuals/generate-batch" && method === "POST") {
+      state.visualGenerateCalls = (state.visualGenerateCalls ?? 0) + 1;
+      return json(route, { items: [] }, 202);
+    }
+    const visualBatchRegenerateMatch = path.match(/^\/api\/assets\/asset-e2e\/visuals\/batches\/([^/]+)\/regenerate$/);
+    if (visualBatchRegenerateMatch && method === "POST") {
+      state.visualBatchRegenerateCalls = (state.visualBatchRegenerateCalls ?? 0) + 1;
+      return json(route, { items: state.assetVisuals ?? [] }, 202);
     }
     if (path === "/api/assets/asset-e2e" && method === "GET") {
       return json(route, { id: "asset-e2e", user_id: "user-e2e", ...state.savedAssetBody, metadata_: state.savedAssetBody?.metadata ?? state.savedAssetBody?.metadata_ ?? null, source_refs: state.savedAssetBody?.source_refs ?? [], note_refs: state.savedAssetBody?.note_refs ?? [], wiki_refs: state.savedAssetBody?.wiki_refs ?? [], created_at: now, updated_at: now });
@@ -1598,6 +1654,107 @@ test("Asset complete optimization records a saved first round before running the
   expect(state.documentOptimizationCalls).toBe(2);
 });
 
+test("Claim analysis recovers when the model corrects an invalid tool call", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: {
+      title: "Claim Recovery Asset",
+      brief: "Validate recoverable Claim tool errors.",
+      asset_type: "research_brief",
+      status: "draft",
+      draft_content: "# Claim Recovery Asset",
+      source_refs: ["source-input"],
+      note_refs: [],
+      wiki_refs: [],
+      metadata_: {},
+    },
+    assetWorkspace: {
+      asset_id: "asset-e2e",
+      workspace_revision: 7,
+      intent: { revision: 1, question: "What does the evidence support?", goal: "Produce reviewed Claims.", audience: "Reviewers", creation_mode: "make_decision", scope: [], constraints: [], status: "confirmed", confirmed_by: "user-e2e", confirmed_at: now },
+      intent_history: [],
+      evidence: [{ id: "evidence-1", target_type: "source", target_id: "source-input", relation: "supports", summary: "Accepted evidence.", status: "accepted", authorship: "agent", intent_revision: 1, created_at: now }],
+      claims: [],
+      contribution: null,
+      knowledge_candidates: [],
+      decision_items: [],
+    },
+    claimSelfCorrection: true,
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/assets/asset-e2e?tab=claims");
+  await page.getByRole("button", { name: "Ask Agent to Propose Claims" }).click();
+  await expect(page.getByText("Candidate Claim Proposal")).toBeVisible();
+  await expect(page.locator('[data-agent-run-status="completed"]')).toBeVisible();
+  await expect(page.getByText("Claim proposal failed")).toHaveCount(0);
+  await expect(page.getByText(/Corrected the tool call/)).toHaveCount(0);
+});
+
+test("Asset visual batches compare candidates and regenerate together", async ({ page }) => {
+  const visualBrief = {
+    concept: "Layered AI infrastructure",
+    composition: "Central system with left title space",
+    style: "Editorial technology",
+    palette: ["#0B1F3A", "#2563EB"],
+    must_include: ["clear focal point"],
+    must_avoid: ["text", "logo"],
+    title_safe_area: "left",
+    prompt: "Create an editorial technology cover without text.",
+    alt_text: "Abstract layered AI infrastructure cover.",
+  };
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: {
+      title: "Visual Batch Asset",
+      brief: "Compare generated cover candidates.",
+      asset_type: "newsletter_issue",
+      status: "draft",
+      draft_content: "# Visual Batch Asset\n\nA reviewable draft.",
+      source_refs: [],
+      note_refs: [],
+      wiki_refs: [],
+      metadata_: {},
+    },
+    assetVisuals: [1, 2].map((candidateIndex) => ({
+      id: `visual-${candidateIndex}`,
+      asset_id: "asset-e2e",
+      role: "cover",
+      status: "ready",
+      prompt: `Candidate ${candidateIndex} prompt`,
+      model: "qwen-image-3.0-pro",
+      width: 1280,
+      height: 720,
+      mime_type: "image/png",
+      image_url: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1280' height='720'%3E%3Crect width='100%25' height='100%25' fill='%232563EB'/%3E%3C/svg%3E",
+      metadata_: { batch_id: "visual-batch-e2e", candidate_index: candidateIndex, candidate_count: 2, style_preset: "editorial_technology", visual_brief: visualBrief, alt_text: visualBrief.alt_text },
+      created_at: now,
+      updated_at: now,
+    })),
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/assets/asset-e2e?tab=production");
+  await expect(page.getByRole("button", { name: "Generate AI cover candidates" })).toBeVisible();
+  await page.getByRole("button", { name: "Generate AI cover candidates" }).click();
+  await expect.poll(() => state.visualPlanCalls).toBe(1);
+  await expect.poll(() => state.visualGenerateCalls).toBe(1);
+  await expect(page.locator('[data-visual-batch="visual-batch-e2e"]')).toBeVisible();
+  await expect(page.getByText("2 candidates · 2 reviewable · editorial technology")).toBeVisible();
+  await page.getByRole("button", { name: "Regenerate batch" }).click();
+  await expect.poll(() => state.visualBatchRegenerateCalls).toBe(1);
+});
+
 test("legacy Asset can establish stable Blocks before creating an Outline Map", async ({ page }) => {
   const state: MockState = {
     loggedIn: false,
@@ -1742,6 +1899,10 @@ test("Newsletter Automation saves dirty settings before running and keeps the re
   await page.getByLabel("Newsletter name").fill("E2E Tech Weekly");
   await page.getByLabel("Newsletter topics").fill("AI agents\nrobotics");
   await page.getByLabel("Enable Newsletter automation").check();
+  await page.getByLabel("Generate Newsletter cover image").check();
+  await page.getByLabel("Newsletter cover review mode").selectOption("draft_only");
+  await page.getByLabel("Newsletter cover style").selectOption("minimal_abstract");
+  await page.getByLabel("Newsletter cover candidate count").selectOption("3");
   await page.getByLabel("Newsletter frequency").selectOption("daily");
   await page.getByLabel("Newsletter local hour").fill("10");
   await expect(page.getByText("Unsaved changes", { exact: true })).toBeVisible();
@@ -1751,6 +1912,9 @@ test("Newsletter Automation saves dirty settings before running and keeps the re
   await expect.poll(() => state.newsletterAutomation?.name).toBe("E2E Tech Weekly");
   expect(state.newsletterAutomation?.topics).toEqual(["AI agents", "robotics"]);
   expect(state.newsletterAutomation?.frequency).toBe("daily");
+  expect(state.newsletterAutomation?.cover_review_mode).toBe("draft_only");
+  expect(state.newsletterAutomation?.cover_style_profile).toBe("minimal_abstract");
+  expect(state.newsletterAutomation?.cover_candidate_count).toBe(3);
   expect(state.newsletterAutomation?.config_revision).toBe(1);
   await expect.poll(() => state.newsletterRunCalls).toBe(1);
   await expect(page).toHaveURL(/\/assets\/newsletter-automation$/);
@@ -1855,10 +2019,10 @@ test("agent-assisted Asset generation creates a Workspace after Intent confirmat
     candidate: null,
     memory: null,
     sessionContext: null,
-    chatResponse: validResearchBrief.replace(
+    chatResponse: `<think>Private chain-of-thought must never enter the Asset body.</think>\n${validResearchBrief.replace(
       "[Source: source-input]",
       "[Source: source-input] [Source: web-linuxfoundation-2026]",
-    ),
+    )}`,
   };
   await installMockBff(page, state);
   await signIn(page);
@@ -1911,6 +2075,7 @@ test("agent-assisted Asset generation creates a Workspace after Intent confirmat
   await expect(input).toContainText("Architecture reviewers");
   await input.press("Enter");
   await expect(page.getByText("E2E answer with a durable result.")).toBeVisible();
+  await expect(page.getByText("Private chain-of-thought must never enter the Asset body.")).toHaveCount(0);
   expect(state.savedAssetBody?.draft_content).toBeUndefined();
 
   await page.getByRole("button", { name: "Save Draft to Asset" }).click();
@@ -1924,6 +2089,8 @@ test("agent-assisted Asset generation creates a Workspace after Intent confirmat
     status: "draft",
   });
   expect(state.savedAssetBody?.draft_content).toContain("[Source: web-linuxfoundation-2026]");
+  expect(state.savedAssetBody?.draft_content).not.toContain("<think>");
+  expect(state.savedAssetBody?.draft_content).not.toContain("Private chain-of-thought");
   expect(state.savedAssetBody?.metadata).toMatchObject({
     audience: "Architecture reviewers",
     generation_mode: "agent_assisted",
@@ -1933,7 +2100,7 @@ test("agent-assisted Asset generation creates a Workspace after Intent confirmat
   await page.goto("/assets/asset-e2e");
   await expect(page.getByRole("tab", { name: "Read" })).toHaveAttribute("data-state", "active");
   await expect(page.locator('[data-reader-layout="research-brief"]')).toBeVisible();
-  await expect(page.getByText("Decision document", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Decision document · Executive Brief/)).toBeVisible();
   await expect(page.getByText("Executive brief", { exact: true })).toBeVisible();
   await expect(page.getByText("Brief sections", { exact: true })).toBeVisible();
   await expect(page.getByText("Evidence base", { exact: true })).toBeVisible();
@@ -1955,9 +2122,9 @@ test("agent-assisted Asset generation creates a Workspace after Intent confirmat
   await expect(page.locator("[data-block-preview]").getByRole("heading", { name: "Executive Summary" })).toBeVisible();
   await page.getByRole("button", { name: "Hide preview for block 2" }).click();
   await expect(page.locator("[data-block-preview]")).toHaveCount(0);
-  await page.getByRole("button", { name: "让 Agent 修改" }).nth(3).click();
+  await page.getByRole("button", { name: "Revise with Agent" }).nth(3).click();
   await page.getByLabel("Agent instruction for block 4").fill("Make this paragraph clearer without removing its evidence marker.");
-  await page.getByRole("button", { name: "按要求修改" }).click();
+  await page.getByRole("button", { name: "Revise as instructed" }).click();
   await expect(page.locator("[data-agent-diff-preview]")).toBeVisible();
   await expect(page.getByLabel("Draft block 4")).not.toHaveValue(/Agent revised paragraph/);
   await page.getByRole("button", { name: "Apply to Editor" }).click();

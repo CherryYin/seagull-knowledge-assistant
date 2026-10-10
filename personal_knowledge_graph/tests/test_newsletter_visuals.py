@@ -5,13 +5,22 @@ import pytest
 
 from pkg.models.application.asset import Asset
 from pkg.models.foundation.source import Source
-from pkg.schemas.application.asset import NewsletterAutomationConfig
+from pkg.schemas.application.asset import AssetVisualBrief, AssetVisualPlanRead, NewsletterAutomationConfig
 from pkg.services.application.newsletter_automation import generate_newsletter
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cover_failure", [False, True])
-async def test_newsletter_cover_generation_is_optional_and_non_blocking(cover_failure):
+@pytest.mark.parametrize(("review_mode", "candidate_count", "expected_auto_accept"), [
+    ("draft_only", 2, False),
+    ("auto_accept", 1, True),
+])
+async def test_newsletter_cover_generation_is_optional_and_non_blocking(
+    cover_failure,
+    review_mode,
+    candidate_count,
+    expected_auto_accept,
+):
     now = datetime(2026, 10, 8, 8, 0, tzinfo=timezone.utc)
     config = NewsletterAutomationConfig(
         enabled=True,
@@ -20,6 +29,9 @@ async def test_newsletter_cover_generation_is_optional_and_non_blocking(cover_fa
         max_news_items=1,
         max_paper_items=0,
         generate_cover_image=True,
+        cover_review_mode=review_mode,
+        cover_style_profile="minimal_abstract",
+        cover_candidate_count=candidate_count,
     )
     source = Source(
         id="news-1",
@@ -51,6 +63,21 @@ async def test_newsletter_cover_generation_is_optional_and_non_blocking(cover_fa
     asset.created_at = now
     asset.updated_at = now
 
+    visual_plan = AssetVisualPlanRead(
+        style_preset="minimal_abstract",
+        planner_mode="fallback",
+        brief=AssetVisualBrief(
+            concept="Agent infrastructure",
+            composition="One focal point with editorial whitespace",
+            style="Minimal abstract",
+            palette=["#0B1F3A", "#F59E0B"],
+            must_include=["clear focus"],
+            must_avoid=["text", "logos"],
+            prompt="Create an abstract editorial cover without text or logos.",
+            alt_text="Abstract agent infrastructure cover.",
+        ),
+    )
+
     with patch(
         "pkg.services.application.newsletter_automation.get_newsletter_config",
         new=AsyncMock(return_value=config),
@@ -72,14 +99,29 @@ async def test_newsletter_cover_generation_is_optional_and_non_blocking(cover_fa
         "pkg.services.application.newsletter_automation._rewrite_newsletter_details",
         new=AsyncMock(return_value=({}, None)),
     ), patch(
-        "pkg.services.application.newsletter_automation.generate_asset_visual",
+        "pkg.services.application.newsletter_automation.plan_asset_visual",
+        new=AsyncMock(return_value=visual_plan),
+    ) as plan_mock, patch(
+        "pkg.services.application.newsletter_automation.generate_asset_visual_candidates",
         new=AsyncMock(
             side_effect=RuntimeError("provider unavailable") if cover_failure else None,
-            return_value=MagicMock(id="visual-1"),
+            return_value=[MagicMock(id="visual-1")],
         ),
     ) as generate_mock:
         result = await generate_newsletter(session, user_id="user-1", now=now)
 
     assert result.status == "generated"
+    plan_mock.assert_awaited_once()
     generate_mock.assert_awaited_once()
-    assert generate_mock.await_args.kwargs["auto_accept"] is True
+    assert generate_mock.await_args.kwargs["auto_accept"] is expected_auto_accept
+    assert generate_mock.await_args.kwargs["body"].candidate_count == candidate_count
+    assert generate_mock.await_args.kwargs["body"].style_preset == "minimal_abstract"
+
+
+def test_newsletter_auto_accept_requires_one_candidate():
+    with pytest.raises(ValueError, match="exactly one candidate"):
+        NewsletterAutomationConfig(
+            generate_cover_image=True,
+            cover_review_mode="auto_accept",
+            cover_candidate_count=2,
+        )

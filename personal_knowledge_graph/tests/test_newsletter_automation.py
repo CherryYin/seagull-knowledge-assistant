@@ -8,7 +8,12 @@ from pkg.models.application.asset import Asset
 from pkg.models.discovery import DiscoveryItem
 from pkg.models.foundation.source import Source
 from pkg.models.user import UserSettings
-from pkg.schemas.application.asset import NewsletterAutomationConfig, NewsletterAutomationUpdate
+from pkg.schemas.application.asset import (
+    AssetVisualBrief,
+    AssetVisualPlanRead,
+    NewsletterAutomationConfig,
+    NewsletterAutomationUpdate,
+)
 from pkg.schemas.connector import NewsArticle
 from pkg.services.application.blog_generation import export_html, export_markdown, export_wechat_html
 from pkg.services.application.newsletter_automation import (
@@ -401,14 +406,31 @@ async def test_generate_newsletter_creates_draft_asset_from_recent_items(cover_f
     asset = Asset(id="asset-newsletter", user_id="user-1", asset_type="newsletter_issue", status="draft", title="Tech Daily · 2026-09-03", source_refs=["news-1"], note_refs=[], wiki_refs=[])
     asset.created_at = now
     asset.updated_at = now
+    visual_plan = AssetVisualPlanRead(
+        style_preset="editorial_technology",
+        planner_mode="fallback",
+        brief=AssetVisualBrief(
+            concept="Agent infrastructure",
+            composition="Editorial focal point with whitespace",
+            style="Editorial technology",
+            palette=["#0B1F3A", "#F59E0B"],
+            must_include=["clear focus"],
+            must_avoid=["text", "logos"],
+            prompt="Create an editorial cover without text or logos.",
+            alt_text="Abstract agent infrastructure cover.",
+        ),
+    )
 
     with patch("pkg.services.application.newsletter_automation.get_newsletter_config", new=AsyncMock(return_value=config)), patch(
         "pkg.services.application.newsletter_automation.create_asset", new=AsyncMock(return_value=asset)
     ) as create_mock, patch(
         "pkg.services.application.newsletter_automation._save_newsletter_config", new=AsyncMock()
     ) as save_mock, patch(
-        "pkg.services.application.newsletter_automation.generate_asset_visual",
-        new=AsyncMock(side_effect=RuntimeError("provider unavailable") if cover_failure else None, return_value=MagicMock(id="visual-1")),
+        "pkg.services.application.newsletter_automation.plan_asset_visual",
+        new=AsyncMock(return_value=visual_plan),
+    ) as plan_visual_mock, patch(
+        "pkg.services.application.newsletter_automation.generate_asset_visual_candidates",
+        new=AsyncMock(side_effect=RuntimeError("provider unavailable") if cover_failure else None, return_value=[MagicMock(id="visual-1")]),
     ) as generate_visual_mock, patch(
         "pkg.services.application.newsletter_automation._newsletter_llm_runtime",
         return_value=(MagicMock(), "test-model"),
@@ -431,8 +453,10 @@ async def test_generate_newsletter_creates_draft_asset_from_recent_items(cover_f
     assert result.config_snapshot is not None
     assert result.config_snapshot.topics == ["agent"]
     assert result.config_snapshot.generate_cover_image is True
+    assert result.config_snapshot.cover_review_mode == "draft_only"
+    plan_visual_mock.assert_awaited_once()
     generate_visual_mock.assert_awaited_once()
-    assert generate_visual_mock.await_args.kwargs["auto_accept"] is True
+    assert generate_visual_mock.await_args.kwargs["auto_accept"] is False
     body = create_mock.await_args.kwargs["body"]
     assert body.asset_type == "newsletter_issue"
     assert body.status == "draft"

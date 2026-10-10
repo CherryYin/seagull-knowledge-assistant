@@ -688,6 +688,37 @@ test("login cookie authenticates direct API requests and preserves query params"
   });
   assert.equal(preview.status, 200);
   assert.deepEqual((await preview.json()).memories.map((memory) => memory.id), [agentMemory.id]);
+
+  const unavailableMemoryBff = createBffServer({
+    agentMemoryStore: {
+      async previewRecall() {
+        const error = new Error("connect ECONNREFUSED 127.0.0.1:5434");
+        error.code = "ECONNREFUSED";
+        throw error;
+      },
+    },
+  });
+  await listen(unavailableMemoryBff);
+  t.after(() => close(unavailableMemoryBff));
+  const unavailableMemoryBase = `http://127.0.0.1:${unavailableMemoryBff.address().port}`;
+  const originalConsoleError = console.error;
+  const loggedMemoryErrors = [];
+  console.error = (...args) => loggedMemoryErrors.push(args);
+  t.after(() => { console.error = originalConsoleError; });
+  try {
+    const unavailablePreview = await fetch(`${unavailableMemoryBase}/api/harness/memory-preview`, {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json", "X-Request-Id": "memory-preview-degraded" },
+      body: JSON.stringify({ query: "draft an asset" }),
+    });
+    assert.equal(unavailablePreview.status, 200);
+    assert.deepEqual(await unavailablePreview.json(), { memories: [], unavailable: true });
+    assert.equal(loggedMemoryErrors.length, 1);
+    assert.match(String(loggedMemoryErrors[0][0]), /continuing without memory/);
+    assert.equal(loggedMemoryErrors[0][1].code, "ECONNREFUSED");
+  } finally {
+    console.error = originalConsoleError;
+  }
   const previewAudit = await fetch(`${base}/api/harness/memory-recalls?session_id=local-session`, { headers: { Cookie: cookie } });
   assert.deepEqual((await previewAudit.json()).items, []);
 

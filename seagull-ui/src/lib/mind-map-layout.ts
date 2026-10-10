@@ -50,11 +50,11 @@ export function createMindMapFixture(count: number): MindMapTreeNode[] {
   return Array.from({ length: size }, (_, index) => {
     const ordinal = index + 1;
     if (ordinal === 1) {
-      return { id: "node-1", parentId: null, label: `Mind Map 技术验证 · ${size} nodes` };
+      return { id: "node-1", parentId: null, label: `Mind Map technical validation · ${size} nodes` };
     }
     const parentOrdinal = Math.floor((ordinal - 2) / 3) + 1;
     const longLabel = ordinal % 11 === 0
-      ? "长文本节点：验证中文、English term 与多层知识结构的换行表现"
+      ? "Long text node: validate wrapping across English terms and multi-level knowledge structures"
       : `Knowledge node ${ordinal}`;
     return { id: `node-${ordinal}`, parentId: `node-${parentOrdinal}`, label: longLabel };
   });

@@ -8,7 +8,7 @@ from pkg.models.application.asset import Asset
 
 
 def test_asset_api_models_exclude_memory_refs():
-    from pkg.schemas.application.asset import AssetCreate, AssetRead, AssetUpdate
+    from pkg.schemas.application.asset import AssetCreate, AssetUpdate
 
     assert "memory_refs" not in AssetCreate.model_fields
     assert "memory_refs" not in AssetUpdate.model_fields
@@ -495,6 +495,7 @@ async def test_asset_visual_routes_delegate_to_services():
         delete_asset_visual_route,
         generate_asset_visual_route,
         list_asset_visuals_route,
+        regenerate_asset_visual_batch_route,
     )
     from pkg.schemas.application.asset import (
         AssetVisualDecisionRequest,
@@ -524,6 +525,21 @@ async def test_asset_visual_routes_delegate_to_services():
         listed = await list_asset_visuals_route("asset-1", user=fake_user, session=session)
     assert listed.items == [visual]
     list_mock.assert_awaited_once_with(session, user_id="user-1", asset_id="asset-1")
+
+    with patch("pkg.api.assets.regenerate_asset_visual_batch", new=AsyncMock(return_value=[visual])) as regenerate_mock:
+        regenerated = await regenerate_asset_visual_batch_route(
+            "asset-1",
+            "visual-batch-1",
+            user=fake_user,
+            session=session,
+        )
+    assert regenerated.items == [visual]
+    regenerate_mock.assert_awaited_once_with(
+        session,
+        user_id="user-1",
+        asset_id="asset-1",
+        batch_id="visual-batch-1",
+    )
 
     generate_body = AssetVisualGenerateRequest(prompt="A restrained editorial illustration")
     with patch("pkg.api.assets.generate_asset_visual", new=AsyncMock(return_value=visual)) as generate_mock:

@@ -1,8 +1,8 @@
 from datetime import datetime
 
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 ASSET_TYPE_PATTERN = r"^(blog_post|research_brief|knowledge_pack|newsletter_issue|topic_report)$"
 ASSET_STATUS_PATTERN = r"^(draft|in_review|ready_to_export|exported|published|archived)$"
@@ -91,6 +91,49 @@ class AssetVisualGenerateRequest(BaseModel):
     prompt: str | None = Field(default=None, max_length=4000)
     role: Literal["cover"] = "cover"
     size: Literal["1024*1024", "1280*720", "720*1280"] = "1280*720"
+
+
+AssetVisualStylePreset = Literal["editorial_technology", "minimal_abstract", "research_brief"]
+
+
+class AssetVisualPlanRequest(BaseModel):
+    role: Literal["cover"] = "cover"
+    size: Literal["1024*1024", "1280*720", "720*1280"] = "1280*720"
+    style_preset: AssetVisualStylePreset = "editorial_technology"
+    instructions: str | None = Field(default=None, max_length=2000)
+
+
+class AssetVisualBrief(BaseModel):
+    concept: str = Field(min_length=1, max_length=500)
+    composition: str = Field(min_length=1, max_length=1000)
+    style: str = Field(min_length=1, max_length=500)
+    palette: list[str] = Field(default_factory=list, max_length=8)
+    must_include: list[str] = Field(default_factory=list, max_length=8)
+    must_avoid: list[str] = Field(default_factory=list, max_length=12)
+    title_safe_area: Literal["left", "right", "top", "bottom", "center", "none"] = "left"
+    prompt: str = Field(min_length=1, max_length=4000)
+    alt_text: str = Field(min_length=1, max_length=1000)
+
+
+class AssetVisualPlanRead(BaseModel):
+    role: Literal["cover"] = "cover"
+    size: Literal["1024*1024", "1280*720", "720*1280"] = "1280*720"
+    style_preset: AssetVisualStylePreset
+    planner_mode: Literal["llm", "fallback"]
+    planner_model: str | None = None
+    brief: AssetVisualBrief
+
+
+class AssetVisualBatchGenerateRequest(BaseModel):
+    role: Literal["cover"] = "cover"
+    size: Literal["1024*1024", "1280*720", "720*1280"] = "1280*720"
+    style_preset: AssetVisualStylePreset = "editorial_technology"
+    candidate_count: int = Field(default=2, ge=1, le=4)
+    brief: AssetVisualBrief
+
+
+class AssetVisualUpdateRequest(BaseModel):
+    alt_text: str = Field(min_length=1, max_length=1000)
 
 
 class AssetVisualDecisionRequest(BaseModel):
@@ -238,6 +281,9 @@ class NewsletterAutomationConfig(BaseModel):
     audience: str = "Technology readers"
     style_notes: str = "Concise, evidence-led, and easy to scan."
     generate_cover_image: bool = False
+    cover_review_mode: Literal["draft_only", "auto_accept"] = "draft_only"
+    cover_style_profile: AssetVisualStylePreset = "editorial_technology"
+    cover_candidate_count: int = Field(default=1, ge=1, le=4)
     last_generated_at: datetime | None = None
     last_asset_id: str | None = None
     last_run_at: datetime | None = None
@@ -245,6 +291,12 @@ class NewsletterAutomationConfig(BaseModel):
     last_run_reason: str | None = None
     last_news_count: int = Field(default=0, ge=0)
     last_paper_count: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def validate_cover_policy(self) -> Self:
+        if self.cover_review_mode == "auto_accept" and self.cover_candidate_count != 1:
+            raise ValueError("auto_accept cover review mode requires exactly one candidate")
+        return self
 
 
 class NewsletterAutomationUpdate(BaseModel):
@@ -261,6 +313,15 @@ class NewsletterAutomationUpdate(BaseModel):
     audience: str = Field(default="", max_length=300)
     style_notes: str = Field(default="", max_length=2000)
     generate_cover_image: bool = False
+    cover_review_mode: Literal["draft_only", "auto_accept"] = "draft_only"
+    cover_style_profile: AssetVisualStylePreset = "editorial_technology"
+    cover_candidate_count: int = Field(default=1, ge=1, le=4)
+
+    @model_validator(mode="after")
+    def validate_cover_policy(self) -> Self:
+        if self.cover_review_mode == "auto_accept" and self.cover_candidate_count != 1:
+            raise ValueError("auto_accept cover review mode requires exactly one candidate")
+        return self
 
 
 class NewsletterAutomationRunSnapshot(BaseModel):
@@ -278,6 +339,9 @@ class NewsletterAutomationRunSnapshot(BaseModel):
     audience: str
     style_notes: str
     generate_cover_image: bool
+    cover_review_mode: Literal["draft_only", "auto_accept"]
+    cover_style_profile: AssetVisualStylePreset
+    cover_candidate_count: int = Field(ge=1, le=4)
 
 
 class NewsletterAutomationRunResult(BaseModel):
