@@ -87,20 +87,39 @@ class AssetList(BaseModel):
     total: int
 
 
+AssetVisualRole = Literal["cover", "social_square", "social_portrait"]
+
+
 class AssetVisualGenerateRequest(BaseModel):
     prompt: str | None = Field(default=None, max_length=4000)
-    role: Literal["cover"] = "cover"
+    role: AssetVisualRole = "cover"
     size: Literal["1024*1024", "1280*720", "720*1280"] = "1280*720"
+
+    @model_validator(mode="after")
+    def validate_role_size(self) -> Self:
+        if self.role == "social_square" and self.size != "1024*1024":
+            raise ValueError("social_square visuals require size 1024*1024")
+        if self.role == "social_portrait" and self.size != "720*1280":
+            raise ValueError("social_portrait visuals require size 720*1280")
+        return self
 
 
 AssetVisualStylePreset = Literal["editorial_technology", "minimal_abstract", "research_brief"]
 
 
 class AssetVisualPlanRequest(BaseModel):
-    role: Literal["cover"] = "cover"
+    role: AssetVisualRole = "cover"
     size: Literal["1024*1024", "1280*720", "720*1280"] = "1280*720"
     style_preset: AssetVisualStylePreset = "editorial_technology"
     instructions: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_role_size(self) -> Self:
+        if self.role == "social_square" and self.size != "1024*1024":
+            raise ValueError("social_square visuals require size 1024*1024")
+        if self.role == "social_portrait" and self.size != "720*1280":
+            raise ValueError("social_portrait visuals require size 720*1280")
+        return self
 
 
 class AssetVisualBrief(BaseModel):
@@ -115,21 +134,39 @@ class AssetVisualBrief(BaseModel):
     alt_text: str = Field(min_length=1, max_length=1000)
 
 
+class AssetVisualStyleMemoryRead(BaseModel):
+    style_preset: AssetVisualStylePreset
+    sample_count: int = Field(ge=1)
+    source_visual_ids: list[str] = Field(default_factory=list, max_length=5)
+    palette: list[str] = Field(default_factory=list, max_length=8)
+    preferred_title_safe_area: Literal["left", "right", "top", "bottom", "center", "none"] | None = None
+
+
 class AssetVisualPlanRead(BaseModel):
-    role: Literal["cover"] = "cover"
+    role: AssetVisualRole = "cover"
     size: Literal["1024*1024", "1280*720", "720*1280"] = "1280*720"
     style_preset: AssetVisualStylePreset
     planner_mode: Literal["llm", "fallback"]
     planner_model: str | None = None
+    style_memory: AssetVisualStyleMemoryRead | None = None
     brief: AssetVisualBrief
 
 
 class AssetVisualBatchGenerateRequest(BaseModel):
-    role: Literal["cover"] = "cover"
+    role: AssetVisualRole = "cover"
     size: Literal["1024*1024", "1280*720", "720*1280"] = "1280*720"
     style_preset: AssetVisualStylePreset = "editorial_technology"
     candidate_count: int = Field(default=2, ge=1, le=4)
+    style_memory: AssetVisualStyleMemoryRead | None = None
     brief: AssetVisualBrief
+
+    @model_validator(mode="after")
+    def validate_role_size(self) -> Self:
+        if self.role == "social_square" and self.size != "1024*1024":
+            raise ValueError("social_square visuals require size 1024*1024")
+        if self.role == "social_portrait" and self.size != "720*1280":
+            raise ValueError("social_portrait visuals require size 720*1280")
+        return self
 
 
 class AssetVisualUpdateRequest(BaseModel):
@@ -344,6 +381,14 @@ class NewsletterAutomationRunSnapshot(BaseModel):
     cover_candidate_count: int = Field(ge=1, le=4)
 
 
+class NewsletterVisualRunResult(BaseModel):
+    status: Literal["disabled", "queued", "failed"]
+    asset_id: str | None = None
+    plan: AssetVisualPlanRead | None = None
+    visuals: list[AssetVisualRead] = Field(default_factory=list)
+    error: str | None = None
+
+
 class NewsletterAutomationRunResult(BaseModel):
     status: Literal["generated", "skipped"]
     reason: str | None = None
@@ -352,3 +397,4 @@ class NewsletterAutomationRunResult(BaseModel):
     config_revision: int = Field(default=0, ge=0)
     config_snapshot: NewsletterAutomationRunSnapshot | None = None
     asset: AssetRead | None = None
+    cover: NewsletterVisualRunResult | None = None

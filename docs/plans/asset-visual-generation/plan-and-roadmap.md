@@ -256,6 +256,8 @@ Phase 2C 品牌约束切片（2026-10-09）：已将色板、必须包含、禁�
 
 Phase 2D 候选批次工作台（2026-10-10）：已按 `batch_id` 分组展示历史候选，提供同批次并排大图比较和原图打开能力；可从保存的 Visual Brief、风格、尺寸和候选数量创建全新批次，旧图片保持不可变并继续保留审核历史。
 
+Phase 2E 轻量风格记忆（2026-10-10）：Visual Planner 会按用户、角色和风格预设读取其他 Asset 中已接受封面的结构化元数据，仅聚合色板和标题安全区偏好，并记录样本 Visual ID。历史主题、Prompt、Alt Text、人物、产品、数据和正文内容不会进入风格记忆；当前用户选择的风格预设始终优先。
+
 任务：
 
 1. 增加 Prompt Planner 和结构化 Visual Brief。
@@ -263,7 +265,7 @@ Phase 2D 候选批次工作台（2026-10-10）：已按 `batch_id` 分组展示�
 3. 支持 Prompt 预览、编辑和 2～4 个候选版本。
 4. 生成并保存 `alt_text`。
 5. 增加品牌色、禁止元素和构图留白配置。（已完成 Phase 2C）
-6. 对历史接受结果建立轻量风格记忆，但不得复用图片事实内容。
+6. 对历史接受结果建立轻量风格记忆，但不得复用图片事实内容。（已完成 Phase 2E）
 
 验收：
 
@@ -276,10 +278,12 @@ Phase 2D 候选批次工作台（2026-10-10）：已按 `batch_id` 分组展示�
 
 优先级：P1。
 
+实施状态（2026-10-10）：Phase 3A 已完成。Asset Visual 契约和 Production 工作台支持 `cover`、`social_square`、`social_portrait`，分别使用横向、方形和竖版尺寸；候选历史按当前发布位筛选，预览采用对应宽高比。接受结果写入 `metadata.accepted_visuals[role]`，封面同时继续维护 `cover_visual_id` 以兼容现有读取链路。
+
 任务：
 
-1. 扩展 `cover`、`social_square`、`social_portrait` 和 `inline_illustration`。
-2. 增加角色级接受映射和历史版本比较。
+1. 扩展 `cover`、`social_square`、`social_portrait` 和 `inline_illustration`。（前三种已完成 Phase 3A）
+2. 增加角色级接受映射和历史版本比较。（角色级映射已完成 Phase 3A）
 3. 支持基于已接受封面的尺寸派生或重绘。
 4. 支持焦点位置、裁切预览和下载命名规则。
 5. 正文插图与 Asset Block 建立关联。
@@ -375,7 +379,7 @@ Phase 2D 候选批次工作台（2026-10-10）：已按 `batch_id` 分组展示�
 
 1. 将品牌色、必须包含和禁止元素改为可编辑结构化字段。
 2. 增加候选批次折叠、并排大图比较和批次级重新生成。
-3. 从历史接受结果提取轻量风格偏好，不复用事实内容。
-4. 在 Newsletter Run 详情展示 Visual Brief、任务状态和最终接受图片。
+3. 从历史接受结果提取轻量风格偏好，不复用事实内容。（已完成 Phase 2E）
+4. 在 Newsletter Run 详情展示 Visual Brief、任务状态和最终接受图片。（已完成 2026-10-10）
 
 Phase 2B 完成后再扩展多发布位，避免在视觉风格和审核策略尚未稳定时扩大角色数量。

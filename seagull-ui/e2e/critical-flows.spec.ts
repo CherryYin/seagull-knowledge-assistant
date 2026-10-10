@@ -44,6 +44,7 @@ type MockState = {
   newsletterAutomation?: Record<string, unknown>;
   newsletterRunMode?: "generated" | "skipped" | "failed";
   newsletterRunCalls?: number;
+  newsletterCoverRetryCalls?: number;
   newsletterSaveFailureOnce?: boolean;
   assetWorkspace?: Record<string, unknown>;
   qualityAudit?: Record<string, unknown>;
@@ -65,7 +66,9 @@ type MockState = {
   assetVisuals?: Array<Record<string, unknown>>;
   visualBatchRegenerateCalls?: number;
   visualPlanCalls?: number;
+  visualPlanBodies?: Array<Record<string, unknown>>;
   visualGenerateCalls?: number;
+  visualGenerateBodies?: Array<Record<string, unknown>>;
   claimSelfCorrection?: boolean;
 };
 
@@ -478,6 +481,43 @@ async function installMockBff(page: Page, state: MockState) {
         metadata_: { delivery_format: "html", generation_mode: "newsletter_automation" },
       };
       state.newsletterAutomation = { ...config, last_generated_at: now, last_asset_id: "asset-e2e", last_run_at: now, last_run_status: "generated", last_run_reason: null, last_news_count: 1, last_paper_count: 1 };
+      const coverPlan = {
+        role: "cover",
+        size: "1280*720",
+        style_preset: config.cover_style_profile ?? "editorial_technology",
+        planner_mode: "llm",
+        planner_model: "qwen-plus",
+        style_memory: {
+          style_preset: "editorial_technology",
+          sample_count: 2,
+          source_visual_ids: ["visual-history-1", "visual-history-2"],
+          palette: ["#0B1F3A", "#2563EB"],
+          preferred_title_safe_area: "left",
+        },
+        brief: {
+          concept: "Layered AI infrastructure",
+          composition: "Central system with left title space",
+          style: "Editorial technology",
+          palette: ["#0B1F3A", "#2563EB"],
+          must_include: ["clear focal point"],
+          must_avoid: ["text", "logo"],
+          title_safe_area: "left",
+          prompt: "Create an editorial technology cover without text.",
+          alt_text: "Abstract layered AI infrastructure cover.",
+        },
+      };
+      state.assetVisuals = Array.from({ length: Number(config.cover_candidate_count ?? 1) }, (_, index) => ({
+        id: `newsletter-cover-${index + 1}`,
+        asset_id: "asset-e2e",
+        role: "cover",
+        status: "queued",
+        prompt: coverPlan.brief.prompt,
+        model: "qwen-image-3.0-pro",
+        processing_attempts: 0,
+        metadata_: { batch_id: "newsletter-batch-1", visual_brief: coverPlan.brief, alt_text: coverPlan.brief.alt_text },
+        created_at: now,
+        updated_at: now,
+      }));
       return json(route, {
         status: "generated",
         news_count: 1,
@@ -485,6 +525,33 @@ async function installMockBff(page: Page, state: MockState) {
         config_revision: config.config_revision ?? 0,
         config_snapshot: configSnapshot,
         asset: { id: "asset-e2e", user_id: "user-e2e", ...state.savedAssetBody, created_at: now, updated_at: now },
+        cover: config.generate_cover_image ? { status: "queued", asset_id: "asset-e2e", plan: coverPlan, visuals: state.assetVisuals } : { status: "disabled", asset_id: "asset-e2e", visuals: [] },
+      });
+    }
+    if (path === "/api/assets/newsletter/automation/cover/retry" && method === "POST") {
+      state.newsletterCoverRetryCalls = (state.newsletterCoverRetryCalls ?? 0) + 1;
+      return json(route, {
+        status: "queued",
+        asset_id: "asset-e2e",
+        plan: {
+          role: "cover",
+          size: "1280*720",
+          style_preset: "minimal_abstract",
+          planner_mode: "llm",
+          planner_model: "qwen-plus",
+          brief: {
+            concept: "Layered AI infrastructure",
+            composition: "Central system with left title space",
+            style: "Minimal abstract",
+            palette: ["#0B1F3A", "#2563EB"],
+            must_include: ["clear focal point"],
+            must_avoid: ["text", "logo"],
+            title_safe_area: "left",
+            prompt: "Create an editorial technology cover without text.",
+            alt_text: "Abstract layered AI infrastructure cover.",
+          },
+        },
+        visuals: state.assetVisuals ?? [],
       });
     }
     if (path === "/api/assets/asset-e2e/visuals" && method === "GET") {
@@ -492,12 +559,21 @@ async function installMockBff(page: Page, state: MockState) {
     }
     if (path === "/api/assets/asset-e2e/visuals/plan" && method === "POST") {
       state.visualPlanCalls = (state.visualPlanCalls ?? 0) + 1;
+      const planBody = request.postDataJSON() as Record<string, unknown>;
+      state.visualPlanBodies = [...(state.visualPlanBodies ?? []), planBody];
       return json(route, {
-        role: "cover",
-        size: "1280*720",
+        role: planBody.role ?? "cover",
+        size: planBody.size ?? "1280*720",
         style_preset: "editorial_technology",
         planner_mode: "llm",
         planner_model: "qwen-plus",
+        style_memory: {
+          style_preset: "editorial_technology",
+          sample_count: 2,
+          source_visual_ids: ["visual-history-1", "visual-history-2"],
+          palette: ["#0B1F3A", "#2563EB"],
+          preferred_title_safe_area: "left",
+        },
         brief: {
           concept: "Layered AI infrastructure",
           composition: "Central system with left title space",
@@ -513,6 +589,7 @@ async function installMockBff(page: Page, state: MockState) {
     }
     if (path === "/api/assets/asset-e2e/visuals/generate-batch" && method === "POST") {
       state.visualGenerateCalls = (state.visualGenerateCalls ?? 0) + 1;
+      state.visualGenerateBodies = [...(state.visualGenerateBodies ?? []), request.postDataJSON() as Record<string, unknown>];
       return json(route, { items: [] }, 202);
     }
     const visualBatchRegenerateMatch = path.match(/^\/api\/assets\/asset-e2e\/visuals\/batches\/([^/]+)\/regenerate$/);
@@ -1749,10 +1826,20 @@ test("Asset visual batches compare candidates and regenerate together", async ({
   await page.getByRole("button", { name: "Generate AI cover candidates" }).click();
   await expect.poll(() => state.visualPlanCalls).toBe(1);
   await expect.poll(() => state.visualGenerateCalls).toBe(1);
+  await expect(page.getByText(/Uses visual style memory from 2 accepted covers/)).toBeVisible();
+  await expect(page.getByText(/Historical topics and facts are not reused/)).toBeVisible();
   await expect(page.locator('[data-visual-batch="visual-batch-e2e"]')).toBeVisible();
   await expect(page.getByText("2 candidates · 2 reviewable · editorial technology")).toBeVisible();
   await page.getByRole("button", { name: "Regenerate batch" }).click();
   await expect.poll(() => state.visualBatchRegenerateCalls).toBe(1);
+
+  await page.getByLabel("Visual publishing placement").selectOption("social_square");
+  await expect(page.getByText("Square social feed sharing image")).toBeVisible();
+  await page.getByRole("button", { name: "Generate AI square social image candidates" }).click();
+  await expect.poll(() => state.visualPlanCalls).toBe(2);
+  await expect.poll(() => state.visualGenerateCalls).toBe(2);
+  expect(state.visualPlanBodies?.at(-1)).toMatchObject({ role: "social_square", size: "1024*1024" });
+  expect(state.visualGenerateBodies?.at(-1)).toMatchObject({ role: "social_square", size: "1024*1024" });
 });
 
 test("legacy Asset can establish stable Blocks before creating an Outline Map", async ({ page }) => {
@@ -1920,8 +2007,14 @@ test("Newsletter Automation saves dirty settings before running and keeps the re
   await expect(page).toHaveURL(/\/assets\/newsletter-automation$/);
   await expect(page.locator("[data-newsletter-run-status]")).toContainText("Completed · Newsletter draft created");
   await expect(page.locator("[data-newsletter-run-status]")).toContainText("Config revision 1");
+  await expect(page.locator("[data-newsletter-cover-generation]")).toContainText("Layered AI infrastructure");
+  await expect(page.locator("[data-newsletter-cover-generation]")).toContainText("3 queued");
   await expect(page.getByRole("link", { name: "Open generated Asset" })).toBeVisible();
   expect(state.savedAssetBody).toMatchObject({ asset_type: "newsletter_issue", status: "draft" });
+
+  await page.getByRole("button", { name: "Retry cover generation" }).click();
+  await expect.poll(() => state.newsletterCoverRetryCalls).toBe(1);
+  expect(state.newsletterRunCalls).toBe(1);
 
   await page.getByRole("link", { name: "Open generated Asset" }).click();
   await expect(page).toHaveURL(/\/assets\/asset-e2e\?tab=read$/);

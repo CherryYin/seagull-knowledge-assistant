@@ -8,6 +8,7 @@ from datetime import datetime, time, timedelta, timezone
 from typing import Any, Iterable
 
 from opencc import OpenCC
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,8 +26,9 @@ from pkg.schemas.application.asset import (
     NewsletterAutomationRunResult,
     NewsletterAutomationRunSnapshot,
     NewsletterAutomationUpdate,
+    NewsletterVisualRunResult,
 )
-from pkg.services.application.assets import create_asset
+from pkg.services.application.assets import create_asset, get_asset
 from pkg.services.application.asset_visuals import generate_asset_visual_candidates, plan_asset_visual
 from pkg.services.cross_cutting.user_settings import get_user_settings_dict
 from pkg.services.foundation.connectors import import_news_article, is_news_url_excluded, search_news_articles
@@ -268,6 +270,7 @@ async def generate_newsletter(
             provenance=AssetProvenance(origin_type="user", action="save"),
         ),
     )
+    cover_result = NewsletterVisualRunResult(status="disabled", asset_id=asset.id)
     if config.generate_cover_image:
         try:
             visual_plan = await plan_asset_visual(
@@ -281,21 +284,33 @@ async def generate_newsletter(
                     instructions=config.style_notes or None,
                 ),
             )
-            await generate_asset_visual_candidates(
+            visuals = await generate_asset_visual_candidates(
                 session,
                 user_id=user_id,
                 asset_id=asset.id,
                 body=AssetVisualBatchGenerateRequest(
                     role="cover",
                     size=visual_plan.size,
-                    style_preset=visual_plan.style_preset,
-                    candidate_count=config.cover_candidate_count,
-                    brief=visual_plan.brief,
+                style_preset=visual_plan.style_preset,
+                candidate_count=config.cover_candidate_count,
+                style_memory=visual_plan.style_memory,
+                brief=visual_plan.brief,
                 ),
                 auto_accept=config.cover_review_mode == "auto_accept",
             )
-        except Exception:
+            cover_result = NewsletterVisualRunResult(
+                status="queued",
+                asset_id=asset.id,
+                plan=visual_plan,
+                visuals=visuals,
+            )
+        except Exception as exc:
             logger.warning("Newsletter cover queueing failed for asset %s", asset.id, exc_info=True)
+            cover_result = NewsletterVisualRunResult(
+                status="failed",
+                asset_id=asset.id,
+                error=str(exc),
+            )
     news_count = len(news_sources)
     paper_count = len(paper_sources) + len(paper_discoveries)
     updated = config.model_copy(update={
@@ -315,6 +330,71 @@ async def generate_newsletter(
         config_revision=config.config_revision,
         config_snapshot=run_snapshot,
         asset=asset,
+        cover=cover_result,
+    )
+
+
+async def retry_newsletter_cover(
+    session: AsyncSession,
+    *,
+    user_id: str,
+) -> NewsletterVisualRunResult:
+    config = await get_newsletter_config(session, user_id=user_id)
+    if not config.last_asset_id:
+        raise HTTPException(status_code=409, detail="No generated Newsletter Asset is available")
+
+    asset = await get_asset(session, user_id=user_id, asset_id=config.last_asset_id)
+    if asset.asset_type != "newsletter_issue":
+        raise HTTPException(status_code=409, detail="The last generated Asset is not a Newsletter issue")
+
+    newsletter_metadata = (asset.metadata_ or {}).get("newsletter_automation")
+    snapshot_payload = newsletter_metadata.get("config_snapshot") if isinstance(newsletter_metadata, dict) else None
+    if not isinstance(snapshot_payload, dict):
+        raise HTTPException(status_code=409, detail="The Newsletter Asset does not contain a reusable configuration snapshot")
+    try:
+        snapshot = NewsletterAutomationRunSnapshot.model_validate(snapshot_payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="The Newsletter configuration snapshot is invalid") from exc
+    if not snapshot.generate_cover_image:
+        raise HTTPException(status_code=409, detail="Cover generation was disabled for this Newsletter run")
+
+    try:
+        visual_plan = await plan_asset_visual(
+            session,
+            user_id=user_id,
+            asset_id=asset.id,
+            body=AssetVisualPlanRequest(
+                role="cover",
+                size="1280*720",
+                style_preset=snapshot.cover_style_profile,
+                instructions=snapshot.style_notes or None,
+            ),
+        )
+        visuals = await generate_asset_visual_candidates(
+            session,
+            user_id=user_id,
+            asset_id=asset.id,
+            body=AssetVisualBatchGenerateRequest(
+                role="cover",
+                size=visual_plan.size,
+                style_preset=visual_plan.style_preset,
+                candidate_count=snapshot.cover_candidate_count,
+                style_memory=visual_plan.style_memory,
+                brief=visual_plan.brief,
+            ),
+            auto_accept=snapshot.cover_review_mode == "auto_accept",
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Newsletter cover retry failed for asset %s", asset.id, exc_info=True)
+        return NewsletterVisualRunResult(status="failed", asset_id=asset.id, error=str(exc))
+
+    return NewsletterVisualRunResult(
+        status="queued",
+        asset_id=asset.id,
+        plan=visual_plan,
+        visuals=visuals,
     )
 
 

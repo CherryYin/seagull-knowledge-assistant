@@ -79,11 +79,31 @@ def _brief() -> AssetVisualBrief:
     )
 
 
+def test_social_visual_roles_require_matching_dimensions():
+    square = AssetVisualPlanRequest(role="social_square", size="1024*1024")
+    portrait = AssetVisualBatchGenerateRequest(
+        role="social_portrait",
+        size="720*1280",
+        candidate_count=1,
+        brief=_brief(),
+    )
+
+    assert square.role == "social_square"
+    assert portrait.role == "social_portrait"
+    with pytest.raises(ValueError, match="1024\\*1024"):
+        AssetVisualPlanRequest(role="social_square", size="1280*720")
+    with pytest.raises(ValueError, match="720\\*1280"):
+        AssetVisualBatchGenerateRequest(role="social_portrait", size="1024*1024", brief=_brief())
+
+
 @pytest.mark.asyncio
 async def test_plan_asset_visual_uses_llm_structured_brief():
     asset = _asset()
     session = AsyncMock()
     session.get = AsyncMock(return_value=asset)
+    memory_rows = MagicMock()
+    memory_rows.scalars.return_value = []
+    session.execute = AsyncMock(return_value=memory_rows)
     client = MagicMock()
     client.chat.completions.create = AsyncMock(return_value=SimpleNamespace(
         choices=[SimpleNamespace(message=SimpleNamespace(content=_brief().model_dump_json()))]
@@ -108,6 +128,9 @@ async def test_plan_asset_visual_uses_llm_structured_brief():
 async def test_plan_asset_visual_falls_back_when_planner_is_unavailable():
     session = AsyncMock()
     session.get = AsyncMock(return_value=_asset())
+    memory_rows = MagicMock()
+    memory_rows.scalars.return_value = []
+    session.execute = AsyncMock(return_value=memory_rows)
 
     with patch("pkg.services.application.asset_visuals._planner_runtime", return_value=None):
         result = await plan_asset_visual(
@@ -121,6 +144,68 @@ async def test_plan_asset_visual_falls_back_when_planner_is_unavailable():
     assert "Use warm highlights" in result.brief.prompt
     assert "文字" in result.brief.must_avoid
     assert result.brief.title_safe_area == "left"
+
+
+@pytest.mark.asyncio
+async def test_plan_asset_visual_applies_only_non_factual_accepted_style_memory():
+    matching_one = _visual(status="accepted")
+    matching_one.id = "visual-history-1"
+    matching_one.asset_id = "asset-history-1"
+    matching_one.metadata_ = {
+        "style_preset": "research_brief",
+        "visual_brief": {
+            **_brief().model_dump(mode="json"),
+            "palette": ["#112233", "#DDAA00"],
+            "title_safe_area": "right",
+            "concept": "Historical product launch that must not be reused",
+            "prompt": "Reuse a historical robot product",
+            "alt_text": "A historical robot product",
+        },
+    }
+    matching_two = _visual(status="accepted")
+    matching_two.id = "visual-history-2"
+    matching_two.asset_id = "asset-history-2"
+    matching_two.metadata_ = {
+        "style_preset": "research_brief",
+        "visual_brief": {
+            **_brief().model_dump(mode="json"),
+            "palette": ["#112233", "#EEF2F7"],
+            "title_safe_area": "right",
+        },
+    }
+    other_preset = _visual(status="accepted")
+    other_preset.id = "visual-history-3"
+    other_preset.metadata_ = {
+        "style_preset": "minimal_abstract",
+        "visual_brief": _brief().model_dump(mode="json"),
+    }
+    memory_rows = MagicMock()
+    memory_rows.scalars.return_value = [matching_one, matching_two, other_preset]
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=_asset())
+    session.execute = AsyncMock(return_value=memory_rows)
+    client = MagicMock()
+    client.chat.completions.create = AsyncMock(return_value=SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=_brief().model_dump_json()))]
+    ))
+
+    with patch("pkg.services.application.asset_visuals._planner_runtime", return_value=(client, "qwen3.8-max")):
+        result = await plan_asset_visual(
+            session,
+            user_id="user-1",
+            asset_id="asset-1",
+            body=AssetVisualPlanRequest(style_preset="research_brief"),
+        )
+
+    assert result.style_memory is not None
+    assert result.style_memory.sample_count == 2
+    assert result.style_memory.source_visual_ids == ["visual-history-1", "visual-history-2"]
+    assert result.style_memory.palette[0] == "#112233"
+    assert result.style_memory.preferred_title_safe_area == "right"
+    planner_prompt = client.chat.completions.create.await_args.kwargs["messages"][1]["content"]
+    assert "#112233" in planner_prompt
+    assert "Historical product launch" not in planner_prompt
+    assert "historical robot product" not in planner_prompt
 
 
 @pytest.mark.asyncio
@@ -142,7 +227,17 @@ async def test_generate_asset_visual_candidates_queues_shared_brief_batch():
         session,
         user_id="user-1",
         asset_id="asset-1",
-        body=AssetVisualBatchGenerateRequest(candidate_count=2, brief=_brief()),
+        body=AssetVisualBatchGenerateRequest(
+            candidate_count=2,
+            style_memory={
+                "style_preset": "editorial_technology",
+                "sample_count": 2,
+                "source_visual_ids": ["visual-history-1", "visual-history-2"],
+                "palette": ["#112233"],
+                "preferred_title_safe_area": "right",
+            },
+            brief=_brief(),
+        ),
     )
 
     queued = [call.args[0] for call in session.add.call_args_list]
@@ -153,6 +248,7 @@ async def test_generate_asset_visual_candidates_queues_shared_brief_batch():
     assert queued[1].metadata_["candidate_index"] == 2
     assert queued[0].metadata_["alt_text"] == "Abstract layered infrastructure illustration."
     assert queued[0].metadata_["visual_brief"]["title_safe_area"] == "right"
+    assert queued[0].metadata_["style_memory"]["sample_count"] == 2
     assert "标题留白：right" in queued[0].prompt
     assert queued[0].prompt != queued[1].prompt
     session.commit.assert_awaited_once()
@@ -166,6 +262,13 @@ async def test_regenerate_asset_visual_batch_reuses_stored_brief_and_candidate_c
         "batch_id": "visual-batch-1",
         "size": "1280*720",
         "style_preset": "research_brief",
+        "style_memory": {
+            "style_preset": "research_brief",
+            "sample_count": 1,
+            "source_visual_ids": ["visual-history-1"],
+            "palette": ["#112233"],
+            "preferred_title_safe_area": "right",
+        },
         "visual_brief": _brief().model_dump(mode="json"),
     }
     second = _visual()
@@ -192,6 +295,8 @@ async def test_regenerate_asset_visual_batch_reuses_stored_brief_and_candidate_c
     body = generate_mock.await_args.kwargs["body"]
     assert body.candidate_count == 2
     assert body.style_preset == "research_brief"
+    assert body.style_memory is not None
+    assert body.style_memory.sample_count == 1
     assert body.brief.title_safe_area == "right"
 
 
@@ -436,9 +541,46 @@ async def test_accept_asset_visual_sets_cover_and_demotes_previous_acceptance():
         )
 
     assert result.status == "accepted"
-    assert asset.metadata_ == {"existing": True, "cover_visual_id": "visual-1"}
+    assert asset.metadata_ == {
+        "existing": True,
+        "cover_visual_id": "visual-1",
+        "accepted_visuals": {"cover": "visual-1"},
+    }
     session.execute.assert_awaited_once()
     session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_accept_social_visual_sets_role_mapping_without_changing_cover():
+    asset = _asset(metadata={
+        "cover_visual_id": "visual-cover",
+        "accepted_visuals": {"cover": "visual-cover"},
+    })
+    visual = _visual()
+    visual.id = "visual-social"
+    visual.role = "social_square"
+    session = AsyncMock()
+    session.get = AsyncMock(side_effect=[asset, visual])
+    storage = MagicMock()
+    storage.generate_download_url = AsyncMock(return_value="https://minio.example/social.png")
+
+    with patch("pkg.services.application.asset_visuals.get_storage_service", return_value=storage):
+        result = await decide_asset_visual(
+            session,
+            user_id="user-1",
+            asset_id="asset-1",
+            visual_id="visual-social",
+            decision="accept",
+        )
+
+    assert result.status == "accepted"
+    assert asset.metadata_ == {
+        "cover_visual_id": "visual-cover",
+        "accepted_visuals": {
+            "cover": "visual-cover",
+            "social_square": "visual-social",
+        },
+    }
 
 
 @pytest.mark.asyncio
@@ -466,7 +608,7 @@ async def test_accept_asset_visual_requires_alt_text():
 
 @pytest.mark.asyncio
 async def test_reject_and_delete_visual_clear_selected_cover():
-    asset = _asset(metadata={"cover_visual_id": "visual-1"})
+    asset = _asset(metadata={"cover_visual_id": "visual-1", "accepted_visuals": {"cover": "visual-1"}})
     visual = _visual(status="accepted")
     session = AsyncMock()
     session.get = AsyncMock(side_effect=[asset, visual])
@@ -485,7 +627,7 @@ async def test_reject_and_delete_visual_clear_selected_cover():
     assert rejected.status == "rejected"
     assert asset.metadata_ is None
 
-    asset.metadata_ = {"cover_visual_id": "visual-1"}
+    asset.metadata_ = {"cover_visual_id": "visual-1", "accepted_visuals": {"cover": "visual-1"}}
     session.get = AsyncMock(side_effect=[asset, visual])
     storage.delete_object = AsyncMock()
     with patch("pkg.services.application.asset_visuals.get_storage_service", return_value=storage):

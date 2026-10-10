@@ -111,6 +111,7 @@ async def test_asset_knowledge_lineage_route_delegates_to_service():
 async def test_newsletter_automation_routes_delegate_to_services():
     from pkg.api.assets import (
         get_newsletter_automation_route,
+        retry_newsletter_cover_route,
         run_newsletter_automation_route,
         update_newsletter_automation_route,
     )
@@ -118,6 +119,7 @@ async def test_newsletter_automation_routes_delegate_to_services():
         NewsletterAutomationConfig,
         NewsletterAutomationRunResult,
         NewsletterAutomationUpdate,
+        NewsletterVisualRunResult,
     )
 
     fake_user = MagicMock(id="user-1")
@@ -140,6 +142,12 @@ async def test_newsletter_automation_routes_delegate_to_services():
         result = await run_newsletter_automation_route(user=fake_user, session=session)
     assert result.reason == "no_matching_items"
     run_mock.assert_awaited_once_with(session, user_id="user-1", force=True)
+
+    cover_result = NewsletterVisualRunResult(status="queued", asset_id="asset-1")
+    with patch("pkg.api.assets.retry_newsletter_cover", new=AsyncMock(return_value=cover_result)) as retry_mock:
+        result = await retry_newsletter_cover_route(user=fake_user, session=session)
+    assert result.asset_id == "asset-1"
+    retry_mock.assert_awaited_once_with(session, user_id="user-1")
 
 
 @pytest.mark.asyncio

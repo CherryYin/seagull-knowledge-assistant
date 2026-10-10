@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, Link, useNavigate, useLocation } from "react-router-dom";
 import { BookOpen, CalendarDays, ChartNoAxesCombined, CheckCircle2, CircleAlert, Clock3, Copy, Download, Eye, FileSearch, ImageIcon, LibraryBig, MailOpen, MessageSquareShare, PenLine, Quote, Sparkles, Square, Trash2, WandSparkles } from "lucide-react";
-import { assetsApi, authApi, notesApi, sourcesApi, wikiApi, type Asset, type AssetClaimProposalInput, type AssetContributionKind, type AssetEvidenceProposalInput, type AssetEvidenceRelation, type AssetKnowledgeProposalInput, type AssetMissingEvidenceRequest, type AssetQualityAuditResult, type AssetStatus, type AssetStyleProfileId, type AssetType, type AssetVisual, type AssetVisualPlan, type AssetVisualStylePreset, type ReadinessCheckResult } from "@/lib/api";
+import { assetsApi, authApi, notesApi, sourcesApi, wikiApi, type Asset, type AssetClaimProposalInput, type AssetContributionKind, type AssetEvidenceProposalInput, type AssetEvidenceRelation, type AssetKnowledgeProposalInput, type AssetMissingEvidenceRequest, type AssetQualityAuditResult, type AssetStatus, type AssetStyleProfileId, type AssetType, type AssetVisual, type AssetVisualPlan, type AssetVisualRole, type AssetVisualStylePreset, type ReadinessCheckResult } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -49,6 +49,12 @@ type ProductionEvent = {
 
 type AssetDetailTab = "intent" | "evidence" | "claims" | "read" | "edit" | "map" | "knowledge" | "production";
 const ASSET_DETAIL_TABS: AssetDetailTab[] = ["intent", "evidence", "claims", "read", "edit", "map", "knowledge", "production"];
+
+const VISUAL_ROLE_OPTIONS: Record<AssetVisualRole, { label: string; description: string; size: "1024*1024" | "1280*720" | "720*1280"; aspectClass: string }> = {
+  cover: { label: "cover", description: "Landscape article and Newsletter cover", size: "1280*720", aspectClass: "aspect-video" },
+  social_square: { label: "square social image", description: "Square social feed sharing image", size: "1024*1024", aspectClass: "aspect-square" },
+  social_portrait: { label: "portrait social image", description: "Portrait mobile social sharing image", size: "720*1280", aspectClass: "aspect-[9/16]" },
+};
 
 function parseVisualConstraintList(value: string, limit: number): string[] {
   return value
@@ -1172,6 +1178,7 @@ export function AssetDetailPage() {
   const [htmlPreviewOpen, setHtmlPreviewOpen] = useState(false);
   const [htmlCopied, setHtmlCopied] = useState(false);
   const [visualStylePreset, setVisualStylePreset] = useState<AssetVisualStylePreset>("editorial_technology");
+  const [visualRole, setVisualRole] = useState<AssetVisualRole>("cover");
   const [visualInstructions, setVisualInstructions] = useState("");
   const [visualCandidateCount, setVisualCandidateCount] = useState(2);
   const [visualPlan, setVisualPlan] = useState<AssetVisualPlan | null>(null);
@@ -1179,7 +1186,11 @@ export function AssetDetailPage() {
   const [visualMustIncludeInput, setVisualMustIncludeInput] = useState("");
   const [visualMustAvoidInput, setVisualMustAvoidInput] = useState("");
   const [visualAltTextDrafts, setVisualAltTextDrafts] = useState<Record<string, string>>({});
-  const visualBatches = useMemo(() => groupAssetVisualBatches(assetVisualsQuery.data?.items ?? []), [assetVisualsQuery.data?.items]);
+  const visualRoleConfig = VISUAL_ROLE_OPTIONS[visualRole];
+  const visualBatches = useMemo(
+    () => groupAssetVisualBatches((assetVisualsQuery.data?.items ?? []).filter((visual) => visual.role === visualRole)),
+    [assetVisualsQuery.data?.items, visualRole],
+  );
   const [htmlPreviewTitle, setHtmlPreviewTitle] = useState("HTML Preview");
   const [htmlPreviewDescription, setHtmlPreviewDescription] = useState("Sandboxed preview generated from the current Markdown Asset.");
   const [editTitle, setEditTitle] = useState("");
@@ -2729,8 +2740,8 @@ export function AssetDetailPage() {
   });
   const planVisualMutation = useMutation({
     mutationFn: () => assetsApi.planVisual(id, {
-      role: "cover",
-      size: "1280*720",
+      role: visualRole,
+      size: visualRoleConfig.size,
       style_preset: visualStylePreset,
       instructions: visualInstructions.trim() || null,
     }),
@@ -2745,10 +2756,11 @@ export function AssetDetailPage() {
     mutationFn: () => {
       if (!visualPlan) throw new Error("Plan the visual before generating candidates.");
       return assetsApi.generateVisualBatch(id, {
-        role: "cover",
+        role: visualRole,
         size: visualPlan.size,
         style_preset: visualPlan.style_preset,
         candidate_count: visualCandidateCount,
+        style_memory: visualPlan.style_memory,
         brief: visualPlan.brief,
       });
     },
@@ -2757,8 +2769,8 @@ export function AssetDetailPage() {
   const quickGenerateVisualMutation = useMutation({
     mutationFn: async () => {
       const plan = await assetsApi.planVisual(id, {
-        role: "cover",
-        size: "1280*720",
+        role: visualRole,
+        size: visualRoleConfig.size,
         style_preset: visualStylePreset,
         instructions: visualInstructions.trim() || null,
       });
@@ -2767,10 +2779,11 @@ export function AssetDetailPage() {
       setVisualMustIncludeInput(plan.brief.must_include.join("\n"));
       setVisualMustAvoidInput(plan.brief.must_avoid.join("\n"));
       return assetsApi.generateVisualBatch(id, {
-        role: "cover",
+        role: visualRole,
         size: plan.size,
         style_preset: plan.style_preset,
         candidate_count: visualCandidateCount,
+        style_memory: plan.style_memory,
         brief: plan.brief,
       });
     },
@@ -4266,11 +4279,20 @@ export function AssetDetailPage() {
             <TabsContent value="production" className="mt-0 space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-base"><ImageIcon className="h-4 w-4" />AI Cover Visual</CardTitle>
-                <CardDescription>Generate a reviewable cover with Qwen Image 3.0 Pro. Generated visuals are Asset publishing material, not evidence Sources.</CardDescription>
+                <CardTitle className="flex items-center gap-2 text-base"><ImageIcon className="h-4 w-4" />AI Publishing Visuals</CardTitle>
+                <CardDescription>Generate reviewable cover and social publishing visuals with Qwen Image 3.0 Pro. Generated visuals are Asset publishing material, not evidence Sources.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid gap-3 rounded-xl border bg-muted/10 p-4 lg:grid-cols-[200px_1fr_150px_auto_auto] lg:items-end">
+                <div className="grid gap-3 rounded-xl border bg-muted/10 p-4 lg:grid-cols-[190px_190px_1fr_150px_auto_auto] lg:items-end">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium" htmlFor="visual-role">Publishing placement</label>
+                    <select id="visual-role" aria-label="Visual publishing placement" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={visualRole} onChange={(event) => { setVisualRole(event.target.value as AssetVisualRole); setVisualPlan(null); }}>
+                      <option value="cover">Cover · 1280×720</option>
+                      <option value="social_square">Social square · 1024×1024</option>
+                      <option value="social_portrait">Social portrait · 720×1280</option>
+                    </select>
+                    <p className="text-xs text-muted-foreground">{visualRoleConfig.description}</p>
+                  </div>
                   <div className="space-y-2">
                     <label className="text-sm font-medium" htmlFor="visual-style-preset">Visual style</label>
                     <select id="visual-style-preset" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={visualStylePreset} onChange={(event) => { setVisualStylePreset(event.target.value as AssetVisualStylePreset); setVisualPlan(null); }}>
@@ -4293,15 +4315,19 @@ export function AssetDetailPage() {
                     <Sparkles className="mr-2 h-4 w-4" />{planVisualMutation.isPending ? "Planning…" : "Plan and edit"}
                   </Button>
                   <Button type="button" onClick={() => quickGenerateVisualMutation.mutate()} disabled={quickGenerateVisualMutation.isPending || planVisualMutation.isPending || generateVisualMutation.isPending}>
-                    <WandSparkles className="mr-2 h-4 w-4" />{quickGenerateVisualMutation.isPending ? "Planning and queueing…" : "Generate AI cover candidates"}
+                    <WandSparkles className="mr-2 h-4 w-4" />{quickGenerateVisualMutation.isPending ? "Planning and queueing…" : `Generate AI ${visualRoleConfig.label} candidates`}
                   </Button>
                 </div>
                 {planVisualMutation.isError && <ActionError title="Visual planning failed" impact="No generation task was created." recovery="Check the configured planning LLM or retry with the deterministic fallback." details={planVisualMutation.error instanceof Error ? planVisualMutation.error.message : "Unknown visual planning error"} onRetry={() => planVisualMutation.mutate()} />}
-                {quickGenerateVisualMutation.isError && <ActionError title="Cover generation failed" impact="No cover candidates were created for this Asset." recovery="Check the Qwen image configuration and retry, or create and edit a Visual Brief before generating." details={quickGenerateVisualMutation.error instanceof Error ? quickGenerateVisualMutation.error.message : "Unknown image generation error"} onRetry={() => quickGenerateVisualMutation.mutate()} />}
+                {quickGenerateVisualMutation.isError && <ActionError title="Visual generation failed" impact={`No ${visualRoleConfig.label} candidates were created for this Asset.`} recovery="Check the Qwen image configuration and retry, or create and edit a Visual Brief before generating." details={quickGenerateVisualMutation.error instanceof Error ? quickGenerateVisualMutation.error.message : "Unknown image generation error"} onRetry={() => quickGenerateVisualMutation.mutate()} />}
                 {visualPlan ? (
                   <div className="space-y-4 rounded-xl border p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div><p className="font-medium">Visual Brief</p><p className="text-xs text-muted-foreground">{visualPlan.planner_mode === "llm" ? `Planned by ${visualPlan.planner_model ?? "LLM"}` : "Deterministic fallback plan"} · edit before generation</p></div>
+                      <div>
+                        <p className="font-medium">Visual Brief</p>
+                        <p className="text-xs text-muted-foreground">{visualPlan.planner_mode === "llm" ? `Planned by ${visualPlan.planner_model ?? "LLM"}` : "Deterministic fallback plan"} · edit before generation</p>
+                        {visualPlan.style_memory && <p className="mt-1 text-xs text-muted-foreground">Uses visual style memory from {visualPlan.style_memory.sample_count} accepted cover{visualPlan.style_memory.sample_count === 1 ? "" : "s"}: {visualPlan.style_memory.palette.length ? visualPlan.style_memory.palette.join(", ") : "layout preference only"}{visualPlan.style_memory.preferred_title_safe_area ? ` · ${visualPlan.style_memory.preferred_title_safe_area} title safe area` : ""}. Historical topics and facts are not reused.</p>}
+                      </div>
                       <Badge variant="outline">{visualPlan.style_preset.replace(/_/g, " ")}</Badge>
                     </div>
                     <div className="grid gap-3 lg:grid-cols-2">
@@ -4332,19 +4358,19 @@ export function AssetDetailPage() {
                       <Button type="button" onClick={() => generateVisualMutation.mutate()} disabled={generateVisualMutation.isPending || !visualPlan.brief.prompt.trim() || !visualPlan.brief.alt_text.trim()}>
                         <WandSparkles className="mr-2 h-4 w-4" />{generateVisualMutation.isPending ? "Queueing candidates…" : "Generate candidates"}
                       </Button>
-                      <span className="text-xs text-muted-foreground">1280×720 · queued asynchronously · review required</span>
+                      <span className="text-xs text-muted-foreground">{visualRoleConfig.size.replace("*", "×")} · queued asynchronously · review required</span>
                     </div>
                   </div>
                 ) : <p className="text-sm text-muted-foreground">Plan a structured visual brief before generating. Asset text is treated as content, not executable instructions.</p>}
-                {generateVisualMutation.isError && <ActionError title="Cover generation failed" impact="No cover was added to this Asset." recovery="Check the Qwen image configuration and retry generation." details={generateVisualMutation.error instanceof Error ? generateVisualMutation.error.message : "Unknown image generation error"} onRetry={() => generateVisualMutation.mutate()} />}
+                {generateVisualMutation.isError && <ActionError title="Visual generation failed" impact={`No ${visualRoleConfig.label} was added to this Asset.`} recovery="Check the Qwen image configuration and retry generation." details={generateVisualMutation.error instanceof Error ? generateVisualMutation.error.message : "Unknown image generation error"} onRetry={() => generateVisualMutation.mutate()} />}
                 {assetVisualsQuery.isLoading ? <p className="text-sm text-muted-foreground">Loading visuals…</p> : null}
-                {assetVisualsQuery.isError ? <ActionError title="Cover visuals could not be loaded" impact="Existing generated covers are temporarily unavailable in this view." recovery="Retry loading the visual history." details={assetVisualsQuery.error instanceof Error ? assetVisualsQuery.error.message : "Unknown visual loading error"} onRetry={() => void assetVisualsQuery.refetch()} /> : null}
-                {decideVisualMutation.isError ? <ActionError title="Cover review decision failed" impact="The selected cover status was not changed." recovery="Reload the visual history and retry the decision." details={decideVisualMutation.error instanceof Error ? decideVisualMutation.error.message : "Unknown review error"} /> : null}
+                {assetVisualsQuery.isError ? <ActionError title="Publishing visuals could not be loaded" impact="Existing generated visuals are temporarily unavailable in this view." recovery="Retry loading the visual history." details={assetVisualsQuery.error instanceof Error ? assetVisualsQuery.error.message : "Unknown visual loading error"} onRetry={() => void assetVisualsQuery.refetch()} /> : null}
+                {decideVisualMutation.isError ? <ActionError title="Visual review decision failed" impact="The selected visual status was not changed." recovery="Reload the visual history and retry the decision." details={decideVisualMutation.error instanceof Error ? decideVisualMutation.error.message : "Unknown review error"} /> : null}
                 {updateVisualMutation.isError ? <ActionError title="Alt text was not saved" impact="The generated image is unchanged, but its accessible description was not updated." recovery="Reload the visual history and retry saving the description." details={updateVisualMutation.error instanceof Error ? updateVisualMutation.error.message : "Unknown visual update error"} /> : null}
-                {deleteVisualMutation.isError ? <ActionError title="Cover deletion failed" impact="The generated cover remains attached to this Asset." recovery="Check MinIO availability and retry deletion." details={deleteVisualMutation.error instanceof Error ? deleteVisualMutation.error.message : "Unknown deletion error"} /> : null}
-                {cancelVisualMutation.isError ? <ActionError title="Cover cancellation failed" impact="The generation task remains active." recovery="Reload the visual history and retry while the task is queued or waiting to retry." details={cancelVisualMutation.error instanceof Error ? cancelVisualMutation.error.message : "Unknown cancellation error"} /> : null}
+                {deleteVisualMutation.isError ? <ActionError title="Visual deletion failed" impact="The generated visual remains attached to this Asset." recovery="Check MinIO availability and retry deletion." details={deleteVisualMutation.error instanceof Error ? deleteVisualMutation.error.message : "Unknown deletion error"} /> : null}
+                {cancelVisualMutation.isError ? <ActionError title="Visual cancellation failed" impact="The generation task remains active." recovery="Reload the visual history and retry while the task is queued or waiting to retry." details={cancelVisualMutation.error instanceof Error ? cancelVisualMutation.error.message : "Unknown cancellation error"} /> : null}
                 {regenerateVisualBatchMutation.isError ? <ActionError title="Batch regeneration failed" impact="No replacement candidate batch was queued." recovery="Wait for active image tasks to finish or verify the saved Visual Brief, then retry." details={regenerateVisualBatchMutation.error instanceof Error ? regenerateVisualBatchMutation.error.message : "Unknown batch regeneration error"} /> : null}
-                {!assetVisualsQuery.isLoading && !assetVisualsQuery.isError && (assetVisualsQuery.data?.items?.length ?? 0) === 0 ? <div className="rounded-xl border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">No generated covers yet. Add optional art direction or generate directly from the Asset content.</div> : null}
+                {!assetVisualsQuery.isLoading && !assetVisualsQuery.isError && visualBatches.length === 0 ? <div className="rounded-xl border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">No generated {visualRoleConfig.label}s yet. Add optional art direction or generate directly from the Asset content.</div> : null}
                 <div className="space-y-5">
                   {visualBatches.map((batch, batchIndex) => {
                     const completedCount = batch.items.filter((visual) => ["ready", "accepted", "rejected"].includes(visual.status)).length;
@@ -4352,7 +4378,7 @@ export function AssetDetailPage() {
                     return (
                       <section key={batch.id} data-visual-batch={batch.id} className="space-y-3 rounded-2xl border bg-muted/5 p-4">
                         <div className="flex flex-wrap items-center justify-between gap-3">
-                          <div><p className="text-sm font-semibold">Candidate batch {visualBatches.length - batchIndex}</p><p className="text-xs text-muted-foreground">{batch.items.length} candidate{batch.items.length === 1 ? "" : "s"} · {completedCount} reviewable · {stylePreset}</p></div>
+                          <div><p className="text-sm font-semibold">{visualRoleConfig.label.replace(/^./, (letter) => letter.toUpperCase())} batch {visualBatches.length - batchIndex}</p><p className="text-xs text-muted-foreground">{batch.items.length} candidate{batch.items.length === 1 ? "" : "s"} · {completedCount} reviewable · {stylePreset}</p></div>
                           {batch.reusable ? <Button type="button" size="sm" variant="outline" onClick={() => regenerateVisualBatchMutation.mutate(batch.id)} disabled={regenerateVisualBatchMutation.isPending}><WandSparkles className="mr-2 h-4 w-4" />{regenerateVisualBatchMutation.isPending ? "Queueing batch…" : "Regenerate batch"}</Button> : <Badge variant="outline">Legacy batch</Badge>}
                         </div>
                         <div className="grid gap-4 xl:grid-cols-2">
@@ -4361,19 +4387,19 @@ export function AssetDetailPage() {
                             const altText = visualAltTextDrafts[visual.id] ?? storedAltText;
                             return (
                               <div key={visual.id} className="overflow-hidden rounded-xl border bg-background">
-                                {visual.image_url ? <a href={visual.image_url} target="_blank" rel="noreferrer" title="Open full-size candidate"><img src={visual.image_url} alt={storedAltText || "Generated Asset cover"} className="aspect-video w-full object-cover transition-opacity hover:opacity-90" /></a> : <div className="flex aspect-video items-center justify-center text-sm text-muted-foreground">{visual.status === "failed" ? "Generation failed" : ["queued", "generating", "retrying"].includes(visual.status) ? "Generating cover…" : "Image unavailable"}</div>}
+                                {visual.image_url ? <a href={visual.image_url} target="_blank" rel="noreferrer" title="Open full-size candidate"><img src={visual.image_url} alt={storedAltText || `Generated Asset ${visualRoleConfig.label}`} className={`${visualRoleConfig.aspectClass} w-full object-cover transition-opacity hover:opacity-90`} /></a> : <div className={`flex ${visualRoleConfig.aspectClass} items-center justify-center text-sm text-muted-foreground`}>{visual.status === "failed" ? "Generation failed" : ["queued", "generating", "retrying"].includes(visual.status) ? `Generating ${visualRoleConfig.label}…` : "Image unavailable"}</div>}
                                 <div className="space-y-3 p-4">
                                   <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><Badge variant={visual.status === "accepted" ? "default" : "outline"}>{visual.status}</Badge>{typeof visual.metadata_?.candidate_index === "number" ? <span className="text-xs text-muted-foreground">Candidate {String(visual.metadata_.candidate_index)}</span> : null}</div><span className="text-xs text-muted-foreground">{visual.model}{visual.width && visual.height ? ` · ${visual.width}×${visual.height}` : ""}</span></div>
                                   <p className="line-clamp-3 text-xs leading-5 text-muted-foreground">{visual.prompt}</p>
                                   <div className="space-y-2"><label className="text-xs font-medium" htmlFor={`visual-alt-${visual.id}`}>Alt text</label><Textarea id={`visual-alt-${visual.id}`} rows={2} value={altText} onChange={(event) => setVisualAltTextDrafts((current) => ({ ...current, [visual.id]: event.target.value }))} /><Button type="button" size="sm" variant="outline" onClick={() => updateVisualMutation.mutate({ visualId: visual.id, altText: altText.trim() })} disabled={!altText.trim() || altText.trim() === storedAltText || updateVisualMutation.isPending}>Save alt text</Button></div>
                                   {visual.error_message ? <p className="text-xs text-destructive">{visual.error_message}</p> : null}
                                   <div className="flex flex-wrap gap-2">
-                                    {["ready", "rejected"].includes(visual.status) ? <Button type="button" size="sm" onClick={() => decideVisualMutation.mutate({ visualId: visual.id, decision: "accept" })} disabled={decideVisualMutation.isPending || !storedAltText.trim()}>Accept cover</Button> : null}
+                                    {["ready", "rejected"].includes(visual.status) ? <Button type="button" size="sm" onClick={() => decideVisualMutation.mutate({ visualId: visual.id, decision: "accept" })} disabled={decideVisualMutation.isPending || !storedAltText.trim()}>Accept {visualRoleConfig.label}</Button> : null}
                                     {["ready", "accepted"].includes(visual.status) ? <Button type="button" size="sm" variant="outline" onClick={() => decideVisualMutation.mutate({ visualId: visual.id, decision: "reject" })} disabled={decideVisualMutation.isPending}>Reject</Button> : null}
                                     {["queued", "retrying"].includes(visual.status) ? <Button type="button" size="sm" variant="outline" onClick={() => cancelVisualMutation.mutate(visual.id)} disabled={cancelVisualMutation.isPending}>Cancel</Button> : null}
                                     <Button type="button" size="sm" variant="ghost" onClick={() => { if (window.confirm("Delete this generated visual?")) deleteVisualMutation.mutate(visual.id); }} disabled={deleteVisualMutation.isPending || visual.status === "generating"}><Trash2 className="mr-2 h-4 w-4" />Delete</Button>
                                   </div>
-                                  {!storedAltText.trim() && ["ready", "rejected"].includes(visual.status) ? <p className="text-xs text-amber-700">Save Alt Text before accepting this cover.</p> : null}
+                                  {!storedAltText.trim() && ["ready", "rejected"].includes(visual.status) ? <p className="text-xs text-amber-700">Save Alt Text before accepting this visual.</p> : null}
                                 </div>
                               </div>
                             );

@@ -33,6 +33,7 @@ from pkg.schemas.application.asset import (
     NewsletterAutomationConfig,
     NewsletterAutomationRunResult,
     NewsletterAutomationUpdate,
+    NewsletterVisualRunResult,
     ReadinessCheckResult,
 )
 from pkg.schemas.application.asset_workspace import (
@@ -72,6 +73,7 @@ from pkg.services.application.blog_generation import (
 from pkg.services.application.newsletter_automation import (
     generate_newsletter,
     get_newsletter_config,
+    retry_newsletter_cover,
     update_newsletter_config,
 )
 from pkg.services.application.asset_experience import list_style_profiles
@@ -144,6 +146,14 @@ async def run_newsletter_automation_route(
     session: AsyncSession = Depends(get_session),
 ):
     return await generate_newsletter(session, user_id=user.id, force=True)
+
+
+@router.post("/newsletter/automation/cover/retry", response_model=NewsletterVisualRunResult)
+async def retry_newsletter_cover_route(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await retry_newsletter_cover(session, user_id=user.id)
 
 
 @router.get("/knowledge-lineage", response_model=AssetKnowledgeLineageList)
