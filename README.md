@@ -21,7 +21,7 @@ Seagull is a self-hosted knowledge workspace that connects information capture, 
 - **Organize knowledge** — linked Sources, Notes, and Wiki pages; note pinning, image attachments, and version history; PDF mind maps with source-linked nodes and branch expansion.
 - **Stay on top of your work** — to-dos, calendar reminders, review suggestions, and knowledge usage statistics.
 - **Work with agents** — chat, reusable workflows, presets, skills, tools, persistent sessions, execution traces, and user-confirmed memory. An optional read-only WeRead tool accesses books, highlights, reviews, and reading statistics.
-- **Create and improve Assets** — clarify intent, review evidence and claims, edit structured drafts, and iteratively optimize the complete document with quality checks.
+- **Create and improve Assets** — clarify intent, review evidence and claims, edit structured drafts, and iteratively optimize the complete document with quality checks; Settings → Dashboard groups knowledge overview, usage rankings, and all owned Assets’ functional blockers into tabs, with optional journey reviews for recovery and adoption feedback.
 - **Generate publishing visuals** — AI-planned covers, social images, and inline illustrations, with editable prompts, multiple candidates, and explicit review.
 - **Automate recurring work** — scheduled collection, discovery, digests, and newsletters, with optional cover generation and visible background job status.
 
@@ -115,6 +115,7 @@ npm test               # run repository checks
 - [PKG overview](personal_knowledge_graph/README.md)
 - [Platform architecture](docs/platform/architecture.md)
 - [Development guide](docs/platform/development.md)
+- [Asset journey review](seagull-ui/ASSET_JOURNEY_REVIEW.md)
 - [Knowledge Lab](deepseek-knowledge-lab/README.md)
 
 ## License

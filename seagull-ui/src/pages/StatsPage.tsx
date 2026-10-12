@@ -1,11 +1,14 @@
 import { useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Search, ArrowUpDown, StickyNote, FileText, MessageSquare, Newspaper } from "lucide-react";
+import { Search, RefreshCw, ArrowUpDown, StickyNote, FileText, MessageSquare, Newspaper } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { knowledgeApi, type KnowledgeStatsItem, type DashboardData } from "@/lib/api";
 import { ModuleSectionNav } from "@/components/SectionNav";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { AssetStatisticsPanel } from "@/pages/AssetJourneyStatsPage";
 import {
   BarChart,
   Bar,
@@ -16,8 +19,6 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-
-// --- Rankings table config (preserved from original) ---
 
 const SORT_OPTIONS = [
   { value: "total_count", label: "Total" },
@@ -34,8 +35,6 @@ const TYPE_OPTIONS = [
 
 const PAGE_SIZE = 30;
 
-// --- Colors ---
-
 const CHART_COLORS = {
   notes: "#10b981",
   sources: "#6366f1",
@@ -43,19 +42,72 @@ const CHART_COLORS = {
 };
 
 export function StatsPage() {
-  // Rankings table state
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get("tab");
+  const activeTab = requestedTab === "knowledge" || requestedTab === "assets" ? requestedTab : "overview";
+
+  return (
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 sm:py-8">
+        <ModuleSectionNav parent="settings" active="Dashboard" />
+        <header className="rounded-2xl border bg-card p-6">
+          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">System Dashboard</h1>
+          <p className="mt-2 max-w-3xl text-sm text-muted-foreground">Knowledge growth, recorded usage, and functional blockers across all your Assets. Each view states what is measured and what remains unknown.</p>
+        </header>
+        <Tabs value={activeTab} activationMode="manual" onValueChange={value => {
+          const next = new URLSearchParams(searchParams);
+          if (value === "overview") next.delete("tab");
+          else next.set("tab", value);
+          setSearchParams(next);
+        }}>
+          <TabsList aria-label="Dashboard sections" className="h-auto w-full justify-start gap-1 overflow-x-auto p-1">
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="knowledge">Knowledge Usage</TabsTrigger>
+            <TabsTrigger value="assets">Asset Diagnostics</TabsTrigger>
+          </TabsList>
+          <TabsContent value="overview" className="h-auto"><KnowledgeOverviewPanel /></TabsContent>
+          <TabsContent value="knowledge" className="h-auto"><KnowledgeUsagePanel /></TabsContent>
+          <TabsContent value="assets" className="h-auto"><AssetStatisticsPanel /></TabsContent>
+        </Tabs>
+      </div>
+    </div>
+  );
+}
+
+function KnowledgeOverviewPanel() {
+  const dashboardQuery = useQuery({ queryKey: ["dashboard"], queryFn: () => knowledgeApi.dashboard() });
+  const dashboard = dashboardQuery.data;
+
+  return <section aria-label="Knowledge overview" className="space-y-6">
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div><h2 className="text-xl font-semibold">Knowledge Overview</h2><p className="mt-1 text-sm text-muted-foreground">Saved knowledge, recent creation activity, and category distributions. Counts are not measures of quality or adoption.</p></div>
+      <Button variant="outline" disabled={dashboardQuery.isFetching} onClick={() => void dashboardQuery.refetch()}><RefreshCw className="h-4 w-4" />Refresh overview</Button>
+    </div>
+    {dashboardQuery.isLoading && <p role="status" className="rounded-xl border p-8 text-center text-muted-foreground">Loading knowledge overview…</p>}
+    {dashboardQuery.isError && <div role="alert" className="rounded-xl border border-destructive/30 p-6"><p className="text-destructive">Could not load the knowledge overview. Counts are unavailable, not zero.</p><Button className="mt-3" variant="outline" onClick={() => void dashboardQuery.refetch()}>Retry overview</Button></div>}
+    {dashboard && !dashboardQuery.isError && <>
+      <OverviewCards counts={dashboard.counts} />
+      <div className="grid gap-6 lg:grid-cols-2">
+        {dashboard.trends.length ? <TrendChart trends={dashboard.trends} /> : <DashboardEmpty title="7-Day Activity" detail="No recorded creation activity in this period." />}
+        {dashboard.category_distribution.length ? <CategoryChart distribution={dashboard.category_distribution} /> : <DashboardEmpty title="Category Distribution" detail="No categorized knowledge to display yet." />}
+      </div>
+      {dashboard.note_type_distribution.length ? <NoteTypeChart distribution={dashboard.note_type_distribution} /> : <DashboardEmpty title="Note Types" detail="No saved notes to group by type yet." />}
+    </>}
+  </section>;
+}
+
+function DashboardEmpty({ title, detail }: { title: string; detail: string }) {
+  return <div className="rounded-xl border bg-card p-6"><h3 className="font-semibold">{title}</h3><p className="mt-2 text-sm text-muted-foreground">{detail}</p></div>;
+}
+
+function KnowledgeUsagePanel() {
   const [sortBy, setSortBy] = useState("total_count");
   const [itemType, setItemType] = useState("");
   const [titleQuery, setTitleQuery] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [page, setPage] = useState(0);
 
-  const { data: dashboard } = useQuery({
-    queryKey: ["dashboard"],
-    queryFn: () => knowledgeApi.dashboard(),
-  });
-
-  const { data: statsData, isLoading: statsLoading } = useQuery({
+  const statsQuery = useQuery({
     queryKey: ["knowledge-stats", sortBy, itemType, titleQuery, page],
     queryFn: () =>
       knowledgeApi.stats({
@@ -66,6 +118,7 @@ export function StatsPage() {
         offset: page * PAGE_SIZE,
       }),
   });
+  const { data: statsData, isLoading: statsLoading } = statsQuery;
 
   const items = statsData?.items ?? [];
   const total = statsData?.total ?? 0;
@@ -77,36 +130,12 @@ export function StatsPage() {
     setPage(0);
   }
 
-	return (
-		<div className="h-full overflow-y-auto">
-			<div className="max-w-6xl mx-auto px-6 py-8">
-				<ModuleSectionNav parent="settings" active="Dashboard" />
-				<div className="mb-6 mt-6">
-					<h1 className="text-2xl font-bold">System Dashboard</h1>
-					<p className="mt-2 text-sm text-muted-foreground">
-						Operational stats and rankings live in Settings so Home can stay focused on daily next actions.
-					</p>
-				</div>
-
-        {/* Overview cards */}
-        {dashboard && <OverviewCards counts={dashboard.counts} />}
-
-        {/* Charts row */}
-        {dashboard && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-            <TrendChart trends={dashboard.trends} />
-            <CategoryChart distribution={dashboard.category_distribution} />
+  return (
+        <section aria-label="Knowledge usage" className="space-y-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div><h2 className="text-xl font-semibold">Knowledge Rankings</h2><p className="mt-1 text-sm text-muted-foreground">Recorded search, retrieval, and reference counts for Sources and Notes. Usage does not establish that an Asset was adopted.</p></div>
+            <Button variant="outline" disabled={statsQuery.isFetching} onClick={() => void statsQuery.refetch()}><RefreshCw className="h-4 w-4" />Refresh usage</Button>
           </div>
-        )}
-
-        {/* Note type distribution */}
-        {dashboard && dashboard.note_type_distribution.length > 0 && (
-          <NoteTypeChart distribution={dashboard.note_type_distribution} />
-        )}
-
-        {/* Rankings table */}
-        <div className="mt-8">
-          <h2 className="text-lg font-semibold mb-4">Knowledge Rankings</h2>
 
           {/* Filters */}
           <div className="flex flex-wrap items-center gap-3 mb-4">
@@ -115,6 +144,7 @@ export function StatsPage() {
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
                   placeholder="Search title..."
+                  aria-label="Search knowledge titles"
                   value={searchInput}
                   onChange={(e) => setSearchInput(e.target.value)}
                   className="pl-9 h-9 w-52"
@@ -144,6 +174,7 @@ export function StatsPage() {
               {TYPE_OPTIONS.map((opt) => (
                 <button
                   key={opt.value}
+                  aria-pressed={itemType === opt.value}
                   onClick={() => {
                     setItemType(opt.value);
                     setPage(0);
@@ -162,6 +193,7 @@ export function StatsPage() {
             <div className="flex items-center gap-1.5 ml-auto">
               <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
               <select
+                aria-label="Knowledge ranking sort order"
                 className="flex h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm"
                 value={sortBy}
                 onChange={(e) => {
@@ -178,8 +210,8 @@ export function StatsPage() {
             </div>
           </div>
 
-          {/* Table */}
-          <div className="rounded-lg border border-border overflow-hidden">
+          {statsQuery.isError && <div role="alert" className="rounded-xl border border-destructive/30 p-6"><p className="text-destructive">Could not load knowledge usage. Rankings are unavailable, not empty.</p><Button className="mt-3" variant="outline" onClick={() => void statsQuery.refetch()}>Retry usage</Button></div>}
+          {!statsQuery.isError && <div className="rounded-lg border border-border overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-muted/50 border-b border-border">
@@ -212,9 +244,9 @@ export function StatsPage() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </div>}
 
-          {totalPages > 1 && (
+          {!statsQuery.isError && totalPages > 1 && (
             <div className="flex items-center justify-between mt-4">
               <span className="text-sm text-muted-foreground">
                 {total} items total
@@ -242,13 +274,9 @@ export function StatsPage() {
               </div>
             </div>
           )}
-        </div>
-      </div>
-    </div>
+        </section>
   );
 }
-
-// --- Subcomponents ---
 
 function OverviewCards({ counts }: { counts: DashboardData["counts"] }) {
   const cards = [
@@ -259,7 +287,7 @@ function OverviewCards({ counts }: { counts: DashboardData["counts"] }) {
   ];
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
       {cards.map((c) => (
         <div
           key={c.label}
@@ -385,9 +413,9 @@ function StatsRow({ item, rank }: { item: KnowledgeStatsItem; rank: number }) {
     <tr className="border-b border-border/50 hover:bg-accent/30 transition-colors">
       <td className="px-4 py-2.5 text-muted-foreground font-mono text-xs">{rank}</td>
       <td className="px-4 py-2.5">
-        <a href={href} className="hover:underline font-medium text-foreground">
+        <Link to={href} className="hover:underline font-medium text-foreground">
           {item.title}
-        </a>
+        </Link>
         {item.category_name && item.category_name !== "general" && (
           <Badge variant="secondary" className="ml-2 text-[10px]">
             {item.category_name}

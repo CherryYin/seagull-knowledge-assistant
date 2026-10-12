@@ -27,6 +27,7 @@ import { MindMapCanvas, type MindMapCanvasNode } from "@/components/mind-map/Min
 import { mindMapsApi, type AssetOutlineDocumentPatchProposal, type AssetOutlinePatchOperation, type MindMapNodeRead } from "@/lib/api/mind-maps";
 import { ASSET_STYLE_PROFILES, defaultAssetStyleProfile } from "@/lib/asset-generation";
 import { renderMermaidDiagramsForWechat } from "@/lib/mermaid-export";
+import { renderAssetJourneyReviewContext } from "@/lib/asset-journey-review";
 
 type AssetOutlineRefreshOperation = "add" | "move" | "rename" | "delete";
 
@@ -3011,6 +3012,29 @@ export function AssetDetailPage() {
             {!asset && <span className="text-sm text-muted-foreground">Loading Asset…</span>}
           </div>
           <div className="flex flex-wrap justify-end gap-2">
+            <Button variant="outline" onClick={() => {
+              if (!asset || !confirmEditorNavigation()) return;
+              navigate("/chat", {
+                state: {
+                  workflowId: "review-asset-journey",
+                  backTo: `${location.pathname}${location.search}`,
+                  backLabel: "Back to Asset",
+                  objectRef: { object_type: "asset", object_id: asset.id, title: asset.title },
+                  promptSeed: renderAssetJourneyReviewContext({
+                    asset,
+                    workspace: workspaceQuery.data,
+                    visuals: assetVisualsQuery.data?.items,
+                    audit: qualityAuditQuery.data,
+                    readiness: readinessQuery.data,
+                    currentTab: resolvedActiveTab,
+                    hasUnsavedChanges: isEditorDirty,
+                    completedOptimizationRounds: optimizationMetadata.completed_rounds,
+                  }),
+                },
+              });
+            }} disabled={!asset}>
+              <MessageSquareShare className="h-4 w-4" /> Review Journey
+            </Button>
             <Button variant="outline" onClick={openForkDialog} disabled={!asset || forkMutation.isPending}>
               <Copy className="h-4 w-4" /> Fork New Asset
             </Button>

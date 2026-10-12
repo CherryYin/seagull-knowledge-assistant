@@ -50,6 +50,8 @@ from pkg.schemas.application.asset_workspace import (
 )
 from pkg.schemas.note import NoteCreate
 from pkg.services.application.assets import create_asset, delete_asset, fork_asset, get_asset, list_asset_knowledge_lineage, list_assets, update_asset
+from pkg.schemas.application.asset_analytics import AssetAnalytics
+from pkg.services.application.asset_analytics import FEATURE_IDS, get_asset_analytics
 from pkg.services.application.asset_workspace import (
     decide_asset_claim,
     decide_asset_contribution,
@@ -138,6 +140,22 @@ async def list_assets_route(
 ):
     items, total = await list_assets(session, user_id=user.id, asset_type=asset_type, status=status, limit=limit, offset=offset)
     return AssetList(items=items, total=total)
+
+
+@router.get("/analytics", response_model=AssetAnalytics)
+async def asset_analytics_route(
+    asset_type: str | None = None,
+    status: str | None = Query(default=None, pattern=r"^(draft|in_review|ready_to_export|exported|published|archived)$"),
+    feature: str | None = None,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    if feature is not None and feature not in FEATURE_IDS:
+        raise HTTPException(status_code=422, detail="Unknown Asset feature")
+    return await get_asset_analytics(session, user_id=user.id, asset_type=asset_type,
+        status=status, feature=feature, offset=offset, limit=limit)
 
 
 @router.get("/newsletter/automation", response_model=NewsletterAutomationConfig)

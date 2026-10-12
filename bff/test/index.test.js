@@ -74,6 +74,10 @@ test("login cookie authenticates direct API requests and preserves query params"
   const pkg = http.createServer(async (req, res) => {
     pkgReceived.push({ url: req.url, authorization: req.headers.authorization, requestId: req.headers["x-request-id"] });
     res.setHeader("Content-Type", "application/json");
+    if (req.url?.startsWith("/assets/analytics?")) {
+      res.end(JSON.stringify({ total_assets: 251, features: [] }));
+      return;
+    }
     if (req.url === "/auth/login") {
       res.end(JSON.stringify({ access_token: "test-token" }));
       return;
@@ -947,6 +951,14 @@ test("login cookie authenticates direct API requests and preserves query params"
     }),
   });
   assert.equal(invalidEphemeralReuse.status, 400);
+
+  const analytics = await fetch(`${base}/api/assets/analytics?feature=blocks&offset=30&limit=30`, {
+    headers: { Cookie: cookie },
+  });
+  assert.equal(analytics.status, 200);
+  assert.equal((await analytics.json()).total_assets, 251);
+  assert.equal(pkgReceived.at(-1).url, "/assets/analytics?feature=blocks&offset=30&limit=30");
+  assert.match(pkgReceived.at(-1).authorization, /^Bearer /);
 
   const logout = await fetch(`${base}/api/auth/logout`, {
     method: "POST",

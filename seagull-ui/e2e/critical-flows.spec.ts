@@ -1,4 +1,6 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
+import { ASSET_JOURNEY_REPORT_TEMPLATE, type AssetJourneyReport } from "../src/lib/asset-journey-stats";
+import type { AssetAnalytics } from "../src/lib/api/assets";
 
 const apiBase = "http://127.0.0.1:4000";
 const now = "2026-08-23T08:00:00.000Z";
@@ -23,6 +25,7 @@ Review the evidence with the architecture group and record the final decision ex
 The selected evidence is sufficient for this draft; final editorial review should confirm wording.`;
 
 type MockState = {
+  assetAnalytics?: AssetAnalytics;
   loggedIn: boolean;
   savedNoteBody: Record<string, unknown> | null;
   savedAssetBody: Record<string, unknown> | null;
@@ -92,6 +95,13 @@ async function installMockBff(page: Page, state: MockState) {
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname;
+    if (path === "/api/assets/analytics") return json(route, state.assetAnalytics ?? {
+      generated_at: now, total_assets: 0, assets_with_attention: 0, assets_without_workspace: 0,
+      by_type: {}, by_status: {}, features: [], issues: [], issue_total: 0,
+      issue_offset: 0, issue_limit: 30, measurement_limits: [],
+      visual_metrics: { total_tasks: 0, failed_tasks: 0, active_tasks: 0, processing_attempts: 0,
+        retry_attempts: 0, timed_tasks: 0, mean_elapsed_seconds: null },
+    });
     const method = request.method();
 
     if (path === "/api/auth/login" && method === "POST") {
@@ -122,6 +132,7 @@ async function installMockBff(page: Page, state: MockState) {
       category_distribution: [],
       note_type_distribution: [],
     });
+    if (path === "/api/knowledge/stats") return json(route, { items: [], total: 0 });
 
     if (path === "/api/chat-sessions" && method === "GET") {
       return json(route, { items: state.chatSessions ?? [], total: state.chatSessions?.length ?? 0 });
@@ -811,7 +822,11 @@ async function installMockBff(page: Page, state: MockState) {
     if (path === "/api/notes" && method === "GET") {
       if (url.searchParams.get("note_type") === "digest") return json(route, { items: [], total: 0 });
       const items = state.noteItems ?? [{ id: "note-input", title: "E2E Knowledge Note", note_type: "inbox", status: "kept", category_id: 1, domains: [], tags: [], confidence: "medium", source_ids: [], created_at: now, updated_at: now }];
-      return json(route, { items, total: items.length });
+      const tag = url.searchParams.get("tag");
+      const filtered = tag ? items.filter(item => (item.tags as string[] | undefined)?.includes(tag)) : items;
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      const limit = Number(url.searchParams.get("limit") ?? 20);
+      return json(route, { items: filtered.slice(offset, offset + limit), total: filtered.length });
     }
     if (path === "/api/notes/note-input" && method === "GET") {
       return json(route, { id: "note-input", title: "E2E Knowledge Note", note_type: "concept", status: "seed", category_id: 1, category_name: "Inbox", abstract: "A distilled note.", content: "# Distilled Note\n\nReusable knowledge.", project: null, domains: [], tags: ["asset-promotion"], confidence: "medium", source_ids: [], file_path: null, word_count: 4, is_pinned: false, created_at: now, updated_at: now });
@@ -1611,6 +1626,283 @@ test("Asset intake retry does not duplicate Evidence after a lost save response"
   await expect(page).toHaveURL(/\/assets\/asset-e2e\?tab=evidence$/);
   expect(state.assetCreateCalls).toBe(1);
   expect(((state.assetWorkspace?.evidence as unknown[]) ?? []).length).toBe(1);
+});
+
+test("Asset journey review carries a snapshot and saves only after explicit confirmation", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: { title: "Journey Review Asset", asset_type: "blog_post", status: "exported", draft_content: "Saved article." },
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+    chatResponse: `## Review Context\n\nAsset: asset-e2e\n\n## Adoption and Reasons\n\nUnknown; user confirmation required.\n\n\`\`\`json\n${JSON.stringify({ ...ASSET_JOURNEY_REPORT_TEMPLATE, asset_id: "asset-e2e" }, null, 2)}\n\`\`\``,
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+  await page.goto("/assets/asset-e2e?tab=production");
+  await page.getByRole("button", { name: "Review Journey", exact: true }).click();
+  await expect(page).toHaveURL(/\/chat/);
+  const input = page.getByPlaceholder("Ask anything about your knowledge base...");
+  await expect(input).toHaveValue(/Run a focused retrospective/);
+  await expect(input).toHaveValue(/"current_tab": "production"/);
+  await expect(input).toHaveValue(/"model_token_usage": "not_recorded"/);
+  await expect(input).toHaveValue(/"id": "asset-e2e"/);
+  expect(state.savedNoteBody).toBeNull();
+  await input.press("Enter");
+  await expect(page.getByRole("button", { name: "Save as Review Note" })).toBeVisible();
+  expect(state.savedNoteBody).toBeNull();
+  await expect(page.getByRole("button", { name: "Save as Asset Draft" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Save as Review Note" }).click();
+  await expect.poll(() => state.savedNoteBody).not.toBeNull();
+  expect(state.savedNoteBody?.tags).toEqual(expect.arrayContaining([
+    "workflow:review-asset-journey", "asset-journey-review", "asset:asset-e2e", "explicit-save",
+  ]));
+  state.noteItems = [{ id: "review-saved", ...state.savedNoteBody, created_at: now, updated_at: now }];
+  await page.goto("/assets");
+  await page.getByRole("button", { name: "Function Statistics" }).click();
+  await expect(page.getByRole("heading", { name: "Asset Function Statistics" })).toBeVisible();
+  await page.getByText("User-reported journey reviews (supplementary)", { exact: true }).click();
+  await expect(page.getByTestId("journey-reviewed")).toHaveText("1");
+  await expect(page.getByTestId("journey-adoption-rate")).toHaveText("—");
+});
+
+test("Asset journey review refuses to save interview answers without a structured report", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false, savedNoteBody: null, candidate: null, memory: null, sessionContext: null,
+    savedAssetBody: { title: "Incomplete Journey Review", asset_type: "blog_post", status: "draft" },
+    chatResponse: "Which step did you stop at, and why?",
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+  await page.goto("/assets/asset-e2e");
+  await page.getByRole("button", { name: "Review Journey", exact: true }).click();
+  await page.getByPlaceholder("Ask anything about your knowledge base...").press("Enter");
+  await page.getByRole("button", { name: "Save as Review Note" }).click();
+  await expect(page.getByText("The result was not saved.", { exact: true })).toBeVisible();
+  await page.getByText("Details", { exact: true }).click();
+  await expect(page.getByText("Journey report cannot be saved:", { exact: false })).toBeVisible();
+  expect(state.savedNoteBody).toBeNull();
+});
+
+test("Settings Dashboard organizes overview, usage and Asset diagnostics into persistent tabs", async ({ page }, testInfo) => {
+  const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null,
+    candidate: null, memory: null, sessionContext: null };
+  await installMockBff(page, state);
+  const requestedPaths: string[] = [];
+  page.on("request", request => requestedPaths.push(new URL(request.url()).pathname));
+  await signIn(page);
+  await page.goto("/settings");
+  await page.getByRole("link", { name: "Dashboard", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "System Dashboard" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Overview", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("heading", { name: "Knowledge Overview" })).toBeVisible();
+  expect(requestedPaths).not.toContain("/api/assets/analytics");
+  expect(requestedPaths).not.toContain("/api/knowledge/stats");
+  await page.getByRole("tab", { name: "Knowledge Usage", exact: true }).click();
+  await expect(page).toHaveURL(/\/stats\?tab=knowledge$/);
+  await expect(page.getByRole("heading", { name: "Knowledge Rankings" })).toBeVisible();
+  await expect(page.getByText("No stats yet. Use search or chat to start tracking.")).toBeVisible();
+  expect(requestedPaths).not.toContain("/api/assets/analytics");
+  await page.getByRole("tab", { name: "Asset Diagnostics", exact: true }).click();
+  await expect(page).toHaveURL(/\/stats\?tab=assets$/);
+  await expect(page.getByTestId("global-asset-total")).toHaveText("0");
+  await page.reload();
+  await expect(page.getByRole("tab", { name: "Asset Diagnostics", exact: true })).toHaveAttribute("aria-selected", "true");
+  await page.goBack();
+  await expect(page.getByRole("tab", { name: "Knowledge Usage", exact: true })).toHaveAttribute("aria-selected", "true");
+  await page.goto("/assets/journey-stats");
+  await expect(page).toHaveURL(/\/stats\?tab=assets$/);
+  await expect(page.getByRole("heading", { name: "Asset Function Statistics" })).toBeVisible();
+  await page.getByRole("tab", { name: "Overview", exact: true }).click();
+  await expect(page).toHaveURL(/\/stats$/);
+  await page.getByRole("button", { name: "Collapse", exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(async () => (await page.getByRole("complementary").boundingBox())?.width ?? Infinity).toBeLessThanOrEqual(70);
+  await expect(page.getByRole("tab", { name: "Asset Diagnostics", exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("settings-dashboard-mobile.png"), fullPage: true });
+});
+
+test("Settings Dashboard distinguishes overview and usage failures from empty data", async ({ page }) => {
+  const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null,
+    candidate: null, memory: null, sessionContext: null };
+  await installMockBff(page, state);
+  let unavailable = true;
+  await page.route(`${apiBase}/api/knowledge/**`, route => unavailable
+    ? json(route, { detail: "Unavailable" }, 503) : route.fallback());
+  await signIn(page);
+  await page.goto("/stats");
+  await expect(page.getByRole("alert")).toContainText("Counts are unavailable, not zero", { timeout: 15000 });
+  unavailable = false;
+  await page.getByRole("button", { name: "Retry overview" }).click();
+  await expect(page.getByText("No categorized knowledge to display yet.")).toBeVisible();
+  unavailable = true;
+  await page.getByRole("tab", { name: "Knowledge Usage", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("Rankings are unavailable, not empty", { timeout: 15000 });
+  await expect(page.getByText("No stats yet. Use search or chat to start tracking.")).toHaveCount(0);
+  unavailable = false;
+  await page.getByRole("button", { name: "Retry usage" }).click();
+  await expect(page.getByText("No stats yet. Use search or chat to start tracking.")).toBeVisible();
+});
+
+test("Settings Dashboard knowledge usage retains search, type, sorting and pagination", async ({ page }) => {
+  const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null,
+    candidate: null, memory: null, sessionContext: null };
+  await installMockBff(page, state);
+  const queries: URLSearchParams[] = [];
+  await page.route(`${apiBase}/api/knowledge/stats?**`, route => {
+    const query = new URL(route.request().url()).searchParams;
+    queries.push(query);
+    const offset = Number(query.get("offset"));
+    return json(route, { total: 31, items: [{ item_id: offset ? "source-last" : "source-first", item_type: "source",
+      title: offset ? "Last ranked Source" : "First ranked Source", search_count: 3, retrieval_count: 2, reference_count: 1, total_count: 6 }] });
+  });
+  await signIn(page);
+  await page.goto("/stats?tab=knowledge");
+  await expect(page.getByRole("link", { name: "First ranked Source" })).toHaveAttribute("href", "/sources/source-first");
+  await page.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(page.getByRole("link", { name: "Last ranked Source" })).toBeVisible();
+  expect(queries.at(-1)?.get("offset")).toBe("30");
+  await page.getByRole("button", { name: "Sources", exact: true }).click();
+  await expect.poll(() => queries.at(-1)?.get("item_type")).toBe("source");
+  await expect.poll(() => Number(queries.at(-1)?.get("offset") ?? 0)).toBe(0);
+  await page.getByLabel("Search knowledge titles").fill("seagull");
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await expect.poll(() => queries.at(-1)?.get("title")).toBe("seagull");
+  await page.getByLabel("Knowledge ranking sort order").selectOption("retrieval_count");
+  await expect.poll(() => queries.at(-1)?.get("sort_by")).toBe("retrieval_count");
+});
+
+test("Asset global function statistics cover all Assets without reviews and filter paginated blockers", async ({ page }, testInfo) => {
+  const features = ["intent", "evidence", "claims", "draft", "blocks", "optimization", "quality", "outline", "visuals", "export", "wechat", "knowledge"];
+  const state: MockState = {
+    loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null,
+    memory: null, sessionContext: null, noteItems: [],
+    assetAnalytics: {
+      generated_at: now, total_assets: 251, assets_with_attention: 31, assets_without_workspace: 20,
+      by_type: { blog_post: 251 }, by_status: { draft: 251 },
+      features: features.map(feature => ({ feature, label: feature, optional: ["visuals", "wechat"].includes(feature),
+        completed: feature === "blocks" ? 220 : 0, blocked: 0, needs_review: feature === "blocks" ? 31 : 0,
+        in_progress: 0, not_started: feature === "blocks" ? 0 : 251, failed: 0, unknown: 0,
+        recorded_failure_assets: feature === "visuals" ? 1 : null,
+        reasons: feature === "blocks" ? { "Review unsupported Block": 31 } : {} })),
+      visual_metrics: { total_tasks: 3, failed_tasks: 1, active_tasks: 0, processing_attempts: 6,
+        retry_attempts: 3, timed_tasks: 2, mean_elapsed_seconds: 105 },
+      issues: [{ asset_id: "asset-1", title: "Blocked first Asset", asset_type: "blog_post", asset_status: "draft",
+        feature: "blocks", state: "needs_review", reason: "Review unsupported Block", block_ids: ["block-1"] }],
+      issue_total: 31, issue_offset: 0, issue_limit: 30,
+      measurement_limits: ["Stage waits and Token usage are not recorded."],
+    },
+  };
+  await installMockBff(page, state);
+  const queries: string[] = [];
+  await page.route(`${apiBase}/api/assets/analytics?**`, async route => {
+    const query = new URL(route.request().url()).searchParams;
+    queries.push(query.toString());
+    const offset = Number(query.get("offset") ?? 0);
+    const payload = state.assetAnalytics!;
+    return json(route, { ...payload, issue_offset: offset,
+      issues: offset ? [{ ...payload.issues[0], asset_id: "asset-31", title: "Blocked last Asset" }] : payload.issues });
+  });
+  await signIn(page);
+  await page.goto("/assets/journey-stats");
+  await expect(page.getByRole("heading", { name: "Asset Function Statistics" })).toBeVisible();
+  await expect(page.getByTestId("global-asset-total")).toHaveText("251");
+  await expect(page.getByTestId("global-feature-count")).toHaveText("12");
+  await expect(page.getByTestId("global-workspace-unknown")).toHaveText("20");
+  await expect(page.getByTestId("journey-reviewed")).not.toBeVisible();
+  await expect(page.getByRole("link", { name: "Blocked first Asset" })).toHaveAttribute("href", "/assets/asset-1?tab=edit&block=block-1");
+  await page.getByTestId("global-feature-blocks").getByRole("button").click();
+  await expect.poll(() => queries.at(-1)).toContain("feature=blocks");
+  await page.getByRole("button", { name: "Next affected Assets" }).click();
+  await expect(page.getByRole("link", { name: "Blocked last Asset" })).toBeVisible();
+  await expect(page.getByTestId("global-asset-total")).toHaveText("251");
+  await expect.poll(() => queries.at(-1)).toContain("offset=30");
+  await page.getByLabel("Global Asset type").selectOption("blog_post");
+  await expect.poll(() => queries.at(-1)).toContain("asset_type=blog_post");
+  await page.getByLabel("Global Asset status").selectOption("draft");
+  await expect.poll(() => queries.at(-1)).toContain("status=draft");
+  await expect.poll(() => queries.at(-1)).toContain("offset=0");
+  await page.screenshot({ path: testInfo.outputPath("global-asset-statistics.png"), fullPage: true });
+});
+
+test("Asset global function statistics distinguish unavailable telemetry from zero and recover", async ({ page }) => {
+  const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null,
+    candidate: null, memory: null, sessionContext: null };
+  await installMockBff(page, state);
+  let unavailable = true;
+  await page.route(`${apiBase}/api/assets/analytics?**`, route => unavailable
+    ? json(route, { detail: "Unavailable" }, 503) : route.fallback());
+  await signIn(page);
+  await page.goto("/assets/journey-stats");
+  await expect(page.getByRole("alert")).toContainText("Counts are unavailable, not zero", { timeout: 15000 });
+  await expect(page.getByTestId("global-asset-total")).toHaveCount(0);
+  unavailable = false;
+  await page.getByRole("button", { name: "Retry global statistics" }).click();
+  await expect(page.getByTestId("global-asset-total")).toHaveText("0");
+});
+
+test("Asset journey statistics separate unknowns, legacy notes, repeat reviews and estimates", async ({ page }, testInfo) => {
+  const makeNote = (id: string, report: AssetJourneyReport | null, savedAt: string) => ({
+    id, title: `Review ${id}`, category_id: 1, note_type: "inbox", status: "kept", confidence: "medium",
+    domains: ["review"], tags: ["asset-journey-review", ...(report?.asset_id ? [`asset:${report.asset_id}`] : [])],
+    source_ids: [], created_at: savedAt, updated_at: savedAt,
+    content: report ? `\`\`\`json\n${JSON.stringify(report)}\n\`\`\`` : "An old review says adopted, with 900 tokens.",
+  });
+  const state: MockState = {
+    loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null,
+    noteItems: [
+      makeNote("latest-a", { ...ASSET_JOURNEY_REPORT_TEMPLATE, asset_id: "asset-a", adoption: { status: "yes", reason: "Used in a meeting", source: "user_report" }, metrics: [{ scope: "journey", metric: "wait_seconds", value: 0, unit: "seconds", source: "system_record" }] }, "2026-10-12T00:00:00Z"),
+      makeNote("old-a", { ...ASSET_JOURNEY_REPORT_TEMPLATE, asset_id: "asset-a", adoption: { status: "no", reason: "Too long", source: "user_report" } }, "2026-10-09T00:00:00Z"),
+      makeNote("partial-b", { ...ASSET_JOURNEY_REPORT_TEMPLATE, asset_id: "asset-b", adoption: { status: "partial", reason: "Needed edits", source: "user_report" }, stops: { status: "reported", source: "user_report", items: [{ step: "visuals", reason: "Generation timeout" }] }, manual_recovery: { status: "reported", source: "user_report", items: [{ step: "visuals", problem: "Timeout", action: "Retry image", result: "Worked" }] }, metrics: [{ scope: "journey", metric: "wait_seconds", value: 120, unit: "seconds", source: "user_estimate" }] }, "2026-10-10T00:00:00Z"),
+      makeNote("unknown-c", { ...ASSET_JOURNEY_REPORT_TEMPLATE, asset_id: "asset-c" }, "2026-10-11T00:00:00Z"),
+      makeNote("legacy", null, "2026-10-12T01:00:00Z"),
+    ],
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+  await page.goto("/assets/journey-stats");
+  await page.getByText("User-reported journey reviews (supplementary)", { exact: true }).click();
+  await expect(page.getByTestId("journey-reviewed")).toHaveText("3");
+  await expect(page.getByTestId("journey-blocked")).toHaveText("1");
+  await expect(page.getByTestId("journey-recovered")).toHaveText("1");
+  await expect(page.getByTestId("journey-adoption-rate")).toHaveText("50%");
+  await expect(page.getByText("Excluded: No valid structured summary")).toBeVisible();
+  await expect(page.getByText("User estimate", { exact: true })).toBeVisible();
+  await expect(page.getByText("Needed edits", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Review old-a", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Review legacy", exact: true })).toHaveAttribute("href", "/notes/legacy");
+  await page.screenshot({ path: testInfo.outputPath("journey-statistics.png"), fullPage: true });
+  await page.getByLabel("Sample mode").selectOption("all");
+  await expect(page.getByTestId("journey-reviewed")).toHaveText("4");
+  await expect(page.getByTestId("journey-adoption-rate")).toHaveText("33.33%");
+  await page.getByLabel("Search reviews").fill("Generation timeout");
+  await expect(page.getByTestId("journey-reviewed")).toHaveText("1");
+  await expect(page.getByTestId("journey-adoption-rate")).toHaveText("0%");
+  await page.getByLabel("Search reviews").fill("");
+  await page.getByLabel("From (UTC)").fill("2026-10-12");
+  await expect(page.getByTestId("journey-reviewed")).toHaveText("1");
+  await expect(page.getByTestId("journey-adoption-rate")).toHaveText("100%");
+});
+
+test("Asset journey statistics explain empty data and recover from a loading failure", async ({ page }) => {
+  const state: MockState = { loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null, noteItems: [] };
+  await installMockBff(page, state);
+  await signIn(page);
+  let unavailable = true;
+  await page.route(`${apiBase}/api/notes?**`, async route => {
+    if (new URL(route.request().url()).searchParams.get("tag") === "asset-journey-review" && unavailable) {
+      return json(route, { detail: "Unavailable" }, 503);
+    }
+    return route.fallback();
+  });
+  await page.goto("/assets/journey-stats");
+  await page.getByText("User-reported journey reviews (supplementary)", { exact: true }).click();
+  await expect(page.getByText("Could not load review records.", { exact: false })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByTestId("journey-reviewed")).toHaveCount(0);
+  unavailable = false;
+  await page.getByRole("button", { name: "Retry loading reviews" }).click();
+  await expect(page.getByRole("heading", { name: "No saved journey reviews yet" })).toBeVisible();
 });
 
 test("Asset Production previews and downloads the preferred HTML delivery", async ({ page }) => {

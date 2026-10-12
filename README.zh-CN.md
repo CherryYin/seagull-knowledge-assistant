@@ -21,7 +21,7 @@ Seagull 是一个串联信息采集、研究、写作与发布的自托管知识
 - **知识组织**：关联 Sources、Notes 与 Wiki，支持笔记置顶、图片附件和版本历史；PDF 思维导图支持来源定位与分支扩展。
 - **日常管理与回顾**：待办、日历提醒、回顾建议与知识使用统计。
 - **Agent 协作**：对话、可复用工作流、Preset、Skill、Tool、持久会话、执行轨迹和用户确认的记忆；可选微信读书只读工具，查询书籍、划线、书评与阅读统计。
-- **Asset 创作与优化**：澄清意图、审阅证据与结论、编辑结构化草稿，结合质量检查进行多轮整篇优化。
+- **Asset 创作与优化**：澄清意图、审阅证据与结论、编辑结构化草稿，结合质量检查进行多轮整篇优化；Settings → Dashboard 按标签展示知识总览、使用排行与全部个人 Asset 的功能卡点，使用复盘补充手动补救和成品采用反馈。
 - **发布生图**：AI 规划封面、社交分享图与正文插图，支持编辑提示词、生成多个候选并逐一审阅。
 - **定时自动化**：持续采集、发现、Digest 与 Newsletter，可选自动生成封面，并查看后台任务状态。
 
@@ -116,6 +116,7 @@ npm test               # 运行仓库检查
 - [PKG 介绍](personal_knowledge_graph/README.zh-CN.md)
 - [平台架构](docs/platform/architecture.md)
 - [开发指南](docs/platform/development.md)
+- [Asset 使用复盘](seagull-ui/ASSET_JOURNEY_REVIEW.md)
 - [Knowledge Lab](deepseek-knowledge-lab/README.md)
 
 ## 开源协议

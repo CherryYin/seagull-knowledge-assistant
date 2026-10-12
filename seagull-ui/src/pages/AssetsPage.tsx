@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, BookOpen, CalendarClock, FileText, Filter, Newspaper, Search, Sparkles } from "lucide-react";
+import { ArrowRight, BookOpen, CalendarClock, ChartNoAxesCombined, FileText, Filter, Newspaper, Search, Sparkles } from "lucide-react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { assetsApi, type Asset, type AssetStatus, type AssetType } from "@/lib/api";
 import { assetTypeLabel, MANUAL_ASSET_TYPES } from "@/lib/asset-generation";
@@ -69,7 +69,7 @@ export function AssetsPage() {
             <h1 className="mt-2 text-3xl font-semibold tracking-tight">Asset Library</h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">Read, refine, and deliver knowledge Assets created from explicit user needs and traceable Sources, Notes, and Wiki pages.</p>
           </div>
-          <div className="flex flex-wrap gap-2"><Button variant="outline" size="lg" onClick={() => navigate("/assets/newsletter-automation", { state: detailState })}><Newspaper className="mr-2 h-4 w-4" />Newsletter Automation</Button><Button size="lg" onClick={() => navigate("/assets/new", { state: detailState })}><Sparkles className="mr-2 h-4 w-4" />Create Asset</Button></div>
+          <div className="flex flex-wrap gap-2"><Button variant="outline" size="lg" onClick={() => navigate("/stats?tab=assets")}><ChartNoAxesCombined className="mr-2 h-4 w-4" />Function Statistics</Button><Button variant="outline" size="lg" onClick={() => navigate("/assets/newsletter-automation", { state: detailState })}><Newspaper className="mr-2 h-4 w-4" />Newsletter Automation</Button><Button size="lg" onClick={() => navigate("/assets/new", { state: detailState })}><Sparkles className="mr-2 h-4 w-4" />Create Asset</Button></div>
         </header>
 
         <Card className="border-primary/20 bg-gradient-to-r from-primary/10 via-primary/5 to-background">

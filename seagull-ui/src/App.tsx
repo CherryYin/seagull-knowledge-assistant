@@ -131,6 +131,7 @@ export default function App() {
             <Route path="/assets" element={<LazyPage><AssetsPage /></LazyPage>} />
             <Route path="/assets/new" element={<LazyPage><AssetGenerationPage /></LazyPage>} />
             <Route path="/assets/newsletter-automation" element={<LazyPage><NewsletterAutomationPage /></LazyPage>} />
+            <Route path="/assets/journey-stats" element={<Navigate to="/stats?tab=assets" replace />} />
             <Route path="/assets/:id" element={<LazyPage><AssetDetailPage /></LazyPage>} />
             <Route path="/review/wiki-suggestions" element={<LazyPage><WikiSuggestionsPage /></LazyPage>} />
             <Route path="/wiki/discovery" element={<LazyPage><WikiDiscoveryPage /></LazyPage>} />

@@ -2,6 +2,7 @@ import { assetsApi, notesApi, wikiApi, type ReferenceInfo } from "@/lib/api";
 import type { AgentWorkflowContext, WorkflowResultSaveTarget } from "@/lib/agent-workflows";
 import { assessAssetDraft, type AssetGenerationRequest } from "@/lib/asset-generation";
 import { stripModelThinking } from "@/lib/model-output";
+import { parseAssetJourneyReport } from "@/lib/asset-journey-stats";
 
 interface SaveWorkflowResultInput {
   target: WorkflowResultSaveTarget;
@@ -106,6 +107,12 @@ export async function saveWorkflowResult({
   assetDraft,
 }: SaveWorkflowResultInput) {
   content = stripModelThinking(content);
+  const journeyReview = workflowId === "review-asset-journey"
+    ? parseAssetJourneyReport(content, objectRef?.object_type === "asset" ? objectRef.object_id : undefined)
+    : null;
+  if (journeyReview && !journeyReview.report) {
+    throw new Error(`Journey report cannot be saved: ${journeyReview.error}. Ask the Agent for a final report with a valid structured JSON summary; do not fill missing measurements with guesses.`);
+  }
   const title = deriveTitle(content, assetDraft?.title || explicitTitle);
   const { sourceRefs, noteRefs, wikiRefs } = collectReferences(references, objectRef);
   const inlineReferences = collectInlineKnowledgeReferences(content);
@@ -188,6 +195,10 @@ export async function saveWorkflowResult({
       "explicit-save",
       workflowTag,
       `harness-session:${sessionId}`,
+      ...(workflowId === "review-asset-journey" ? [
+        "asset-journey-review",
+        ...(journeyReview?.report?.asset_id ? [`asset:${journeyReview.report.asset_id}`] : []),
+      ] : []),
     ],
     domains: [target === "review_note" ? "review" : "agent-output"],
     source_ids: persistableReferences.sourceRefs,

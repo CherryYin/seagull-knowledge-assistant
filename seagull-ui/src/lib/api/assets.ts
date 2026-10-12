@@ -34,6 +34,58 @@ export interface AssetList {
   total: number;
 }
 
+export type AssetFeatureState = "completed" | "blocked" | "needs_review" | "in_progress" | "not_started" | "unknown" | "failed";
+
+export interface AssetFeatureCounts {
+  feature: string;
+  label: string;
+  optional: boolean;
+  completed: number;
+  blocked: number;
+  needs_review: number;
+  in_progress: number;
+  not_started: number;
+  unknown: number;
+  failed: number;
+  recorded_failure_assets: number | null;
+  reasons: Record<string, number>;
+}
+
+export interface AssetFeatureIssue {
+  asset_id: string;
+  title: string;
+  asset_type: AssetType;
+  asset_status: AssetStatus;
+  feature: string;
+  state: AssetFeatureState;
+  reason: string;
+  block_ids: string[];
+}
+
+export interface AssetAnalytics {
+  generated_at: string;
+  total_assets: number;
+  assets_with_attention: number;
+  assets_without_workspace: number;
+  by_type: Record<string, number>;
+  by_status: Record<string, number>;
+  features: AssetFeatureCounts[];
+  visual_metrics: {
+    total_tasks: number;
+    failed_tasks: number;
+    active_tasks: number;
+    processing_attempts: number;
+    retry_attempts: number;
+    timed_tasks: number;
+    mean_elapsed_seconds: number | null;
+  };
+  issues: AssetFeatureIssue[];
+  issue_total: number;
+  issue_offset: number;
+  issue_limit: number;
+  measurement_limits: string[];
+}
+
 export type AssetVisualRole = "cover" | "social_square" | "social_portrait" | "inline_illustration";
 
 export interface AssetVisual {
@@ -441,6 +493,13 @@ export const reviseAssetIntent = (id: string, body: AssetIntentRevisionRequest) 
 );
 
 export const assetsApi = {
+  analytics: (params?: { asset_type?: string; status?: string; feature?: string; limit?: number; offset?: number }) => {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(params ?? {})) {
+      if (value !== undefined && value !== "") query.set(key, String(value));
+    }
+    return request<AssetAnalytics>(`/assets/analytics?${query}`);
+  },
   list: (params?: { asset_type?: string; status?: AssetStatus; limit?: number; offset?: number }) => {
     const q = new URLSearchParams();
     if (params?.asset_type) q.set("asset_type", params.asset_type);
