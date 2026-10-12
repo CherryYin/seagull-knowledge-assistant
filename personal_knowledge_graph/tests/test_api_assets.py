@@ -8,7 +8,7 @@ from pkg.models.application.asset import Asset
 
 
 def test_asset_api_models_exclude_memory_refs():
-    from pkg.schemas.application.asset import AssetCreate, AssetRead, AssetUpdate
+    from pkg.schemas.application.asset import AssetCreate, AssetUpdate
 
     assert "memory_refs" not in AssetCreate.model_fields
     assert "memory_refs" not in AssetUpdate.model_fields
@@ -111,6 +111,7 @@ async def test_asset_knowledge_lineage_route_delegates_to_service():
 async def test_newsletter_automation_routes_delegate_to_services():
     from pkg.api.assets import (
         get_newsletter_automation_route,
+        retry_newsletter_cover_route,
         run_newsletter_automation_route,
         update_newsletter_automation_route,
     )
@@ -118,6 +119,7 @@ async def test_newsletter_automation_routes_delegate_to_services():
         NewsletterAutomationConfig,
         NewsletterAutomationRunResult,
         NewsletterAutomationUpdate,
+        NewsletterVisualRunResult,
     )
 
     fake_user = MagicMock(id="user-1")
@@ -140,6 +142,12 @@ async def test_newsletter_automation_routes_delegate_to_services():
         result = await run_newsletter_automation_route(user=fake_user, session=session)
     assert result.reason == "no_matching_items"
     run_mock.assert_awaited_once_with(session, user_id="user-1", force=True)
+
+    cover_result = NewsletterVisualRunResult(status="queued", asset_id="asset-1")
+    with patch("pkg.api.assets.retry_newsletter_cover", new=AsyncMock(return_value=cover_result)) as retry_mock:
+        result = await retry_newsletter_cover_route(user=fake_user, session=session)
+    assert result.asset_id == "asset-1"
+    retry_mock.assert_awaited_once_with(session, user_id="user-1")
 
 
 @pytest.mark.asyncio
@@ -229,9 +237,21 @@ async def test_export_markdown_route_marks_asset_exported():
     asset.outline = "# Outline"
     asset.draft_content = "# Draft post\n\ncontent"
     asset.reference_notes = "## References\n\n- Source: src-1"
+    visual = {
+        "visual_id": "visual-1",
+        "role": "cover",
+        "file_path": "minio://pkg/cover.png",
+        "image_url": "https://cdn.example/cover.png",
+        "alt_text": "Editorial cover",
+        "model": "qwen-image-3.0-pro",
+        "width": 1600,
+        "height": 900,
+        "mime_type": "image/png",
+    }
 
     with (
         patch("pkg.api.assets.get_asset", new=AsyncMock(return_value=asset)),
+        patch("pkg.api.assets.resolve_accepted_visuals", new=AsyncMock(return_value={"cover": visual})),
         patch("pkg.api.assets.export_markdown", return_value="# Draft post\n\ncontent"),
         patch("pkg.api.assets.update_asset", new=AsyncMock(return_value=asset)) as mock_update,
     ):
@@ -241,6 +261,10 @@ async def test_export_markdown_route_marks_asset_exported():
     assert result.export_format == "markdown"
     assert "# Draft post" in result.content
     mock_update.assert_awaited_once()
+    update_body = mock_update.await_args.kwargs["body"]
+    assert update_body.metadata["visual_delivery_snapshot"]["latest"]["markdown"]["visual_ids"] == {
+        "cover": "visual-1",
+    }
 
 
 @pytest.mark.asyncio
@@ -326,12 +350,25 @@ async def test_publish_wechat_draft_route_records_remote_draft():
         config={"app_id": "wx-app", "default_thumb_media_id": "cover-media"},
     )
     sent_at = datetime.now(timezone.utc)
+    visual = {
+        "visual_id": "visual-1",
+        "role": "cover",
+        "file_path": "minio://pkg/cover.png",
+        "image_url": "https://cdn.example/cover.png",
+        "data_url": "data:image/png;base64,AAAA",
+        "alt_text": "Editorial cover",
+        "model": "qwen-image-3.0-pro",
+        "width": 1600,
+        "height": 900,
+        "mime_type": "image/png",
+    }
 
     with (
         patch("pkg.api.assets.get_asset", new=AsyncMock(return_value=asset)),
         patch("pkg.api.assets.check_readiness", return_value=(True, [], [], [])),
         patch("pkg.api.assets.get_default_user_api_credential", new=AsyncMock(return_value=credential)),
         patch("pkg.api.assets.decrypt_secret", return_value="app-secret"),
+        patch("pkg.api.assets.resolve_accepted_visuals", new=AsyncMock(return_value={"cover": visual})),
         patch(
             "pkg.api.assets.create_wechat_draft",
             new=AsyncMock(return_value=WechatDraftReceipt(media_id="draft-media-1", sent_at=sent_at)),
@@ -354,6 +391,10 @@ async def test_publish_wechat_draft_route_records_remote_draft():
     assert update_body.status == "exported"
     assert update_body.export_format == "wechat_draft"
     assert update_body.metadata["wechat_draft"]["media_id"] == "draft-media-1"
+    assert update_body.metadata["visual_delivery_snapshot"]["latest"]["wechat_draft"]["visual_ids"] == {
+        "cover": "visual-1",
+    }
+    assert mock_create_draft.await_args.kwargs["cover_image_url"] == "data:image/png;base64,AAAA"
     assert mock_create_draft.await_args.kwargs["rendered_diagrams"] == {
         "a" * 64: "data:image/png;base64,AAAA",
     }
@@ -405,6 +446,9 @@ async def test_preview_wechat_rendered_route_forwards_mermaid_images():
     mock_export.assert_called_once_with(
         asset,
         rendered_diagrams={"b" * 64: "data:image/png;base64,BBBB"},
+        cover_image_url=None,
+        cover_alt_text=None,
+        inline_visuals=[],
     )
 
 
@@ -484,3 +528,81 @@ async def test_convert_asset_feedback_to_note_route_returns_note_result():
 
     assert result.note_id == "note-1"
     mock_persist.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_asset_visual_routes_delegate_to_services():
+    from datetime import datetime, timezone
+
+    from pkg.api.assets import (
+        decide_asset_visual_route,
+        delete_asset_visual_route,
+        generate_asset_visual_route,
+        list_asset_visuals_route,
+        regenerate_asset_visual_batch_route,
+    )
+    from pkg.schemas.application.asset import (
+        AssetVisualDecisionRequest,
+        AssetVisualGenerateRequest,
+        AssetVisualRead,
+    )
+
+    fake_user = MagicMock(id="user-1")
+    session = AsyncMock()
+    now = datetime(2026, 10, 8, tzinfo=timezone.utc)
+    visual = AssetVisualRead(
+        id="visual-1",
+        asset_id="asset-1",
+        role="cover",
+        status="ready",
+        prompt="Editorial cover",
+        model="qwen-image-3.0-pro",
+        width=1280,
+        height=720,
+        mime_type="image/png",
+        image_url="https://minio.example/cover.png",
+        created_at=now,
+        updated_at=now,
+    )
+
+    with patch("pkg.api.assets.list_asset_visuals", new=AsyncMock(return_value=[visual])) as list_mock:
+        listed = await list_asset_visuals_route("asset-1", user=fake_user, session=session)
+    assert listed.items == [visual]
+    list_mock.assert_awaited_once_with(session, user_id="user-1", asset_id="asset-1")
+
+    with patch("pkg.api.assets.regenerate_asset_visual_batch", new=AsyncMock(return_value=[visual])) as regenerate_mock:
+        regenerated = await regenerate_asset_visual_batch_route(
+            "asset-1",
+            "visual-batch-1",
+            user=fake_user,
+            session=session,
+        )
+    assert regenerated.items == [visual]
+    regenerate_mock.assert_awaited_once_with(
+        session,
+        user_id="user-1",
+        asset_id="asset-1",
+        batch_id="visual-batch-1",
+    )
+
+    generate_body = AssetVisualGenerateRequest(prompt="A restrained editorial illustration")
+    with patch("pkg.api.assets.generate_asset_visual", new=AsyncMock(return_value=visual)) as generate_mock:
+        generated = await generate_asset_visual_route("asset-1", generate_body, user=fake_user, session=session)
+    assert generated.id == "visual-1"
+    generate_mock.assert_awaited_once_with(session, user_id="user-1", asset_id="asset-1", body=generate_body)
+
+    decision_body = AssetVisualDecisionRequest(decision="accept")
+    with patch("pkg.api.assets.decide_asset_visual", new=AsyncMock(return_value=visual)) as decide_mock:
+        await decide_asset_visual_route("asset-1", "visual-1", decision_body, user=fake_user, session=session)
+    decide_mock.assert_awaited_once_with(
+        session,
+        user_id="user-1",
+        asset_id="asset-1",
+        visual_id="visual-1",
+        decision="accept",
+    )
+
+    with patch("pkg.api.assets.delete_asset_visual", new=AsyncMock()) as delete_mock:
+        result = await delete_asset_visual_route("asset-1", "visual-1", user=fake_user, session=session)
+    assert result is None
+    delete_mock.assert_awaited_once_with(session, user_id="user-1", asset_id="asset-1", visual_id="visual-1")

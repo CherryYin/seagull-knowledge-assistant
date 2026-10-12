@@ -77,7 +77,7 @@ export function LabPage() {
       const res = await request<LabExperimentList>("/lab/experiments");
       setExperiments(res.items ?? []);
     } catch {
-      // lab 端点不存在时静默
+      // Keep the page usable when the Lab endpoint is unavailable.
     } finally {
       setLoading(false);
     }
@@ -113,7 +113,7 @@ export function LabPage() {
       setShowForm(false);
       loadExperiments();
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : "转化失败");
+      alert(err instanceof Error ? err.message : "Conversion failed");
     } finally {
       setSubmitting(false);
     }
@@ -164,13 +164,13 @@ export function LabPage() {
             Experiment Lab
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            设计 agent 实验 → 调优验证 → 固化为 Skill + Workflow 双输出
+            Design agent experiments, validate improvements, and produce both Skill and Workflow outputs.
           </p>
         </div>
         {!showForm && (
           <Button onClick={() => setShowForm(true)}>
             <Plus className="mr-1 h-4 w-4" />
-            新实验
+            New Experiment
           </Button>
         )}
       </div>
@@ -179,23 +179,23 @@ export function LabPage() {
       {showForm && (
         <Card>
           <CardHeader>
-            <CardTitle>设计新实验</CardTitle>
+            <CardTitle>Design a New Experiment</CardTitle>
             <CardDescription>
-              填写实验步骤，系统将自动生成 PKG Skill + Harness Workflow 双输出。
+              Define the experiment steps to generate both a PKG Skill and a Harness Workflow.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-sm font-medium">实验名称</label>
+                <label className="text-sm font-medium">Experiment name</label>
                 <Input
-                  placeholder="如 research-topic-validated"
+                  placeholder="For example: research-topic-validated"
                   value={experimentName}
                   onChange={(e) => setExperimentName(e.target.value)}
                 />
               </div>
               <div>
-                <label className="text-sm font-medium">模型</label>
+                <label className="text-sm font-medium">Model</label>
                 <div className="flex gap-2">
                   <Input
                     placeholder="provider"
@@ -220,9 +220,9 @@ export function LabPage() {
             </div>
 
             <div>
-              <label className="text-sm font-medium">描述</label>
+              <label className="text-sm font-medium">Description</label>
               <Textarea
-                placeholder="这个实验的目的和功能..."
+                placeholder="Describe the experiment's purpose and behavior..."
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 rows={2}
@@ -230,7 +230,7 @@ export function LabPage() {
             </div>
 
             <div>
-              <label className="mb-2 block text-sm font-medium">执行步骤</label>
+              <label className="mb-2 block text-sm font-medium">Execution steps</label>
               <div className="space-y-2">
                 {steps.map((step, i) => (
                   <div key={i} className="flex gap-2">
@@ -238,7 +238,7 @@ export function LabPage() {
                       {i + 1}
                     </span>
                     <Input
-                      placeholder={`步骤 ${i + 1}: 用 pkg_search 搜索...`}
+                      placeholder={`Step ${i + 1}: search with pkg_search...`}
                       value={step.text}
                       onChange={(e) => updateStep(i, e.target.value)}
                       className="flex-1"
@@ -255,24 +255,24 @@ export function LabPage() {
                 ))}
               </div>
               <Button variant="outline" size="sm" className="mt-2" onClick={addStep}>
-                <Plus className="mr-1 h-3 w-3" /> 添加步骤
+                <Plus className="mr-1 h-3 w-3" /> Add Step
               </Button>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-sm font-medium">输出 Sections（每行一个）</label>
+                <label className="text-sm font-medium">Output sections (one per line)</label>
                 <Textarea
-                  placeholder="核心发现&#10;记忆关联&#10;知识缺口&#10;建议行动"
+                  placeholder="Key Findings&#10;Memory Connections&#10;Knowledge Gaps&#10;Recommended Actions"
                   value={outputSections}
                   onChange={(e) => setOutputSections(e.target.value)}
                   rows={4}
                 />
               </div>
               <div>
-                <label className="text-sm font-medium">约束条件（每行一个）</label>
+                <label className="text-sm font-medium">Constraints (one per line)</label>
                 <Textarea
-                  placeholder="先搜 PKG，不要跳过检索&#10;每步标注来源"
+                  placeholder="Search PKG first; do not skip retrieval&#10;Cite sources at every step"
                   value={constraints}
                   onChange={(e) => setConstraints(e.target.value)}
                   rows={4}
@@ -282,7 +282,7 @@ export function LabPage() {
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-sm font-medium">使用工具（逗号分隔）</label>
+                <label className="text-sm font-medium">Tools used (comma-separated)</label>
                 <Input
                   placeholder="pkg_search, pkg_read_note, pkg_save_document"
                   value={toolsUsed}
@@ -297,7 +297,7 @@ export function LabPage() {
                     onChange={(e) => setSaveAsNote(e.target.checked)}
                     className="h-4 w-4"
                   />
-                  同时保存为 PKG Note
+                  Also save as a PKG Note
                 </label>
               </div>
             </div>
@@ -305,10 +305,10 @@ export function LabPage() {
             <div className="flex gap-2">
               <Button onClick={handleSubmit} disabled={submitting}>
                 {submitting && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
-                固化为 Skill + Workflow
+                Generate Skill + Workflow
               </Button>
               <Button variant="ghost" onClick={() => setShowForm(false)}>
-                取消
+                Cancel
               </Button>
             </div>
           </CardContent>
@@ -350,10 +350,10 @@ export function LabPage() {
                 </div>
                 <Button variant="outline" size="sm" onClick={handleCopy}>
                   {copied ? <Check className="mr-1 h-3 w-3" /> : <Copy className="mr-1 h-3 w-3" />}
-                  {copied ? "已复制" : "复制"}
+                  {copied ? "Copied" : "Copy"}
                 </Button>
                 <Button variant="outline" size="sm" onClick={handleDownload}>
-                  <Download className="mr-1 h-3 w-3" /> 下载
+                  <Download className="mr-1 h-3 w-3" /> Download
                 </Button>
               </div>
             </div>
@@ -369,14 +369,14 @@ export function LabPage() {
       {/* ── Experiment History ── */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">历史实验</CardTitle>
+          <CardTitle className="text-base">Experiment History</CardTitle>
         </CardHeader>
         <CardContent>
           {loading ? (
-            <p className="text-sm text-muted-foreground">加载中...</p>
+            <p className="text-sm text-muted-foreground">Loading...</p>
           ) : experiments.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              还没有固化过的实验。设计你的第一个实验吧。
+              No experiments have been generated yet. Design your first experiment.
             </p>
           ) : (
             <div className="space-y-2">
@@ -408,23 +408,23 @@ export function LabPage() {
           <div className="grid grid-cols-3 gap-4 text-sm">
             <div className="space-y-1 rounded border p-3">
               <span className="font-mono text-xs text-purple-500">Phase 1</span>
-              <p className="font-medium">Harness 中实验</p>
+              <p className="font-medium">Experiment in Harness</p>
               <p className="text-xs text-muted-foreground">
-                在 DeepSeek Harness Web UI 中设计 prompt，跑实验，观察 Trajectory View。
+                Design prompts, run experiments, and inspect the Trajectory View in the DeepSeek Harness Web UI.
               </p>
             </div>
             <div className="space-y-1 rounded border p-3">
               <span className="font-mono text-xs text-purple-500">Phase 2</span>
-              <p className="font-medium">固化为双输出</p>
+              <p className="font-medium">Generate Both Outputs</p>
               <p className="text-xs text-muted-foreground">
-                在此页面填写实验步骤，系统自动生成 PKG Skill .md + Harness Workflow .yml。
+                Define experiment steps here to generate a PKG Skill .md and Harness Workflow .yml.
               </p>
             </div>
             <div className="space-y-1 rounded border p-3">
               <span className="font-mono text-xs text-purple-500">Phase 3</span>
-              <p className="font-medium">验证 & 对比</p>
+              <p className="font-medium">Validate and Compare</p>
               <p className="text-xs text-muted-foreground">
-                在 PKG 中调 skill，在 Harness 中 fork 实验，对比效果差异。
+                Tune the Skill in PKG, fork the experiment in Harness, and compare outcomes.
               </p>
             </div>
           </div>

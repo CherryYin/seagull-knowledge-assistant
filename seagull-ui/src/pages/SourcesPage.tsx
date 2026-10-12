@@ -37,10 +37,10 @@ const FEED_VIEWS = [
 ];
 
 const PDF_TYPES = [
-  { value: "text", label: "一般文字型 (快速)" },
-  { value: "ocr", label: "扫描/图片型 (OCR)" },
-  { value: "ppt", label: "PPT型" },
-  { value: "vlm", label: "不清晰文件 (AI识别)" },
+  { value: "text", label: "Standard text (fast)" },
+  { value: "ocr", label: "Scanned or image-based (OCR)" },
+  { value: "ppt", label: "Presentation (PPT)" },
+  { value: "vlm", label: "Low-clarity document (AI recognition)" },
 ];
 
 /** Files that go through Docling on the server (PDF/Office/images may take a long time, especially with OCR). */
@@ -515,7 +515,7 @@ export function SourcesPage() {
                 </div>
                 {uploadMutation.isPending && uploadFile && isServerHeavyExtract(uploadFile) && pdfType === "vlm" && (
                   <p className="text-xs text-muted-foreground rounded-md border border-border bg-muted/50 px-3 py-2">
-                    AI正在逐页识别文档，大文档可能需要较长时间。进度日志:{" "}
+                    AI is analyzing the document page by page. Large documents may take longer. Progress log:{" "}
                     <span className="font-mono text-[10px]">[vlm] requesting page x/y</span>
                   </p>
                 )}
@@ -533,7 +533,7 @@ export function SourcesPage() {
                 >
                   {uploadMutation.isPending
                     ? uploadFile && pdfType === "vlm"
-                      ? "AI识别中..."
+                      ? "AI recognition in progress..."
                       : uploadFile && isServerHeavyExtract(uploadFile) && pdfType !== "text"
                         ? "Processing on server..."
                         : "Uploading..."

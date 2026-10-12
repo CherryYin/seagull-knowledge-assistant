@@ -34,6 +34,71 @@ export interface AssetList {
   total: number;
 }
 
+export type AssetVisualRole = "cover" | "social_square" | "social_portrait" | "inline_illustration";
+
+export interface AssetVisual {
+  id: string;
+  asset_id: string;
+  role: AssetVisualRole | string;
+  status: "queued" | "generating" | "retrying" | "ready" | "accepted" | "rejected" | "failed" | "cancelled" | string;
+  prompt: string;
+  model: string;
+  width?: number | null;
+  height?: number | null;
+  mime_type?: string | null;
+  image_url?: string | null;
+  download_name?: string | null;
+  parent_visual_id?: string | null;
+  source_block_ids: string[];
+  provider_request_id?: string | null;
+  error_message?: string | null;
+  processing_attempts: number;
+  next_retry_at?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  metadata_?: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AssetVisualList {
+  items: AssetVisual[];
+}
+
+export type AssetVisualStylePreset = "editorial_technology" | "minimal_abstract" | "research_brief";
+
+export interface AssetVisualBrief {
+  concept: string;
+  composition: string;
+  style: string;
+  palette: string[];
+  must_include: string[];
+  must_avoid: string[];
+  title_safe_area: "left" | "right" | "top" | "bottom" | "center" | "none";
+  prompt: string;
+  alt_text: string;
+}
+
+export interface AssetVisualStyleMemory {
+  style_preset: AssetVisualStylePreset;
+  sample_count: number;
+  source_visual_ids: string[];
+  palette: string[];
+  preferred_title_safe_area?: "left" | "right" | "top" | "bottom" | "center" | "none" | null;
+}
+
+export interface AssetVisualPlan {
+  role: AssetVisualRole;
+  size: "1024*1024" | "1280*720" | "720*1280";
+  style_preset: AssetVisualStylePreset;
+  planner_mode: "llm" | "fallback";
+  planner_model?: string | null;
+  style_memory?: AssetVisualStyleMemory | null;
+  parent_visual_id?: string | null;
+  source_block_ids: string[];
+  brief: AssetVisualBrief;
+}
+
 export interface AssetKnowledgeLineageItem {
   asset_id: string;
   asset_title: string;
@@ -174,6 +239,10 @@ export interface NewsletterAutomationConfig {
   delivery_format: "markdown" | "html";
   audience: string;
   style_notes: string;
+  generate_cover_image: boolean;
+  cover_review_mode: "draft_only" | "auto_accept";
+  cover_style_profile: AssetVisualStylePreset;
+  cover_candidate_count: number;
   last_generated_at?: string | null;
   last_asset_id?: string | null;
   last_run_at?: string | null;
@@ -189,6 +258,14 @@ export interface NewsletterAutomationRunSnapshot extends NewsletterAutomationUpd
   config_revision: number;
 }
 
+export interface NewsletterVisualRunResult {
+  status: "disabled" | "queued" | "failed";
+  asset_id?: string | null;
+  plan?: AssetVisualPlan | null;
+  visuals: AssetVisual[];
+  error?: string | null;
+}
+
 export interface NewsletterAutomationRunResult {
   status: "generated" | "skipped";
   reason?: string | null;
@@ -197,6 +274,7 @@ export interface NewsletterAutomationRunResult {
   config_revision: number;
   config_snapshot?: NewsletterAutomationRunSnapshot | null;
   asset?: Asset | null;
+  cover?: NewsletterVisualRunResult | null;
 }
 
 export interface AssetIntent {
@@ -383,6 +461,16 @@ export const assetsApi = {
   getNewsletterAutomation: () => request<NewsletterAutomationConfig>("/assets/newsletter/automation"),
   updateNewsletterAutomation: (body: NewsletterAutomationUpdate) => request<NewsletterAutomationConfig>("/assets/newsletter/automation", { method: "PUT", body: JSON.stringify(body) }),
   runNewsletterAutomation: () => request<NewsletterAutomationRunResult>("/assets/newsletter/automation/run", { method: "POST" }),
+  retryNewsletterCover: () => request<NewsletterVisualRunResult>("/assets/newsletter/automation/cover/retry", { method: "POST" }),
+  listVisuals: (id: string) => request<AssetVisualList>(`/assets/${encodeURIComponent(id)}/visuals`),
+  planVisual: (id: string, body: { role?: AssetVisualRole; size?: "1024*1024" | "1280*720" | "720*1280"; style_preset: AssetVisualStylePreset; instructions?: string | null; parent_visual_id?: string | null; source_block_ids?: string[] }) => request<AssetVisualPlan>(`/assets/${encodeURIComponent(id)}/visuals/plan`, { method: "POST", body: JSON.stringify(body) }),
+  generateVisual: (id: string, body: { prompt?: string | null; role?: AssetVisualRole; size?: "1024*1024" | "1280*720" | "720*1280"; parent_visual_id?: string | null; source_block_ids?: string[] }) => request<AssetVisual>(`/assets/${encodeURIComponent(id)}/visuals/generate`, { method: "POST", body: JSON.stringify(body) }),
+  generateVisualBatch: (id: string, body: { role?: AssetVisualRole; size?: "1024*1024" | "1280*720" | "720*1280"; style_preset: AssetVisualStylePreset; candidate_count: number; style_memory?: AssetVisualStyleMemory | null; parent_visual_id?: string | null; source_block_ids?: string[]; brief: AssetVisualBrief }) => request<AssetVisualList>(`/assets/${encodeURIComponent(id)}/visuals/generate-batch`, { method: "POST", body: JSON.stringify(body) }),
+  regenerateVisualBatch: (id: string, batchId: string) => request<AssetVisualList>(`/assets/${encodeURIComponent(id)}/visuals/batches/${encodeURIComponent(batchId)}/regenerate`, { method: "POST" }),
+  updateVisual: (id: string, visualId: string, body: { alt_text: string }) => request<AssetVisual>(`/assets/${encodeURIComponent(id)}/visuals/${encodeURIComponent(visualId)}`, { method: "PATCH", body: JSON.stringify(body) }),
+  decideVisual: (id: string, visualId: string, decision: "accept" | "reject") => request<AssetVisual>(`/assets/${encodeURIComponent(id)}/visuals/${encodeURIComponent(visualId)}/decision`, { method: "POST", body: JSON.stringify({ decision }) }),
+  cancelVisual: (id: string, visualId: string) => request<AssetVisual>(`/assets/${encodeURIComponent(id)}/visuals/${encodeURIComponent(visualId)}/cancel`, { method: "POST" }),
+  deleteVisual: (id: string, visualId: string) => request<void>(`/assets/${encodeURIComponent(id)}/visuals/${encodeURIComponent(visualId)}`, { method: "DELETE" }),
   reviseIntent: reviseAssetIntent,
   proposeEvidence: (id: string, body: { base_workspace_revision: number; session_id?: string; proposals: AssetEvidenceProposalInput[] }) => request<AssetWorkspace>(`/assets/${encodeURIComponent(id)}/workspace/evidence/proposals`, { method: "POST", body: JSON.stringify(body) }),
   decideEvidence: (id: string, evidenceId: string, body: { base_workspace_revision: number; decision: "accepted" | "rejected" }) => request<AssetWorkspace>(`/assets/${encodeURIComponent(id)}/workspace/evidence/${encodeURIComponent(evidenceId)}/decision`, { method: "POST", body: JSON.stringify(body) }),

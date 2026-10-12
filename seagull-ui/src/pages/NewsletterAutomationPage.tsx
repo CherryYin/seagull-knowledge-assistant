@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeft, CalendarClock, CheckCircle2, ExternalLink, LoaderCircle, Newspaper, Play } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CalendarClock, CheckCircle2, ExternalLink, Image, LoaderCircle, Newspaper, Play, RefreshCw } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
-import { assetsApi, type NewsletterAutomationConfig, type NewsletterAutomationRunResult, type NewsletterAutomationUpdate } from "@/lib/api";
+import { assetsApi, type AssetVisual, type AssetVisualBrief, type NewsletterAutomationConfig, type NewsletterAutomationRunResult, type NewsletterAutomationUpdate } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,6 +26,10 @@ const DEFAULT_FORM: NewsletterAutomationUpdate = {
   delivery_format: "html",
   audience: "Technology readers",
   style_notes: "Concise, evidence-led, and easy to scan.",
+  generate_cover_image: false,
+  cover_review_mode: "draft_only",
+  cover_style_profile: "editorial_technology",
+  cover_candidate_count: 1,
 };
 
 const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -50,6 +54,10 @@ function editableConfig(config: NewsletterAutomationConfig): NewsletterAutomatio
     delivery_format: config.delivery_format,
     audience: config.audience,
     style_notes: config.style_notes,
+    generate_cover_image: config.generate_cover_image,
+    cover_review_mode: config.cover_review_mode,
+    cover_style_profile: config.cover_style_profile,
+    cover_candidate_count: config.cover_candidate_count,
   };
 }
 
@@ -85,6 +93,24 @@ function runReason(reason?: string | null) {
   if (reason === "no_matching_items") return "No matching recent news or papers were found.";
   if (reason === "not_due") return "The saved schedule is not due yet.";
   return reason || "No Newsletter draft was created.";
+}
+
+function visualBrief(visual?: AssetVisual | null): AssetVisualBrief | null {
+  const value = visual?.metadata_?.visual_brief;
+  if (!value || typeof value !== "object") return null;
+  const brief = value as Partial<AssetVisualBrief>;
+  if (!brief.concept || !brief.composition || !brief.style || !brief.alt_text) return null;
+  return {
+    concept: brief.concept,
+    composition: brief.composition,
+    style: brief.style,
+    palette: Array.isArray(brief.palette) ? brief.palette : [],
+    must_include: Array.isArray(brief.must_include) ? brief.must_include : [],
+    must_avoid: Array.isArray(brief.must_avoid) ? brief.must_avoid : [],
+    title_safe_area: brief.title_safe_area ?? "none",
+    prompt: brief.prompt ?? "",
+    alt_text: brief.alt_text,
+  };
 }
 
 export function NewsletterAutomationPage() {
@@ -188,6 +214,26 @@ export function NewsletterAutomationPage() {
 
   const activeRun: NewsletterAutomationRunResult | null = runMutation.data ?? null;
   const generatedAssetId = activeRun?.asset?.id ?? configQuery.data?.last_asset_id ?? null;
+  const coverVisualsQuery = useQuery({
+    queryKey: ["asset-visuals", generatedAssetId],
+    queryFn: () => assetsApi.listVisuals(generatedAssetId!),
+    enabled: Boolean(generatedAssetId),
+    refetchInterval: (query) => (query.state.data?.items.some((visual) => ["queued", "generating", "retrying"].includes(visual.status)) ? 3000 : false),
+  });
+  const retryCoverMutation = useMutation({
+    mutationFn: assetsApi.retryNewsletterCover,
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({ queryKey: ["asset-visuals", result.asset_id ?? generatedAssetId] });
+    },
+  });
+  const activeCover = retryCoverMutation.data ?? activeRun?.cover ?? null;
+  const coverVisuals = activeCover?.visuals.length ? activeCover.visuals : coverVisualsQuery.data?.items ?? [];
+  const coverBrief = activeCover?.plan?.brief ?? visualBrief(coverVisuals[0]);
+  const acceptedCover = coverVisuals.find((visual) => visual.status === "accepted" && visual.image_url);
+  const coverStatusCounts = coverVisuals.reduce<Record<string, number>>((counts, visual) => {
+    counts[visual.status] = (counts[visual.status] ?? 0) + 1;
+    return counts;
+  }, {});
   const displayedStatus = runActionPending
     ? "running"
     : runActionError
@@ -212,7 +258,7 @@ export function NewsletterAutomationPage() {
                 <Badge variant={form.enabled ? "default" : "outline"}>{form.enabled ? "Enabled" : "Paused"}</Badge>
                 {isDirty && <Badge variant="outline" className="border-amber-300 text-amber-700">Unsaved changes</Badge>}
               </div>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">Collect technology news and paper discoveries around your topics, then turn recent material into reviewable Newsletter Assets. Automation creates drafts only; export and publishing remain explicit user actions.</p>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">Collect technology news and paper discoveries into a reviewable draft: a short linked roundup first, then a more detailed section for each item with source-title links. Only newly generated issues use this format; export and publishing remain explicit user actions.</p>
             </div>
           </div>
           <Button variant={isDirty ? "default" : "outline"} onClick={() => void saveAndRun()} disabled={runActionPending || updateMutation.isPending || configQuery.isLoading || !payload.name}>
@@ -243,6 +289,14 @@ export function NewsletterAutomationPage() {
             <CardHeader><CardTitle>Schedule and limits</CardTitle><CardDescription>Times are entered in {timezoneName}; PKG stores the corresponding UTC schedule.</CardDescription></CardHeader>
             <CardContent className="space-y-4">
               <label className="flex items-center justify-between rounded-xl border p-4 text-sm"><span><span className="block font-medium">Enable scheduled generation</span><span className="mt-1 block text-xs text-muted-foreground">Paused automation can still be run manually.</span></span><input aria-label="Enable Newsletter automation" type="checkbox" className="h-4 w-4" checked={form.enabled} onChange={(event) => setForm({ ...form, enabled: event.target.checked })} /></label>
+              <label className="flex items-center justify-between rounded-xl border p-4 text-sm"><span><span className="block font-medium">Generate AI cover image</span><span className="mt-1 block text-xs text-muted-foreground">Plan and queue Qwen Image candidates after the text draft succeeds. Image failure never blocks the Newsletter.</span></span><input aria-label="Generate Newsletter cover image" type="checkbox" className="h-4 w-4" checked={form.generate_cover_image} onChange={(event) => setForm({ ...form, generate_cover_image: event.target.checked })} /></label>
+              {form.generate_cover_image && (
+                <div className="grid gap-4 rounded-xl border bg-muted/10 p-4 sm:grid-cols-3">
+                  <label className="space-y-2 text-sm"><span className="font-medium">Cover review</span><select aria-label="Newsletter cover review mode" className="h-10 w-full rounded-md border border-input bg-background px-3" value={form.cover_review_mode} onChange={(event) => { const mode = event.target.value as NewsletterAutomationUpdate["cover_review_mode"]; setForm({ ...form, cover_review_mode: mode, cover_candidate_count: mode === "auto_accept" ? 1 : form.cover_candidate_count }); }}><option value="draft_only">Generate for review</option><option value="auto_accept">Auto-accept one cover</option></select><span className="block text-xs text-muted-foreground">Review mode is safer and remains the default.</span></label>
+                  <label className="space-y-2 text-sm"><span className="font-medium">Cover style</span><select aria-label="Newsletter cover style" className="h-10 w-full rounded-md border border-input bg-background px-3" value={form.cover_style_profile} onChange={(event) => setForm({ ...form, cover_style_profile: event.target.value as NewsletterAutomationUpdate["cover_style_profile"] })}><option value="editorial_technology">Editorial technology</option><option value="minimal_abstract">Minimal abstract</option><option value="research_brief">Research brief</option></select></label>
+                  <label className="space-y-2 text-sm"><span className="font-medium">Candidates</span><select aria-label="Newsletter cover candidate count" className="h-10 w-full rounded-md border border-input bg-background px-3" value={form.cover_candidate_count} disabled={form.cover_review_mode === "auto_accept"} onChange={(event) => setForm({ ...form, cover_candidate_count: Number(event.target.value) })}>{[1, 2, 3, 4].map((count) => <option key={count} value={count}>{count}</option>)}</select><span className="block text-xs text-muted-foreground">Auto-accept always uses exactly one candidate.</span></label>
+                </div>
+              )}
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className="space-y-2 text-sm"><span className="font-medium">Frequency</span><select aria-label="Newsletter frequency" className="h-10 w-full rounded-md border border-input bg-background px-3" value={form.frequency} onChange={(event) => setForm({ ...form, frequency: event.target.value as NewsletterAutomationUpdate["frequency"] })}><option value="manual">Manual</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
                 <label className="space-y-2 text-sm"><span className="font-medium">Local hour</span><Input aria-label="Newsletter local hour" type="number" min={0} max={23} value={localSchedule.hour} onChange={(event) => setLocalHour(Number(event.target.value))} /></label>
@@ -282,6 +336,38 @@ export function NewsletterAutomationPage() {
             {displayedStatus === "skipped" && <div className="space-y-2 text-sm"><p className="flex items-center gap-2 font-medium text-amber-700"><AlertTriangle className="h-5 w-5" />Skipped · no draft created</p><p className="text-muted-foreground">{runReason(displayedReason)}</p></div>}
             {displayedStatus === "failed" && <ActionError title="Newsletter run failed" impact="No Newsletter Asset was generated, and your visible configuration remains editable." recovery="Fix the reported issue, then use Save & Run now again." details={runActionError} onRetry={() => void saveAndRun()} retryLabel={isDirty ? "Save & Run again" : "Run again"} />}
             {activeRun?.config_snapshot && <div className="rounded-xl border bg-muted/20 p-3 text-xs text-muted-foreground">Used “{activeRun.config_snapshot.name}” · {activeRun.config_snapshot.topics.length ? activeRun.config_snapshot.topics.join(", ") : "all topics"} · {activeRun.config_snapshot.lookback_days} day lookback · up to {activeRun.config_snapshot.max_news_items} news / {activeRun.config_snapshot.max_paper_items} papers · {activeRun.config_snapshot.delivery_format.toUpperCase()}</div>}
+            {generatedAssetId && (
+              <div className="space-y-4 rounded-xl border p-4" data-newsletter-cover-generation>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="flex items-center gap-2 font-medium"><Image className="h-4 w-4 text-primary" />Cover Generation</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Visual planning and image candidates for this Newsletter Asset. Retrying does not rerun collection or rewrite the draft.</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {activeCover?.status && <Badge variant="outline">{activeCover.status}</Badge>}
+                    {activeCover?.plan?.style_memory && <Badge variant="outline">Style memory · {activeCover.plan.style_memory.sample_count} accepted</Badge>}
+                    {Object.entries(coverStatusCounts).map(([status, count]) => <Badge key={status} variant="outline">{count} {status}</Badge>)}
+                  </div>
+                </div>
+                {coverBrief && (
+                  <div className="grid gap-3 text-sm md:grid-cols-2">
+                    <div><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Concept</p><p className="mt-1 leading-6">{coverBrief.concept}</p></div>
+                    <div><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Composition</p><p className="mt-1 leading-6">{coverBrief.composition}</p></div>
+                    <div><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Style</p><p className="mt-1 leading-6">{coverBrief.style}</p></div>
+                    <div><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Alt text</p><p className="mt-1 leading-6">{coverBrief.alt_text}</p></div>
+                  </div>
+                )}
+                {acceptedCover?.image_url && <img src={acceptedCover.image_url} alt={String(acceptedCover.metadata_?.alt_text || coverBrief?.alt_text || "Accepted Newsletter cover")} className="max-h-72 w-full rounded-lg border object-cover" />}
+                {(activeCover?.error || retryCoverMutation.isError) && <ActionError title="Cover generation failed" impact="The Newsletter draft remains available without a new cover." recovery="Retry cover generation after checking the image model configuration and worker." details={activeCover?.error || errorMessage(retryCoverMutation.error)} onRetry={() => retryCoverMutation.mutate()} retryLabel="Retry cover generation" />}
+                <div className="flex flex-wrap gap-3">
+                  <Button variant="outline" onClick={() => retryCoverMutation.mutate()} disabled={retryCoverMutation.isPending}>
+                    {retryCoverMutation.isPending ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                    {retryCoverMutation.isPending ? "Retrying cover…" : "Retry cover generation"}
+                  </Button>
+                  <Button variant="ghost" asChild><Link to={`/assets/${encodeURIComponent(generatedAssetId)}?tab=production`} state={{ backTo: `${location.pathname}${location.search}`, backLabel: "Back to Newsletter Automation" }}>Open Asset Production<ExternalLink className="ml-2 h-4 w-4" /></Link></Button>
+                </div>
+              </div>
+            )}
             <div className="flex flex-wrap items-center gap-3">
               {generatedAssetId && <Button asChild><Link to={`/assets/${encodeURIComponent(generatedAssetId)}?tab=read`} state={{ backTo: `${location.pathname}${location.search}`, backLabel: "Back to Newsletter Automation" }}>Open generated Asset<ExternalLink className="ml-2 h-4 w-4" /></Link></Button>}
               {configQuery.data?.last_run_at && !activeRun && <span className="text-xs text-muted-foreground">Last run {new Date(configQuery.data.last_run_at).toLocaleString()}</span>}

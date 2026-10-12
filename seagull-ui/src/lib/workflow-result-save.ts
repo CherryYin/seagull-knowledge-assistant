@@ -1,6 +1,7 @@
 import { assetsApi, notesApi, wikiApi, type ReferenceInfo } from "@/lib/api";
 import type { AgentWorkflowContext, WorkflowResultSaveTarget } from "@/lib/agent-workflows";
 import { assessAssetDraft, type AssetGenerationRequest } from "@/lib/asset-generation";
+import { stripModelThinking } from "@/lib/model-output";
 
 interface SaveWorkflowResultInput {
   target: WorkflowResultSaveTarget;
@@ -104,6 +105,7 @@ export async function saveWorkflowResult({
   references,
   assetDraft,
 }: SaveWorkflowResultInput) {
+  content = stripModelThinking(content);
   const title = deriveTitle(content, assetDraft?.title || explicitTitle);
   const { sourceRefs, noteRefs, wikiRefs } = collectReferences(references, objectRef);
   const inlineReferences = collectInlineKnowledgeReferences(content);

@@ -564,6 +564,10 @@ async function harnessChat(req, res, requestId, agentMemoryStore) {
   const body = await readBody(req);
   const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
   if (!prompt) return json(req, res, 400, { error: "prompt is required" });
+  if (body?.memory_ids !== undefined && (
+    !Array.isArray(body.memory_ids) || body.memory_ids.length > 5
+    || body.memory_ids.some((id) => typeof id !== "string" || !id.trim())
+  )) return json(req, res, 400, { error: "memory_ids must contain at most five non-empty IDs" });
   const preset = typeof body?.preset === "string" && body.preset.trim() ? body.preset.trim() : undefined;
   const requestedModel = typeof body?.model === "string" && body.model.includes(":")
     ? body.model.trim()
@@ -656,6 +660,7 @@ async function harnessChat(req, res, requestId, agentMemoryStore) {
       scopeType: typeof body?.memory_scope_type === "string" ? body.memory_scope_type : "global",
       scopeId: typeof body?.memory_scope_id === "string" ? body.memory_scope_id : null,
       sessionId,
+      selectedIds: body?.memory_ids,
     });
     const memoryContext = formatAgentMemoryContext(recalled.memories);
     const promptPayload = {
@@ -823,6 +828,18 @@ async function harnessMemories(req, res, path, url, requestId, agentMemoryStore)
   if (!authorization) return json(req, res, 401, { error: "Unauthorized" });
   try {
     const user = await currentPkgUser(authorization, requestId);
+    if (path === "/api/harness/memory-preview") {
+      if (req.method !== "POST") return json(req, res, 405, { error: "Method not allowed" });
+      const body = await readBody(req);
+      if (typeof body?.query !== "string" || !body.query.trim() || body.query.length > 10_000) {
+        return json(req, res, 400, { error: "query is required and must be at most 10000 characters" });
+      }
+      return json(req, res, 200, await agentMemoryStore.previewRecall(user.id, {
+        query: body.query,
+        scopeType: typeof body.memory_scope_type === "string" ? body.memory_scope_type : "global",
+        scopeId: typeof body.memory_scope_id === "string" ? body.memory_scope_id : null,
+      }));
+    }
     if (path === "/api/harness/memories") {
       if (req.method !== "GET") return json(req, res, 405, { error: "Method not allowed" });
       return json(req, res, 200, await agentMemoryStore.list(user.id, {
@@ -880,6 +897,24 @@ async function harnessMemories(req, res, path, url, requestId, agentMemoryStore)
     return json(req, res, 404, { error: "Not found" });
   } catch (error) {
     if (error.status === 401) return respondAuthExpired(req, res, authorization);
+    if (path === "/api/harness/memory-preview") {
+      const status = error?.status || memoryErrorStatus(error);
+      console.error(
+        `[${requestId}] Agent Memory preview failed; continuing without memory`,
+        {
+          name: error?.name || "Error",
+          code: error?.code || null,
+          status,
+          message: error?.message || "Unknown error",
+        },
+      );
+      if (status >= 500) {
+        return json(req, res, 200, {
+          memories: [],
+          unavailable: true,
+        });
+      }
+    }
     return json(req, res, error.status || memoryErrorStatus(error), { error: error.message });
   }
 }
@@ -1145,7 +1180,7 @@ export function createBffServer({
   if (path === "/api/harness/models") return harnessModels(req, res, id);
   if (path === "/api/harness/model-settings") return harnessModelSettings(req, res, id);
 
-  if (path === "/api/harness/memories" || path === "/api/harness/memory-recalls"
+  if (path === "/api/harness/memories" || path === "/api/harness/memory-recalls" || path === "/api/harness/memory-preview"
     || path.startsWith("/api/harness/memory-candidates") || path.startsWith("/api/harness/memories/")) {
     return harnessMemories(req, res, path, url, id, agentMemoryStore);
   }

@@ -246,6 +246,9 @@ async def create_wechat_draft(
     content_source_url: str | None = None,
     thumb_media_id: str | None = None,
     rendered_diagrams: dict[str, str] | None = None,
+    cover_image_url: str | None = None,
+    cover_alt_text: str | None = None,
+    inline_visuals: list[dict] | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> WechatDraftReceipt:
     app_id = _required_config(config, "app_id", "AppID")
@@ -255,7 +258,13 @@ async def create_wechat_draft(
     resolved_author = (author or str(config.get("author") or "")).strip()
     resolved_digest = (digest or asset.brief or "").strip()[:120]
     resolved_source_url = (content_source_url or str(config.get("content_source_url") or "")).strip()
-    content = export_wechat_html(asset, rendered_diagrams=rendered_diagrams)
+    content = export_wechat_html(
+        asset,
+        rendered_diagrams=rendered_diagrams,
+        cover_image_url=cover_image_url,
+        cover_alt_text=cover_alt_text,
+        inline_visuals=inline_visuals,
+    )
     if not content.strip():
         raise WechatPublishingError("Asset has no content to send to WeChat")
 

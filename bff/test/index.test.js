@@ -681,6 +681,47 @@ test("login cookie authenticates direct API requests and preserves query params"
   assert.equal(agentMemory.status, "active");
   assert.equal(agentMemory.provenance.sessionId, "local-session");
 
+  const preview = await fetch(`${base}/api/harness/memory-preview`, {
+    method: "POST",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ query: "concise answers" }),
+  });
+  assert.equal(preview.status, 200);
+  assert.deepEqual((await preview.json()).memories.map((memory) => memory.id), [agentMemory.id]);
+
+  const unavailableMemoryBff = createBffServer({
+    agentMemoryStore: {
+      async previewRecall() {
+        const error = new Error("connect ECONNREFUSED 127.0.0.1:5434");
+        error.code = "ECONNREFUSED";
+        throw error;
+      },
+    },
+  });
+  await listen(unavailableMemoryBff);
+  t.after(() => close(unavailableMemoryBff));
+  const unavailableMemoryBase = `http://127.0.0.1:${unavailableMemoryBff.address().port}`;
+  const originalConsoleError = console.error;
+  const loggedMemoryErrors = [];
+  console.error = (...args) => loggedMemoryErrors.push(args);
+  t.after(() => { console.error = originalConsoleError; });
+  try {
+    const unavailablePreview = await fetch(`${unavailableMemoryBase}/api/harness/memory-preview`, {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json", "X-Request-Id": "memory-preview-degraded" },
+      body: JSON.stringify({ query: "draft an asset" }),
+    });
+    assert.equal(unavailablePreview.status, 200);
+    assert.deepEqual(await unavailablePreview.json(), { memories: [], unavailable: true });
+    assert.equal(loggedMemoryErrors.length, 1);
+    assert.match(String(loggedMemoryErrors[0][0]), /continuing without memory/);
+    assert.equal(loggedMemoryErrors[0][1].code, "ECONNREFUSED");
+  } finally {
+    console.error = originalConsoleError;
+  }
+  const previewAudit = await fetch(`${base}/api/harness/memory-recalls?session_id=local-session`, { headers: { Cookie: cookie } });
+  assert.deepEqual((await previewAudit.json()).items, []);
+
   const chat = await fetch(`${base}/api/chat`, {
     method: "POST",
     headers: { Cookie: cookie, "Content-Type": "application/json" },
@@ -714,6 +755,7 @@ test("login cookie authenticates direct API requests and preserves query params"
       preset: "research-topic",
       session_id: "local-session",
       create_session: false,
+      memory_ids: [],
     }),
   });
   assert.equal(followup.status, 200);
@@ -756,7 +798,7 @@ test("login cookie authenticates direct API requests and preserves query params"
   assert.match(promptCalls[0].payload.content[0].text, /explicitly confirmed by the user/);
   assert.match(promptCalls[0].payload.content[0].text, /Keep answers concise and direct\./);
   assert.match(promptCalls[0].payload.content[0].text, /\n\nhello$/);
-  assert.match(promptCalls[1].payload.content[0].text, /\n\nfollow up$/);
+  assert.equal(promptCalls[1].payload.content[0].text, "follow up");
   assert.match(promptCalls[2].payload.content[0].text, /\n\nclarify$/);
   const recallAudits = await fetch(`${base}/api/harness/memory-recalls?session_id=local-session`, {
     headers: { Cookie: cookie },

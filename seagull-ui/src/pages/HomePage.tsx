@@ -1,4 +1,5 @@
-import { Link } from "react-router-dom";
+import { useState, type FormEvent } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -17,6 +18,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   calendarRemindersApi,
   chatSessionsApi,
@@ -61,6 +63,24 @@ interface TodayCardData {
 }
 
 export function HomePage() {
+  const navigate = useNavigate();
+  const [researchTopic, setResearchTopic] = useState("");
+
+  const startResearch = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const topic = researchTopic.trim();
+    if (!topic) return;
+    navigate("/chat", {
+      state: {
+        promptSeed: `The Asset Intent is not confirmed yet. I want to research this topic: ${topic}. Help me clarify the question, goal, audience, scope, and evidence needs before creating an Asset. Do not search or draft yet.`,
+        workflowId: "clarify-asset-intent",
+        autoStartIntent: true,
+        backTo: "/",
+        backLabel: "Back to Home",
+      },
+    });
+  };
+
   const { data: dashboard } = useQuery({ queryKey: ["home-dashboard"], queryFn: () => knowledgeApi.dashboard() });
   const { data: reminders } = useQuery({
     queryKey: ["home-reminders"],
@@ -201,6 +221,20 @@ export function HomePage() {
             </div>
           </div>
         </section>
+
+        <form onSubmit={startResearch} className="rounded-3xl border bg-card p-6 shadow-sm">
+          <label htmlFor="research-topic" className="text-lg font-semibold">Research a topic</label>
+          <p className="mt-1 text-sm text-muted-foreground">Start with a question. The Agent helps clarify your Asset Intent before research and drafting.</p>
+          <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+            <Input
+              id="research-topic"
+              value={researchTopic}
+              onChange={(event) => setResearchTopic(event.target.value)}
+              placeholder="What new technology or topic would you like to investigate?"
+            />
+            <Button type="submit" disabled={!researchTopic.trim()}>Start research</Button>
+          </div>
+        </form>
 
         <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <MetricCard label="Notes" value={counts?.notes ?? 0} icon={FileText} to="/notes" />

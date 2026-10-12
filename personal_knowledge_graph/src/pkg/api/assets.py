@@ -19,12 +19,21 @@ from pkg.schemas.application.asset import (
     AssetRead,
     AssetStyleProfileList,
     AssetUpdate,
+    AssetVisualDecisionRequest,
+    AssetVisualBatchGenerateRequest,
+    AssetVisualGenerateRequest,
+    AssetVisualList,
+    AssetVisualPlanRead,
+    AssetVisualPlanRequest,
+    AssetVisualRead,
+    AssetVisualUpdateRequest,
     AssetWechatDraftRequest,
     AssetWechatDraftResult,
     AttachReferencesRequest,
     NewsletterAutomationConfig,
     NewsletterAutomationRunResult,
     NewsletterAutomationUpdate,
+    NewsletterVisualRunResult,
     ReadinessCheckResult,
 )
 from pkg.schemas.application.asset_workspace import (
@@ -64,15 +73,44 @@ from pkg.services.application.blog_generation import (
 from pkg.services.application.newsletter_automation import (
     generate_newsletter,
     get_newsletter_config,
+    retry_newsletter_cover,
     update_newsletter_config,
 )
 from pkg.services.application.asset_experience import list_style_profiles
+from pkg.services.application.asset_visual_delivery import (
+    record_visual_delivery_snapshot,
+    resolve_accepted_visuals,
+)
+from pkg.services.application.asset_visuals import (
+    cancel_asset_visual,
+    decide_asset_visual,
+    delete_asset_visual,
+    generate_asset_visual,
+    generate_asset_visual_candidates,
+    list_asset_visuals,
+    plan_asset_visual,
+    regenerate_asset_visual_batch,
+    update_asset_visual_alt_text,
+)
 from pkg.services.application.wechat_publishing import WechatPublishingError, create_wechat_draft
 from pkg.services.cross_cutting.credentials_crypto import CredentialsCryptoError, decrypt_secret
 from pkg.services.cross_cutting.user_api_credentials import get_default_user_api_credential
 from pkg.api.notes import persist_note
 
 router = APIRouter()
+
+
+def _visual_delivery_parts(visuals: dict[str, dict], *, embedded: bool = False) -> tuple[dict, list[dict]]:
+    cover = visuals.get("cover") or {}
+    inline_visuals: list[dict] = []
+    for key, visual in visuals.items():
+        if not key.startswith("inline_illustration:"):
+            continue
+        item = dict(visual)
+        if embedded and item.get("data_url"):
+            item["image_url"] = item["data_url"]
+        inline_visuals.append(item)
+    return cover, inline_visuals
 
 
 @router.get("/style-profiles", response_model=AssetStyleProfileList)
@@ -127,6 +165,14 @@ async def run_newsletter_automation_route(
     return await generate_newsletter(session, user_id=user.id, force=True)
 
 
+@router.post("/newsletter/automation/cover/retry", response_model=NewsletterVisualRunResult)
+async def retry_newsletter_cover_route(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await retry_newsletter_cover(session, user_id=user.id)
+
+
 @router.get("/knowledge-lineage", response_model=AssetKnowledgeLineageList)
 async def get_asset_knowledge_lineage_route(
     target_type: Literal["note", "wiki"],
@@ -140,6 +186,123 @@ async def get_asset_knowledge_lineage_route(
         target_type=target_type,
         target_id=target_id,
     )
+
+
+@router.get("/{asset_id}/visuals", response_model=AssetVisualList)
+async def list_asset_visuals_route(
+    asset_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return AssetVisualList(items=await list_asset_visuals(session, user_id=user.id, asset_id=asset_id))
+
+
+@router.post("/{asset_id}/visuals/generate", response_model=AssetVisualRead, status_code=202)
+async def generate_asset_visual_route(
+    asset_id: str,
+    body: AssetVisualGenerateRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await generate_asset_visual(session, user_id=user.id, asset_id=asset_id, body=body)
+
+
+@router.post("/{asset_id}/visuals/plan", response_model=AssetVisualPlanRead)
+async def plan_asset_visual_route(
+    asset_id: str,
+    body: AssetVisualPlanRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await plan_asset_visual(session, user_id=user.id, asset_id=asset_id, body=body)
+
+
+@router.post("/{asset_id}/visuals/generate-batch", response_model=AssetVisualList, status_code=202)
+async def generate_asset_visual_batch_route(
+    asset_id: str,
+    body: AssetVisualBatchGenerateRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return AssetVisualList(
+        items=await generate_asset_visual_candidates(session, user_id=user.id, asset_id=asset_id, body=body)
+    )
+
+
+@router.post("/{asset_id}/visuals/batches/{batch_id}/regenerate", response_model=AssetVisualList, status_code=202)
+async def regenerate_asset_visual_batch_route(
+    asset_id: str,
+    batch_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return AssetVisualList(
+        items=await regenerate_asset_visual_batch(
+            session,
+            user_id=user.id,
+            asset_id=asset_id,
+            batch_id=batch_id,
+        )
+    )
+
+
+@router.patch("/{asset_id}/visuals/{visual_id}", response_model=AssetVisualRead)
+async def update_asset_visual_route(
+    asset_id: str,
+    visual_id: str,
+    body: AssetVisualUpdateRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await update_asset_visual_alt_text(
+        session,
+        user_id=user.id,
+        asset_id=asset_id,
+        visual_id=visual_id,
+        alt_text=body.alt_text,
+    )
+
+
+@router.post("/{asset_id}/visuals/{visual_id}/decision", response_model=AssetVisualRead)
+async def decide_asset_visual_route(
+    asset_id: str,
+    visual_id: str,
+    body: AssetVisualDecisionRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await decide_asset_visual(
+        session,
+        user_id=user.id,
+        asset_id=asset_id,
+        visual_id=visual_id,
+        decision=body.decision,
+    )
+
+
+@router.post("/{asset_id}/visuals/{visual_id}/cancel", response_model=AssetVisualRead)
+async def cancel_asset_visual_route(
+    asset_id: str,
+    visual_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await cancel_asset_visual(
+        session,
+        user_id=user.id,
+        asset_id=asset_id,
+        visual_id=visual_id,
+    )
+
+
+@router.delete("/{asset_id}/visuals/{visual_id}", status_code=204)
+async def delete_asset_visual_route(
+    asset_id: str,
+    visual_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await delete_asset_visual(session, user_id=user.id, asset_id=asset_id, visual_id=visual_id)
 
 
 @router.get("/{asset_id}", response_model=AssetRead)
@@ -360,12 +523,24 @@ async def export_markdown_route(
         raise HTTPException(status_code=409, detail="Asset is not ready to export: " + "; ".join(blocking_reasons))
     if not (asset.reference_notes or "").strip():
         raise HTTPException(status_code=409, detail="Asset export requires a references section. Attach references first.")
-    content = export_markdown(asset)
+    visuals = await resolve_accepted_visuals(session, asset=asset, roles=("cover", "inline_illustration"))
+    cover, inline_visuals = _visual_delivery_parts(visuals)
+    content = export_markdown(
+        asset,
+        cover_image_url=cover.get("image_url"),
+        cover_alt_text=cover.get("alt_text"),
+        inline_visuals=inline_visuals,
+    )
+    metadata = record_visual_delivery_snapshot(
+        asset.metadata_,
+        delivery="markdown",
+        visuals=visuals,
+    )
     await update_asset(
         session,
         user_id=user.id,
         asset_id=asset_id,
-        body=AssetUpdate(status="exported", export_format="markdown"),
+        body=AssetUpdate(status="exported", export_format="markdown", metadata=metadata),
     )
     return AssetExportResult(asset_id=asset_id, export_format="markdown", content=content)
 
@@ -377,7 +552,18 @@ async def preview_html_route(
     session: AsyncSession = Depends(get_session),
 ):
     asset = await get_asset(session, user_id=user.id, asset_id=asset_id)
-    return AssetExportResult(asset_id=asset_id, export_format="html", content=export_html(asset))
+    visuals = await resolve_accepted_visuals(session, asset=asset, roles=("cover", "inline_illustration"))
+    cover, inline_visuals = _visual_delivery_parts(visuals)
+    return AssetExportResult(
+        asset_id=asset_id,
+        export_format="html",
+        content=export_html(
+            asset,
+            cover_image_url=cover.get("image_url"),
+            cover_alt_text=cover.get("alt_text"),
+            inline_visuals=inline_visuals,
+        ),
+    )
 
 
 @router.post("/{asset_id}/export/html", response_model=AssetExportResult)
@@ -392,12 +578,29 @@ async def export_html_route(
         raise HTTPException(status_code=409, detail="Asset is not ready to export: " + "; ".join(blocking_reasons))
     if not (asset.reference_notes or "").strip():
         raise HTTPException(status_code=409, detail="Asset export requires a references section. Attach references first.")
-    content = export_html(asset)
+    visuals = await resolve_accepted_visuals(
+        session,
+        asset=asset,
+        roles=("cover", "inline_illustration"),
+        include_data_url=True,
+    )
+    cover, inline_visuals = _visual_delivery_parts(visuals, embedded=True)
+    content = export_html(
+        asset,
+        cover_image_url=cover.get("data_url"),
+        cover_alt_text=cover.get("alt_text"),
+        inline_visuals=inline_visuals,
+    )
+    metadata = record_visual_delivery_snapshot(
+        asset.metadata_,
+        delivery="html",
+        visuals=visuals,
+    )
     await update_asset(
         session,
         user_id=user.id,
         asset_id=asset_id,
-        body=AssetUpdate(status="exported", export_format="html"),
+        body=AssetUpdate(status="exported", export_format="html", metadata=metadata),
     )
     return AssetExportResult(asset_id=asset_id, export_format="html", content=content)
 
@@ -409,10 +612,17 @@ async def preview_wechat_route(
     session: AsyncSession = Depends(get_session),
 ):
     asset = await get_asset(session, user_id=user.id, asset_id=asset_id)
+    visuals = await resolve_accepted_visuals(session, asset=asset, roles=("cover", "inline_illustration"))
+    cover, inline_visuals = _visual_delivery_parts(visuals)
     return AssetExportResult(
         asset_id=asset_id,
         export_format="wechat_html",
-        content=export_wechat_preview_html(asset),
+        content=export_wechat_preview_html(
+            asset,
+            cover_image_url=cover.get("image_url"),
+            cover_alt_text=cover.get("alt_text"),
+            inline_visuals=inline_visuals,
+        ),
     )
 
 
@@ -424,12 +634,17 @@ async def preview_wechat_rendered_route(
     session: AsyncSession = Depends(get_session),
 ):
     asset = await get_asset(session, user_id=user.id, asset_id=asset_id)
+    visuals = await resolve_accepted_visuals(session, asset=asset, roles=("cover", "inline_illustration"))
+    cover, inline_visuals = _visual_delivery_parts(visuals)
     return AssetExportResult(
         asset_id=asset_id,
         export_format="wechat_html",
         content=export_wechat_preview_html(
             asset,
             rendered_diagrams={item.source_hash: item.data_url for item in body.rendered_diagrams},
+            cover_image_url=cover.get("image_url"),
+            cover_alt_text=cover.get("alt_text"),
+            inline_visuals=inline_visuals,
         ),
     )
 
@@ -455,6 +670,13 @@ async def publish_wechat_draft_route(
     )
     if credential is None:
         raise HTTPException(status_code=409, detail="Configure a WeChat Official Account credential in Settings > API Keys first")
+    visuals = await resolve_accepted_visuals(
+        session,
+        asset=asset,
+        roles=("cover", "inline_illustration"),
+        include_data_url=True,
+    )
+    cover, inline_visuals = _visual_delivery_parts(visuals, embedded=True)
     try:
         receipt = await create_wechat_draft(
             asset,
@@ -465,6 +687,9 @@ async def publish_wechat_draft_route(
             content_source_url=body.content_source_url,
             thumb_media_id=body.thumb_media_id,
             rendered_diagrams={item.source_hash: item.data_url for item in body.rendered_diagrams},
+            cover_image_url=cover.get("data_url"),
+            cover_alt_text=cover.get("alt_text"),
+            inline_visuals=inline_visuals,
         )
     except (CredentialsCryptoError, WechatPublishingError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -476,6 +701,11 @@ async def publish_wechat_draft_route(
         "account_label": credential.label,
         "credential_id": credential.id,
     }
+    metadata = record_visual_delivery_snapshot(
+        metadata,
+        delivery="wechat_draft",
+        visuals=visuals,
+    )
     await update_asset(
         session,
         user_id=user.id,

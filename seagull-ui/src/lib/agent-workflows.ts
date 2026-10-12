@@ -19,17 +19,17 @@ export interface AgentWorkflowTemplate {
 }
 
 export const AGENT_WORKFLOW_GROUP_LABELS: Record<AgentWorkflowTemplate["group"], string> = {
-  find: "查找型",
-  understand: "理解型",
-  decide: "决策型",
-  produce: "生产型",
+  find: "Find",
+  understand: "Understand",
+  decide: "Decide",
+  produce: "Produce",
 };
 
 export const AGENT_WORKFLOW_GROUP_DESCRIPTIONS: Record<AgentWorkflowTemplate["group"], string> = {
-  find: "先找资料、聚合上下文、识别缺口。",
-  understand: "先把单份材料或局部上下文讲清楚。",
-  decide: "先判断哪些内容值得进入更稳定的知识层。",
-  produce: "先起草面向输出的内容，但保持可 review。",
+  find: "Find information, assemble context, and identify gaps.",
+  understand: "Explain a source or focused context clearly.",
+  decide: "Decide what deserves promotion into a more stable knowledge layer.",
+  produce: "Draft output-oriented content while keeping it reviewable.",
 };
 
 export interface AgentWorkflowContext {
@@ -56,10 +56,10 @@ export const AGENT_WORKFLOW_TEMPLATES: AgentWorkflowTemplate[] = [
   {
     id: "review-candidate-article",
     group: "decide",
-    title: "审核 Candidate Article",
-    description: "围绕 wiki mining 生成的 candidate article，检查证据、弱 claim、是否该继续 in review / accept as draft / merge。",
-    requiredInput: "一篇 candidate article 或一组待审核 claims",
-    inputPlaceholder: "例如：检查这篇 candidate article 的证据强度，判断是否能接受为 draft...",
+    title: "Review Candidate Article",
+    description: "Review a wiki-mined candidate article for evidence quality, weak claims, and whether to keep it in review, accept it as a draft, or merge it.",
+    requiredInput: "A candidate article or a set of claims to review",
+    inputPlaceholder: "For example: assess this candidate article's evidence strength and whether it can be accepted as a draft...",
     saveTargets: ["review_note", "wiki_draft"],
     outputSections: [
       "Article Summary",
@@ -85,10 +85,10 @@ Output exactly these sections:
   {
     id: "mine-wiki-candidates",
     group: "decide",
-    title: "挖掘 Wiki 候选",
-    description: "从 source、note 或近期导入里筛出更值得沉淀为 stable wiki 的候选，并给出可 review 的理由。",
-    requiredInput: "一批材料、一个主题，或一个时间范围",
-    inputPlaceholder: "例如：从最近导入里找出值得升级成 wiki 的主题...",
+    title: "Mine Wiki Candidates",
+    description: "Identify material from sources, notes, or recent imports that deserves promotion into stable wiki knowledge, with reviewable reasons.",
+    requiredInput: "A material set, topic, or time range",
+    inputPlaceholder: "For example: find themes in recent imports that deserve promotion into wiki pages...",
     saveTargets: ["review_note", "wiki_draft"],
     outputSections: [
       "Candidate Topics",
@@ -113,10 +113,10 @@ Output exactly these sections:
   {
     id: "review-discovery-batch",
     group: "find",
-    title: "梳理 Discovery 候选",
-    description: "把 discovery / paper discovery / web discovery 候选按主题聚类，判断哪些值得保存、研究或进入 wiki。",
-    requiredInput: "一批 discovery items、一个主题或一个时间窗口",
-    inputPlaceholder: "例如：整理这批 discovery 候选，找出最值得保存和继续研究的主题...",
+    title: "Organize Discovery Candidates",
+    description: "Cluster discovery, paper discovery, and web discovery candidates by theme, then decide what to save, research, or promote into the wiki.",
+    requiredInput: "Discovery items, a topic, or a time window",
+    inputPlaceholder: "For example: organize these discovery candidates and identify the themes most worth saving and researching...",
     saveTargets: ["note", "review_note"],
     outputSections: [
       "Top Discoveries",
@@ -141,10 +141,10 @@ Output exactly these sections:
   {
     id: "summarize-source",
     group: "understand",
-    title: "理解这份材料",
-    description: "把一份 Source 解释清楚，提炼重点，并指出它下一步更适合成为 Note 还是 Wiki Draft。",
-    requiredInput: "一份 source、一个角度，或一个具体问题",
-    inputPlaceholder: "例如：重点看这篇材料的核心论点 / 它和我已有知识有什么关系...",
+    title: "Understand This Source",
+    description: "Explain a Source clearly, extract its key points, and recommend whether it should become a Note or Wiki Draft.",
+    requiredInput: "A source, an angle, or a specific question",
+    inputPlaceholder: "For example: focus on the source's core argument or how it relates to my existing knowledge...",
     saveTargets: ["note"],
     outputSections: [
       "Summary",
@@ -171,10 +171,10 @@ Output exactly these sections:
   {
     id: "organize-recent-imports",
     group: "find",
-    title: "梳理最近导入",
-    description: "从最近导入的 source 和 note 里找主题、重复项、缺口和下一步动作。",
-    requiredInput: "可选主题、范围或时间窗口",
-    inputPlaceholder: "例如：过去 7 天里和 agent / memory / wiki 相关的内容...",
+    title: "Review Recent Imports",
+    description: "Find themes, duplicates, gaps, and next actions across recently imported sources and notes.",
+    requiredInput: "An optional topic, scope, or time window",
+    inputPlaceholder: "For example: content from the past seven days related to agents, memory, or wiki workflows...",
     saveTargets: ["note"],
     outputSections: [
       "Clustered Topics",
@@ -201,10 +201,10 @@ Output exactly these sections:
   {
     id: "research-topic",
     group: "find",
-    title: "研究一个主题",
-    description: "先查你已有知识，再识别缺口，形成一版可继续深入的研究结果。",
-    requiredInput: "一个研究问题",
-    inputPlaceholder: "例如：LangGraph 和 Strands 在 agent orchestration 上的差异是什么？",
+    title: "Research a Topic",
+    description: "Search your existing knowledge first, identify gaps, and produce a research result that can be developed further.",
+    requiredInput: "A research question",
+    inputPlaceholder: "For example: how do LangGraph and Strands differ in agent orchestration?",
     saveTargets: ["note"],
     outputSections: [
       "Question",
@@ -232,10 +232,10 @@ Output exactly these sections:
   {
     id: "production-retrospective",
     group: "decide",
-    title: "复盘生产输出",
-    description: "基于 Production History 回顾最近生成、导出、发布与反馈，提炼有效渠道、内容类型和下一步策略。",
-    requiredInput: "一个时间窗口、一个资产类型，或最近生产记录",
-    inputPlaceholder: "例如：复盘最近 2 周 blog / brief 的输出和反馈，找出有效策略...",
+    title: "Review Production Output",
+    description: "Review recent generation, export, publication, and feedback events to identify effective channels, content types, and next-step strategies.",
+    requiredInput: "A time window, Asset type, or recent production records",
+    inputPlaceholder: "For example: review the past two weeks of blog and brief output to identify effective strategies...",
     saveTargets: ["note", "review_note"],
     outputSections: [
       "Production Summary",
@@ -260,10 +260,10 @@ Output exactly these sections:
   {
     id: "draft-wiki-refresh",
     group: "decide",
-    title: "判断并起草下一步",
-    description: "围绕一个 Wiki Page、Knowledge Record 或新证据，判断下一步该更新什么，并产出可审核草案。",
-    requiredInput: "一个 Wiki Page、Knowledge Record，或一条新证据",
-    inputPlaceholder: "例如：这份材料应该形成 Wiki Draft 吗？这页 Wiki 现在需要刷新吗？",
+    title: "Decide and Draft the Next Step",
+    description: "Decide what should be updated around a Wiki Page, Knowledge Record, or new evidence, then produce a reviewable draft.",
+    requiredInput: "A Wiki Page, Knowledge Record, or new evidence item",
+    inputPlaceholder: "For example: should this material become a Wiki Draft, or does this Wiki Page need an update?",
     saveTargets: ["note", "wiki_draft"],
     outputSections: [
       "Current Wiki Summary",
@@ -292,10 +292,10 @@ Output exactly these sections:
   {
     id: "clarify-asset-intent",
     group: "understand",
-    title: "澄清 Asset Intent",
-    description: "在创建 Asset 前，与 Agent 澄清问题、目标、受众、范围和约束；Agent 只能建议，不能替用户确认。",
-    requiredInput: "可以为空，也可以提供任何尚未成形的想法",
-    inputPlaceholder: "例如：我只有一个模糊主题，先帮我判断真正需要解决的问题...",
+    title: "Clarify Asset Intent",
+    description: "Clarify the question, goal, audience, scope, and constraints before creating an Asset. The Agent may recommend but cannot confirm decisions for the user.",
+    requiredInput: "Optional; provide any early or incomplete idea",
+    inputPlaceholder: "For example: I only have a broad topic; help me identify the real problem to solve...",
     saveTargets: [],
     outputSections: [
       "Proposed Question",
@@ -307,6 +307,7 @@ Output exactly these sections:
     promptTemplate: `Help the user clarify an Asset Intent before any Asset is created.
 The Agent may recommend wording, scope, audience, creation mode, and research questions, but must not claim these recommendations are confirmed user decisions.
 If the current context is empty or materially ambiguous, use ask_user_question with one concise batch rather than refusing to start.
+When offering alternative research questions or angles, ask the user to select them through ask_user_question (allow multiple selections where appropriate); do not put unselectable numbered choices in prose or treat a suggestion as the user's decision.
 Do not search for evidence, draft the Asset, save knowledge, or publish anything during this workflow.
 Once enough context is available, present a Proposed Intent Brief and clearly separate confirmed user statements from Agent recommendations.
 After sufficient context is available, you must call propose_asset_intent exactly once with the complete structured candidate. A prose brief alone does not complete this workflow.
@@ -316,10 +317,10 @@ Tell the user to return to the Asset creation page and explicitly confirm the In
   {
     id: "draft-asset",
     group: "produce",
-    title: "Agent 辅助生成 Asset",
-    description: "Agent 先澄清交付需求，再自动检索本地知识并按需补充网络证据，生成可审阅草稿。",
-    requiredInput: "一个希望解决的问题、表达目标或交付需求",
-    inputPlaceholder: "例如：帮我整理一份说明不同文档解析方案取舍的材料，受众和结构可以先和我确认...",
+    title: "Generate an Asset with Agent Assistance",
+    description: "The Agent clarifies the delivery need, searches local knowledge, adds web evidence when needed, and produces a reviewable draft.",
+    requiredInput: "A problem to solve, communication goal, or delivery requirement",
+    inputPlaceholder: "For example: create a document comparing document-parsing approaches, and confirm the audience and structure with me first...",
     saveTargets: ["asset", "review_note"],
     outputSections: ["Editable Markdown Document"],
     promptTemplate: `Help the user turn the supplied need into an editable Asset draft.
@@ -337,10 +338,10 @@ Do not add a preface, explanation, completion message, save instruction, or Mark
   {
     id: "draft-blog-asset",
     group: "produce",
-    title: "起草 Blog Asset",
-    description: "把已有 Source、Note、Wiki Page 或其他 Knowledge Record 组织成可继续编辑的 Asset 草稿。",
-    requiredInput: "一个主题、一个受众，或一批上下文材料",
-    inputPlaceholder: "例如：把这个 wiki 主题整理成一篇面向工程师的博客草稿...",
+    title: "Draft a Blog Asset",
+    description: "Organize existing Sources, Notes, Wiki Pages, or other Knowledge Records into an editable Asset draft.",
+    requiredInput: "A topic, audience, or set of context materials",
+    inputPlaceholder: "For example: turn this wiki topic into a blog draft for engineers...",
     saveTargets: ["asset", "review_note"],
     outputSections: [
       "Introduction",

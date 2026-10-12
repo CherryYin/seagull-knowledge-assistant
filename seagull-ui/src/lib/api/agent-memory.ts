@@ -57,8 +57,17 @@ export interface AgentMemoryRecallAudit {
   createdAt: string;
 }
 
+export interface AgentMemoryPreview {
+  memories: AgentMemory[];
+  unavailable?: boolean;
+}
+
 export const agentMemoryApi = {
   list: () => request<AgentMemoryList>("/harness/memories"),
+  preview: (query: string) => request<AgentMemoryPreview>("/harness/memory-preview", {
+    method: "POST",
+    body: JSON.stringify({ query }),
+  }),
   listRecallAudits: (sessionId?: string) => request<{ items: AgentMemoryRecallAudit[] }>(
     `/harness/memory-recalls${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ""}`,
   ),

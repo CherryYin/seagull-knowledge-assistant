@@ -6,6 +6,7 @@ from html import escape, unescape
 import re
 
 import markdown
+from markdown.extensions.toc import TocExtension
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -298,16 +299,19 @@ def _newsletter_issue_export_markdown(asset: Asset) -> str:
         parts.extend(["", "## Issue Overview", "", overview])
     elif brief:
         parts.extend(["", "## Issue Overview", "", brief])
-    if editors_note:
-        parts.extend(["", "## Editor’s Note", "", editors_note])
-    if featured:
-        parts.extend(["", "## Featured Items", "", featured])
-    if matters:
-        parts.extend(["", "## Why It Matters", "", matters])
-    if next_reads:
-        parts.extend(["", "## Recommended Next Reads", "", next_reads])
-    if draft:
+    if _markdown_section(draft, "In Depth"):
         parts.extend(["", "## Full Issue", "", draft])
+    else:
+        if editors_note:
+            parts.extend(["", "## Editor’s Note", "", editors_note])
+        if featured:
+            parts.extend(["", "## Featured Items", "", featured])
+        if matters:
+            parts.extend(["", "## Why It Matters", "", matters])
+        if next_reads:
+            parts.extend(["", "## Recommended Next Reads", "", next_reads])
+        if draft:
+            parts.extend(["", "## Full Issue", "", draft])
     if outline:
         parts.extend(["", "## Appendix A — Working Outline", "", outline])
     if asset.reference_notes:
@@ -505,35 +509,105 @@ def check_readiness(asset: Asset) -> tuple[bool, list[str], list[str], list[str]
     return len(blocking) == 0, blocking, warnings, suggestions
 
 
-def export_markdown(asset: Asset) -> str:
+def _markdown_cover(image_url: str | None, alt_text: str | None) -> str | None:
+    if not (image_url or "").strip():
+        return None
+    safe_alt = re.sub(r"[\[\]\r\n]+", " ", (alt_text or "Asset cover")).strip() or "Asset cover"
+    return f"![{safe_alt}](<{image_url.strip()}>)"
+
+
+def _markdown_inline_image(image_url: str | None, alt_text: str | None) -> str | None:
+    if not (image_url or "").strip():
+        return None
+    safe_alt = re.sub(r"[\[\]\r\n]+", " ", (alt_text or "Inline illustration")).strip() or "Inline illustration"
+    safe_url = image_url.strip().replace("(", "%28").replace(")", "%29")
+    return f"![{safe_alt}]({safe_url})"
+
+
+def _inject_inline_visuals(asset: Asset, content: str, inline_visuals: list[dict] | None) -> str:
+    if not inline_visuals:
+        return content
+    document = (asset.metadata_ or {}).get("asset_document")
+    blocks = document.get("blocks") if isinstance(document, dict) else None
+    if not isinstance(blocks, list):
+        return content
+    block_markdown = {
+        str(block.get("id")): str(block.get("markdown"))
+        for block in blocks
+        if isinstance(block, dict) and block.get("id") and isinstance(block.get("markdown"), str)
+    }
+    updated = content
+    for visual in inline_visuals:
+        image = _markdown_inline_image(visual.get("image_url"), visual.get("alt_text"))
+        source_block_ids = visual.get("source_block_ids")
+        if not image or not isinstance(source_block_ids, list):
+            continue
+        target = next((block_markdown.get(str(block_id)) for block_id in source_block_ids if block_markdown.get(str(block_id))), None)
+        if not target or target not in updated:
+            continue
+        updated = updated.replace(target, f"{target}\n\n{image}", 1)
+    return updated
+
+
+def export_markdown(
+    asset: Asset,
+    *,
+    cover_image_url: str | None = None,
+    cover_alt_text: str | None = None,
+    inline_visuals: list[dict] | None = None,
+) -> str:
     if asset.asset_type == "research_brief":
-        return _research_brief_export_markdown(asset)
-    if asset.asset_type == "knowledge_pack":
-        return _knowledge_pack_export_markdown(asset)
-    if asset.asset_type == "newsletter_issue":
-        return _newsletter_issue_export_markdown(asset)
-    if asset.asset_type == "topic_report":
-        return _topic_report_export_markdown(asset)
-    parts = [f"# {asset.title}"]
-    if asset.brief:
-        parts.extend(["", asset.brief])
-    if asset.outline:
-        parts.extend(["", "## Outline", "", asset.outline])
-    if asset.draft_content:
-        parts.extend(["", asset.draft_content])
-    if asset.reference_notes:
-        parts.extend(["", "## References", "", asset.reference_notes])
-    return "\n".join(parts).strip()
+        content = _research_brief_export_markdown(asset)
+    elif asset.asset_type == "knowledge_pack":
+        content = _knowledge_pack_export_markdown(asset)
+    elif asset.asset_type == "newsletter_issue":
+        content = _newsletter_issue_export_markdown(asset)
+    elif asset.asset_type == "topic_report":
+        content = _topic_report_export_markdown(asset)
+    else:
+        parts = [f"# {asset.title}"]
+        if asset.brief:
+            parts.extend(["", asset.brief])
+        if asset.outline:
+            parts.extend(["", "## Outline", "", asset.outline])
+        if asset.draft_content:
+            parts.extend(["", asset.draft_content])
+        if asset.reference_notes:
+            parts.extend(["", "## References", "", asset.reference_notes])
+        content = "\n".join(parts).strip()
+    content = _inject_inline_visuals(asset, content, inline_visuals)
+    cover = _markdown_cover(cover_image_url, cover_alt_text)
+    if not cover:
+        return content
+    lines = content.splitlines()
+    return "\n".join([lines[0], "", cover, "", *lines[1:]]).strip() if lines else cover
 
 
-def export_html(asset: Asset) -> str:
-    markdown_content = export_markdown(asset)
+def _newsletter_heading_slug(value: str, separator: str) -> str:
+    return re.sub(r"[^\w]+", separator, value.lower(), flags=re.UNICODE).strip(separator).replace("_", separator) or "section"
+
+
+def export_html(
+    asset: Asset,
+    *,
+    cover_image_url: str | None = None,
+    cover_alt_text: str | None = None,
+    inline_visuals: list[dict] | None = None,
+) -> str:
+    markdown_content = export_markdown(asset, inline_visuals=inline_visuals)
+    toc = TocExtension(slugify=_newsletter_heading_slug) if asset.asset_type == "newsletter_issue" else "toc"
     rendered_body = markdown.markdown(
         escape(markdown_content, quote=False),
-        extensions=["extra", "sane_lists", "toc"],
+        extensions=["extra", "sane_lists", toc],
         output_format="html5",
     )
     rendered_body = re.sub(r"\A<h1(?:\s[^>]*)?>.*?</h1>\s*", "", rendered_body, count=1, flags=re.DOTALL)
+    if asset.asset_type == "newsletter_issue":
+        rendered_body = re.sub(
+            r'(<h3 id="\d+-[^\"]+")>',
+            r'\1 class="newsletter-detail-title">',
+            rendered_body,
+        )
     if asset.brief:
         rendered_brief = f"<p>{escape(asset.brief, quote=False)}</p>"
         if rendered_body.startswith(rendered_brief):
@@ -552,6 +626,14 @@ def export_html(asset: Asset) -> str:
         "visual_digest": "--ink:#312e81;--muted:#705b8b;--line:#ebcfe6;--accent:#c026d3;--accent-soft:#f9dff4;--paper:#fffafd;--canvas:#fff0f5;--content-width:1120px;--body-font:Inter,ui-sans-serif,system-ui,sans-serif;--display-font:Inter,ui-sans-serif,system-ui,sans-serif;",
         "knowledge_atlas": "--ink:#17382a;--muted:#557566;--line:#b8d8c5;--accent:#15803d;--accent-soft:#dcefe2;--paper:#f8fff9;--canvas:#e7f2eb;--content-width:1060px;--body-font:Inter,ui-sans-serif,system-ui,sans-serif;--display-font:ui-monospace,SFMono-Regular,Menlo,monospace;",
     }[style_id]
+    cover_html = ""
+    if (cover_image_url or "").strip():
+        cover_html = (
+            '<figure class="asset-cover">'
+            f'<img src="{escape(cover_image_url.strip(), quote=True)}" '
+            f'alt="{escape((cover_alt_text or "Asset cover").strip(), quote=True)}">'
+            "</figure>"
+        )
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -571,6 +653,8 @@ def export_html(asset: Asset) -> str:
     .asset-dek {{ position:relative; z-index:1; max-width:760px; margin:30px 0 0; color:var(--muted); font-size:clamp(1.05rem,2.4vw,1.35rem); line-height:1.65; }}
     .asset-meta {{ position:relative; z-index:1; display:flex; flex-wrap:wrap; gap:10px; margin-top:34px; }}
     .asset-meta span {{ padding:8px 12px; border:1px solid var(--line); border-radius:999px; background:color-mix(in srgb,var(--paper) 82%,transparent); color:var(--muted); font:700 11px/1 var(--body-font); letter-spacing:.08em; text-transform:uppercase; }}
+    .asset-cover {{ margin:0; border-bottom:1px solid var(--line); background:var(--accent-soft); }}
+    .asset-cover img {{ display:block; width:100%; max-height:620px; object-fit:cover; }}
     .asset-body {{ padding:clamp(32px,7vw,82px); }}
     .asset-body > :first-child {{ margin-top:0; }}
     h1, h2, h3, h4 {{ font-family:var(--display-font); line-height:1.2; letter-spacing:-.025em; }}
@@ -602,6 +686,19 @@ def export_html(asset: Asset) -> str:
     [data-style-profile="visual_digest"] h2 {{ display:inline-block; padding:10px 18px; border-radius:999px; background:var(--accent-soft); color:#86198f; }}
     [data-style-profile="visual_digest"] blockquote {{ border:0; border-radius:22px; box-shadow:0 16px 40px -30px rgba(126,34,206,.65); }}
     [data-style-profile="visual_digest"] table {{ overflow:hidden; border-radius:16px; box-shadow:0 12px 34px -28px rgba(49,46,129,.5); }}
+    [data-style-profile] .asset-body h2#in-depth {{ display:grid; gap:7px; position:relative; margin-bottom:28px; padding:0 0 16px; border:0; border-radius:0; background:none; color:var(--ink); }}
+    [data-style-profile] .asset-body h2#in-depth::before {{ content:"FEATURED ANALYSIS"; color:var(--accent); font:750 .68rem/1 var(--body-font); letter-spacing:.2em; }}
+    [data-style-profile] .asset-body h2#in-depth::after {{ position:absolute; bottom:0; left:0; width:min(256px,72%); height:2px; content:""; background:linear-gradient(90deg,var(--accent),transparent); }}
+    .asset-body h3.newsletter-detail-title {{ margin:24px 0 0; padding:20px 24px 14px; border:1px solid var(--line); border-bottom:0; border-left:4px solid var(--accent); border-radius:16px 16px 0 0; background:linear-gradient(135deg,var(--accent-soft),var(--paper) 62%); box-shadow:0 18px 45px -38px rgba(15,23,42,.62); font-size:1.22rem; line-height:1.45; overflow-wrap:anywhere; }}
+    .asset-body h3.newsletter-detail-title a {{ color:var(--ink); text-decoration:none; }}
+    .asset-body h3.newsletter-detail-title a:hover {{ color:var(--accent); }}
+    .asset-body h3.newsletter-detail-title + p {{ margin:0; padding:0 24px 20px; border:1px solid var(--line); border-top:0; border-left-width:4px; border-radius:0 0 16px 16px; color:var(--muted); background:var(--paper); line-height:1.75; overflow-wrap:anywhere; }}
+    .asset-body h3.newsletter-detail-title + p:has(+ p > a) {{ padding-bottom:16px; border-bottom:0; border-radius:0; }}
+    .asset-body h3.newsletter-detail-title + p + p:has(> a) {{ margin:0; padding:0 24px 16px; border:1px solid var(--line); border-top:0; border-bottom:0; border-left-width:4px; border-radius:0; background:var(--paper); font-size:.85rem; }}
+    .asset-body h3.newsletter-detail-title + p + p:has(> a) > a {{ display:inline-flex; align-items:center; padding:7px 12px; border-radius:999px; background:var(--accent-soft); color:var(--accent); font-size:.76rem; font-weight:700; letter-spacing:.035em; text-decoration:none; }}
+    .asset-body h3.newsletter-detail-title + p + p:has(> a) > a:hover {{ background:var(--accent); color:white; }}
+    .asset-body h3.newsletter-detail-title + p + p + p,
+    .asset-body h3.newsletter-detail-title + p + p:not(:has(> a)) {{ margin:0 0 30px; padding:10px 24px 12px; border:1px solid var(--line); border-top:0; border-left-width:4px; border-radius:0 0 16px 16px; background:color-mix(in srgb,var(--paper) 86%,var(--line)); color:var(--muted); font:400 .7rem/1.45 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; letter-spacing:.025em; }}
     [data-style-profile="knowledge_atlas"] main {{ background-image:linear-gradient(rgba(21,128,61,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(21,128,61,.035) 1px,transparent 1px); background-size:28px 28px; }}
     [data-style-profile="knowledge_atlas"] .asset-hero {{ background:linear-gradient(135deg,#effcf3,#dff2e5); }}
     [data-style-profile="knowledge_atlas"] .asset-title {{ max-width:18ch; font-size:clamp(2.3rem,6vw,5rem); }}
@@ -609,7 +706,7 @@ def export_html(asset: Asset) -> str:
     [data-style-profile="knowledge_atlas"] h2 {{ display:grid; grid-template-columns:auto 1fr; align-items:center; gap:12px; padding-bottom:12px; border-bottom:1px dashed var(--line); }}
     [data-style-profile="knowledge_atlas"] h2::before {{ counter-increment:atlas-section; content:counter(atlas-section,decimal-leading-zero); color:var(--accent); font:700 .7em/1 var(--display-font); }}
     [data-style-profile="knowledge_atlas"] blockquote {{ border-radius:4px 18px 18px 4px; }}
-    @media (max-width:680px) {{ main {{ margin:0; width:100%; border:0; border-radius:0; }} .asset-hero,.asset-body {{ padding:28px 22px; }} .asset-title {{ font-size:2.65rem; }} }}
+    @media (max-width:680px) {{ main {{ margin:0; width:100%; border:0; border-radius:0; }} .asset-hero,.asset-body {{ padding:28px 22px; }} .asset-title {{ font-size:2.65rem; }} .asset-body h3.newsletter-detail-title {{ padding:17px 16px 12px; border-left-width:3px; }} .asset-body h3.newsletter-detail-title + p,.asset-body h3.newsletter-detail-title + p + p:has(> a),.asset-body h3.newsletter-detail-title + p + p + p,.asset-body h3.newsletter-detail-title + p + p:not(:has(> a)) {{ padding-left:16px; padding-right:16px; border-left-width:3px; }} }}
     @media print {{ body {{ background:white; }} main {{ width:100%; margin:0; border:0; box-shadow:none; }} }}
   </style>
 </head>
@@ -621,6 +718,7 @@ def export_html(asset: Asset) -> str:
       {f'<p class="asset-dek">{brief}</p>' if brief else ''}
       <div class="asset-meta"><span>{reading_minutes} min read</span><span>{word_count} units</span><span>Editable Mermaid</span></div>
     </header>
+    {cover_html}
     <article class="asset-body">{rendered_body}</article>
   </main>
   <script type="module">
@@ -643,11 +741,25 @@ def export_html(asset: Asset) -> str:
 </html>"""
 
 
-def export_wechat_html(asset: Asset, *, rendered_diagrams: dict[str, str] | None = None) -> str:
-    markdown_content = _asset_reader_markdown(asset.draft_content)
+def export_wechat_html(
+    asset: Asset,
+    *,
+    rendered_diagrams: dict[str, str] | None = None,
+    cover_image_url: str | None = None,
+    cover_alt_text: str | None = None,
+    inline_visuals: list[dict] | None = None,
+) -> str:
+    markdown_content = _inject_inline_visuals(
+        asset,
+        _asset_reader_markdown(asset.draft_content),
+        inline_visuals,
+    )
+    extensions = ["extra", "sane_lists"]
+    if asset.asset_type == "newsletter_issue":
+        extensions.append(TocExtension(slugify=_newsletter_heading_slug))
     rendered = markdown.markdown(
         escape(markdown_content, quote=False),
-        extensions=["extra", "sane_lists"],
+        extensions=extensions,
         output_format="html5",
     )
     experience = experience_from_metadata(asset.metadata_, asset_type=asset.asset_type)
@@ -706,10 +818,19 @@ def export_wechat_html(asset: Asset, *, rendered_diagrams: dict[str, str] | None
         "<td>": '<td style="padding:8px;border:1px solid #d8dee4;vertical-align:top;">',
         "<hr>": '<hr style="margin:28px 0;border:0;border-top:1px solid #d8dee4;">',
     }
+    if asset.asset_type == "newsletter_issue":
+        for heading_tag in ("h1", "h2", "h3"):
+            styled_heading = replacements[f"<{heading_tag}>"]
+            rendered = re.sub(
+                rf'<{heading_tag} id="([^"]+)">',
+                lambda match: styled_heading.replace(f"<{heading_tag} ", f'<{heading_tag} id="{match.group(1)}" ', 1),
+                rendered,
+            )
     for source, target in replacements.items():
         rendered = rendered.replace(source, target)
+    allowed_anchor = r"|#[\w-]+" if asset.asset_type == "newsletter_issue" else ""
     rendered = re.sub(
-        r'href="(?!https?://)[^"]*"',
+        rf'href="(?!https?://{allowed_anchor})[^"]*"',
         'href="#"',
         rendered,
         flags=re.IGNORECASE,
@@ -726,7 +847,16 @@ def export_wechat_html(asset: Asset, *, rendered_diagrams: dict[str, str] | None
         f'<p style="margin:7px 0 0;color:{muted};font-size:14px;line-height:1.65;">由 Seagull Asset 工作流生成，可在公众号草稿箱继续调整。</p>'
         f'</section>'
     )
-    return f'<section style="padding:4px 2px;background:#ffffff;">{signature}{rendered}</section>'
+    cover = ""
+    if (cover_image_url or "").strip():
+        cover = (
+            '<figure style="margin:0 0 24px;">'
+            f'<img src="{escape(cover_image_url.strip(), quote=True)}" '
+            f'alt="{escape((cover_alt_text or "Asset cover").strip(), quote=True)}" '
+            'style="display:block;width:100%;height:auto;border-radius:14px;" />'
+            "</figure>"
+        )
+    return f'<section style="padding:4px 2px;background:#ffffff;">{cover}{signature}{rendered}</section>'
 
 
 def _asset_reader_markdown(content: str | None) -> str:
@@ -775,8 +905,21 @@ def _wechat_mermaid_block(source_html: str, *, rendered_diagrams: dict[str, str]
     )
 
 
-def export_wechat_preview_html(asset: Asset, *, rendered_diagrams: dict[str, str] | None = None) -> str:
-    content = export_wechat_html(asset, rendered_diagrams=rendered_diagrams)
+def export_wechat_preview_html(
+    asset: Asset,
+    *,
+    rendered_diagrams: dict[str, str] | None = None,
+    cover_image_url: str | None = None,
+    cover_alt_text: str | None = None,
+    inline_visuals: list[dict] | None = None,
+) -> str:
+    content = export_wechat_html(
+        asset,
+        rendered_diagrams=rendered_diagrams,
+        cover_image_url=cover_image_url,
+        cover_alt_text=cover_alt_text,
+        inline_visuals=inline_visuals,
+    )
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>

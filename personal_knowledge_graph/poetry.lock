@@ -3269,6 +3269,18 @@ typing-extensions = ">=4.11,<5"
 datalib = ["numpy (>=1)", "pandas (>=1.2.3)", "pandas-stubs (>=1.1.0.11)"]
 
 [[package]]
+name = "opencc-python-reimplemented"
+version = "0.1.7"
+description = "OpenCC made with Python"
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "opencc-python-reimplemented-0.1.7.tar.gz", hash = "sha256:4f777ea3461a25257a7b876112cfa90bb6acabc6dfb843bf4d11266e43579dee"},
+    {file = "opencc_python_reimplemented-0.1.7-py2.py3-none-any.whl", hash = "sha256:41b3b92943c7bed291f448e9c7fad4b577c8c2eae30fcfe5a74edf8818493aa6"},
+]
+
+[[package]]
 name = "opencv-python"
 version = "4.13.0.92"
 description = "Wrapper package for OpenCV python bindings."
@@ -6865,4 +6877,4 @@ media-local = ["faster-whisper"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<4.0"
-content-hash = "5c5d50e764c9f85f4160598e546ce1583fa998aa36df6999ec1b784147ea6c0f"
+content-hash = "6761b93aa7e9df6ef10af8bde1a392a961572c593ce3dee7c47c38a62f5b589d"

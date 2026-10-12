@@ -9,9 +9,30 @@ from pkg.schemas.completion import CompleteRequest
 from pkg.schemas.chat_session import (
     ChatSessionCreate,
     ChatMessageSchema,
+    ResearchPlan,
+    ResearchState,
     HarnessSessionEventSchema,
     HarnessSessionHeaderSchema,
 )
+
+
+def test_research_state_does_not_accept_verified_without_evidence() -> None:
+    with pytest.raises(ValidationError):
+        ResearchState(question="Research this", status="verified")
+    with pytest.raises(ValidationError):
+        ResearchState(question=" ", status="prepared")
+
+
+def test_research_plan_rejects_unsafe_links_and_oversized_dimensions() -> None:
+    with pytest.raises(ValidationError):
+        ResearchState(question="A", status="prepared", plan=ResearchPlan(mode="quick_overview", comparison_dimensions=[" "]))
+    with pytest.raises(ValidationError):
+        ResearchState.model_validate({
+            "question": "A", "status": "prepared",
+            "plan": {"mode": "quick_overview", "comparison_dimensions": [], "web_results": [
+                {"title": "Bad", "url": "javascript:alert(1)", "retrieved_at": "2026-09-28T00:00:00Z"}
+            ]},
+        })
 
 
 # ---------------------------------------------------------------------------

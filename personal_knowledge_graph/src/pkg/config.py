@@ -87,9 +87,24 @@ class Settings(BaseSettings):
     QWEN_API_BASE: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     QWEN_API_KEY: str = ""
     QWEN_MODEL: str = "qwen-plus"
+    QWEN_IMAGE_API_BASE: str = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
+    QWEN_IMAGE_MODEL: str = "qwen-image-3.0-pro"
+    QWEN_IMAGE_TIMEOUT: int = 180
+    QWEN_IMAGE_ENABLED: bool = True
+    ASSET_VISUAL_PROCESSING_ENABLED: bool = True
+    ASSET_VISUAL_PROCESSING_INTERVAL_SECONDS: int = 5
+    ASSET_VISUAL_PROCESSING_BATCH_SIZE: int = 1
+    ASSET_VISUAL_MAX_ACTIVE_PER_USER: int = 4
+    ASSET_VISUAL_PROCESSING_MAX_ATTEMPTS: int = 3
+    ASSET_VISUAL_PROCESSING_RETRY_DELAY_SECONDS: int = 30
+    ASSET_VISUAL_PROCESSING_STALE_SECONDS: int = 300
+    ASSET_VISUAL_PLANNER_ENABLED: bool = True
+    ASSET_VISUAL_PLANNER_PROVIDER_ID: str = "qwen"
+    ASSET_VISUAL_PLANNER_MODEL: str = "qwen3.8-max"
+    ASSET_VISUAL_PLANNER_TIMEOUT: int = 120
 
     # MiniMax API (OpenAI-compatible, recommended via LLM_PROVIDERS)
-    MINIMAX_API_BASE: str = "https://api.minimax.io/v1"
+    MINIMAX_API_BASE: str = "https://api.minimaxi.com/v1"
     MINIMAX_API_KEY: str = ""
     MINIMAX_MODEL: str = ""
 
@@ -180,6 +195,12 @@ class Settings(BaseSettings):
     RSS_SUMMARY_MAX_ARTICLES: int = 12
     RSS_SUMMARY_MAX_CHARS_PER_ARTICLE: int = 1500
     RSS_FILTER_LOW_VALUE: bool = True
+    NEWSLETTER_DETAIL_LLM_ENABLED: bool = True
+    NEWSLETTER_DETAIL_LLM_PROVIDER_ID: str = ""
+    NEWSLETTER_DETAIL_LLM_MODEL: str = ""
+    NEWSLETTER_DETAIL_LLM_TIMEOUT: int = 120
+    NEWSLETTER_DETAIL_LLM_CONCURRENCY: int = 3
+    NEWSLETTER_DETAIL_SOURCE_MAX_CHARS: int = 6000
 
     # External connector trend discovery. Disabled by default so app startup does not fetch external sources.
     ARXIV_USER_AGENT: str = "personal-knowledge-graph/0.1"
@@ -224,6 +245,7 @@ class Settings(BaseSettings):
     NEWS_FETCH_TIMEOUT: int = 20
     NEWS_DEFAULT_LANGUAGE: str = "en"
     NEWS_DEFAULT_MAX_RESULTS: int = 10
+    NEWS_EXCLUDED_DOMAINS: str = "pypi.org"
     NEWS_AUTO_SEARCH_ENABLED: bool = False
     NEWS_AUTO_SEARCH_QUERY: str = "AI, LLM, Agent, workflow"
     NEWS_AUTO_SEARCH_WINDOW_HOURS: int = 24
@@ -255,7 +277,15 @@ class Settings(BaseSettings):
         except (json.JSONDecodeError, TypeError):
             raw = []
         if raw:
-            return [LLMProviderConfig(**entry) for entry in raw]
+            providers = [LLMProviderConfig(**entry) for entry in raw]
+            return [
+                provider.model_copy(update={
+                    "api_key": getattr(self, provider.api_key_env, provider.api_key),
+                })
+                if provider.api_key_env and not provider.api_key
+                else provider
+                for provider in providers
+            ]
         if self.QWEN_API_KEY:
             return [LLMProviderConfig(
                 id="qwen",

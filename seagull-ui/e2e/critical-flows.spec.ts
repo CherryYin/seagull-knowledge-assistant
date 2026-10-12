@@ -28,6 +28,10 @@ type MockState = {
   savedAssetBody: Record<string, unknown> | null;
   candidate: Record<string, unknown> | null;
   memory: Record<string, unknown> | null;
+  memoryPreviewItems?: Array<Record<string, unknown>>;
+  memoryPreviewStatus?: number;
+  memoryPreviewQueries?: string[];
+  questionAnswers?: Array<Record<string, unknown>>;
   sessionContext: Record<string, unknown> | null;
   chatResponse?: string;
   chatPrompts?: string[];
@@ -40,6 +44,7 @@ type MockState = {
   newsletterAutomation?: Record<string, unknown>;
   newsletterRunMode?: "generated" | "skipped" | "failed";
   newsletterRunCalls?: number;
+  newsletterCoverRetryCalls?: number;
   newsletterSaveFailureOnce?: boolean;
   assetWorkspace?: Record<string, unknown>;
   qualityAudit?: Record<string, unknown>;
@@ -58,6 +63,13 @@ type MockState = {
   searchResults?: Array<Record<string, unknown>>;
   searchRequests?: Array<Record<string, unknown>>;
   calendarReminders?: Array<Record<string, unknown>>;
+  assetVisuals?: Array<Record<string, unknown>>;
+  visualBatchRegenerateCalls?: number;
+  visualPlanCalls?: number;
+  visualPlanBodies?: Array<Record<string, unknown>>;
+  visualGenerateCalls?: number;
+  visualGenerateBodies?: Array<Record<string, unknown>>;
+  claimSelfCorrection?: boolean;
 };
 
 const intentProposal = {
@@ -196,24 +208,34 @@ async function installMockBff(page: Page, state: MockState) {
       if (body.preset === "analyze-asset-claims") {
         const contractText = body.prompt?.match(/\{[\s\S]*\}$/)?.[0] ?? "{}";
         const contract = JSON.parse(contractText) as { assetId?: string; baseWorkspaceRevision?: number; intentRevision?: number; evidence?: Array<{ id: string }> };
+        const validProposal = {
+          assetId: contract.assetId,
+          baseWorkspaceRevision: contract.baseWorkspaceRevision,
+          intentRevision: contract.intentRevision,
+          proposals: [{
+            content: "The selected evidence supports a focused architecture decision.",
+            kind: "recommendation",
+            supportingEvidence: [contract.evidence?.[0]?.id],
+            contradictingEvidence: [],
+            agentConfidence: "medium",
+          }],
+        };
+        const correctionEvents = state.claimSelfCorrection ? [
+          `data: ${JSON.stringify({ type: "tool_call", tool: "propose_asset_claims", args: { ...validProposal, proposals: [{ ...validProposal.proposals[0], agentConfidence: undefined }] } })}`,
+          "",
+          `data: ${JSON.stringify({ type: "tool_result", tool: "propose_asset_claims", result: "Error: proposals[0].agentConfidence is invalid", error: true })}`,
+          "",
+        ] : [];
         return route.fulfill({
           status: 200,
           contentType: "text/event-stream",
           body: [
             'data: {"type":"session","session_id":"claim-session-e2e"}',
             "",
-            `data: ${JSON.stringify({ type: "tool_call", tool: "propose_asset_claims", args: {
-              assetId: contract.assetId,
-              baseWorkspaceRevision: contract.baseWorkspaceRevision,
-              intentRevision: contract.intentRevision,
-              proposals: [{
-                content: "The selected evidence supports a focused architecture decision.",
-                kind: "recommendation",
-                supportingEvidence: [contract.evidence?.[0]?.id],
-                contradictingEvidence: [],
-                agentConfidence: "medium",
-              }],
-            } })}`,
+            ...correctionEvents,
+            `data: ${JSON.stringify({ type: "tool_call", tool: "propose_asset_claims", args: validProposal })}`,
+            "",
+            ...(state.claimSelfCorrection ? [`data: ${JSON.stringify({ type: "text", content: "<think>Corrected the tool call.</think>" })}`, ""] : []),
             "",
             'data: {"type":"done","session_id":"claim-session-e2e"}',
             "",
@@ -317,6 +339,10 @@ async function installMockBff(page: Page, state: MockState) {
         return json(route, {}, 204);
       }
     }
+    if (path === "/api/harness/questions/respond" && method === "POST") {
+      state.questionAnswers = [...(state.questionAnswers ?? []), request.postDataJSON() as Record<string, unknown>];
+      return json(route, { accepted: true });
+    }
 
     if (path === "/api/harness/models") return json(route, { models: [], failures: [] });
     if (path === "/api/knowledge/models") return json(route, []);
@@ -384,6 +410,10 @@ async function installMockBff(page: Page, state: MockState) {
         delivery_format: "html",
         audience: "Technology readers",
         style_notes: "Concise, evidence-led, and easy to scan.",
+        generate_cover_image: false,
+        cover_review_mode: "draft_only",
+        cover_style_profile: "editorial_technology",
+        cover_candidate_count: 1,
         last_generated_at: null,
         last_asset_id: null,
         last_run_at: null,
@@ -430,6 +460,10 @@ async function installMockBff(page: Page, state: MockState) {
         delivery_format: config.delivery_format ?? "html",
         audience: config.audience ?? "Technology readers",
         style_notes: config.style_notes ?? "",
+        generate_cover_image: config.generate_cover_image ?? false,
+        cover_review_mode: config.cover_review_mode ?? "draft_only",
+        cover_style_profile: config.cover_style_profile ?? "editorial_technology",
+        cover_candidate_count: config.cover_candidate_count ?? 1,
       };
       if (state.newsletterRunMode === "skipped") {
         state.newsletterAutomation = { ...config, last_run_at: now, last_run_status: "skipped", last_run_reason: "no_matching_items", last_news_count: 0, last_paper_count: 0 };
@@ -447,6 +481,43 @@ async function installMockBff(page: Page, state: MockState) {
         metadata_: { delivery_format: "html", generation_mode: "newsletter_automation" },
       };
       state.newsletterAutomation = { ...config, last_generated_at: now, last_asset_id: "asset-e2e", last_run_at: now, last_run_status: "generated", last_run_reason: null, last_news_count: 1, last_paper_count: 1 };
+      const coverPlan = {
+        role: "cover",
+        size: "1280*720",
+        style_preset: config.cover_style_profile ?? "editorial_technology",
+        planner_mode: "llm",
+        planner_model: "qwen-plus",
+        style_memory: {
+          style_preset: "editorial_technology",
+          sample_count: 2,
+          source_visual_ids: ["visual-history-1", "visual-history-2"],
+          palette: ["#0B1F3A", "#2563EB"],
+          preferred_title_safe_area: "left",
+        },
+        brief: {
+          concept: "Layered AI infrastructure",
+          composition: "Central system with left title space",
+          style: "Editorial technology",
+          palette: ["#0B1F3A", "#2563EB"],
+          must_include: ["clear focal point"],
+          must_avoid: ["text", "logo"],
+          title_safe_area: "left",
+          prompt: "Create an editorial technology cover without text.",
+          alt_text: "Abstract layered AI infrastructure cover.",
+        },
+      };
+      state.assetVisuals = Array.from({ length: Number(config.cover_candidate_count ?? 1) }, (_, index) => ({
+        id: `newsletter-cover-${index + 1}`,
+        asset_id: "asset-e2e",
+        role: "cover",
+        status: "queued",
+        prompt: coverPlan.brief.prompt,
+        model: "qwen-image-3.0-pro",
+        processing_attempts: 0,
+        metadata_: { batch_id: "newsletter-batch-1", visual_brief: coverPlan.brief, alt_text: coverPlan.brief.alt_text },
+        created_at: now,
+        updated_at: now,
+      }));
       return json(route, {
         status: "generated",
         news_count: 1,
@@ -454,7 +525,77 @@ async function installMockBff(page: Page, state: MockState) {
         config_revision: config.config_revision ?? 0,
         config_snapshot: configSnapshot,
         asset: { id: "asset-e2e", user_id: "user-e2e", ...state.savedAssetBody, created_at: now, updated_at: now },
+        cover: config.generate_cover_image ? { status: "queued", asset_id: "asset-e2e", plan: coverPlan, visuals: state.assetVisuals } : { status: "disabled", asset_id: "asset-e2e", visuals: [] },
       });
+    }
+    if (path === "/api/assets/newsletter/automation/cover/retry" && method === "POST") {
+      state.newsletterCoverRetryCalls = (state.newsletterCoverRetryCalls ?? 0) + 1;
+      return json(route, {
+        status: "queued",
+        asset_id: "asset-e2e",
+        plan: {
+          role: "cover",
+          size: "1280*720",
+          style_preset: "minimal_abstract",
+          planner_mode: "llm",
+          planner_model: "qwen-plus",
+          brief: {
+            concept: "Layered AI infrastructure",
+            composition: "Central system with left title space",
+            style: "Minimal abstract",
+            palette: ["#0B1F3A", "#2563EB"],
+            must_include: ["clear focal point"],
+            must_avoid: ["text", "logo"],
+            title_safe_area: "left",
+            prompt: "Create an editorial technology cover without text.",
+            alt_text: "Abstract layered AI infrastructure cover.",
+          },
+        },
+        visuals: state.assetVisuals ?? [],
+      });
+    }
+    if (path === "/api/assets/asset-e2e/visuals" && method === "GET") {
+      return json(route, { items: state.assetVisuals ?? [] });
+    }
+    if (path === "/api/assets/asset-e2e/visuals/plan" && method === "POST") {
+      state.visualPlanCalls = (state.visualPlanCalls ?? 0) + 1;
+      const planBody = request.postDataJSON() as Record<string, unknown>;
+      state.visualPlanBodies = [...(state.visualPlanBodies ?? []), planBody];
+      return json(route, {
+        role: planBody.role ?? "cover",
+        size: planBody.size ?? "1280*720",
+        style_preset: "editorial_technology",
+        planner_mode: "llm",
+        planner_model: "qwen-plus",
+        style_memory: {
+          style_preset: "editorial_technology",
+          sample_count: 2,
+          source_visual_ids: ["visual-history-1", "visual-history-2"],
+          palette: ["#0B1F3A", "#2563EB"],
+          preferred_title_safe_area: "left",
+        },
+        brief: {
+          concept: "Layered AI infrastructure",
+          composition: "Central system with left title space",
+          style: "Editorial technology",
+          palette: ["#0B1F3A", "#2563EB"],
+          must_include: ["clear focal point"],
+          must_avoid: ["text", "logo"],
+          title_safe_area: "left",
+          prompt: "Create an editorial technology cover without text.",
+          alt_text: "Abstract layered AI infrastructure cover.",
+        },
+      });
+    }
+    if (path === "/api/assets/asset-e2e/visuals/generate-batch" && method === "POST") {
+      state.visualGenerateCalls = (state.visualGenerateCalls ?? 0) + 1;
+      state.visualGenerateBodies = [...(state.visualGenerateBodies ?? []), request.postDataJSON() as Record<string, unknown>];
+      return json(route, { items: [] }, 202);
+    }
+    const visualBatchRegenerateMatch = path.match(/^\/api\/assets\/asset-e2e\/visuals\/batches\/([^/]+)\/regenerate$/);
+    if (visualBatchRegenerateMatch && method === "POST") {
+      state.visualBatchRegenerateCalls = (state.visualBatchRegenerateCalls ?? 0) + 1;
+      return json(route, { items: state.assetVisuals ?? [] }, 202);
     }
     if (path === "/api/assets/asset-e2e" && method === "GET") {
       return json(route, { id: "asset-e2e", user_id: "user-e2e", ...state.savedAssetBody, metadata_: state.savedAssetBody?.metadata ?? state.savedAssetBody?.metadata_ ?? null, source_refs: state.savedAssetBody?.source_refs ?? [], note_refs: state.savedAssetBody?.note_refs ?? [], wiki_refs: state.savedAssetBody?.wiki_refs ?? [], created_at: now, updated_at: now });
@@ -638,6 +779,11 @@ async function installMockBff(page: Page, state: MockState) {
         updatedAt: now,
       };
       return json(route, { candidate: state.candidate, memory: state.memory });
+    }
+    if (path === "/api/harness/memory-preview" && method === "POST") {
+      const body = request.postDataJSON() as { query: string };
+      state.memoryPreviewQueries = [...(state.memoryPreviewQueries ?? []), body.query];
+      return json(route, state.memoryPreviewStatus ? { error: "Preview unavailable" } : { memories: state.memoryPreviewItems ?? [] }, state.memoryPreviewStatus ?? 200);
     }
     if (path === "/api/harness/memories") {
       return json(route, {
@@ -896,6 +1042,105 @@ test("critical knowledge journey: login, chat, explicit save, decisions, and Age
   await expect(page.locator("main").getByRole("link", { name: "Settings", exact: true })).toBeVisible();
   await expect(page.getByText("E2E Memory")).toBeVisible();
   await expect(page.getByText("Remember this E2E preference")).toBeVisible();
+});
+
+test("Home research uses Asset Intent and selected memory without creating an Asset", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null,
+    memoryPreviewItems: [
+      { id: "memory-relevant", title: "Preferred audience", content: "Engineering leads" },
+      { id: "memory-unwanted", title: "Old preference", content: "Avoid this angle" },
+    ],
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/");
+  await page.getByLabel("Research a topic").fill("How should we evaluate new vector databases?");
+  await page.getByRole("button", { name: "Start research" }).click();
+  await expect(page).toHaveURL(/\/chat\?session=/);
+  const input = page.getByPlaceholder("Ask anything about your knowledge base...");
+  await expect(input).toContainText("How should we evaluate new vector databases?");
+  await expect(page.getByText("Preferred audience")).toBeVisible();
+  expect(state.chatRequests).toBeUndefined();
+  await page.getByLabel("Old preference · Avoid this angle").uncheck();
+  await input.press("Enter");
+  await expect(page.getByRole("button", { name: "Apply Intent Proposal to Form" })).toBeVisible();
+  expect(state.chatRequests?.at(-1)).toMatchObject({ preset: "clarify-asset-intent", memory_ids: ["memory-relevant"] });
+  expect(state.memoryPreviewQueries?.at(-1)).toContain("How should we evaluate new vector databases?");
+  expect(state.savedAssetBody).toBeNull();
+  await page.getByRole("button", { name: "Apply Intent Proposal to Form" }).click();
+  await expect(page).toHaveURL(/\/assets\/new$/);
+});
+
+test("Home research starts Asset Intent immediately when no memory matches", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null,
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+  await page.goto("/");
+  await page.getByLabel("Research a topic").fill("Investigate a new database technology");
+  await page.getByRole("button", { name: "Start research" }).click();
+  await expect(page.getByRole("button", { name: "Apply Intent Proposal to Form" })).toBeVisible();
+  expect(state.chatRequests?.at(-1)).toMatchObject({ preset: "clarify-asset-intent", memory_ids: [] });
+  expect(state.chatPrompts?.at(-1)).toContain("Investigate a new database technology");
+  expect(state.savedAssetBody).toBeNull();
+});
+
+test("Home Asset Intent lets users select structured research questions", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null,
+    nextChatEvents: [
+      { type: "session", session_id: "session-e2e" },
+      { type: "question", rpc_id: "research-options", session_id: "session-e2e", questions: [{
+        id: "focus", question: "Which research directions matter?", multiSelect: true,
+        options: [{ label: "Compare approaches" }, { label: "Evaluate risks" }],
+      }] },
+    ],
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+  await page.goto("/");
+  await page.getByLabel("Research a topic").fill("Investigate retrieval architectures");
+  await page.getByRole("button", { name: "Start research" }).click();
+  await expect(page.getByText("Which research directions matter?")).toBeVisible();
+  await page.getByRole("button", { name: "Compare approaches" }).click();
+  await page.getByRole("button", { name: "Evaluate risks" }).click();
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect.poll(() => state.questionAnswers?.length).toBe(1);
+  expect(state.questionAnswers?.[0]).toMatchObject({ rpc_id: "research-options", session_id: "session-e2e", answers: [{ id: "focus", selected: ["Compare approaches", "Evaluate risks"] }] });
+});
+
+test("withdrawn research sessions keep their unsent topic without restarting the old workflow", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null,
+    sessionContext: { kind: "research_topic", topic: "Old research topic", prompt: "Old research prompt", workflowId: "research-topic" },
+    chatSessions: [{ id: "legacy-research", title: "Old research topic", messages: [], research_state: { question: "Old research topic", status: "prepared" }, created_at: now, updated_at: now }],
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+  await page.goto("/chat?session=legacy-research");
+  await expect(page.getByPlaceholder("Ask anything about your knowledge base...")).toContainText("Old research topic");
+  await expect(page.getByText("Research plan", { exact: true })).toHaveCount(0);
+  expect(state.chatRequests).toBeUndefined();
+});
+
+test("Asset Intent can continue without memory when preview fails", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false, savedNoteBody: null, savedAssetBody: null, candidate: null, memory: null, sessionContext: null,
+    memoryPreviewStatus: 503,
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+  await page.goto("/");
+  await page.getByLabel("Research a topic").fill("Compare two design choices");
+  await page.getByRole("button", { name: "Start research" }).click();
+  await expect(page.getByRole("button", { name: "Continue without memory" })).toBeVisible();
+  await page.getByRole("button", { name: "Continue without memory" }).click();
+  await page.getByPlaceholder("Ask anything about your knowledge base...").press("Enter");
+  await expect(page.getByRole("button", { name: "Apply Intent Proposal to Form" })).toBeVisible();
+  expect(state.chatRequests?.at(-1)).toMatchObject({ preset: "clarify-asset-intent", memory_ids: [] });
 });
 
 test("Asset Intent Agent starts a fresh session and restores its apply action", async ({ page }) => {
@@ -1486,6 +1731,117 @@ test("Asset complete optimization records a saved first round before running the
   expect(state.documentOptimizationCalls).toBe(2);
 });
 
+test("Claim analysis recovers when the model corrects an invalid tool call", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: {
+      title: "Claim Recovery Asset",
+      brief: "Validate recoverable Claim tool errors.",
+      asset_type: "research_brief",
+      status: "draft",
+      draft_content: "# Claim Recovery Asset",
+      source_refs: ["source-input"],
+      note_refs: [],
+      wiki_refs: [],
+      metadata_: {},
+    },
+    assetWorkspace: {
+      asset_id: "asset-e2e",
+      workspace_revision: 7,
+      intent: { revision: 1, question: "What does the evidence support?", goal: "Produce reviewed Claims.", audience: "Reviewers", creation_mode: "make_decision", scope: [], constraints: [], status: "confirmed", confirmed_by: "user-e2e", confirmed_at: now },
+      intent_history: [],
+      evidence: [{ id: "evidence-1", target_type: "source", target_id: "source-input", relation: "supports", summary: "Accepted evidence.", status: "accepted", authorship: "agent", intent_revision: 1, created_at: now }],
+      claims: [],
+      contribution: null,
+      knowledge_candidates: [],
+      decision_items: [],
+    },
+    claimSelfCorrection: true,
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/assets/asset-e2e?tab=claims");
+  await page.getByRole("button", { name: "Ask Agent to Propose Claims" }).click();
+  await expect(page.getByText("Candidate Claim Proposal")).toBeVisible();
+  await expect(page.locator('[data-agent-run-status="completed"]')).toBeVisible();
+  await expect(page.getByText("Claim proposal failed")).toHaveCount(0);
+  await expect(page.getByText(/Corrected the tool call/)).toHaveCount(0);
+});
+
+test("Asset visual batches compare candidates and regenerate together", async ({ page }) => {
+  const visualBrief = {
+    concept: "Layered AI infrastructure",
+    composition: "Central system with left title space",
+    style: "Editorial technology",
+    palette: ["#0B1F3A", "#2563EB"],
+    must_include: ["clear focal point"],
+    must_avoid: ["text", "logo"],
+    title_safe_area: "left",
+    prompt: "Create an editorial technology cover without text.",
+    alt_text: "Abstract layered AI infrastructure cover.",
+  };
+  const state: MockState = {
+    loggedIn: false,
+    savedNoteBody: null,
+    savedAssetBody: {
+      title: "Visual Batch Asset",
+      brief: "Compare generated cover candidates.",
+      asset_type: "newsletter_issue",
+      status: "draft",
+      draft_content: "# Visual Batch Asset\n\nA reviewable draft.",
+      source_refs: [],
+      note_refs: [],
+      wiki_refs: [],
+      metadata_: {},
+    },
+    assetVisuals: [1, 2].map((candidateIndex) => ({
+      id: `visual-${candidateIndex}`,
+      asset_id: "asset-e2e",
+      role: "cover",
+      status: "ready",
+      prompt: `Candidate ${candidateIndex} prompt`,
+      model: "qwen-image-3.0-pro",
+      width: 1280,
+      height: 720,
+      mime_type: "image/png",
+      image_url: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1280' height='720'%3E%3Crect width='100%25' height='100%25' fill='%232563EB'/%3E%3C/svg%3E",
+      metadata_: { batch_id: "visual-batch-e2e", candidate_index: candidateIndex, candidate_count: 2, style_preset: "editorial_technology", visual_brief: visualBrief, alt_text: visualBrief.alt_text },
+      created_at: now,
+      updated_at: now,
+    })),
+    candidate: null,
+    memory: null,
+    sessionContext: null,
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+
+  await page.goto("/assets/asset-e2e?tab=production");
+  await expect(page.getByRole("button", { name: "Generate AI cover candidates" })).toBeVisible();
+  await page.getByRole("button", { name: "Generate AI cover candidates" }).click();
+  await expect.poll(() => state.visualPlanCalls).toBe(1);
+  await expect.poll(() => state.visualGenerateCalls).toBe(1);
+  await expect(page.getByText(/Uses visual style memory from 2 accepted covers/)).toBeVisible();
+  await expect(page.getByText(/Historical topics and facts are not reused/)).toBeVisible();
+  await expect(page.locator('[data-visual-batch="visual-batch-e2e"]')).toBeVisible();
+  await expect(page.getByText("2 candidates · 2 reviewable · editorial technology")).toBeVisible();
+  await page.getByRole("button", { name: "Regenerate batch" }).click();
+  await expect.poll(() => state.visualBatchRegenerateCalls).toBe(1);
+
+  await page.getByLabel("Visual publishing placement").selectOption("social_square");
+  await expect(page.getByText("Square social feed sharing image")).toBeVisible();
+  await page.getByRole("button", { name: "Generate AI square social image candidates" }).click();
+  await expect.poll(() => state.visualPlanCalls).toBe(2);
+  await expect.poll(() => state.visualGenerateCalls).toBe(2);
+  expect(state.visualPlanBodies?.at(-1)).toMatchObject({ role: "social_square", size: "1024*1024" });
+  expect(state.visualGenerateBodies?.at(-1)).toMatchObject({ role: "social_square", size: "1024*1024" });
+});
+
 test("legacy Asset can establish stable Blocks before creating an Outline Map", async ({ page }) => {
   const state: MockState = {
     loggedIn: false,
@@ -1630,6 +1986,10 @@ test("Newsletter Automation saves dirty settings before running and keeps the re
   await page.getByLabel("Newsletter name").fill("E2E Tech Weekly");
   await page.getByLabel("Newsletter topics").fill("AI agents\nrobotics");
   await page.getByLabel("Enable Newsletter automation").check();
+  await page.getByLabel("Generate Newsletter cover image").check();
+  await page.getByLabel("Newsletter cover review mode").selectOption("draft_only");
+  await page.getByLabel("Newsletter cover style").selectOption("minimal_abstract");
+  await page.getByLabel("Newsletter cover candidate count").selectOption("3");
   await page.getByLabel("Newsletter frequency").selectOption("daily");
   await page.getByLabel("Newsletter local hour").fill("10");
   await expect(page.getByText("Unsaved changes", { exact: true })).toBeVisible();
@@ -1639,17 +1999,46 @@ test("Newsletter Automation saves dirty settings before running and keeps the re
   await expect.poll(() => state.newsletterAutomation?.name).toBe("E2E Tech Weekly");
   expect(state.newsletterAutomation?.topics).toEqual(["AI agents", "robotics"]);
   expect(state.newsletterAutomation?.frequency).toBe("daily");
+  expect(state.newsletterAutomation?.cover_review_mode).toBe("draft_only");
+  expect(state.newsletterAutomation?.cover_style_profile).toBe("minimal_abstract");
+  expect(state.newsletterAutomation?.cover_candidate_count).toBe(3);
   expect(state.newsletterAutomation?.config_revision).toBe(1);
   await expect.poll(() => state.newsletterRunCalls).toBe(1);
   await expect(page).toHaveURL(/\/assets\/newsletter-automation$/);
   await expect(page.locator("[data-newsletter-run-status]")).toContainText("Completed · Newsletter draft created");
   await expect(page.locator("[data-newsletter-run-status]")).toContainText("Config revision 1");
+  await expect(page.locator("[data-newsletter-cover-generation]")).toContainText("Layered AI infrastructure");
+  await expect(page.locator("[data-newsletter-cover-generation]")).toContainText("3 queued");
   await expect(page.getByRole("link", { name: "Open generated Asset" })).toBeVisible();
   expect(state.savedAssetBody).toMatchObject({ asset_type: "newsletter_issue", status: "draft" });
+
+  await page.getByRole("button", { name: "Retry cover generation" }).click();
+  await expect.poll(() => state.newsletterCoverRetryCalls).toBe(1);
+  expect(state.newsletterRunCalls).toBe(1);
 
   await page.getByRole("link", { name: "Open generated Asset" }).click();
   await expect(page).toHaveURL(/\/assets\/asset-e2e\?tab=read$/);
   await expect(page.getByRole("heading", { name: "E2E Tech Weekly · 2026-09-03", exact: true }).last()).toBeVisible();
+});
+
+test("Newsletter summary links jump to linked source titles in the detailed section", async ({ page }) => {
+  const state: MockState = {
+    loggedIn: false, savedNoteBody: null, candidate: null, memory: null, sessionContext: null,
+    savedAssetBody: {
+      title: "E2E Tech Weekly", asset_type: "newsletter_issue", status: "draft",
+      draft_content: "# E2E Tech Weekly\n\n## Featured Items\n\n### Technology News\n\n- [1. AI chip launch](#1-ai-chip-launch) — A new accelerator launched.\n\n## In Depth\n\n### 1. [AI chip launch](https://example.com/news)\n\nThe full item offers more context on efficiency and availability.\n\n[Read the original ↗](https://example.com/news)\n\n[Source: source-input]",
+      source_refs: ["source-input"], note_refs: [], wiki_refs: [], metadata_: {},
+    },
+  };
+  await installMockBff(page, state);
+  await signIn(page);
+  await page.goto("/assets/asset-e2e?tab=read");
+  const reader = page.locator('[data-reader-layout="newsletter-issue"]');
+  await expect(reader.locator('h3.newsletter-detail-title[id="1-ai-chip-launch"]')).toBeVisible();
+  await expect(reader.locator('h3[id="1-ai-chip-launch"] a[href="https://example.com/news"]')).toHaveText("AI chip launch");
+  await expect(reader.getByRole("link", { name: "Read the original ↗" })).toHaveAttribute("href", "https://example.com/news");
+  await reader.locator('a[href="#1-ai-chip-launch"]').first().click();
+  await expect.poll(() => page.evaluate(() => window.location.hash)).toBe("#1-ai-chip-launch");
 });
 
 test("Newsletter Automation explains skipped runs without leaving the page", async ({ page }) => {
@@ -1723,10 +2112,10 @@ test("agent-assisted Asset generation creates a Workspace after Intent confirmat
     candidate: null,
     memory: null,
     sessionContext: null,
-    chatResponse: validResearchBrief.replace(
+    chatResponse: `<think>Private chain-of-thought must never enter the Asset body.</think>\n${validResearchBrief.replace(
       "[Source: source-input]",
       "[Source: source-input] [Source: web-linuxfoundation-2026]",
-    ),
+    )}`,
   };
   await installMockBff(page, state);
   await signIn(page);
@@ -1779,6 +2168,7 @@ test("agent-assisted Asset generation creates a Workspace after Intent confirmat
   await expect(input).toContainText("Architecture reviewers");
   await input.press("Enter");
   await expect(page.getByText("E2E answer with a durable result.")).toBeVisible();
+  await expect(page.getByText("Private chain-of-thought must never enter the Asset body.")).toHaveCount(0);
   expect(state.savedAssetBody?.draft_content).toBeUndefined();
 
   await page.getByRole("button", { name: "Save Draft to Asset" }).click();
@@ -1792,6 +2182,8 @@ test("agent-assisted Asset generation creates a Workspace after Intent confirmat
     status: "draft",
   });
   expect(state.savedAssetBody?.draft_content).toContain("[Source: web-linuxfoundation-2026]");
+  expect(state.savedAssetBody?.draft_content).not.toContain("<think>");
+  expect(state.savedAssetBody?.draft_content).not.toContain("Private chain-of-thought");
   expect(state.savedAssetBody?.metadata).toMatchObject({
     audience: "Architecture reviewers",
     generation_mode: "agent_assisted",
@@ -1801,7 +2193,7 @@ test("agent-assisted Asset generation creates a Workspace after Intent confirmat
   await page.goto("/assets/asset-e2e");
   await expect(page.getByRole("tab", { name: "Read" })).toHaveAttribute("data-state", "active");
   await expect(page.locator('[data-reader-layout="research-brief"]')).toBeVisible();
-  await expect(page.getByText("Decision document", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Decision document · Executive Brief/)).toBeVisible();
   await expect(page.getByText("Executive brief", { exact: true })).toBeVisible();
   await expect(page.getByText("Brief sections", { exact: true })).toBeVisible();
   await expect(page.getByText("Evidence base", { exact: true })).toBeVisible();
@@ -1823,9 +2215,9 @@ test("agent-assisted Asset generation creates a Workspace after Intent confirmat
   await expect(page.locator("[data-block-preview]").getByRole("heading", { name: "Executive Summary" })).toBeVisible();
   await page.getByRole("button", { name: "Hide preview for block 2" }).click();
   await expect(page.locator("[data-block-preview]")).toHaveCount(0);
-  await page.getByRole("button", { name: "让 Agent 修改" }).nth(3).click();
+  await page.getByRole("button", { name: "Revise with Agent" }).nth(3).click();
   await page.getByLabel("Agent instruction for block 4").fill("Make this paragraph clearer without removing its evidence marker.");
-  await page.getByRole("button", { name: "按要求修改" }).click();
+  await page.getByRole("button", { name: "Revise as instructed" }).click();
   await expect(page.locator("[data-agent-diff-preview]")).toBeVisible();
   await expect(page.getByLabel("Draft block 4")).not.toHaveValue(/Agent revised paragraph/);
   await page.getByRole("button", { name: "Apply to Editor" }).click();

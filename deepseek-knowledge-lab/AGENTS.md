@@ -12,7 +12,8 @@ DeepSeek Knowledge Lab — 基于 DeepSeek Harness 的个人知识 agent 实验�
 deepseek-knowledge-lab/
 ├── plugins/            # deepseek-harness 插件与 Lab 运行时模块
 │   ├── pkg-client/     # PKG 知识 API 客户端插件
-│   └── agent-memory/   # Harness Agent Memory 领域存储（由 BFF 调用）
+│   ├── agent-memory/   # Harness Agent Memory 领域存储（由 BFF 调用）
+│   └── session-context/ # 用户隔离的 Asset 生成上下文（由 BFF 调用）
 ├── experiments/        # 实验任务模板（Markdown prompt + 配置）
 ├── config/             # dsh 配置文件
 │   ├── cordis.patch.yml   # 插件补丁，注入 pkg-client 等自定义插件
@@ -35,13 +36,15 @@ deepseek-knowledge-lab/
 9. **Asset Claims**：`analyze-asset-claims` preset 只引用 Workspace Evidence，通过 `propose_asset_claims` 返回 Agent 署名的 Candidate Claim；接受、编辑、拒绝或保留为假设必须在 Seagull Claim Gate 完成。
 10. **Asset 整篇优化**：`revise-asset-document` preset 在当前 Intent 已确认、Evidence 与 Claim 决策已完成后使用；Contribution 与 Knowledge Candidate 可为优化提供上下文，但不阻塞正文润色。Agent 通过 `propose_asset_document_patch` 返回完整文档替换候选，Seagull 校验 Workspace revision、文档签名与 Claim 引用；用户确认后仅应用到本地编辑态，仍需显式保存才写入 PKG。后续优化轮次会携带最新确定性质量审计和上一轮记录，只有应用并保存后才计为完成一轮。
 11. **PDF Source Mind Map**：`generate-source-mind-map` preset 只接收 Source Metadata、Source basis、最多 40 个章节摘要和 80 个均匀抽样的 Chunk 摘要；禁止传入整篇 PDF 原文。Agent 必须直接通过 `propose_source_mind_map` 返回目标 18–28、最多 32 个节点的结构化候选，不得在工具参数中回显输入摘要；事实节点只能引用输入中提供的 Chunk，Chunk 归属与引文真实性由 PKG 基于当前 Source 验证，且候选仍需用户确认，不能直接创建或覆盖正式 Map。Selected Branch Expansion 还必须保持当前 `map_id`、`base_version`、`target_node_id`，Proposal 根只作为现有节点锚点，确认后只在该锚点下安全合并后代。
+12. **Asset 发布视觉**：`asset-visual-tools` 通过 Session-scoped Gateway 调用 PKG Visual Planner、候选生成和状态查询。Agent 可规划 Brief，并在用户明确要求后创建待审核候选；插件不得暴露 Accept、Reject、Cancel、Delete 或 Publish 能力，最终审核继续在 Seagull Production 完成。
 
 ## PKG API 对接要点
 
 - PKG 是 FastAPI 服务，默认运行在 `http://localhost:8000`
 - 用户认证由 Seagull BFF 统一处理：浏览器登录 PKG 后，BFF 按 Harness Session 绑定当前用户 JWT
 - `pkg-client` 通过 BFF `/internal/pkg/*` 调用 PKG，并从工具执行上下文读取 Harness Session ID；禁止把用户名、密码或 JWT 写入 Prompt/工具参数
-- `pkg-web-search` 将 `web_search` 注册为 Harness 工具，并通过 `pkg-client`、BFF Session 认证和 PKG `/discovery/web-search/preview` 复用 PKG 的 Tavily 搜索；该接口只返回结果，不自动写入 Discovery 或其他 PKG 实体
+- `pkg-web-search` 将 `web_search` 注册为 Harness 工具，并通过 `pkg-client`、BFF Session 认证和 PKG `/discovery/web-search/preview` 复用 PKG 的 Tavily 搜索；该接口只返回结果，不自动写入 Discovery 或其他 PKG 实体。
+- `weread-client` 将 `weread_api` 注册为 Harness 工具，只允许访问腾讯微信读书官方 Agent Gateway 的显式只读接口白名单；域名、Bearer 鉴权和 Skill 版本由插件固定注入，禁止任意 URL、Header、Method 或 Shell。`WEREAD_API_KEY` 从 Harness 环境读取，不得进入 Prompt、工具参数、日志或提交记录。
 - Chat 模型目录、平台默认模型和 Session 模型选择归 Harness；Seagull 通过 BFF 的 `/api/harness/models` 与 `/api/harness/model-settings` 使用 `llm.models`、`settings.update` 和 `session.selectModel`，不得再从 PKG `/knowledge/models` 驱动 Chat Agent
 - `pkg-client` 的 Agent 工具面必须保持只读；PKG 写入由 Seagull UI 的显式用户动作负责
 - Asset 自动检索遵循“PKG 优先、Web 补缺”；Web 结果不会自动导入 PKG，只有用户显式保存的最终 Asset 才进入耐久知识层

@@ -32,6 +32,7 @@ from pkg.models.application.mind_map import (  # noqa: F401
     MindMapNodeReference,
     MindMapRevision,
 )
+from pkg.models.application.asset import Asset, AssetVisual  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL_SYNC)

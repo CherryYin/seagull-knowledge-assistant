@@ -33,6 +33,7 @@ dependencies = [
     "pymdown-extensions>=10.0",
     "pillow>=10.0",
     "weasyprint>=62.0",
+    "opencc-python-reimplemented (>=0.1.7,<0.2)",
 ]
 
 [project.optional-dependencies]
