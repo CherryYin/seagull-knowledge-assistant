@@ -12,15 +12,29 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-Seagull is a self-hosted knowledge workspace for research, writing, and long-running AI workflows. It collects files and feeds, builds a searchable personal knowledge graph, lets agents work against grounded context, and produces reviewable assets such as articles, briefs, diagrams, and WeChat drafts.
+Seagull is a self-hosted knowledge workspace that connects information capture, research, writing, and publishing. Build a searchable personal knowledge graph, work with agents, and turn your knowledge into reviewable **Assets**—articles, research briefs, newsletters, diagrams, and illustrated WeChat drafts.
 
-## Why Seagull
+## Features
 
-- **Capture broadly** — files, web pages, RSS, GitHub, arXiv, papers, and news.
-- **Find precisely** — structured filters, vector search, and hybrid retrieval.
-- **Work with agents** — reusable Harness presets, skills, tools, sessions, and workflows.
-- **Keep humans in control** — agent proposals stay reviewable until explicitly saved or published.
-- **Create polished output** — editable Markdown, styled HTML, Mermaid diagrams, downloadable documents, and publishing drafts.
+- **Collect and discover** — import PDF, Office, Markdown, HTML, and images; collect web pages, RSS, GitHub, papers, and news; review discovery candidates before keeping them.
+- **Search with context** — structured filters, vector search, hybrid retrieval, and traceable source references; optional web search to fill knowledge gaps.
+- **Organize knowledge** — linked Sources, Notes, and Wiki pages; note pinning, image attachments, and version history; PDF mind maps with source-linked nodes and branch expansion.
+- **Stay on top of your work** — to-dos, calendar reminders, review suggestions, and knowledge usage statistics.
+- **Work with agents** — chat, reusable workflows, presets, skills, tools, persistent sessions, execution traces, and user-confirmed memory. An optional read-only WeRead tool accesses books, highlights, reviews, and reading statistics.
+- **Create and improve Assets** — clarify intent, review evidence and claims, edit structured drafts, and iteratively optimize the complete document with quality checks.
+- **Generate publishing visuals** — AI-planned covers, social images, and inline illustrations, with editable prompts, multiple candidates, and explicit review.
+- **Automate recurring work** — scheduled collection, discovery, digests, and newsletters, with optional cover generation and visible background job status.
+
+## From Knowledge to Publishable Assets
+
+1. **Define the brief** — choose the audience, question, and goal yourself, or discuss them with an agent before confirming.
+2. **Review the research** — search your knowledge first, optionally supplement with web results, and accept or reject evidence and candidate claims. Search summaries are not automatically verified facts.
+3. **Draft and optimize** — edit Markdown blocks, request targeted edits or whole-document restructuring, and run multiple optimization rounds informed by quality audits. Review proposed changes, apply them to the editor, then explicitly save.
+4. **Add visuals** — use the Visual Planner and style presets to generate 1–4 candidates for covers, square/portrait social images, or block-linked illustrations. Compare, retry, cancel, and select images; edit their alternative text. Image generation runs asynchronously through Qwen Image (DashScope).
+5. **Deliver** — preview and export Markdown or styled HTML with approved visuals and Mermaid diagrams, or send an illustrated draft to your WeChat Official Account. Newsletter automation can generate a cover; image failure does not discard the text draft, and automatic acceptance requires explicit configuration.
+6. **Keep what you learned** — review the Asset's contribution and proposed Note/Wiki content before promoting it into long-term knowledge.
+
+Generated images are publishing materials, not factual sources or evidence. Agents can propose edits and visual candidates, but final acceptance, knowledge promotion, and publishing remain under your control.
 
 ## Architecture
 
@@ -70,7 +84,9 @@ cp bff/.env.example bff/.env
 cp deepseek-knowledge-lab/.dsh/.env.example deepseek-knowledge-lab/.dsh/.env
 ```
 
-Configure the provider keys and secrets you need, then start the platform:
+Configure the provider keys and secrets you need. Image generation uses `QWEN_API_KEY` and `QWEN_IMAGE_*` in the PKG environment; optional web search uses `TAVILY_API_KEY`. For the read-only WeRead tool, add `WEREAD_API_KEY` to the Harness environment and load `weread-skills`. WeChat draft delivery requires Official Account credentials configured in the app.
+
+Then start the platform:
 
 ```bash
 npm run stack:check
@@ -90,7 +106,7 @@ npm test               # run repository checks
 
 - PKG owns durable user knowledge; Harness owns agent execution.
 - The Gateway owns browser and Harness authentication boundaries.
-- Agent output is not persisted without an explicit product action.
+- Agent proposals do not automatically become final Assets or long-term knowledge; automation uses explicitly configured policies.
 - Real `.env` files, credentials, personal content, and runtime state stay local.
 - Cross-service contracts evolve together across PKG, Gateway, UI, and Harness plugins.
 
