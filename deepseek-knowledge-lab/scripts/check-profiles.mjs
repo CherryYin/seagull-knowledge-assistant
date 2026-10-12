@@ -31,6 +31,9 @@ for (const profile of ["headless", "web"]) {
   if (!result.stdout.includes("asset-visual-tools")) {
     throw new Error(`${profile} profile does not compose the review-gated Asset visual tools`);
   }
+  if (!result.stdout.includes("weread-client")) {
+    throw new Error(`${profile} profile does not compose the read-only WeRead client plugin`);
+  }
   if (!result.stdout.includes("source-mind-map-proposal")) {
     throw new Error(`${profile} profile does not compose the Source Mind Map proposal plugin`);
   }
@@ -45,4 +48,4 @@ for (const profile of ["headless", "web"]) {
   }
 }
 
-console.log("headless and web profiles compose Qwen/MiniMax, PostgreSQL persistence, PKG web_search, review-gated Asset visuals, and Source Mind Map proposals without JSONL shadow");
+console.log("headless and web profiles compose Qwen/MiniMax, PostgreSQL persistence, PKG web_search, review-gated Asset visuals, read-only WeRead, and Source Mind Map proposals without JSONL shadow");

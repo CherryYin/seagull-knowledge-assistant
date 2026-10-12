@@ -49,6 +49,9 @@
     - id: asset-visual-tools
       name: ../../../plugins/asset-visual-tools/src/index.js
       inject: [pkg, tools]
+    - id: weread-client
+      name: ../../../plugins/weread-client/src/index.js
+      inject: [tools]
     - id: asset-block-patch
       name: ../../../plugins/asset-block-patch/src/index.js
       inject: [tools]
