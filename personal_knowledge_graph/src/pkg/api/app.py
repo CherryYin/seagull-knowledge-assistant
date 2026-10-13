@@ -37,6 +37,7 @@ from pkg.api.dashboard import router as dashboard_router
 from pkg.api.categories import router as categories_router
 from pkg.api.auth import router as auth_router
 from pkg.api.assets import router as assets_router
+from pkg.api.projects import router as projects_router
 from pkg.api.wiki import router as wiki_router
 from pkg.api.connectors import router as connectors_router
 from pkg.api.calendar_reminders import router as calendar_reminders_router
@@ -143,6 +144,7 @@ app.include_router(dashboard_router, prefix="/knowledge", tags=["dashboard"])
 app.include_router(categories_router, prefix="/categories", tags=["categories"])
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(assets_router, prefix="/assets", tags=["assets"])
+app.include_router(projects_router, prefix="/projects", tags=["projects"])
 app.include_router(wiki_router, prefix="/wiki", tags=["wiki"])
 app.include_router(connectors_router, prefix="/connectors", tags=["connectors"])
 app.include_router(calendar_reminders_router, prefix="/calendar/reminders", tags=["calendar"])

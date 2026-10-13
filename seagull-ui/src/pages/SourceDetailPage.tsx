@@ -16,6 +16,7 @@ import { isRssFeedSource, sourcePresentationLabel, webSourceRole } from "@/lib/s
 import { SourceMindMapPanel } from "@/components/mind-map";
 import { useReturnNavigation } from "@/hooks/useReturnNavigation";
 import { useRouteScrollRestoration } from "@/hooks/useRouteScrollRestoration";
+import { ProjectAssociations } from "@/components/projects/ProjectAssociations";
 
 type ViewMode = "full" | "slices" | "mind-map";
 type SourceEditDraft = {
@@ -424,6 +425,7 @@ export function SourceDetailPage() {
               <Pencil className="h-4 w-4" /> Edit
             </Button>
           )}
+          {!editing && <ProjectAssociations resourceType="source" resourceId={source.id} />}
           {!editing && isMediaSource && (
             <Button
               variant="outline"

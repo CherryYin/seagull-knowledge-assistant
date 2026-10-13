@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect, useCallback } from "react";
+import { ProjectAssociations } from "@/components/projects/ProjectAssociations";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Cpu, GripHorizontal, History, MessageSquarePlus, Microscope, Send, Sparkles, Square, Trash2, X } from "lucide-react";
@@ -931,6 +932,7 @@ export function ChatPage() {
             <div className="flex h-full flex-col rounded-xl border border-border bg-card">
               <div className="border-b border-border px-5 py-3">
                 <h2 className="font-semibold">{currentSession?.title || "New Session"}</h2>
+                {currentSession && !streaming && <ProjectAssociations key={currentSession.id} resourceType="chat_session" resourceId={currentSession.id} />}
                 <p className="text-xs text-muted-foreground">
                   {currentSession?.messages.length || 0} messages
                 </p>
@@ -1338,6 +1340,7 @@ export function ChatPage() {
                       <div className="flex items-center justify-between gap-4">
                         <div>
                           <h2 className="font-semibold">{selectedHistorySession.title}</h2>
+                          <ProjectAssociations key={selectedHistorySession.id} resourceType="chat_session" resourceId={selectedHistorySession.id} />
                           <p className="text-xs text-muted-foreground">
                             Created {new Date(selectedHistorySession.created_at).toLocaleString()}
                           </p>

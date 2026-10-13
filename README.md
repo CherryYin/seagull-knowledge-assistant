@@ -19,6 +19,7 @@ Seagull is a self-hosted knowledge workspace that connects information capture, 
 - **Collect and discover** — import PDF, Office, Markdown, HTML, and images; collect web pages, RSS, GitHub, papers, and news; review discovery candidates before keeping them.
 - **Search with context** — structured filters, vector search, hybrid retrieval, and traceable source references; optional web search to fill knowledge gaps.
 - **Organize knowledge** — linked Sources, Notes, and Wiki pages; note pinning, image attachments, and version history; PDF mind maps with source-linked nodes and branch expansion.
+- **Organize Projects** — define goals and completion criteria, link existing Sources, Notes, Wiki, Assets, and chat sessions across projects, and complete, reopen, archive, or restore without moving or copying content. Todo integration and project-scoped agent execution are not included yet.
 - **Stay on top of your work** — to-dos, calendar reminders, review suggestions, and knowledge usage statistics.
 - **Work with agents** — chat, reusable workflows, presets, skills, tools, persistent sessions, execution traces, and user-confirmed memory. An optional read-only WeRead tool accesses books, highlights, reviews, and reading statistics.
 - **Create and improve Assets** — clarify intent, review evidence and claims, edit structured drafts, and iteratively optimize the complete document with quality checks; Settings → Dashboard groups knowledge overview, usage rankings, and all owned Assets’ functional blockers into tabs, with optional journey reviews for recovery and adoption feedback.
@@ -94,6 +95,8 @@ npm run stack:start
 ```
 
 Open `http://127.0.0.1:5173`.
+
+When upgrading an existing installation, apply PKG migrations (`cd personal_knowledge_graph && .venv/bin/alembic upgrade head`) before restarting the API. Projects are available from the sidebar and the Projects button on resource details.
 
 ```bash
 npm run stack:status   # inspect services

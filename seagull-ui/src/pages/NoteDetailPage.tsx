@@ -1,4 +1,5 @@
 import { Link, useLocation, useParams, useNavigate } from "react-router-dom";
+import { ProjectAssociations } from "@/components/projects/ProjectAssociations";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, useMemo, useRef, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { ArrowLeft, CalendarDays, Download, Pencil, Plus, Save, X, Trash2, List, FileText, FileDown, Bot, RefreshCw, LinkIcon, BookOpen, Bold, Italic, Heading1, Heading2, Heading3, ListChecks, ListOrdered, Quote, Code, SquareCode, Table, Check, Loader2, Sparkles, Wand2, PanelRight, Square, Cpu, Pin, History, ImagePlus } from "lucide-react";
@@ -714,6 +715,7 @@ export function NoteDetailPage() {
           </Button>
           {!editing ? (
             <>
+              <ProjectAssociations resourceType="note" resourceId={note.id} />
               <Button variant="outline" size="sm" onClick={startEdit}>
                 <Pencil className="h-4 w-4" /> Edit
               </Button>

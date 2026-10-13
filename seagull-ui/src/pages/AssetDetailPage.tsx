@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ProjectAssociations } from "@/components/projects/ProjectAssociations";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, Link, useNavigate, useLocation } from "react-router-dom";
 import { BookOpen, CalendarDays, ChartNoAxesCombined, CheckCircle2, CircleAlert, Clock3, Copy, Download, Eye, FileSearch, ImageIcon, LibraryBig, MailOpen, MessageSquareShare, PenLine, Quote, Sparkles, Square, Trash2, WandSparkles } from "lucide-react";
@@ -3012,6 +3013,7 @@ export function AssetDetailPage() {
             {!asset && <span className="text-sm text-muted-foreground">Loading Asset…</span>}
           </div>
           <div className="flex flex-wrap justify-end gap-2">
+            {asset && !isEditorDirty && <ProjectAssociations resourceType="asset" resourceId={asset.id} />}
             <Button variant="outline" onClick={() => {
               if (!asset || !confirmEditorNavigation()) return;
               navigate("/chat", {

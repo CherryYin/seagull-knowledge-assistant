@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { ProjectAssociations } from "@/components/projects/ProjectAssociations";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Bot, CheckCircle2, Copy, ExternalLink, Pencil, Plus, Save, Trash2, X } from "lucide-react";
@@ -374,6 +375,7 @@ export function WikiDetailPage() {
           </Button>
           {!editing ? (
             <>
+              <ProjectAssociations resourceType="wiki" resourceId={page.id} />
               <Button variant="outline" size="sm" onClick={startEdit}><Pencil className="h-4 w-4" /> Edit</Button>
               {role === "stable" && (
                 <Button variant="outline" size="sm" onClick={() => cloneDraftMutation.mutate()} disabled={cloneDraftMutation.isPending}>

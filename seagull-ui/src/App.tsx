@@ -37,6 +37,8 @@ const DiscoverPage = lazy(() => import("./pages/DiscoverPage").then((m) => ({ de
 const ReviewPage = lazy(() => import("./pages/ReviewPage").then((m) => ({ default: m.ReviewPage })));
 const ReviewSuggestionsPage = lazy(() => import("./pages/ReviewSuggestionsPage").then((m) => ({ default: m.ReviewSuggestionsPage })));
 const SettingsPage = lazy(() => import("./pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
+const ProjectsPage = lazy(() => import("./pages/ProjectsPage").then((m) => ({ default: m.ProjectsPage })));
+const ProjectDetailPage = lazy(() => import("./pages/ProjectDetailPage").then((m) => ({ default: m.ProjectDetailPage })));
 const SystemJobsPage = lazy(() => import("./pages/SystemJobsPage").then((m) => ({ default: m.SystemJobsPage })));
 const OnboardingPage = lazy(() => import("./pages/OnboardingPage").then((m) => ({ default: m.OnboardingPage })));
 const MindMapSpikePage = import.meta.env.DEV
@@ -129,6 +131,8 @@ export default function App() {
             <Route path="/review/digest" element={<LazyPage><DigestPage /></LazyPage>} />
             <Route path="/documents" element={<LazyPage><WritingPage /></LazyPage>} />
             <Route path="/assets" element={<LazyPage><AssetsPage /></LazyPage>} />
+            <Route path="/projects" element={<LazyPage><ProjectsPage /></LazyPage>} />
+            <Route path="/projects/:id" element={<LazyPage><ProjectDetailPage /></LazyPage>} />
             <Route path="/assets/new" element={<LazyPage><AssetGenerationPage /></LazyPage>} />
             <Route path="/assets/newsletter-automation" element={<LazyPage><NewsletterAutomationPage /></LazyPage>} />
             <Route path="/assets/journey-stats" element={<Navigate to="/stats?tab=assets" replace />} />

@@ -74,6 +74,20 @@ test("login cookie authenticates direct API requests and preserves query params"
   const pkg = http.createServer(async (req, res) => {
     pkgReceived.push({ url: req.url, authorization: req.headers.authorization, requestId: req.headers["x-request-id"] });
     res.setHeader("Content-Type", "application/json");
+    if (req.url?.startsWith("/projects")) {
+      if (!req.headers.authorization) {
+        res.writeHead(401);
+        res.end(JSON.stringify({ detail: "Unauthorized" }));
+        return;
+      }
+      if (req.method === "PATCH") {
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        res.writeHead(409);
+        res.end(JSON.stringify({ detail: "Project changed", received: JSON.parse(Buffer.concat(chunks).toString()) }));
+      } else res.end(JSON.stringify({ items: [], total: 0 }));
+      return;
+    }
     if (req.url?.startsWith("/assets/analytics?")) {
       res.end(JSON.stringify({ total_assets: 251, features: [] }));
       return;
@@ -959,6 +973,22 @@ test("login cookie authenticates direct API requests and preserves query params"
   assert.equal((await analytics.json()).total_assets, 251);
   assert.equal(pkgReceived.at(-1).url, "/assets/analytics?feature=blocks&offset=30&limit=30");
   assert.match(pkgReceived.at(-1).authorization, /^Bearer /);
+
+  const projectList = await fetch(`${base}/api/projects?archived=true&offset=20&limit=20`, {
+    headers: { Cookie: cookie },
+  });
+  assert.equal(projectList.status, 200);
+  assert.equal(pkgReceived.at(-1).url, "/projects?archived=true&offset=20&limit=20");
+  assert.match(pkgReceived.at(-1).authorization, /^Bearer /);
+  const projectConflict = await fetch(`${base}/api/projects/project-one`, {
+    method: "PATCH",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ base_revision: 1, title: "New title" }),
+  });
+  assert.equal(projectConflict.status, 409);
+  assert.deepEqual((await projectConflict.json()).received, { base_revision: 1, title: "New title" });
+  const unauthenticatedProject = await fetch(`${base}/api/projects`);
+  assert.equal(unauthenticatedProject.status, 401);
 
   const logout = await fetch(`${base}/api/auth/logout`, {
     method: "POST",
