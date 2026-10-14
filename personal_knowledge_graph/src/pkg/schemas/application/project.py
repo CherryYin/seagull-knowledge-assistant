@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 ProjectStatus = Literal["active", "completed"]
@@ -116,3 +116,98 @@ class ProjectResourcesResult(BaseModel):
 
 class ProjectNextTask(ProjectRevisionRequest):
     reminder_id: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+class TodoResourceInput(ProjectResourceInput):
+    resource_type: Literal["source", "note", "asset"]
+
+
+class TodoResourcesAdd(ProjectRevisionRequest):
+    role: Literal["context", "result"]
+    resources: list[TodoResourceInput] = Field(min_length=1, max_length=50)
+
+    @field_validator("resources")
+    @classmethod
+    def validate_result(cls, value, info):
+        if info.data.get("role") == "result" and any(item.resource_type == "source" for item in value):
+            raise ValueError("Results must be Notes or Assets")
+        return value
+
+
+class TodoResourceRead(ProjectResourceRead):
+    role: Literal["context", "result"]
+    reminder_id: str
+    task_text: str
+    task_done: bool
+
+
+class TodoResourceList(BaseModel):
+    items: list[TodoResourceRead]
+    total: int
+    revision: int | None
+
+
+class ProjectSavedResultLink(ProjectRevisionRequest):
+    resource_type: Literal["note", "asset", "wiki"]
+    resource_id: str = Field(min_length=1, max_length=200)
+    reminder_id: str | None = Field(default=None, min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def validate_task_result(self):
+        if self.reminder_id and self.resource_type == "wiki":
+            raise ValueError("Task results must be Notes or Assets; Wiki drafts can link to the Project only")
+        return self
+
+
+class ProjectSavedResultRead(BaseModel):
+    project: ProjectRead
+    resource_type: Literal["note", "asset", "wiki"]
+    resource_id: str
+    reminder_id: str | None
+
+
+class ProjectContextRef(BaseModel):
+    resource_type: Literal["source", "note", "wiki", "asset"]
+    resource_id: str = Field(min_length=1, max_length=200)
+
+
+class ProjectContextRequest(ProjectRevisionRequest):
+    reminder_id: str | None = Field(default=None, min_length=1, max_length=200)
+    resources: list[ProjectContextRef] = Field(default_factory=list, max_length=20)
+    expected_fingerprint: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+
+
+class ProjectContextResource(ProjectResourceOption):
+    summary: str
+    truncated: bool
+
+
+class ProjectContextTask(BaseModel):
+    id: str
+    text: str
+    is_done: bool
+    date: str | None
+    recurrence: str
+    updated_at: datetime | None
+
+
+class ProjectContextSnapshot(BaseModel):
+    version: Literal[1] = 1
+    project_id: str
+    project_revision: int
+    title: str
+    goal: str
+    completion_criteria: str
+    status: ProjectStatus
+    generated_at: datetime
+    task: ProjectContextTask | None
+    resources: list[ProjectContextResource]
+    context_text: str = Field(max_length=20000)
+    truncated: bool
+    fingerprint: str
+    launch_fingerprint: str | None = None
+
+
+class ProjectContextSessionCreate(ProjectContextRequest):
+    expected_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    session_id: str = Field(min_length=1, max_length=200)

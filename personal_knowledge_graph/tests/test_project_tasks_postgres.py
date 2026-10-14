@@ -51,6 +51,7 @@ async def test_task_migration_concurrency_real_timestamps_and_safe_downgrade():
             await connection.execute(text("INSERT INTO calendar_reminders (id, user_id, date, text, is_done) VALUES ('legacy-done', 'owner', '2026-01-01', 'Legacy task', true)"))
             await connection.run_sync(lambda sync: migration("f6a7b8c9d0e2_add_projects.py", sync).upgrade())
             await connection.run_sync(lambda sync: migration("a7b8c9d0e3f4_project_tasks.py", sync).upgrade())
+            await connection.run_sync(lambda sync: migration("b8c9d0e1f2a3_todo_resources.py", sync).upgrade())
             await connection.run_sync(CalendarReminderCompletion.__table__.create)
             await connection.run_sync(CalendarReminderNote.__table__.create)
             legacy = (await connection.execute(text("SELECT completed_at FROM calendar_reminders WHERE id='legacy-done'"))).scalar_one()
@@ -86,6 +87,7 @@ async def test_task_migration_concurrency_real_timestamps_and_safe_downgrade():
             assert current.revision == 4 and current.next_reminder_id is None
             await reminders.update_reminder(session, user_id="owner", reminder_id=task.id, body=CalendarReminderUpdate(is_done=False, date=None))
         async with engine.begin() as connection:
+            await connection.run_sync(lambda sync: migration("b8c9d0e1f2a3_todo_resources.py", sync).downgrade())
             with pytest.raises(RuntimeError, match="Schedule unscheduled tasks"):
                 await connection.run_sync(lambda sync: migration("a7b8c9d0e3f4_project_tasks.py", sync).downgrade())
             assert (await connection.execute(text("SELECT count(*) FROM calendar_reminders WHERE date IS NULL"))).scalar_one() == 1

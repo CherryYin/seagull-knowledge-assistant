@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { libraryApi } from "@/lib/api/search";
-import { projectsApi, type Project, type ProjectResourceOption, type ProjectResourceType } from "@/lib/api/projects";
+import { projectsApi, type Project, type ProjectResourceOption, type ProjectResourceType, type TodoResourceRole } from "@/lib/api/projects";
+import { invalidateReminderQueries } from "@/lib/reminderQueries";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -10,8 +11,8 @@ export const PROJECT_RESOURCE_LABELS: Record<ProjectResourceType, string> = {
   source: "Sources", note: "Notes", wiki: "Wiki", asset: "Assets", chat_session: "Sessions",
 };
 
-export function ProjectResourcePicker({ project, initialType, onClose }: {
-  project: Project; initialType: ProjectResourceType; onClose: () => void;
+export function ProjectResourcePicker({ project, initialType, onClose, taskId, role }: {
+  project: Project; initialType: ProjectResourceType; onClose: () => void; taskId?: string; role?: TodoResourceRole;
 }) {
   const queryClient = useQueryClient();
   const [kind, setKind] = useState(initialType);
@@ -21,6 +22,7 @@ export function ProjectResourcePicker({ project, initialType, onClose }: {
   const [selected, setSelected] = useState<Record<string, ProjectResourceOption>>({});
   const [reason, setReason] = useState("");
   const [revision, setRevision] = useState(project.revision);
+  const labels = Object.entries(PROJECT_RESOURCE_LABELS).filter(([key]) => !taskId || (role === "result" ? ["note", "asset"] : ["source", "note", "asset"]).includes(key));
   const options = useQuery({
     queryKey: ["project-resource-options", kind, query, page],
     queryFn: async () => {
@@ -33,15 +35,18 @@ export function ProjectResourcePicker({ project, initialType, onClose }: {
     },
   });
   const add = useMutation({
-    mutationFn: () => projectsApi.addResources(project.id, revision, Object.values(selected).map(item => ({ resource_type: item.resource_type, resource_id: item.resource_id, reason }))),
-    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["projects"] }); onClose(); },
+    mutationFn: async () => {
+      const resources = Object.values(selected).map(item => ({ resource_type: item.resource_type, resource_id: item.resource_id, reason }));
+      return taskId && role ? projectsApi.addTaskResources(project.id, taskId, revision, role, resources) : projectsApi.addResources(project.id, revision, resources);
+    },
+    onSuccess: () => { invalidateReminderQueries(queryClient); onClose(); },
   });
   const refresh = useMutation({ mutationFn: () => projectsApi.get(project.id), onSuccess: saved => { setRevision(saved.revision); add.reset(); } });
 
-  return <Dialog open onOpenChange={open => { if (!open && !add.isPending) onClose(); }}><DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto"><DialogHeader><DialogTitle>Add existing resources</DialogTitle></DialogHeader>
-    <p className="mb-4 text-sm text-muted-foreground">Link existing objects without copying them or automatically adding their references. Selected resources can also belong to other projects.</p>
+  return <Dialog open onOpenChange={open => { if (!open && !add.isPending) onClose(); }}><DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto"><DialogHeader><DialogTitle>{taskId ? role === "result" ? "Link task results" : "Link task context" : "Add existing resources"}</DialogTitle></DialogHeader>
+    <p className="mb-4 text-sm text-muted-foreground">{taskId ? "Link existing objects to this Todo and this project without copying content. Links follow the Todo when moved. A result link is your explicit designation, not proof of adoption or task completion." : "Link existing objects without copying them or automatically adding their references. Selected resources can also belong to other projects."}</p>
     <div className="space-y-4">
-      <label className="block text-sm">Resource type<select className="mt-1 block w-full rounded-md border bg-background p-2" value={kind} onChange={event => { setKind(event.target.value as ProjectResourceType); setPage(0); setInput(""); setQuery(""); }}>{Object.entries(PROJECT_RESOURCE_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
+      <label className="block text-sm">Resource type<select className="mt-1 block w-full rounded-md border bg-background p-2" value={kind} onChange={event => { setKind(event.target.value as ProjectResourceType); setPage(0); setInput(""); setQuery(""); }}>{labels.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
       <form className="flex gap-2" onSubmit={event => { event.preventDefault(); setQuery(input); setPage(0); }}><Input aria-label="Search project resources" placeholder="Search title" value={input} onChange={event => setInput(event.target.value)} maxLength={200} /><Button type="submit" variant="outline">Search resources</Button></form>
       {options.isLoading && <p role="status">Loading available resources…</p>}
       {options.isError && <div role="alert"><p className="text-destructive">Could not load resources.</p><Button variant="outline" onClick={() => void options.refetch()}>Retry resources</Button></div>}

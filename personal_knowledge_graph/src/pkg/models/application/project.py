@@ -65,3 +65,30 @@ class ProjectResource(Base):
         *(Index(f"idx_project_resources_{kind}", column) for kind, column in RESOURCE_COLUMNS.items()),
         Index("idx_project_resources_project_type", "project_id", "resource_type"),
     )
+
+
+class TodoResource(Base):
+    __tablename__ = "todo_resources"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: f"todo-resource-{uuid.uuid4()}")
+    reminder_id: Mapped[str] = mapped_column(String, ForeignKey("calendar_reminders.id", ondelete="CASCADE"), nullable=False)
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    resource_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    source_id: Mapped[str | None] = mapped_column(String, ForeignKey("sources.id", ondelete="CASCADE"))
+    note_id: Mapped[str | None] = mapped_column(String, ForeignKey("notes.id", ondelete="CASCADE"))
+    asset_id: Mapped[str | None] = mapped_column(String, ForeignKey("assets.id", ondelete="CASCADE"))
+    reason: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("role IN ('context', 'result')", name="ck_todo_resources_role"),
+        CheckConstraint("(resource_type = 'source' AND source_id IS NOT NULL AND note_id IS NULL AND asset_id IS NULL) OR "
+            "(resource_type = 'note' AND note_id IS NOT NULL AND source_id IS NULL AND asset_id IS NULL) OR "
+            "(resource_type = 'asset' AND asset_id IS NOT NULL AND source_id IS NULL AND note_id IS NULL)", name="ck_todo_resources_target"),
+        CheckConstraint("role != 'result' OR resource_type IN ('note', 'asset')", name="ck_todo_resources_result"),
+        *(UniqueConstraint("reminder_id", "role", column, name=f"uq_todo_resources_{kind}")
+          for kind, column in RESOURCE_COLUMNS.items() if kind in {"source", "note", "asset"}),
+        *(Index(f"idx_todo_resources_{kind}", column)
+          for kind, column in RESOURCE_COLUMNS.items() if kind in {"source", "note", "asset"}),
+        Index("idx_todo_resources_reminder_role", "reminder_id", "role"),
+    )

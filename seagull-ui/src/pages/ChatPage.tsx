@@ -1,5 +1,7 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import { ProjectAssociations } from "@/components/projects/ProjectAssociations";
+import { ProjectWorkDialog } from "@/components/projects/ProjectWorkDialog";
+import { contextRequest, projectsApi } from "@/lib/api/projects";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Cpu, GripHorizontal, History, MessageSquarePlus, Microscope, Send, Sparkles, Square, Trash2, X } from "lucide-react";
@@ -59,6 +61,7 @@ import { ProposalActions } from "@/components/interaction/ProposalActions";
 import { stripModelThinking } from "@/lib/model-output";
 
 type ChatLocationState = {
+  preparedSessionId?: string;
   promptSeed?: string;
   workflowId?: string;
   objectRef?: AgentWorkflowContext["objectRef"];
@@ -166,6 +169,11 @@ export function ChatPage() {
   const [seedApplied, setSeedApplied] = useState(false);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
   const [workflowContext, setWorkflowContext] = useState<AgentWorkflowContext>({});
+  const [reviewingProjectContext, setReviewingProjectContext] = useState(false);
+  const [projectContextIssue, setProjectContextIssue] = useState<string | null>(null);
+  const [projectChecking, setProjectChecking] = useState(false);
+  const projectCheckingRef = useRef(false);
+  const restoredProjectSessionIdRef = useRef<string | null>(null);
   const [assetIntentProposal, setAssetIntentProposal] = useState<AssetIntentProposal | null>(null);
   const [assetIntentProposalIssue, setAssetIntentProposalIssue] = useState<string | null>(null);
   const [chatInputHeight, setChatInputHeight] = useState(initialChatInputHeight);
@@ -209,7 +217,9 @@ export function ChatPage() {
         const requestedHistorySessionId = initialNavigationParams.current.get("history_session");
         const startsWorkflow = Boolean(launchState?.promptSeed || launchState?.workflowId);
         if (startsWorkflow) {
-          const fresh = await createEmptySession();
+          const fresh = launchState?.preparedSessionId
+            ? loaded.find((session) => session.id === launchState.preparedSessionId) ?? await chatSessionsApi.get(launchState.preparedSessionId)
+            : await createEmptySession();
           if (cancelled) return;
           const nextSessions = [fresh, ...resumableSessions.filter((session) => session.id !== fresh.id)];
           sessionsRef.current = nextSessions;
@@ -217,11 +227,15 @@ export function ChatPage() {
           setActiveSessionId(fresh.id);
           setSelectedHistorySessionId(fresh.id);
           setTab("chat");
-        } else if (resumableSessions.length > 0) {
-          const requestedSession = resumableSessions.find((session) => session.id === requestedSessionId) ?? resumableSessions[0];
+        } else if (resumableSessions.length > 0 || requestedSessionId) {
+          const requestedSession = requestedSessionId
+            ? loaded.find((session) => session.id === requestedSessionId) ?? await chatSessionsApi.get(requestedSessionId)
+            : resumableSessions[0];
+          if (cancelled) return;
           const requestedHistorySession = resumableSessions.find((session) => session.id === requestedHistorySessionId) ?? requestedSession;
-          sessionsRef.current = resumableSessions;
-          setSessions(resumableSessions);
+          const available = [requestedSession, ...resumableSessions.filter(session => session.id !== requestedSession.id)];
+          sessionsRef.current = available;
+          setSessions(available);
           setActiveSessionId(requestedSession.id);
           setSelectedHistorySessionId(requestedHistorySession.id);
         } else {
@@ -383,6 +397,15 @@ export function ChatPage() {
   useEffect(() => {
     if (loading || !currentSession) return;
     const state = launchStateRef.current;
+    if (currentSession.project_context) {
+      if (restoredProjectSessionIdRef.current === currentSession.id || state?.workflowId) return;
+      restoredProjectSessionIdRef.current = currentSession.id;
+      const latest = [...currentSession.messages].reverse().find(message => message.metadata?.agent_run)?.metadata?.agent_run;
+      setSelectedWorkflowId(latest?.workflow_id ?? null);
+      setWorkflowContext({ objectRef: latest?.object_ref, assetDraft: latest?.asset_draft as AgentWorkflowContext["assetDraft"] });
+      setProjectContextIssue(null);
+      return;
+    }
     if (state?.assetDraft && !launchContextPersistedRef.current) {
       launchContextPersistedRef.current = true;
       void sessionContextsApi.putAssetGeneration(currentSession.id, state.assetDraft).catch((error) => {
@@ -484,13 +507,29 @@ export function ChatPage() {
   const sendMessage = useCallback(
     async (task: string, truncateAfterIndex?: number, memoryIds?: string[]) => {
       const sessionAtStart = sessionsRef.current.find((session) => session.id === activeSessionId) ?? currentSession;
-      if (!sessionAtStart || streaming) return;
+      if (!sessionAtStart || streaming || projectCheckingRef.current) return;
+      const projectAtStart = sessionAtStart.project_context;
+      if (projectAtStart) {
+        projectCheckingRef.current = true;
+        setProjectChecking(true);
+        setProjectContextIssue(null);
+        try {
+          await projectsApi.previewContext(projectAtStart.project_id, contextRequest(projectAtStart));
+        } catch (error) {
+          setProjectContextIssue(error instanceof Error ? error.message : "Could not validate Project context. Review a fresh preview before sending.");
+          setInput(task);
+          return;
+        } finally {
+          projectCheckingRef.current = false;
+          setProjectChecking(false);
+        }
+      }
       setPendingQuestion(null);
       stopRequestedRef.current = false;
       const sessionId = sessionAtStart.id;
       const createHarnessSession = sessionAtStart.messages.length === 0;
       const harnessPreset = selectedWorkflowId ?? "knowledge-lab";
-      const selectedMemoryIds = memoryIds ?? (["clarify-asset-intent", "draft-asset", "draft-blog-asset"].includes(harnessPreset) ? [] : undefined);
+      const selectedMemoryIds = projectAtStart ? [] : memoryIds ?? (["clarify-asset-intent", "draft-asset", "draft-blog-asset"].includes(harnessPreset) ? [] : undefined);
       const workflowAtStart = findAgentWorkflowTemplate(selectedWorkflowId);
       const contextAtStart: AgentWorkflowContext = {
         ...workflowContext,
@@ -522,8 +561,9 @@ export function ChatPage() {
         }));
       }
 
-      const userMsg = createMessage("user", task);
-      const assistantMsg = createMessage("assistant", "", { agent_run: runContract });
+      const projectMetadata = projectAtStart ? { project_context: JSON.parse(JSON.stringify(projectAtStart)) as typeof projectAtStart } : {};
+      const userMsg = createMessage("user", task, projectAtStart ? projectMetadata : undefined);
+      const assistantMsg = createMessage("assistant", "", { agent_run: runContract, ...projectMetadata });
 
       updateSessionLocal(sessionId, (s) => {
         const nextMessages = [...baseMessages, userMsg, assistantMsg];
@@ -577,6 +617,7 @@ export function ChatPage() {
           createSession: createHarnessSession,
           clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           memoryIds: selectedMemoryIds,
+          projectContext: projectAtStart ? { project_id: projectAtStart.project_id, expected_fingerprint: projectAtStart.fingerprint } : undefined,
           signal: abortController.signal,
         });
 
@@ -737,8 +778,8 @@ export function ChatPage() {
 
   const handleSubmit = async () => {
     const raw = input.trim();
-    if (!raw || streaming || memoryPreviewing) return;
-    if (["clarify-asset-intent", "draft-asset", "draft-blog-asset"].includes(selectedWorkflowId ?? "") && memoryPreview?.query !== raw) {
+    if (!raw || streaming || memoryPreviewing || projectChecking || reviewingProjectContext) return;
+    if (!currentSession?.project_context && ["clarify-asset-intent", "draft-asset", "draft-blog-asset"].includes(selectedWorkflowId ?? "") && memoryPreview?.query !== raw) {
       setMemoryPreviewing(true);
       setMemoryPreviewError(null);
       try {
@@ -810,6 +851,12 @@ export function ChatPage() {
 
   const handleSaveTarget = useCallback(
     async (session: ChatSessionRecord, assistantMsg: ChatSessionMessage, target: WorkflowResultSaveTarget) => {
+      const savedSession = sessionsRef.current.find(current => current.id === session.id);
+      const existingReceipt = savedSession?.messages.find(message => message.id === assistantMsg.id)?.metadata?.save_receipts?.[target];
+      if (existingReceipt && savedSession) {
+        await persistSessionInOrder(savedSession);
+        return;
+      }
       const runContract = getMessageRunContract(assistantMsg.metadata);
       const allowedTargets = getMessageSaveTargets(assistantMsg.metadata, assistantMsg.content);
       if (!allowedTargets.includes(target)) {
@@ -911,7 +958,7 @@ export function ChatPage() {
 						Ask the knowledge task assistant to search, reason, write, and save useful outputs back into the system.
 					</p>
           </div>
-          <Button variant="outline" size="sm" onClick={handleCreateNewSession} disabled={streaming}>
+          <Button variant="outline" size="sm" onClick={handleCreateNewSession} disabled={streaming || projectChecking}>
             <MessageSquarePlus className="h-4 w-4" /> New Session
           </Button>
         </div>
@@ -930,13 +977,16 @@ export function ChatPage() {
 
           <TabsContent value="chat" className="min-h-0 flex-1">
             <div className="flex h-full flex-col rounded-xl border border-border bg-card">
-              <div className="border-b border-border px-5 py-3">
+              <div className={cn("border-b border-border px-5 py-3", currentSession?.project_context && "max-h-[35%] shrink-0 overflow-y-auto")}>
                 <h2 className="font-semibold">{currentSession?.title || "New Session"}</h2>
                 {currentSession && !streaming && <ProjectAssociations key={currentSession.id} resourceType="chat_session" resourceId={currentSession.id} />}
+                {currentSession?.project_context && <section className="mt-3 space-y-2 rounded-lg border p-3" aria-label="Project execution context"><p className="text-sm font-semibold">Working in Project: {currentSession.project_context.title}</p><p className="text-xs text-muted-foreground">Revision {currentSession.project_context.project_revision} · {currentSession.project_context.resources.length} selected resources · {currentSession.project_context.task ? `Action: ${currentSession.project_context.task.text}` : "Project goal only"}. This execution context is separate from session links. Project memory is not enabled.</p><details><summary className="cursor-pointer text-sm">View confirmed project context</summary><pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words text-xs">{currentSession.project_context.context_text}</pre></details>{projectContextIssue && <p role="alert" className="text-sm text-destructive">{projectContextIssue}</p>}{projectChecking && <p role="status" className="text-sm">Checking Project context before calling the model…</p>}<Button size="sm" variant="outline" disabled={streaming || projectChecking} onClick={() => setReviewingProjectContext(true)}>Review latest project context</Button></section>}
                 <p className="text-xs text-muted-foreground">
                   {currentSession?.messages.length || 0} messages
                 </p>
               </div>
+
+              {reviewingProjectContext && currentSession?.project_context && <ProjectWorkDialog projectId={currentSession.project_context.project_id} snapshot={currentSession.project_context} sessionId={currentSession.id} onClose={() => setReviewingProjectContext(false)} onSaved={saved => { updateSessionLocal(saved.id, session => ({ ...session, project_context: saved.project_context })); setProjectContextIssue(null); }} />}
 
               <div
                 ref={messageScrollRef}
@@ -1129,7 +1179,7 @@ export function ChatPage() {
                   }}
                 />
               ) : (
-              <div className="border-t border-border bg-card/50 px-6 py-4">
+              <div className={cn("border-t border-border bg-card/50 px-6 py-4", currentSession?.project_context && "max-h-[45%] shrink-0 overflow-y-auto")}>
                 {selectedWorkflow && (
                   <div className="mx-auto mb-2 flex max-w-3xl flex-wrap items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs">
                     <span className="font-medium text-primary">Workflow: {selectedWorkflow.title}</span>
@@ -1267,7 +1317,7 @@ export function ChatPage() {
                       <Square className="h-4 w-4 fill-current" />
                     </Button>
                   ) : (
-                    <Button size="icon" onClick={handleSubmit} disabled={!input.trim() || memoryPreviewing}
+                    <Button size="icon" onClick={handleSubmit} disabled={!input.trim() || memoryPreviewing || projectChecking || reviewingProjectContext}
                       aria-label={memoryPreviewing ? "Previewing memory" : "Send message"}>
                       <Send className="h-4 w-4" />
                     </Button>

@@ -1527,7 +1527,7 @@ test("Chat save receipts survive reload and History", async ({ page }) => {
   await input.fill("Create a durable saved result");
   await input.press("Enter");
   await page.getByRole("button", { name: "Save as Personal Note" }).click();
-  await expect(page.getByRole("button", { name: "Saved" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Saved", exact: true })).toBeVisible();
 
   await page.reload();
   await expect(page.getByRole("button", { name: "Saved", exact: true })).toBeVisible();

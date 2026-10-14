@@ -116,16 +116,19 @@ Source → Note、Wiki 引用、Asset 的 Evidence／Claim／Block 等既有关�
 
 ### 4.4 TodoResource：行动与具体对象的关系
 
-建议 `project_todo_resources`：`reminder_id`、`project_resource_id`、`relation=context|result`，三者唯一。
+P2b 使用 `todo_resources`：`reminder_id`、`role=context|result`、类型对应的 Source/Note/Asset FK、说明、关联时间。同一 Todo、role 和目标唯一，数据库检查保证只有一个匹配类型的目标。
 
-- 只服务已经属于 Project 的 Todo；验证提醒与资源关系属于同一 Project、同一用户。
-- `context` 表示做这件事需要什么；`result` 表示行动形成了什么。标成 result 不自动完成任务。
-- 先复用现有 CalendarReminderNote 作为笔记上下文：项目 Todo 的 `note_ids` 仍以该表为准，不在两张表重复保存同一笔记上下文。
-- 新关系表中的 `context` 首版只允许 Source / Wiki / Asset；`result` 只允许 Note / Wiki / Asset。Chat Session 在项目会话区展示，暂不作为任务结果。
-- 给项目 Todo 关联笔记时，确认后在一个事务内添加对应 ProjectResource 和既有笔记关联；无 Project 的 Todo 保持原行为。
-- 移动 Todo 到另一 Project 时，提示清除旧的项目级 context/result 关系；既有 note_ids 保留，需确认将它们加入新 Project。不自动删除笔记。
-- 移除 ProjectResource 时，清除该对象的项目级任务关系；保留 Todo 和原有笔记引用，并提示这些笔记仍可从 Todo 打开但不在项目知识区。
+- 关联属于 Todo，不通过 ProjectResource 间接持有，以避免移出／移动项目或移除项目资源时静默丢失任务材料与成果。此决定替代原先按项目清除任务关系的设计。
+- 写入从 Project Tasks 发起，验证同一用户所有权、任务项目归属、Project revision 和归档状态；全局 Todo 提供只读关联查询。
+- `context` 允许 Source / Note / Asset，表示做这件事需要什么；`result` 只允许 Note / Asset，表示用户明确指定的行动成果。不自动完成任务，不等同于成品采用。
+- result 仅用于一次性行动，重复提醒模板不代表某次 occurrence 的成果。已有成果时转为重复提醒须先显式移除成果关联，不能悄悄改变其含义。
+- CalendarReminderNote 与旧 note_ids 保持原行为和原有引用；不把历史关联笔记自动推断为 context 或 result。显式角色关联另行展示，允许同一 Note 同时作为 context 和 result。
+- 添加任务材料／成果时，在同一事务内补充当前 ProjectResource；任一目标不可用时不部分保存。删除任务关联不删除正文，也不移除 ProjectResource。
+- 移动 Todo 前确认来源、目标、下一步清除影响和资源保留规则；校验两端 revision，按 Project ID 排序加锁。Todo 日程、完成状态、旧笔记、显式材料与成果全部保留，同时补充目标项目资源引用，原项目资源引用保留。
+- 移出或删除 Project 后，Todo 与显式资源关系仍在；Home 的未排期 Todo 可展开查看。删除 Todo 或原资源时，仅对应的 TodoResource 通过 FK 清理。
 - 不同入口的写入都必须使用同一服务。不得靠 UI 缓存把资源视为已经持久化关联。
+
+API：项目任务 `/projects/{id}/tasks/{reminder_id}/resources` 支持 GET/POST，单个关联支持 revision-checked DELETE；`/projects/{id}/task-results` 分页汇总当前成员任务的显式成果；`/calendar/reminders/{id}/resources` 提供全局只读查询。Overview 的最近成果按关联时间排序，可来自未完成任务，不冒充完整活动记录或采用遥测。
 
 ## 5. 页面与关键操作
 
@@ -173,8 +176,10 @@ Overview 的“最近更新”只展示已有关联对象的更新时间，不�
 
 - Project 是附加上下文，不替代现有 Workflow 和 Asset owner／object_ref。
 - 新增可选的逐消息 `project_context` 字段，保存 Project ID、任务 ID、修订和选定 refs；旧消息无需迁移。再次执行时重新读取最新项目状态，旧记录保留当时快照。
+- P3a 同时在 `ChatSession.project_context` 保留经 PKG 确认的执行快照，使空会话／刷新／直接 URL 恢复不依赖浏览器导航状态。逐消息快照位于 `metadata.project_context`，历史与失败消息可查看记录，但不将失败记录称为模型实际使用证据。
 - 默认从 Project 创建新会话；恢复仅有项目关联但最后执行上下文不同的会话时提示“查看历史或新开会话”，不能凭多对多会话关联自动切换执行 scope。
 - 会话所属 PKG 记录建立后才关联 Project。关联失败保留已创建会话并允许重试，不删除原会话。
+- P3a 的新项目会话由 PKG 在同一事务内建立 ChatSession、ProjectResource 和执行快照；客户端 session_id 加 launch_fingerprint 使响应丢失重试不重复创建。确认过期时不留下孤立会话。后续跨服务保存仍遵循回执与补关联规则。
 - 保存 Note / Wiki / Asset 仍是显式用户动作，可勾选“同时加入当前 Project／作为本 Todo 结果”。创建对象和关联应尽量在同一 PKG 事务中完成。
 - 对无法在同事务保存的跨服务步骤，先保存对象回执，再执行幂等关联；关联失败显示“对象已保存，关联待重试”，重试只补关联，不再次生成对象。
 - Agent Run 完成、对象保存或导出成功都不自动关闭 Todo 或 Project。
@@ -201,6 +206,9 @@ Overview 的“最近更新”只展示已有关联对象的更新时间，不�
 | `PATCH /calendar/reminders/{id}` | 复用编辑、完成、安排日期及归属项目；不建立另一套完成接口 |
 | `PUT /projects/{id}/todos/{todo_id}/resources` | 原子替换任务的 context/result；复用笔记关联规则 |
 | `POST /projects/{id}/context-preview` | 验证选定 refs 并返回受限上下文；不调用模型、不写长期记忆 |
+| `POST /projects/{id}/context-session` | P3a 已实现：确认 fingerprint，原子建立独立项目会话、关联及执行快照；支持同 session_id 幂等重试 |
+| `PUT /projects/{id}/context-session/{session_id}` | P3a 已实现：确认更新同项目的执行快照，不重写旧消息或更换执行项目 |
+| `POST /projects/{id}/saved-result` | P3b 已实现：将已保存 Note／Asset／Wiki 显式关联项目，可同时关联一次性 Todo 的 Note／Asset result；原子写入，响应丢失重试不重复建关联 |
 | `GET /assets/analytics?project_id=...` | 在现有全局诊断上增加项目过滤 |
 
 Project 删除不是首版主入口，先提供归档。若之后提供永久删除，只删除 Project、其资源关系及项目级任务关系；Todo 的 project_id 置空，所有知识、Asset、会话和记忆均不得级联删除。记忆失去有效项目时不召回，清理由用户另行确认。
@@ -255,17 +263,25 @@ P1 已实现；服务测试覆盖所有权、条件更新、关联原子性、�
 - [x] 提取共享 Reminder 服务，增加可空日期、project_id 与真实 completed_at。
 - [x] 项目行动、重复提醒独立视图、下一步指针；已有 Todo 可加入项目，移出项目保留任务与笔记。
 - [x] Calendar / Home / Completed 与项目页面同步；无日期任务可完成、可安排日期。
-- [ ] TodoResource 的显式 context/result 关联与跨项目移动确认 UI（下一阶段）。
+- [x] TodoResource 的显式 context/result 关联与跨项目移动确认 UI。
+- [x] Overview 的待办预览、下一步导航与分页最近成果；未知状态提供重试，不显示虚假零值。
 
 P2a 行动闭环已实现：Tasks 分页与全量一次性行动计数，Overview 的用户指定下一步，独立的重复 occurrence 列表；全局 Todo 完成会同步并清理下一步，不自动完成 Project。任务笔记仍复用 CalendarReminderNote，加入项目时在同一事务内补充 Note 项目引用；移出项目不删除笔记或原有任务引用。已有已完成记录不回填完成时间。项目归属变更校验 revision，归档项目的 Tasks 只读，但 Calendar／Home 的原任务仍可完成。部署前应用 `a7b8c9d0e3f4` 迁移并重启 PKG；降级前必须安排所有无日期任务，迁移不会伪造日期或丢弃任务。
+
+P2b 已实现任务材料／成果闭环、显式跨项目移动和总览最近成果。部署前应用 `b8c9d0e1f2a3` 并重启 PKG；降级前须显式移除所有 TodoResource 关联，迁移不会静默丢弃它们。Agent 工作流上下文与成果自动保存仍在 P3，不在此阶段接入。
 
 退出标准：从项目完成一个有日期的 Todo，日历立即同步；无日期行动不伪装为今天；重复提醒只完成指定 occurrence；移出项目不丢失 Todo 与笔记；旧提醒回归通过。
 
 ### P3：受控继续工作与交付关联
 
-- [ ] Context preview、逐消息 project_context、Gateway scope 验证和 Harness 契约同步。
-- [ ] 复用现有 Workflow；显式保存时选择关联 Project／Todo 结果，关联失败可幂等补救。
+- [x] P3a：Context preview、会话与逐消息 project_context、Gateway 执行 scope 验证；既有 Harness prompt/Workflow/Owner 契约保持兼容。
+- [x] P3a：复用现有 Workflow，Project／Task 的继续工作入口、独立会话、预览确认、过期阻断与恢复。
+- [x] P3b：保存后通过回执选择关联 Project／Todo 结果，关联失败可幂等补救；Chat 与 History 均可操作。
 - [ ] 项目记忆只在有效项目与用户确认边界内使用，旧 scope 保持兼容。
+
+P3a 部署需应用 `c9d0e1f2a3b4`，重启 PKG API 和 Gateway；不需要重启 Harness／Worker。源材料摘要来自 Source description、Note abstract／短 content、Wiki summary／短 content、Asset brief／outline，不发送完整 Draft、附件 URI 或聊天历史。fingerprint 覆盖选定目标状态、时间、摘要和任务状态，生成时间不参与 fingerprint；项目、任务或材料改变后须重新预览确认。项目执行关闭记忆召回，工具仍可检索完整用户知识库；这不是项目检索隔离，也不是项目记忆上线。
+
+P3b 复用现有两类关联表，不增加迁移；P3a 已部署的环境只需重启 PKG API。保存产物与关联是两次独立确认：回执保留真实对象 ID，关联失败只重试关联；刷新会话后仍可从回执补关联。默认目的地来自该条消息的快照，用户可选择其他项目或仅关联项目，不改变会话执行 scope。Note／Asset 支持一次性 Todo 成果，Wiki 草稿仅关联 Project，不自动发布为 Stable。接口在同一事务内添加缺失 ProjectResource／TodoResource；已有完整关联的重试不重复推进 revision，但仍校验用户、资源、归档和任务当前归属。缺失关联遇到 revision 冲突须显式刷新确认。完成、采用与关联保持独立；Chat 回执写入失败时可在当前页面只补写回执，页面关闭前须先确认回执持久化，这不等同于跨刷新幂等的内容创建 API。
 
 退出标准：发送前可检查上下文；旧消息仍可读；在不同项目新开会话不会误带另一个项目记忆；对象保存成功但关联失败时重试不会重复创建对象；Run 完成不自动关闭任务。
 

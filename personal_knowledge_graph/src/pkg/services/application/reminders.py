@@ -5,7 +5,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pkg.models.application.project import Project, ProjectResource
+from pkg.models.application.project import Project, ProjectResource, TodoResource
 from pkg.models.calendar_reminder import CalendarReminder, CalendarReminderNote
 from pkg.models.calendar_reminder_completion import CalendarReminderCompletion
 from pkg.models.foundation.note import Note
@@ -152,6 +152,11 @@ async def update_reminder(session: AsyncSession, *, user_id, reminder_id, body: 
     recurrence_changed = final_recurrence != (reminder.recurrence or "once")
     if final_recurrence != "once" and final_date is None:
         raise HTTPException(422, "Recurring reminders require a start date")
+    if recurrence_changed and final_recurrence != "once":
+        result = (await session.execute(select(TodoResource.id).where(TodoResource.reminder_id == reminder.id,
+            TodoResource.role == "result").limit(1))).scalar_one_or_none()
+        if result:
+            raise HTTPException(422, "Remove explicit task results before converting this action to a recurring reminder")
     reminder.date = final_date
     reminder.recurrence = final_recurrence
     if "text" in changes:
@@ -189,6 +194,9 @@ async def update_reminder(session: AsyncSession, *, user_id, reminder_id, body: 
         notes = reminder.linked_notes
     if target_id and relation_change:
         await _join_notes(session, user_id, target_id, notes)
+        from pkg.services.application.todo_resources import carry_resources
+
+        await carry_resources(session, user_id=user_id, project_id=target_id, reminder_id=reminder.id)
     for project in parents.values():
         clear_next = project.next_reminder_id == reminder.id and (target_id != project.id or reminder.is_done or final_recurrence != "once")
         if clear_next:

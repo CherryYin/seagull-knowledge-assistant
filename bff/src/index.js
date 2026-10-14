@@ -582,20 +582,42 @@ async function harnessChat(req, res, requestId, agentMemoryStore) {
   }
   const allocatedSessionId = requestedSessionId || `session-${randomUUID()}`;
   let user;
+  let verifiedProjectContext;
   try {
     user = await currentPkgUser(authorization, requestId);
+    let pkgSession;
     if (requestedSessionId) {
-      await ensurePkgChatSession(requestedSessionId, authorization, {
+      pkgSession = await ensurePkgChatSession(requestedSessionId, authorization, {
         createIfMissing: createRequestedSession,
         requestId,
       });
       bindSessionAuth(requestedSessionId, user.id, authorization);
     } else {
-      await ensurePkgChatSession(allocatedSessionId, authorization, {
+      pkgSession = await ensurePkgChatSession(allocatedSessionId, authorization, {
         createIfMissing: true,
         isEphemeral: ephemeralSession,
         requestId,
       });
+    }
+    if (pkgSession.project_context || body.project_context) {
+      const stored = pkgSession.project_context;
+      const selected = body.project_context;
+      if (!stored || !selected || selected.project_id !== stored.project_id || selected.expected_fingerprint !== stored.fingerprint) {
+        throw statusError(409, "Confirm this session’s Project context before sending. Resource associations alone do not select execution context.");
+      }
+      const checked = await pkgUserRequest(`/projects/${encodeURIComponent(stored.project_id)}/context-preview`, authorization, {
+        method: "POST", requestId,
+        body: { base_revision: stored.project_revision, reminder_id: stored.task?.id ?? null,
+          resources: stored.resources.map(({ resource_type, resource_id }) => ({ resource_type, resource_id })), expected_fingerprint: stored.fingerprint },
+      });
+      if (!checked.ok) {
+        const failure = await checked.json().catch(() => ({}));
+        throw statusError(checked.status, failure.detail || "Project context is unavailable; review a fresh preview before sending.");
+      }
+      verifiedProjectContext = await checked.json();
+      if (verifiedProjectContext.fingerprint !== stored.fingerprint || typeof verifiedProjectContext.context_text !== "string" || Array.from(verifiedProjectContext.context_text).length > 20000) {
+        throw statusError(502, "Invalid Project context response; no model was called.");
+      }
     }
   } catch (error) {
     if (error.status === 401) return respondAuthExpired(req, res, authorization);
@@ -657,16 +679,16 @@ async function harnessChat(req, res, requestId, agentMemoryStore) {
     }
     const recalled = await agentMemoryStore.recall(user.id, {
       query: prompt,
-      scopeType: typeof body?.memory_scope_type === "string" ? body.memory_scope_type : "global",
-      scopeId: typeof body?.memory_scope_id === "string" ? body.memory_scope_id : null,
+      scopeType: !verifiedProjectContext && typeof body?.memory_scope_type === "string" ? body.memory_scope_type : "global",
+      scopeId: !verifiedProjectContext && typeof body?.memory_scope_id === "string" ? body.memory_scope_id : null,
       sessionId,
-      selectedIds: body?.memory_ids,
+      selectedIds: verifiedProjectContext ? [] : body?.memory_ids,
     });
     const memoryContext = formatAgentMemoryContext(recalled.memories);
     const promptPayload = {
       sessionId,
       mode: "queue",
-      content: [{ type: "text", text: memoryContext ? `${memoryContext}\n\n${prompt}` : prompt }],
+      content: [{ type: "text", text: [memoryContext, verifiedProjectContext?.context_text, prompt].filter(Boolean).join("\n\n") }],
       ...(typeof body?.client_time_zone === "string" ? { clientTimeZone: body.client_time_zone } : {}),
     };
     if (!requestedSessionId || createRequestedSession) {

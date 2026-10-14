@@ -44,6 +44,7 @@ export interface ChatMessageSaveReceipt {
 }
 
 export interface MessageMetadata {
+  project_context?: import("./projects").ProjectContextSnapshot;
   documents?: DocumentMetadata[];
   references?: ReferenceInfo[];
   has_generated_document?: boolean;
@@ -69,6 +70,7 @@ export interface ChatSessionRecord {
   title: string;
   messages: ChatSessionMessage[];
   research_state?: { question: string } | null;
+  project_context?: import("./projects").ProjectContextSnapshot | null;
   profile_id?: string | null;
   created_at: string;
   updated_at: string;

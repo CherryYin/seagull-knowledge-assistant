@@ -71,6 +71,10 @@ test("login cookie authenticates direct API requests and preserves query params"
   let sourceUpload;
   const ownedChatSessions = new Set(["session-1", "local-session"]);
   const ephemeralChatSessions = new Set();
+  const projectContexts = new Map();
+  let projectPreviewStatus = 200;
+  const projectSnapshot = { project_id: "project-one", project_revision: 2, fingerprint: "a".repeat(64), task: null,
+    resources: [{ resource_type: "note", resource_id: "selected-note" }], context_text: "Project working context: confirmed goal and selected summary" };
   const pkg = http.createServer(async (req, res) => {
     pkgReceived.push({ url: req.url, authorization: req.headers.authorization, requestId: req.headers["x-request-id"] });
     res.setHeader("Content-Type", "application/json");
@@ -78,6 +82,22 @@ test("login cookie authenticates direct API requests and preserves query params"
       if (!req.headers.authorization) {
         res.writeHead(401);
         res.end(JSON.stringify({ detail: "Unauthorized" }));
+        return;
+      }
+      if (req.url === "/projects/project-one/context-preview" && req.method === "POST") {
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        pkgReceived.at(-1).body = JSON.parse(Buffer.concat(chunks).toString());
+        res.writeHead(projectPreviewStatus);
+        res.end(JSON.stringify(projectPreviewStatus === 200 ? projectSnapshot : { detail: "Project context changed; review it again" }));
+        return;
+      }
+      if (req.url === "/projects/project-one/saved-result" && req.method === "POST") {
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        const received = JSON.parse(Buffer.concat(chunks).toString());
+        res.writeHead(received.base_revision === 3 ? 200 : 409);
+        res.end(JSON.stringify({ received }));
         return;
       }
       if (req.method === "PATCH") {
@@ -151,6 +171,7 @@ test("login cookie authenticates direct API requests and preserves query params"
         title: id,
         messages: [],
         is_ephemeral: ephemeralChatSessions.has(id),
+        project_context: projectContexts.get(id) ?? null,
       }));
       return;
     }
@@ -998,9 +1019,70 @@ test("login cookie authenticates direct API requests and preserves query params"
     body: JSON.stringify({ base_revision: 1, reminder_id: "task-one" }),
   });
   assert.equal(nextTaskConflict.status, 409);
+  for (const path of ["/projects/project-one/tasks/task-one/resources?limit=20&offset=20", "/projects/project-one/task-results?limit=5&offset=5"]) {
+    const response = await fetch(`${base}/api${path}`, { headers: { Cookie: cookie } });
+    assert.equal(response.status, 200);
+    assert.equal(pkgReceived.at(-1).url, path);
+    assert.match(pkgReceived.at(-1).authorization, /^Bearer /);
+  }
+  const moveConflict = await fetch(`${base}/api/projects/project-one/tasks/task-one`, {
+    method: "PATCH", headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ project_id: "project-two", base_revision: 2, target_revision: 3 }),
+  });
+  assert.equal(moveConflict.status, 409);
+  assert.deepEqual((await moveConflict.json()).received, { project_id: "project-two", base_revision: 2, target_revision: 3 });
+  const unauthenticatedTaskResources = await fetch(`${base}/api/projects/project-one/tasks/task-one/resources`);
+  assert.equal(unauthenticatedTaskResources.status, 401);
   assert.deepEqual((await nextTaskConflict.json()).received, { base_revision: 1, reminder_id: "task-one" });
   const unauthenticatedProject = await fetch(`${base}/api/projects`);
   assert.equal(unauthenticatedProject.status, 401);
+
+  const savedResultBody = { base_revision: 3, resource_type: "note", resource_id: "saved-note", reminder_id: "task-one" };
+  const savedResult = await fetch(`${base}/api/projects/project-one/saved-result`, {
+    method: "POST", headers: { Cookie: cookie, "Content-Type": "application/json" }, body: JSON.stringify(savedResultBody),
+  });
+  assert.equal(savedResult.status, 200);
+  assert.deepEqual((await savedResult.json()).received, savedResultBody);
+  assert.equal(pkgReceived.at(-1).url, "/projects/project-one/saved-result");
+  assert.match(pkgReceived.at(-1).authorization, /^Bearer /);
+  const staleResult = await fetch(`${base}/api/projects/project-one/saved-result`, {
+    method: "POST", headers: { Cookie: cookie, "Content-Type": "application/json" }, body: JSON.stringify({ ...savedResultBody, base_revision: 1 }),
+  });
+  assert.equal(staleResult.status, 409);
+  const unauthenticatedResult = await fetch(`${base}/api/projects/project-one/saved-result`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(savedResultBody),
+  });
+  assert.equal(unauthenticatedResult.status, 401);
+
+  ownedChatSessions.add("project-session");
+  projectContexts.set("project-session", projectSnapshot);
+  const beforeProjectPrompts = harnessRpcCalls.filter(call => call.method === "session.prompt").length;
+  for (const extra of [{}, { project_context: { project_id: "private-project", expected_fingerprint: projectSnapshot.fingerprint } },
+    { project_context: { project_id: "project-one", expected_fingerprint: "b".repeat(64) } }]) {
+    const rejected = await fetch(`${base}/api/chat`, { method: "POST", headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "project question", session_id: "project-session", ...extra }) });
+    assert.equal(rejected.status, 409);
+  }
+  const unrelatedSession = await fetch(`${base}/api/chat`, { method: "POST", headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt: "question", session_id: "session-1", project_context: { project_id: "project-one", expected_fingerprint: projectSnapshot.fingerprint } }) });
+  assert.equal(unrelatedSession.status, 409);
+  const selectedContext = { project_id: "project-one", expected_fingerprint: projectSnapshot.fingerprint, context_text: "FORGED_CONTEXT" };
+  projectPreviewStatus = 409;
+  const staleProject = await fetch(`${base}/api/chat`, { method: "POST", headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt: "project question", session_id: "project-session", project_context: selectedContext }) });
+  assert.equal(staleProject.status, 409);
+  assert.equal(harnessRpcCalls.filter(call => call.method === "session.prompt").length, beforeProjectPrompts);
+  projectPreviewStatus = 200;
+  const projectChat = await fetch(`${base}/api/chat`, { method: "POST", headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt: "project question", session_id: "project-session", create_session: true, project_context: selectedContext,
+      memory_scope_type: "project", memory_scope_id: "unverified-scope", memory_ids: ["unverified-memory"] }) });
+  assert.equal(projectChat.status, 200);
+  await projectChat.text();
+  const projectPrompt = harnessRpcCalls.filter(call => call.method === "session.prompt").at(-1);
+  assert.equal(projectPrompt.payload.content[0].text, `${projectSnapshot.context_text}\n\nproject question`);
+  const contextCheck = pkgReceived.findLast(item => item.url === "/projects/project-one/context-preview");
+  assert.deepEqual(contextCheck.body, { base_revision: 2, reminder_id: null, resources: [{ resource_type: "note", resource_id: "selected-note" }], expected_fingerprint: projectSnapshot.fingerprint });
+  assert.match(contextCheck.authorization, /^Bearer /);
 
   const logout = await fetch(`${base}/api/auth/logout`, {
     method: "POST",

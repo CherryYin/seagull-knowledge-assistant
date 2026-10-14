@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { calendarRemindersApi } from "@/lib/api/calendar-reminders";
 import { projectsApi, type Project } from "@/lib/api/projects";
@@ -12,13 +13,14 @@ function today() { const now = new Date(); return `${now.getFullYear()}-${String
 
 export function ProjectTaskOverview({ project }: { project: Project }) {
   const queryClient = useQueryClient();
-  const summary = useQuery({ queryKey: ["projects", "tasks-overview", project.id], queryFn: () => projectsApi.tasks(project.id, { limit: 1 }) });
+  const summary = useQuery({ queryKey: ["projects", "tasks-overview", project.id], queryFn: () => projectsApi.tasks(project.id, { limit: 3, include_done: false }) });
   const clear = useMutation({ mutationFn: () => projectsApi.nextTask(project.id, null, project.revision), onSuccess: () => invalidateReminderQueries(queryClient) });
   return <section className="space-y-3 rounded-xl border p-5"><h2 className="font-semibold">Next step</h2>
     {summary.isLoading && <p role="status">Loading project actions…</p>}
     {summary.isError && <div role="alert"><p>Project actions are unavailable, not empty.</p><Button variant="outline" onClick={() => void summary.refetch()}>Retry project actions</Button></div>}
     {summary.data && !summary.isError && <><p className="text-sm text-muted-foreground">{summary.data.pending_count ?? 0} pending · {summary.data.completed_count ?? 0} completed one-time actions. This is not a project completion percentage.</p>{summary.data.next_task ? <><TaskRow task={summary.data.next_task} project={project} />{!project.archived_at && <Button variant="outline" disabled={clear.isPending} onClick={() => clear.mutate()}>Clear next step</Button>}</> : <p className="text-sm text-muted-foreground">No next step selected. Choose an unfinished one-time action in Tasks.</p>}</>}
     {clear.isError && <div role="alert" className="text-sm text-destructive"><p>{clear.error.message}</p><Button variant="outline" onClick={() => invalidateReminderQueries(queryClient)}>Refresh project</Button></div>}
+    {summary.data && !summary.isError && <div className="space-y-2"><h3 className="text-sm font-semibold">Pending actions</h3>{summary.data.items.map(task => <p key={task.id} className="text-sm">{task.text} · {task.date ?? "Not scheduled"}</p>)}{summary.data.pending_count === 0 && <p className="text-sm text-muted-foreground">No pending one-time actions. Check your completion criteria before marking the project complete.</p>}<Link className="inline-block text-sm text-primary" to={`/projects/${project.id}?tab=tasks`}>{summary.data.pending_count > 0 ? "Open all tasks and choose your next step" : "Open Tasks to plan an action"}</Link></div>}
   </section>;
 }
 

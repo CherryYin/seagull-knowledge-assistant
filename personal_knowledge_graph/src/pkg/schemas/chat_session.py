@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator
+from pkg.schemas.application.project import ProjectContextSnapshot
 
 
 class ChatMessageSchema(BaseModel):
@@ -65,6 +66,7 @@ class ChatSessionRead(BaseModel):
     title: str
     messages: list[ChatMessageSchema]
     research_state: ResearchState | None = None
+    project_context: ProjectContextSnapshot | None = None
     profile_id: str | None = None
     is_ephemeral: bool = False
     created_at: datetime

@@ -33,7 +33,7 @@ from pkg.models.application.mind_map import (  # noqa: F401
     MindMapRevision,
 )
 from pkg.models.application.asset import Asset, AssetVisual  # noqa: F401
-from pkg.models.application.project import Project, ProjectResource  # noqa: F401
+from pkg.models.application.project import Project, ProjectResource, TodoResource  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL_SYNC)

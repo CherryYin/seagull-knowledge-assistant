@@ -39,6 +39,7 @@ export interface HarnessQuestionAnswer {
 }
 
 export interface HarnessChatOptions {
+  projectContext?: { project_id: string; expected_fingerprint: string };
   preset?: string;
   model?: string | null;
   sessionId?: string;
@@ -66,6 +67,7 @@ export async function* harnessChat(prompt: string, options: HarnessChatOptions =
       ephemeral_session: options.ephemeralSession,
       client_time_zone: options.clientTimeZone,
       memory_ids: options.memoryIds,
+      project_context: options.projectContext,
     }),
     credentials: "include",
     signal: options.signal,

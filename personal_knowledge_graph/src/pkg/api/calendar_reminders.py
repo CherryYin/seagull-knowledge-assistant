@@ -7,12 +7,19 @@ from pkg.api.deps import get_current_user
 from pkg.db import get_session
 from pkg.models.user import User
 from pkg.schemas.calendar_reminder import CalendarReminderCreate, CalendarReminderList, CalendarReminderRead, CalendarReminderUpdate
-from pkg.services.application import reminders
+from pkg.schemas.application.project import TodoResourceList
+from pkg.services.application import reminders, todo_resources
 from pkg.services.application.reminders import _attach_linked_notes as _attach_linked_notes
 from pkg.services.application.reminders import _matches_recurrence as _matches_recurrence
 from pkg.services.application.reminders import _today_key as _today_key
 
 router = APIRouter()
+
+
+@router.get("/{reminder_id}/resources", response_model=TodoResourceList)
+async def list_todo_resources(reminder_id: str, limit: int = Query(default=30, ge=1, le=100), offset: int = Query(default=0, ge=0),
+                             user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    return await todo_resources.list_resources(session, user_id=user.id, reminder_id=reminder_id, limit=limit, offset=offset)
 
 
 @router.get("", response_model=CalendarReminderList)

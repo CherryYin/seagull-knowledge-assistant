@@ -12,6 +12,7 @@ import { getMessageRunContract } from "@/lib/chat-message-contract";
 import { AgentRunStatus } from "@/components/interaction/AgentRunStatus";
 import { ActionError } from "@/components/interaction/ActionError";
 import { stripModelThinking } from "@/lib/model-output";
+import { SavedResultLinks } from "@/components/projects/SavedResultLinks";
 
 const CITATION_RE = new RegExp(`\\[(?:Source|\\u6765\\u6e90)[\\uFF1A:\\s]+((?:note|src|source)-[^\\]]+)\\]`, "gi");
 
@@ -75,6 +76,8 @@ export function ChatMessage({
     return Object.fromEntries(Object.keys(receipts).map((target) => [target, "done"])) as Partial<Record<WorkflowResultSaveTarget, "done">>;
   });
   const [actionError, setActionError] = useState<string | null>(null);
+  const [saveErrorTarget, setSaveErrorTarget] = useState<WorkflowResultSaveTarget | null>(null);
+  const failedSaveHasReceipt = Boolean(saveErrorTarget && metadata?.save_receipts?.[saveErrorTarget]);
   const assetQuality = !isUser && assetDraft && saveTargets.includes("asset")
     ? assessAssetDraft(stripModelThinking(metadata?.document_content || content), assetDraft)
     : null;
@@ -115,6 +118,7 @@ export function ChatMessage({
 
   const handleSaveTarget = async (target: WorkflowResultSaveTarget) => {
     if (!onSaveTarget) return;
+    setSaveErrorTarget(target);
     setSaveState((current) => ({ ...current, [target]: "loading" }));
     setActionError(null);
     try {
@@ -304,14 +308,16 @@ export function ChatMessage({
                   disabled={Boolean(state) || (target === "asset" && assetQuality !== null && !assetQuality.ready)}
                 >
                   {saveIcon(target, state)}
-                  {state === "done" ? (appliesToExistingAsset ? "Saved to Asset" : "Saved") : label}
+                  {state === "done" ? (appliesToExistingAsset ? "Saved to Asset" : "Saved") : metadata?.save_receipts?.[target] ? "Retry save receipt" : label}
                 </Button>
               );
             })}
 
           </div>
         )}
-        {actionError && <div className="mt-2 max-w-xl"><ActionError impact="The result was not saved." recovery="Review the details, then retry the same save action." details={actionError} /></div>}
+        {actionError && <div className="mt-2 max-w-xl"><ActionError impact={failedSaveHasReceipt ? "The content is saved, but its Chat receipt could not be confirmed." : "The result was not saved."} recovery={failedSaveHasReceipt ? "Retry the save receipt without creating another copy. Keep this page open until the receipt is confirmed." : "Review the details, then retry the same save action."} details={actionError} /></div>}
+        {!isUser && !streaming && Object.values(metadata?.save_receipts ?? {}).map(receipt => receipt && <SavedResultLinks key={receipt.target} receipt={receipt} context={metadata?.project_context} />)}
+        {!isUser && metadata?.project_context && <details className="mt-2 max-w-3xl rounded-lg border p-3 text-xs text-muted-foreground"><summary className="cursor-pointer">Recorded Project context · {metadata.project_context.title} · revision {metadata.project_context.project_revision}</summary><p className="mt-2">Snapshot retained for this message. Refreshing the session context does not rewrite it; a failed run is not proof that the model used this context.</p><pre className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap break-words">{metadata.project_context.context_text}</pre></details>}
       </div>
     </div>
   );

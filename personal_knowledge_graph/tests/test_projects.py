@@ -7,7 +7,7 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
-from sqlalchemy import create_engine, event, insert, inspect, text
+from sqlalchemy import Boolean, create_engine, event, insert, inspect, text
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy.dialects import postgresql
@@ -18,7 +18,7 @@ from sqlalchemy.pool import StaticPool
 from pkg.api.deps import get_current_user
 from pkg.api.projects import router
 from pkg.db import get_session
-from pkg.models.application.project import Project, ProjectResource
+from pkg.models.application.project import Project, ProjectResource, TodoResource
 from pkg.models.calendar_reminder import CalendarReminder, CalendarReminderNote
 from pkg.models.calendar_reminder_completion import CalendarReminderCompletion
 from pkg.models.user import User
@@ -37,7 +37,7 @@ def database():
     with engine.begin() as connection:
         models = [User, *projects.TARGET_MODELS.values()]
         for model in models:
-            columns = ", ".join(f'"{column.name}" TEXT' + (" PRIMARY KEY" if column.primary_key else "")
+            columns = ", ".join(f'"{column.name}" {"BOOLEAN" if isinstance(column.type, Boolean) else "TEXT"}' + (" PRIMARY KEY" if column.primary_key else "")
                                 for column in model.__table__.columns)
             connection.execute(text(f'CREATE TABLE "{model.__tablename__}" ({columns})'))
         connection.execute(text("INSERT INTO users (id) VALUES ('owner'), ('other')"))
@@ -52,6 +52,7 @@ def database():
     CalendarReminder.__table__.create(engine)
     CalendarReminderNote.__table__.create(engine)
     CalendarReminderCompletion.__table__.create(engine)
+    TodoResource.__table__.create(engine)
     session = Session(engine, expire_on_commit=False)
 
     async def execute(statement):

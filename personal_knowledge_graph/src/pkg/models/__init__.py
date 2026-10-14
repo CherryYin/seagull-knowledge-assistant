@@ -1,5 +1,5 @@
 from pkg.models.application.asset import Asset
-from pkg.models.application.project import Project, ProjectResource
+from pkg.models.application.project import Project, ProjectResource, TodoResource
 from pkg.models.application.mind_map import (
     MindMap,
     MindMapNode,
@@ -12,6 +12,7 @@ __all__ = [
     "Asset",
     "Project",
     "ProjectResource",
+    "TodoResource",
     "MindMap",
     "MindMapNode",
     "MindMapNodeReference",
