@@ -10,7 +10,7 @@ The core product goal is a durable personal knowledge graph with deterministic r
 
 ## Core Capabilities
 
-- Organize user-owned Projects with goals, completion criteria, revision-checked lifecycle changes, and shared references to existing Sources, Notes, Wiki, Assets, and Chat Sessions through `/projects`. Archive is read-only; removing a link never deletes the target. Project-aware Todo and Agent execution remain deferred.
+- Organize user-owned Projects with goals, completion criteria, revision-checked lifecycle changes, shared resource references, and existing Todos through `/projects`. Project Tasks reuse CalendarReminder via the shared Reminder service; one-time actions may be unscheduled, recurring reminders require a start date and complete per occurrence, and user-selected next steps clear on completion/removal. Home and Completed expose separate unscheduled views; unknown legacy completion times stay unknown. Archive is read-only in Project, while original Calendar Todos remain independent. Task result references and project-scoped Agent execution remain deferred.
 
 - Ingest and manage sources, notes, categories, files, and user-owned chat sessions; image and video files are first-class Sources stored in MinIO with SHA-256 deduplication and a user-reviewed searchable description.
 - Generate image/video Source description proposals with the configured multimodal LLM; image proposals inspect a normalized image and video proposals inspect sampled representative frames, while saving remains an explicit user action. Media Source title, search description, and detailed Extraction Content remain user-editable, and description/extraction edits rebuild the Source search index.

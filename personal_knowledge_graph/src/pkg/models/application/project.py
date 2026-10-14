@@ -30,6 +30,7 @@ class Project(Base):
     completion_criteria: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active", server_default="active")
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    next_reminder_id: Mapped[str | None] = mapped_column(String, ForeignKey("calendar_reminders.id", ondelete="SET NULL", use_alter=True, name="fk_projects_next_reminder"), nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -39,6 +40,7 @@ class Project(Base):
         CheckConstraint("status IN ('active', 'completed')", name="ck_projects_status"),
         CheckConstraint("revision >= 1", name="ck_projects_revision"),
         Index("idx_projects_user_updated", "user_id", "updated_at"),
+        Index("idx_projects_next_reminder", "next_reminder_id"),
     )
 
 

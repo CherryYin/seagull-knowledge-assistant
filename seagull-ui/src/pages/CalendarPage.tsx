@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { calendarRemindersApi, notesApi, sourcesApi, type CalendarReminder, type CalendarReminderUpdate, type Note, type Source } from "@/lib/api";
+import { invalidateReminderQueries } from "@/lib/reminderQueries";
 import { cn } from "@/lib/utils";
 
 const RECURRENCE_OPTIONS = [
@@ -98,6 +99,7 @@ function buildCalendarDays(month: Date) {
 function groupReminders(reminders: CalendarReminder[]) {
   const map = new Map<string, CalendarReminder[]>();
   for (const reminder of reminders) {
+    if (!reminder.date) continue;
     const current = map.get(reminder.date) ?? [];
     current.push(reminder);
     map.set(reminder.date, current);
@@ -192,6 +194,7 @@ export function CalendarPage() {
       setNewReminder("");
       setNewReminderRecurrence("once");
       setLinkedNoteId("");
+      invalidateReminderQueries(queryClient);
       queryClient.invalidateQueries({ queryKey: ["calendar-reminders"] });
       queryClient.invalidateQueries({ queryKey: ["calendar-reminders-overdue"] });
     },
@@ -200,6 +203,7 @@ export function CalendarPage() {
   const updateReminderMutation = useMutation({
     mutationFn: ({ id, ...body }: { id: string } & CalendarReminderUpdate) => calendarRemindersApi.update(id, body),
     onSuccess: (_, variables) => {
+      invalidateReminderQueries(queryClient);
       if ("note_ids" in variables || "note_id" in variables) {
         setEditingReminderNoteId(null);
         setPendingLinkedNoteIds([]);
@@ -211,8 +215,9 @@ export function CalendarPage() {
   });
 
   const deleteReminderMutation = useMutation({
-    mutationFn: (id: string) => calendarRemindersApi.delete(id),
+    mutationFn: (reminder: CalendarReminder) => calendarRemindersApi.delete(reminder.id, reminder.project_revision ?? undefined),
     onSuccess: () => {
+      invalidateReminderQueries(queryClient);
       queryClient.invalidateQueries({ queryKey: ["calendar-reminders"] });
       queryClient.invalidateQueries({ queryKey: ["calendar-reminders-overdue"] });
     },
@@ -275,6 +280,7 @@ export function CalendarPage() {
                       type="button"
                       className="rounded-full border border-amber-500/30 bg-background/70 px-3 py-1 text-xs text-amber-800 hover:bg-background"
                       onClick={() => {
+                        if (!reminder.date) return;
                         setSelectedKey(reminder.date);
                         setVisibleMonth(startOfMonth(new Date(`${reminder.date}T00:00:00`)));
                       }}
@@ -453,6 +459,7 @@ export function CalendarPage() {
                     </Button>
                   </div>
                 </form>
+                {(createReminderMutation.isError || updateReminderMutation.isError || deleteReminderMutation.isError) && <div role="alert" className="mt-3 space-y-2 text-sm text-destructive"><p>Todo change was not confirmed. Your input is retained.</p><p>{(createReminderMutation.error ?? updateReminderMutation.error ?? deleteReminderMutation.error)?.message}</p><Button variant="outline" onClick={() => { invalidateReminderQueries(queryClient); createReminderMutation.reset(); updateReminderMutation.reset(); deleteReminderMutation.reset(); }}>Refresh Todos (keep input)</Button></div>}
                 <div className="mt-3 space-y-2">
                   {selectedReminders.length === 0 ? (
                     <p className="rounded-xl border border-dashed p-3 text-sm text-muted-foreground">No todos for this day.</p>
@@ -462,7 +469,7 @@ export function CalendarPage() {
                         <button
                           type="button"
                           className={cn("mt-0.5 rounded-full", reminder.is_done ? "text-emerald-600" : "text-muted-foreground hover:text-emerald-600")}
-                          onClick={() => updateReminderMutation.mutate({ id: reminder.id, is_done: !reminder.is_done, occurrence_date: reminder.date })}
+                          onClick={() => updateReminderMutation.mutate({ id: reminder.id, is_done: !reminder.is_done, occurrence_date: reminder.date ?? undefined })}
                           title={reminder.is_done ? "Mark as open" : "Mark as done"}
                         >
                           <CheckCircle2 className="h-4 w-4" />
@@ -470,6 +477,7 @@ export function CalendarPage() {
                         <div className="min-w-0 flex-1">
                           <p className={cn("text-sm", reminder.is_done && "line-through")}>{reminder.text}</p>
                           <p className="mt-1 text-xs text-muted-foreground">{reminder.date} · {recurrenceLabel(reminder.recurrence)}</p>
+                          {reminder.project_id && <Link className="mt-1 inline-block text-xs text-primary" to={`/projects/${encodeURIComponent(reminder.project_id)}?tab=tasks`}>Open project</Link>}
                           {linkedNotesForReminder(reminder).length ? (
                             <div className="mt-2 flex flex-wrap gap-1.5">
                               {linkedNotesForReminder(reminder).map((note) => (
@@ -531,7 +539,7 @@ export function CalendarPage() {
                                 <Button
                                   size="sm"
                                   type="button"
-                                  onClick={() => updateReminderMutation.mutate({ id: reminder.id, note_ids: pendingLinkedNoteIds })}
+                                  onClick={() => updateReminderMutation.mutate({ id: reminder.id, note_ids: pendingLinkedNoteIds, base_revision: reminder.project_revision ?? undefined })}
                                   disabled={updateReminderMutation.isPending}
                                 >
                                   Save Notes
@@ -566,7 +574,7 @@ export function CalendarPage() {
                         <button
                           type="button"
                           className="rounded-md p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                          onClick={() => deleteReminderMutation.mutate(reminder.id)}
+                          onClick={() => deleteReminderMutation.mutate(reminder)}
                           title="Delete todo"
                         >
                           <Trash2 className="h-4 w-4" />

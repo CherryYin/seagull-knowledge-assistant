@@ -1,5 +1,6 @@
 import { Link, useLocation, useParams, useNavigate } from "react-router-dom";
 import { ProjectAssociations } from "@/components/projects/ProjectAssociations";
+import { invalidateReminderQueries } from "@/lib/reminderQueries";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, useMemo, useRef, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { ArrowLeft, CalendarDays, Download, Pencil, Plus, Save, X, Trash2, List, FileText, FileDown, Bot, RefreshCw, LinkIcon, BookOpen, Bold, Italic, Heading1, Heading2, Heading3, ListChecks, ListOrdered, Quote, Code, SquareCode, Table, Check, Loader2, Sparkles, Wand2, PanelRight, Square, Cpu, Pin, History, ImagePlus } from "lucide-react";
@@ -196,7 +197,7 @@ export function NoteDetailPage() {
 
   const { data: linkedTodos } = useQuery({
     queryKey: ["calendar-reminders", "note", id],
-    queryFn: () => calendarRemindersApi.list({ note_id: id!, include_done: false }),
+    queryFn: () => calendarRemindersApi.list({ note_id: id!, include_done: false, include_unscheduled: true }),
     enabled: !!id,
   });
 
@@ -600,13 +601,14 @@ export function NoteDetailPage() {
 
   const createTodoMutation = useMutation({
     mutationFn: () => calendarRemindersApi.create({
-      date: todoDate,
+      date: todoDate || null,
       text: todoText.trim(),
       note_ids: [id!],
       recurrence: "once",
     }),
     onSuccess: () => {
       setTodoText("");
+      invalidateReminderQueries(queryClient);
       queryClient.invalidateQueries({ queryKey: ["calendar-reminders", "note", id] });
       queryClient.invalidateQueries({ queryKey: ["calendar-reminders"] });
       queryClient.invalidateQueries({ queryKey: ["calendar-reminders-overdue"] });
@@ -974,17 +976,17 @@ export function NoteDetailPage() {
                       <CalendarDays className="h-4 w-4" /> Linked Todos
                     </h2>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      Create a Todo from this Note or reopen its scheduled day in Calendar.
+                      Create a Todo from this Note; leave its date empty to keep it unscheduled.
                     </p>
                     <div className="mt-3 space-y-2">
                       {(linkedTodos?.items ?? []).length ? (linkedTodos?.items ?? []).map((todo) => (
                         <Link
                           key={`${todo.id}:${todo.date}`}
-                          to={`/calendar?date=${encodeURIComponent(todo.date)}`}
+                          to={todo.date ? `/calendar?date=${encodeURIComponent(todo.date)}` : todo.project_id ? `/projects/${encodeURIComponent(todo.project_id)}?tab=tasks` : "/"}
                           className="flex items-start justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm hover:border-primary/40 hover:bg-muted/40"
                         >
                           <span className="min-w-0 truncate">{todo.text}</span>
-                          <span className="shrink-0 text-xs text-muted-foreground">{todo.date}</span>
+                          <span className="shrink-0 text-xs text-muted-foreground">{todo.date ?? "Not scheduled"}</span>
                         </Link>
                       )) : (
                         <p className="text-xs text-muted-foreground">No open Todos are linked to this Note.</p>

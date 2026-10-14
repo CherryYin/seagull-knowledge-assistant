@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { UnscheduledTodos } from "@/components/projects/UnscheduledTodos";
 import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -293,6 +294,7 @@ export function HomePage() {
           </CardContent>
         </Card>
       </div>
+      <UnscheduledTodos />
     </div>
   );
 }

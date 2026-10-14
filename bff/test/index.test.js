@@ -987,6 +987,18 @@ test("login cookie authenticates direct API requests and preserves query params"
   });
   assert.equal(projectConflict.status, 409);
   assert.deepEqual((await projectConflict.json()).received, { base_revision: 1, title: "New title" });
+  const taskList = await fetch(`${base}/api/projects/project-one/tasks?kind=recurring&start=2026-10-13&end=2026-10-27&offset=20`, {
+    headers: { Cookie: cookie },
+  });
+  assert.equal(taskList.status, 200);
+  assert.equal(pkgReceived.at(-1).url, "/projects/project-one/tasks?kind=recurring&start=2026-10-13&end=2026-10-27&offset=20");
+  assert.match(pkgReceived.at(-1).authorization, /^Bearer /);
+  const nextTaskConflict = await fetch(`${base}/api/projects/project-one/next-task`, {
+    method: "PATCH", headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ base_revision: 1, reminder_id: "task-one" }),
+  });
+  assert.equal(nextTaskConflict.status, 409);
+  assert.deepEqual((await nextTaskConflict.json()).received, { base_revision: 1, reminder_id: "task-one" });
   const unauthenticatedProject = await fetch(`${base}/api/projects`);
   assert.equal(unauthenticatedProject.status, 401);
 

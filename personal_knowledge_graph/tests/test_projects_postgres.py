@@ -27,7 +27,7 @@ async def test_postgres_concurrent_edits_and_additions_serialize_without_lost_up
             await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
             created_schema = True
         async with engine.begin() as connection:
-            for table in [User.__tablename__, "sources", "notes", "wiki_pages", "assets", "chat_sessions"]:
+            for table in [User.__tablename__, "sources", "notes", "wiki_pages", "assets", "chat_sessions", "calendar_reminders"]:
                 await connection.execute(text(f'CREATE TABLE "{table}" (id VARCHAR PRIMARY KEY)'))
             await connection.execute(text("INSERT INTO users (id) VALUES ('owner')"))
             await connection.run_sync(Project.__table__.create)

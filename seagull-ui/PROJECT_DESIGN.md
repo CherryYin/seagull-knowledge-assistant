@@ -252,9 +252,12 @@ P1 已实现；服务测试覆盖所有权、条件更新、关联原子性、�
 
 ### P2：复用 Todo，把“下一步”接起来
 
-- [ ] 提取共享 Reminder 服务，增加可空日期、project_id 与真实 completed_at。
-- [ ] 项目行动、重复提醒独立视图、下一步指针、context/result 关联。
-- [ ] Calendar / Home / Completed 与项目页面同步；无日期任务可完成、可安排日期。
+- [x] 提取共享 Reminder 服务，增加可空日期、project_id 与真实 completed_at。
+- [x] 项目行动、重复提醒独立视图、下一步指针；已有 Todo 可加入项目，移出项目保留任务与笔记。
+- [x] Calendar / Home / Completed 与项目页面同步；无日期任务可完成、可安排日期。
+- [ ] TodoResource 的显式 context/result 关联与跨项目移动确认 UI（下一阶段）。
+
+P2a 行动闭环已实现：Tasks 分页与全量一次性行动计数，Overview 的用户指定下一步，独立的重复 occurrence 列表；全局 Todo 完成会同步并清理下一步，不自动完成 Project。任务笔记仍复用 CalendarReminderNote，加入项目时在同一事务内补充 Note 项目引用；移出项目不删除笔记或原有任务引用。已有已完成记录不回填完成时间。项目归属变更校验 revision，归档项目的 Tasks 只读，但 Calendar／Home 的原任务仍可完成。部署前应用 `a7b8c9d0e3f4` 迁移并重启 PKG；降级前必须安排所有无日期任务，迁移不会伪造日期或丢弃任务。
 
 退出标准：从项目完成一个有日期的 Todo，日历立即同步；无日期行动不伪装为今天；重复提醒只完成指定 occurrence；移出项目不丢失 Todo 与笔记；旧提醒回归通过。
 

@@ -1,4 +1,5 @@
 import { request } from "./client";
+import type { CalendarReminder, CalendarReminderCreate, CalendarReminderUpdate } from "./calendar-reminders";
 
 export type ProjectStatus = "active" | "completed";
 export type ProjectResourceType = "source" | "note" | "wiki" | "asset" | "chat_session";
@@ -10,6 +11,7 @@ export interface Project {
   completion_criteria: string;
   status: ProjectStatus;
   revision: number;
+  next_reminder_id?: string | null;
   archived_at: string | null;
   completed_at: string | null;
   created_at: string;
@@ -18,6 +20,10 @@ export interface Project {
 }
 
 export interface ProjectList { items: Project[]; total: number }
+export interface ProjectTaskList {
+  items: CalendarReminder[]; total: number; pending_count: number; completed_count: number;
+  next_task: CalendarReminder | null;
+}
 export interface ProjectInput { title: string; goal: string; completion_criteria: string }
 export interface ProjectResourceRef { resource_type: ProjectResourceType; resource_id: string; reason?: string }
 export interface ProjectResourceOption extends ProjectResourceRef {
@@ -36,6 +42,18 @@ function queryString(params: Record<string, string | number | boolean | undefine
 }
 
 export const projectsApi = {
+  tasks: (id: string, params: { kind?: "once" | "recurring"; start?: string; end?: string; include_done?: boolean; limit?: number; offset?: number } = {}) =>
+    request<ProjectTaskList>(`/projects/${encodeURIComponent(id)}/tasks?${queryString(params)}`),
+  createTask: (id: string, body: CalendarReminderCreate) =>
+    request<CalendarReminder>(`/projects/${encodeURIComponent(id)}/tasks`, { method: "POST", body: JSON.stringify(body) }),
+  updateTask: (id: string, taskId: string, body: CalendarReminderUpdate) =>
+    request<CalendarReminder>(`/projects/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskId)}`, { method: "PATCH", body: JSON.stringify(body) }),
+  attachTask: (id: string, taskId: string, base_revision: number) =>
+    request<CalendarReminder>(`/projects/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskId)}/attach`, { method: "POST", body: JSON.stringify({ base_revision }) }),
+  detachTask: (id: string, taskId: string, base_revision: number) =>
+    request<CalendarReminder>(`/projects/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskId)}?${queryString({ base_revision })}`, { method: "DELETE" }),
+  nextTask: (id: string, reminder_id: string | null, base_revision: number) =>
+    request<Project>(`/projects/${encodeURIComponent(id)}/next-task`, { method: "PATCH", body: JSON.stringify({ reminder_id, base_revision }) }),
   list: (params: { status?: ProjectStatus; archived?: boolean; query?: string; limit?: number; offset?: number } = {}) =>
     request<ProjectList>(`/projects?${queryString(params)}`),
   create: (body: ProjectInput) => request<Project>("/projects", { method: "POST", body: JSON.stringify(body) }),

@@ -835,6 +835,9 @@ async function installMockBff(page: Page, state: MockState) {
       const noteId = url.searchParams.get("note_id");
       const includeDone = url.searchParams.get("include_done") !== "false";
       const items = (state.calendarReminders ?? []).filter((item) => {
+        if (url.searchParams.get("unscheduled_only") === "true" && item.date != null) return false;
+        if (url.searchParams.get("completed_only") === "true" && !item.is_done) return false;
+        if (url.searchParams.get("unassigned_only") === "true" && item.project_id) return false;
         if (noteId && item.note_id !== noteId) return false;
         if (!includeDone && item.is_done) return false;
         return true;

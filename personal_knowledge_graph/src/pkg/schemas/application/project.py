@@ -52,6 +52,7 @@ class ProjectRead(BaseModel):
     completion_criteria: str
     status: ProjectStatus
     revision: int
+    next_reminder_id: str | None = None
     archived_at: datetime | None
     completed_at: datetime | None
     created_at: datetime
@@ -111,3 +112,7 @@ class ProjectResourceOptions(BaseModel):
 class ProjectResourcesResult(BaseModel):
     project: ProjectRead
     added: int
+
+
+class ProjectNextTask(ProjectRevisionRequest):
+    reminder_id: str | None = Field(default=None, min_length=1, max_length=200)

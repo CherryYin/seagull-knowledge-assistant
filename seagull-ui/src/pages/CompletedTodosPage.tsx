@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { UnscheduledTodos } from "@/components/projects/UnscheduledTodos";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
 import { CalendarCheck2, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, FileText } from "lucide-react";
@@ -59,6 +60,7 @@ function formatRange(start: Date, end: Date, period: Period) {
 function groupByDate(items: CalendarReminder[]) {
   const groups = new Map<string, CalendarReminder[]>();
   for (const item of items) {
+    if (!item.date) continue;
     const current = groups.get(item.date) ?? [];
     current.push(item);
     groups.set(item.date, current);
@@ -70,6 +72,7 @@ export function CompletedTodosPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const [period, setPeriod] = useState<Period>("week");
+  const [view, setView] = useState<"scheduled" | "unscheduled">("scheduled");
   const [anchor, setAnchor] = useState(() => new Date());
   const [selected, setSelected] = useState<CalendarReminder | null>(null);
   const range = useMemo(() => rangeFor(anchor, period), [anchor, period]);
@@ -127,11 +130,12 @@ export function CompletedTodosPage() {
             </div>
             <div className="rounded-2xl bg-white/10 px-4 py-3 text-right">
               <p className="text-xs uppercase tracking-wide text-emerald-100/80">Completed</p>
-              <p className="mt-1 text-3xl font-semibold">{completed.length}</p>
+              <p className="mt-1 text-3xl font-semibold">{view === "scheduled" ? completed.length : "Unscheduled"}</p>
             </div>
           </div>
         </div>
 
+        <div className="flex gap-2"><Button variant={view === "scheduled" ? "default" : "outline"} onClick={() => setView("scheduled")}>Scheduled Todos</Button><Button variant={view === "unscheduled" ? "default" : "outline"} onClick={() => setView("unscheduled")}>Unscheduled Todos</Button></div>
         <Card>
           <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
@@ -167,6 +171,7 @@ export function CompletedTodosPage() {
             </div>
           </CardHeader>
           <CardContent>
+            {view === "unscheduled" ? <UnscheduledTodos key={`${period}:${dateKey(range.start)}`} completed start={dateKey(range.start)} end={dateKey(range.end)} /> : <>
             {isLoading && <p className="text-sm text-muted-foreground">Loading completed todos...</p>}
             {error instanceof Error && <p className="text-sm text-destructive">Failed to load completed todos: {error.message}</p>}
             {!isLoading && !completed.length && (
@@ -192,7 +197,7 @@ export function CompletedTodosPage() {
                           <div className="min-w-0 flex-1">
                             <p className="text-sm font-medium">{item.text}</p>
                             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                              <span>Completed {new Date(item.updated_at).toLocaleString()}</span>
+                              <span>{item.completed_at ? `Completed ${new Date(item.completed_at).toLocaleString()}` : "Completion time unknown"}</span>
                               <span>·</span>
                               <span>{item.linked_notes.length || item.note_ids.length} linked note(s)</span>
                             </div>
@@ -205,6 +210,7 @@ export function CompletedTodosPage() {
                 ))}
               </div>
             )}
+            </>}
           </CardContent>
         </Card>
       </div>

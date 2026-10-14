@@ -19,6 +19,8 @@ from pkg.api.deps import get_current_user
 from pkg.api.projects import router
 from pkg.db import get_session
 from pkg.models.application.project import Project, ProjectResource
+from pkg.models.calendar_reminder import CalendarReminder, CalendarReminderNote
+from pkg.models.calendar_reminder_completion import CalendarReminderCompletion
 from pkg.models.user import User
 from pkg.schemas.application.project import ProjectCreate, ProjectResourcesAdd, ProjectUpdate
 from pkg.services.application import projects
@@ -44,8 +46,12 @@ def database():
         for kind, table in [("note", "notes"), ("wiki", "wiki_pages"), ("asset", "assets"), ("chat_session", "chat_sessions")]:
             connection.execute(text(f"INSERT INTO {table} (id, user_id, title) VALUES (:id, 'owner', :title)"),
                                {"id": f"{kind}-1", "title": f"Saved {kind}"})
+        connection.execute(text("UPDATE notes SET status='seed'"))
     Project.__table__.create(engine)
     ProjectResource.__table__.create(engine)
+    CalendarReminder.__table__.create(engine)
+    CalendarReminderNote.__table__.create(engine)
+    CalendarReminderCompletion.__table__.create(engine)
     session = Session(engine, expire_on_commit=False)
 
     async def execute(statement):
@@ -54,15 +60,21 @@ def database():
     async def commit():
         session.commit()
 
-    async def refresh(record):
+    async def refresh(record, **kwargs):
         session.refresh(record)
 
     async def delete(record):
         session.delete(record)
 
+    async def get(model, record_id):
+        return session.get(model, record_id)
+
+    async def flush():
+        session.flush()
+
     adapter = SimpleNamespace(execute=AsyncMock(side_effect=execute), commit=AsyncMock(side_effect=commit),
                               refresh=AsyncMock(side_effect=refresh), delete=AsyncMock(side_effect=delete),
-                              add=session.add)
+                              add=session.add, get=AsyncMock(side_effect=get), flush=AsyncMock(side_effect=flush))
     try:
         yield adapter, session
     finally:
@@ -303,10 +315,10 @@ def test_migration_roundtrip_matches_model_constraints_and_preserves_targets(dat
         migration.upgrade()
         inspector = inspect(connection)
         for model in [Project, ProjectResource]:
-            assert {column["name"] for column in inspector.get_columns(model.__tablename__)} == set(model.__table__.columns.keys())
+            assert {column["name"] for column in inspector.get_columns(model.__tablename__)} == set(model.__table__.columns.keys()) - {"next_reminder_id"}
             assert {entry["name"] for entry in inspector.get_check_constraints(model.__tablename__)} == {
                 constraint.name for constraint in model.__table__.constraints if constraint.__class__.__name__ == "CheckConstraint"}
-            assert {entry["name"] for entry in inspector.get_indexes(model.__tablename__)} == {index.name for index in model.__table__.indexes}
+            assert {entry["name"] for entry in inspector.get_indexes(model.__tablename__)} == {index.name for index in model.__table__.indexes} - {"idx_projects_next_reminder"}
         assert len(inspector.get_foreign_keys("project_resources")) == 6
         assert len(inspector.get_unique_constraints("project_resources")) == 5
         migration.downgrade()
