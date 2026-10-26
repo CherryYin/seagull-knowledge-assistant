@@ -17,6 +17,9 @@ test("provider filters keep chat models and reject incompatible modalities", () 
   assert.equal(isSupportedQwenModel("qwen2.5-7b-instruct"), false);
   assert.equal(isSupportedMiniMaxModel("MiniMax-M3"), true);
   assert.equal(isSupportedMiniMaxModel("MiniMax-M2.7-highspeed"), true);
+  assert.equal(isSupportedMiniMaxModel("MiniMax-M3.1-Flash"), true);
+  assert.equal(isSupportedMiniMaxModel(" minimax-m3.1-flash "), true);
+  assert.equal(isSupportedMiniMaxModel("MiniMax-M3.1-audio"), false);
   assert.equal(isSupportedMiniMaxModel("speech-02-hd"), false);
 });
 
@@ -60,7 +63,7 @@ test("sync appends discovered models through Harness settings mutate", async () 
     async json() {
       return url.includes("qwen")
         ? { data: [{ id: "qwen-plus" }, { id: "qwen3.8-max" }, { id: "qwen-image-3.0" }] }
-        : { data: [{ id: "MiniMax-M3" }, { id: "MiniMax-M2.7" }, { id: "speech-02-hd" }] };
+        : { data: [{ id: "MiniMax-M3" }, { id: "MiniMax-M2.7" }, { id: "MiniMax-M3.1-Flash" }, { id: "speech-02-hd" }] };
     },
   });
 
@@ -74,7 +77,7 @@ test("sync appends discovered models through Harness settings mutate", async () 
   });
 
   assert.equal(result.updated, true);
-  assert.deepEqual(result.providers.map((item) => [item.provider, item.added]), [["qwen", 1], ["minimax", 1]]);
+  assert.deepEqual(result.providers.map((item) => [item.provider, item.added]), [["qwen", 1], ["minimax", 2]]);
   assert.deepEqual(calls.at(-1), {
     method: "settings.mutate",
     payload: {
@@ -95,6 +98,7 @@ test("sync appends discovered models through Harness settings mutate", async () 
           value: [
             { id: "MiniMax-M2.7", name: "MiniMax-M2.7" },
             { id: "MiniMax-M3", name: "MiniMax M3" },
+            { id: "MiniMax-M3.1-Flash", name: "MiniMax-M3.1-Flash" },
           ],
         },
       ],

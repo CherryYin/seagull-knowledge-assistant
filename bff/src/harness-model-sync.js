@@ -17,7 +17,7 @@ export function isSupportedQwenModel(modelId) {
 }
 
 export function isSupportedMiniMaxModel(modelId) {
-  return /^MiniMax-M\d+(?:\.\d+)?(?:-highspeed)?$/i.test(normalizedModelId(modelId));
+  return /^MiniMax-M\d+(?:\.\d+)?(?:-(?:highspeed|flash))?$/i.test(normalizedModelId(modelId));
 }
 
 export function mergeDiscoveredModels(currentModels, discoveredIds) {

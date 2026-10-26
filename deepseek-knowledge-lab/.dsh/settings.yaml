@@ -1,8 +1,8 @@
 ui-onboarding:
   welcomeNoticeVersion: 2026-08-13.1
 agent-default-model:
-  provider: minimax
-  model: MiniMax-M3
+  provider: qwen
+  model: qwen3.8-max
 agent-presets:
   default: code
 llm-pi-ai:
@@ -121,19 +121,35 @@ llm-pi-ai:
       models:
         - id: MiniMax-M2
           name: MiniMax-M2
+          input: []
+          compat: {}
         - id: MiniMax-M2.1
           name: MiniMax-M2.1
+          input: []
+          compat: {}
         - id: MiniMax-M2.1-highspeed
           name: MiniMax-M2.1-highspeed
+          input: []
+          compat: {}
         - id: MiniMax-M2.5
           name: MiniMax-M2.5
+          input: []
+          compat: {}
         - id: MiniMax-M2.5-highspeed
           name: MiniMax-M2.5-highspeed
+          input: []
+          compat: {}
         - id: MiniMax-M2.7
           name: MiniMax-M2.7
+          input: []
+          compat: {}
         - id: MiniMax-M2.7-highspeed
           name: MiniMax-M2.7-highspeed
+          input: []
+          compat: {}
         - id: MiniMax-M3
           name: MiniMax M3
           input: []
           compat: {}
+        - id: MiniMax-M3.1-Flash
+          name: MiniMax-M3.1-Flash
