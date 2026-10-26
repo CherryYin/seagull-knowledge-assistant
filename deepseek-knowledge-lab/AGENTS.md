@@ -25,6 +25,8 @@ deepseek-knowledge-lab/
 
 ## 核心工作流
 
+- Experiment Lab `/lab` 的「隔离对比实验」通过认证 Gateway `/api/lab/harness2` 接入 `experiments/harness2-newsletter/lab_gateway.js` 和标准库 Python `lab_bridge.py`。Lab 私有 SQLite 与实验目录保存在 `.dsh/run/harness2`（或显式私有持久路径），不修改 PKG 数据库或上游子模块。当前仅支持内置虚构 newsletter 素材、人工候选提示词 A/B，不是完整官方 Harness² 自动优化。默认禁用执行；专用凭据、有效价格、≤2 元总预算、一次性预检确认及管理员身份均通过后才启动独立进程。三组训练人工评审后单独确认留出复验；失败/中断/未知不自动重试或提升生产。报告仅在用户显式保存时通过正常 PKG Notes API 写入，旧 Skill / Workflow 标签页保留。不在页面、Note、日志或命令参数接收明文 Key。
+
 1. **知识获取**：agent 通过 pkg-client 插件调用 PKG 的 `/api/search`、`/api/notes`、`/api/sources` 等接口检索知识。
 2. **知识消费**：agent 阅读、分析、关联检索到的知识片段。
 3. **知识产出**：agent 结果保留在 Harness Session/Workflow；用户在 Seagull UI 明确 Keep/Save/Publish 后才写回 PKG。
@@ -60,7 +62,11 @@ deepseek-knowledge-lab/
 
 ## 开发约定
 
+- Newsletter 隔离实验的新基线与人工候选统一要求中文 `title`、`summary`、`detail` JSON，与生产单条生成合同一致。只读提取不改变既有实验的冻结输入，不自动重跑、计费或提升候选。
+
 - 整篇 Asset 优化不再使用固定五分钟总时限：UI 按输入体量给予 10–20 分钟有上限的活动时间，五分钟没有真实模型进度才请求取消；等待用户澄清不消耗活动时间。Gateway 仅向 `revise-asset-document` 发送节流的 `progress` 事件，标记 reasoning/tool_arguments 阶段与工具参数累计字符数，不传思考正文或半成品参数。完整工具结果通过合同校验且收到 turn 完成事件后才展示候选；断线、超时、取消及过期 run 不可应用或覆盖编辑器，不自动重试。取消仅为尽力请求，不能据此推断服务商计费已终止。
+
+- `experiments/harness2-newsletter/` 是独立的 Harness² P0 试验，不是生产插件。官方 Demo 固定上游 commit、精简子进程环境并只写临时目录；`trial.py` 通过 AST 只读提取提示词并准备虚构训练／留出输入，不 import PKG、不加载 `.env`、不联网。独立的 `paid_trial.py` 需显式文本发送授权、专用环境变量或私人临时 Key 文件及有效价格策略，只调用固定 DeepSeek 纯文本端点、不携带工具、不跟随重定向、不读取生产凭据。此次总预算最多 2 元，只覆盖一个 run；先持久化预留，任何未知结果停止且禁止自动重试，训练人工复核后才允许单独启动留出阶段。不修改 `.dsh`、上游子模块、服务配置、认证边界或自动发布／提升候选。候选为人工编写，未接入官方自优化循环或完整 Harness 执行器，不得把确定性 Demo、模拟用量或虚构样例当成真实效果提升。
 
 - 插件使用 TypeScript，遵循 Cordis 插件规范
 - 实验模板用 Markdown，包含任务描述、预期输入输出、评估标准

@@ -11,6 +11,7 @@
 - **知识产出**：Agent 结果默认留在 Harness Session；用户在 Seagull 明确点击保存后才写回 PKG
 - **实验对比**：同一任务用不同 prompt/策略/模型跑，Harness 的 Trajectory View 完整记录每一步
 - **回放复现**：支持 fork/replay，从同一分叉点尝试不同策略
+- **隔离的 Harness² 试验**：Seagull Experiment Lab 支持 newsletter 提示词 A/B 的方案、预算预检、按需独立执行、并排对比、人工评审及报告保存为 Note；默认禁用计费执行，使用专用凭据，不自动应用改动。当前不是完整 Harness² 自动优化；固定版本官方零 API Demo 与离线工具仍可单独使用。见 [试验说明](experiments/harness2-newsletter/README.md)。
 
 ## 快速开始
 

@@ -19,6 +19,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardHeader, CardContent, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Harness2ExperimentLab } from "@/components/Harness2ExperimentLab";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface LabExperiment {
   id: string;
@@ -167,13 +169,13 @@ export function LabPage() {
             Design agent experiments, validate improvements, and produce both Skill and Workflow outputs.
           </p>
         </div>
-        {!showForm && (
-          <Button onClick={() => setShowForm(true)}>
-            <Plus className="mr-1 h-4 w-4" />
-            New Experiment
-          </Button>
-        )}
       </div>
+
+      <Tabs defaultValue="harness2">
+        <TabsList><TabsTrigger value="harness2">隔离对比实验</TabsTrigger><TabsTrigger value="skills">Skill / Workflow</TabsTrigger></TabsList>
+        <TabsContent value="harness2"><Harness2ExperimentLab /></TabsContent>
+        <TabsContent value="skills" className="space-y-6">
+        {!showForm && <Button onClick={() => setShowForm(true)}><Plus className="mr-1 h-4 w-4" />New Experiment</Button>}
 
       {/* ── New Experiment Form ── */}
       {showForm && (
@@ -430,6 +432,8 @@ export function LabPage() {
           </div>
         </CardContent>
       </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

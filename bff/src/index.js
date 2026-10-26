@@ -4,6 +4,7 @@
 import http from "node:http";
 import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
+import { Harness2Lab } from "../../deepseek-knowledge-lab/experiments/harness2-newsletter/lab_gateway.js";
 import {
   AgentMemoryStore,
   PostgresAgentMemoryBackend,
@@ -1163,11 +1164,76 @@ function isHarnessRoute(path) {
   return HARNESS_ROUTES.some((route) => path === route || path.startsWith(`${route}/`));
 }
 
+async function harness2Experiments(req, res, path, requestId, lab) {
+  const authorization = authHeader(req);
+  if (!authorization) return json(req, res, 401, { error: "PKG login required" });
+  try {
+    const user = await currentPkgUser(authorization, requestId);
+    if (req.method === "POST" && ((req.headers.origin && !UI_ORIGINS.has(req.headers.origin))
+      || !req.headers["content-type"]?.startsWith("application/json"))) {
+      return json(req, res, 403, { error: "实验写操作仅接受可信来源的 JSON 请求" });
+    }
+    const suffix = path.slice("/api/lab/harness2".length);
+    if (!suffix || suffix === "/") {
+      if (req.method === "GET") return json(req, res, 200, await lab.call("list", user.id));
+      if (req.method === "POST") {
+        await readLabBody(req);
+        return json(req, res, 201, await lab.call("create", user.id));
+      }
+      return json(req, res, 405, { error: "Method not allowed" });
+    }
+    const match = suffix.match(/^\/([a-f0-9]{32})(?:\/(preflight|start|review|note))?$/);
+    if (!match) return json(req, res, 404, { error: "Not found" });
+    const [, experimentId, action] = match;
+    if (!action && req.method === "GET") return json(req, res, 200, await lab.call("get", user.id, { id: experimentId }));
+    if (!action || req.method !== "POST") return json(req, res, 405, { error: "Method not allowed" });
+    if (action === "start" && user.role !== "admin") return json(req, res, 403, { error: "仅管理员可启动使用服务端试验凭据的计费任务" });
+    if (action === "note") {
+      const report = await lab.call("report", user.id, { id: experimentId });
+      const existing = await pkgUserRequest(`/notes/${encodeURIComponent(report.id)}`, authorization, { requestId });
+      if (existing.ok) {
+        const note = await existing.json();
+        if (note.content !== report.content || note.title !== report.title) throw statusError(409, "同名实验笔记已被修改，未覆盖；请在 Notes 核查");
+        return json(req, res, 200, { note_id: report.id });
+      }
+      if (existing.status !== 404) throw statusError(502, "无法确认已有实验笔记，未创建新笔记");
+      const saved = await pkgUserRequest("/notes", authorization, { method: "POST", requestId, body: {
+        ...report, note_type: "architecture", status: "seed", confidence: "medium",
+        tags: ["seagull", "harness2", "experiment", "from-agent"], domains: ["software-engineering"],
+      } });
+      if (!saved.ok) throw statusError(502, "保存实验笔记未得到成功确认，请在 Notes 核查；未自动重试");
+      const note = await saved.json();
+      if (note.id !== report.id) throw statusError(502, "实验笔记 ID 未获确认，请在 Notes 核查；未自动重试");
+      return json(req, res, 201, { note_id: note.id });
+    }
+    const body = await readLabBody(req);
+    if (action === "start") return json(req, res, 202, await lab.start(user.id, { ...body, id: experimentId }));
+    return json(req, res, 200, await lab.call(action, user.id, { ...body, id: experimentId }));
+  } catch (error) {
+    if (error.status === 401) return respondAuthExpired(req, res, authorization);
+    return json(req, res, error.status || 503, { error: error.status ? error.message : "实验操作未获确认；请刷新核查，未自动重试。" });
+  }
+}
+
+async function readLabBody(req) {
+  let body = "";
+  for await (const chunk of req) {
+    body += chunk;
+    if (Buffer.byteLength(body) > 16384) throw statusError(413, "实验请求过大");
+  }
+  try {
+    const value = JSON.parse(body || "{}");
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error();
+    return value;
+  } catch { throw statusError(400, "实验请求必须是 JSON 对象"); }
+}
+
 // ── Server ──────────────────────────────────────
 
 export function createBffServer({
   agentMemoryStore = defaultAgentMemoryStore,
   sessionContextStore = defaultSessionContextStore,
+  harness2Lab = new Harness2Lab(),
 } = {}) {
   return http.createServer(async (req, res) => {
   const id = req.headers["x-request-id"] || rid();
@@ -1208,6 +1274,10 @@ export function createBffServer({
     return res.end();
   }
   if (path === "/api/auth/me") return pkgForward(req, res, `/auth/me${url.search}`, { requestId: id });
+
+  if (path === "/api/lab/harness2" || path.startsWith("/api/lab/harness2/")) {
+    return harness2Experiments(req, res, path, id, harness2Lab);
+  }
 
   // ── Harness REST adapter ──
   if (path === "/api/chat") return harnessChat(req, res, id, agentMemoryStore);
