@@ -161,7 +161,16 @@ export interface AssetDraftQualityAssessment {
 }
 
 function normalizedHeading(value: string) {
-  return value.trim().toLocaleLowerCase().replace(/[’']/g, "'").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  const normalized = value.trim().toLocaleLowerCase().replace(/[’']/g, "'").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  const newsletterHeadings: Record<string, string> = {
+    "编者按": "editor s note",
+    "本期精选": "featured items",
+    "为何值得关注": "why it matters",
+    "延伸阅读": "further reading",
+    "证据说明": "evidence notes",
+    "审阅说明": "review notes",
+  };
+  return newsletterHeadings[normalized] ?? normalized;
 }
 
 function markdownH2Sections(content: string) {
@@ -303,6 +312,10 @@ export function renderAssetGenerationContract(request: AssetGenerationRequest) {
       : "Start with exactly one H1 using a concise title inferred from the confirmed brief.",
     "Use these required H2 sections in this order:",
     ...requiredSections.map((section) => `- ## ${section}`),
+    ...(request.assetType === "newsletter_issue" ? [
+      "Newsletter language: write the issue title, every item title, summaries and body in Simplified Chinese, including English-language source material. Preserve original brand/model names, code identifiers, URLs and citation markers when necessary; do not copy English sentences as prose.",
+      "Use these Chinese H2 headings instead of their English equivalents: 编者按、本期精选、为何值得关注、延伸阅读、证据说明、审阅说明. Translate an English working title faithfully without adding claims.",
+    ] : []),
     "",
     "Evidence rules:",
     ...(draftBasis ? [

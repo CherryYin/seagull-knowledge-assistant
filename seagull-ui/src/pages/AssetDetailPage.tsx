@@ -2689,7 +2689,9 @@ export function AssetDetailPage() {
       setHtmlPreview(result.content);
       setHtmlCopied(false);
       setHtmlPreviewTitle("WeChat Draft Preview");
-      setHtmlPreviewDescription("WeChat-safe inline HTML with Mermaid diagrams rendered as article images.");
+      setHtmlPreviewDescription(asset?.asset_type === "newsletter_issue"
+        ? "微信发布预览：蓝青科技配色。目录仅作概览，原文网址在文末复制打开，不支持正文点击跳转。"
+        : "WeChat-safe inline HTML with Mermaid diagrams rendered as article images.");
       setHtmlPreviewOpen(true);
     },
   });

@@ -43,7 +43,8 @@ def _png_data_url() -> str:
 
 
 @pytest.mark.asyncio
-async def test_create_wechat_draft_requests_token_and_creates_draft():
+@pytest.mark.parametrize("asset_type", ["blog_post", "newsletter_issue"])
+async def test_create_wechat_draft_requests_token_and_creates_draft(asset_type):
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -54,9 +55,11 @@ async def test_create_wechat_draft_requests_token_and_creates_draft():
             return httpx.Response(200, json={"media_id": "draft-media-1"})
         return httpx.Response(404)
 
+    asset = _asset()
+    asset.asset_type = asset_type
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         receipt = await create_wechat_draft(
-            _asset(),
+            asset,
             app_secret="app-secret",
             config={"app_id": "wx-app", "default_thumb_media_id": "cover-media", "author": "Seagull"},
             client=client,
@@ -71,9 +74,18 @@ async def test_create_wechat_draft_requests_token_and_creates_draft():
     assert article["author"] == "Seagull"
     assert article["title"] == "A WeChat Draft"
     assert "Useful content" in article["content"]
-    assert 'href="https://example.com/read"' in article["content"]
+    if asset_type == "newsletter_issue":
+        assert "<a " not in article["content"]
+        assert "TECH BRIEF / 科技简报" in article["content"]
+        assert "background:#0b213a" in article["content"]
+        assert "原文网址（复制到浏览器打开）" in article["content"]
+        assert "source<sup> [1]</sup>" in article["content"]
+        assert article["content"].count("https://example.com/read") == 1
+        assert "请长按复制网址" in article["content"]
+    else:
+        assert 'href="https://example.com/read"' in article["content"]
     assert "\\1" not in article["content"]
-    assert "EDITORIAL STORY" in article["content"]
+    assert ("TECH BRIEF" if asset_type == "newsletter_issue" else "EDITORIAL STORY") in article["content"]
     assert "<script" not in article["content"]
 
 

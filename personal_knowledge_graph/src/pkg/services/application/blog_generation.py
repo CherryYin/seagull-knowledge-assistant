@@ -270,6 +270,17 @@ def _newsletter_issue_export_markdown(asset: Asset) -> str:
     draft = _strip_title_heading(asset.draft_content or "", asset.title)
     outline = _strip_title_heading(asset.outline or "", asset.title)
 
+    if _markdown_section(draft, "编者按") or _markdown_section(draft, "深度解读"):
+        parts = [f"# {asset.title}"]
+        if brief:
+            parts.extend(["", f"> {brief}"])
+        parts.extend(["", draft])
+        if outline:
+            parts.extend(["", "## 附录：写作提纲", "", outline])
+        if asset.reference_notes:
+            parts.extend(["", "## 附录：参考资料", "", asset.reference_notes.strip()])
+        return "\n".join(parts).strip()
+
     overview = _markdown_section(draft, "Issue Overview")
     editors_note = _markdown_section(draft, "Editor’s Note") or _markdown_section(draft, "Editor's Note")
     featured = _markdown_section(draft, "Featured Items")
@@ -439,11 +450,11 @@ def check_readiness(asset: Asset) -> tuple[bool, list[str], list[str], list[str]
         if not (asset.reference_notes or "").strip():
             blocking.append("Newsletter issue requires references before export")
         draft_text = (asset.draft_content or "").lower()
-        if "editor's note" not in draft_text and "editor’s note" not in draft_text:
+        if "editor's note" not in draft_text and "editor’s note" not in draft_text and "编者按" not in draft_text:
             blocking.append("Newsletter issue requires an 'editor’s note' section")
-        if "featured items" not in draft_text:
+        if "featured items" not in draft_text and "本期精选" not in draft_text:
             blocking.append("Newsletter issue requires a 'featured items' section")
-        if "recommended next reads" not in draft_text:
+        if not any(heading in draft_text for heading in ("recommended next reads", "further reading", "延伸阅读")):
             blocking.append("Newsletter issue requires a 'recommended next reads' section")
     if asset.asset_type == "topic_report":
         total_refs = len(asset.source_refs or []) + len(asset.note_refs or []) + len(asset.wiki_refs or [])
@@ -491,8 +502,8 @@ def check_readiness(asset: Asset) -> tuple[bool, list[str], list[str], list[str]
                 suggestions.append(f"Knowledge pack draft should include a '{heading}' section")
     if asset.asset_type == "newsletter_issue":
         draft_text = (asset.draft_content or "").lower()
-        for heading in ["issue overview", "why it matters"]:
-            if heading not in draft_text:
+        for heading, translated in [("issue overview", "本期概览"), ("why it matters", "为何值得关注")]:
+            if heading not in draft_text and translated not in draft_text:
                 suggestions.append(f"Newsletter issue draft should include a '{heading}' section")
     if asset.asset_type == "topic_report":
         draft_text = (asset.draft_content or "").lower()
@@ -741,6 +752,44 @@ def export_html(
 </html>"""
 
 
+def _wechat_newsletter_links(rendered: str) -> str:
+    references: dict[str, int] = {}
+    has_directory = bool(re.search(r'<a href="#', rendered))
+
+    def replace_link(match: re.Match[str]) -> str:
+        destination = unescape(match.group(1))
+        label = match.group(2)
+        if not re.match(r"https?://", destination, flags=re.IGNORECASE):
+            return "已保存素材（仅站内可访问）" if label in {"Open saved source ↗", "查看已保存素材 ↗"} else label
+        reference = references.setdefault(destination, len(references) + 1)
+        if label in {"Read the original ↗", "阅读原文 ↗"}:
+            label = "原文参考"
+        return f"{label}<sup> [{reference}]</sup>"
+
+    rendered = re.sub(
+        r'<a href="([^"]*)"[^>]*>(.*?)</a>',
+        replace_link,
+        rendered,
+        flags=re.DOTALL,
+    )
+    if references:
+        entries = "".join(
+            f'<p>[{reference}] <span style="overflow-wrap:anywhere;word-break:break-all;">{escape(destination)}</span></p>'
+            for destination, reference in references.items()
+        )
+        rendered += (
+            '<hr><h2>原文网址（复制到浏览器打开）</h2>'
+            '<p>正文编号对应以下网址。请长按复制网址，到浏览器打开；这些是网址文本，不是可点击的跳转按钮。</p>'
+            f"{entries}"
+        )
+    if has_directory or references:
+        notice = "目录仅作内容概览，不支持点击跳转。" if has_directory else ""
+        if references:
+            notice += "原文以编号标注，完整网址见文末，请复制到浏览器打开。"
+        rendered = f'<p>阅读提示：{notice}</p>{rendered}'
+    return rendered
+
+
 def export_wechat_html(
     asset: Asset,
     *,
@@ -787,6 +836,12 @@ def export_wechat_html(
             "quote": "border:1px solid #b8d8c5;border-left:5px solid #16a34a;background:#effaf2;border-radius:4px 16px 16px 4px;",
         },
     }.get(style_id, {})
+    if asset.asset_type == "newsletter_issue":
+        theme = {
+            "accent": "#0369a1", "ink": "#162b45", "muted": "#536b83", "soft": "#edf7fc",
+            "heading": "padding:10px 14px;border-left:3px solid #0891b2;background:#edf7fc;color:#075985;border-radius:0 8px 8px 0;",
+            "quote": "border:1px solid #c7e3f0;border-left:3px solid #0891b2;background:#f2f9fd;border-radius:0 10px 10px 0;",
+        }
     accent_candidate = str(theme.get("accent") or experience.get("presentation", {}).get("accent") or "#2563eb")
     accent = accent_candidate if re.fullmatch(r"#[0-9a-fA-F]{6}", accent_candidate) else "#2563eb"
     ink = str(theme.get("ink") or "#2f3437")
@@ -803,6 +858,8 @@ def export_wechat_html(
         rendered,
         flags=re.DOTALL,
     )
+    if asset.asset_type == "newsletter_issue":
+        rendered = _wechat_newsletter_links(rendered)
     replacements = {
         "<h1>": f'<h1 style="margin:28px 0 16px;font-size:26px;line-height:1.35;color:{accent};font-weight:700;">',
         "<h2>": f'<h2 style="margin:30px 0 15px;font-size:22px;line-height:1.4;font-weight:700;{theme.get("heading", "")}">',
@@ -828,9 +885,8 @@ def export_wechat_html(
             )
     for source, target in replacements.items():
         rendered = rendered.replace(source, target)
-    allowed_anchor = r"|#[\w-]+" if asset.asset_type == "newsletter_issue" else ""
     rendered = re.sub(
-        rf'href="(?!https?://{allowed_anchor})[^"]*"',
+        r'href="(?!https?://)[^"]*"',
         'href="#"',
         rendered,
         flags=re.IGNORECASE,
@@ -847,6 +903,13 @@ def export_wechat_html(
         f'<p style="margin:7px 0 0;color:{muted};font-size:14px;line-height:1.65;">由 Seagull Asset 工作流生成，可在公众号草稿箱继续调整。</p>'
         f'</section>'
     )
+    if asset.asset_type == "newsletter_issue":
+        signature = (
+            '<section style="margin:0 0 24px;padding:18px 20px;border-top:3px solid #22d3ee;border-radius:0 0 12px 12px;background:#0b213a;">'
+            '<p style="margin:0;color:#67e8f9;font-size:12px;font-weight:700;letter-spacing:.14em;">TECH BRIEF / 科技简报</p>'
+            '<p style="margin:8px 0 0;color:#c3d9e8;font-size:14px;line-height:1.65;">技术动态 · 研究进展 · 深度解读</p>'
+            '</section>'
+        )
     cover = ""
     if (cover_image_url or "").strip():
         cover = (
@@ -867,6 +930,8 @@ def _asset_reader_markdown(content: str | None) -> str:
         "evidence and confidence",
         "evidence index",
         "review notes",
+        "证据说明",
+        "审阅说明",
     }
     reader_lines: list[str] = []
     editorial_section = False

@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,6 +18,7 @@ from pkg.schemas.application.asset import (
 from pkg.schemas.connector import NewsArticle
 from pkg.services.application.blog_generation import export_html, export_markdown, export_wechat_html
 from pkg.services.application.newsletter_automation import (
+    NewsletterItemCopy,
     _rewrite_newsletter_details,
     _save_newsletter_config,
     _select_newsletter_title,
@@ -46,48 +48,61 @@ def test_newsletter_markdown_keeps_sources_and_discoveries_traceable():
     discovery = DiscoveryItem(id=7, user_id="user-1", provider="openalex", item_key="paper-7", title="New robotics research", url="https://example.com/paper", summary="A useful robotics result.", payload={"item_type": "paper"}, status="recommended")
 
     content = build_newsletter_markdown(
-        title="Tech Weekly · 2026-09-03",
+        title="科技周报 · 2026-09-03",
         config=NewsletterAutomationConfig(topics=["AI", "robotics"]),
         news_sources=[news],
         paper_sources=[paper],
         paper_discoveries=[discovery],
         generated_at=datetime(2026, 9, 3, 8, 0, tzinfo=timezone.utc),
+        detail_rewrites={
+            "source:news-1": NewsletterItemCopy("人工智能芯片发布", "新加速器发布。", "新加速器改善内存带宽与部署能效。"),
+            "source:paper-1": NewsletterItemCopy("智能体系统论文", "论文探讨可靠智能体。", "这篇论文研究可靠智能体的构建方法。"),
+            "discovery:7": NewsletterItemCopy("机器人研究新进展", "研究介绍机器人领域的进展。", "具体方法和结果仍需查阅论文核实。"),
+        },
     )
 
-    assert content.startswith("# Tech Weekly · 2026-09-03")
-    assert "## Featured Items" in content
-    assert "- [1. AI chip launch](#1-ai-chip-launch) — A new accelerator launched." in content
-    assert "## In Depth" in content
-    assert "### 1. [AI chip launch](https://example.com/news)" in content
-    assert "[Read the original ↗](https://example.com/news)" in content
-    assert "The article describes improved memory bandwidth" in content
-    assert "- [2. Agent systems paper](#2-agent-systems-paper)" in content
-    assert "### 3. [New robotics research](https://example.com/paper)" in content
+    assert content.startswith("# 科技周报 · 2026-09-03")
+    assert "## 本期精选" in content
+    assert "- [1. 人工智能芯片发布](#1-人工智能芯片发布) — 新加速器发布。" in content
+    assert "## 深度解读" in content
+    assert "### 1. [人工智能芯片发布](https://example.com/news)" in content
+    assert "[阅读原文 ↗](https://example.com/news)" in content
+    assert "改善内存带宽" in content
+    assert "- [2. 智能体系统论文](#2-智能体系统论文)" in content
+    assert "### 3. [机器人研究新进展](https://example.com/paper)" in content
     assert "[Source: news-1]" in content
     assert "[Source: paper-1]" in content
     assert "[Discovery: 7]" in content
-    assert "explicit user review" in content
+    assert "需由用户明确审阅" in content
+    assert "AI chip launch" not in content
+    assert "A useful robotics result." not in content
 
     asset = Asset(
         id="newsletter-1", user_id="user-1", asset_type="newsletter_issue", status="draft",
-        title="Tech Weekly · 2026-09-03", draft_content=content, source_refs=[news.id, paper.id],
+        title="科技周报 · 2026-09-03", draft_content=content, source_refs=[news.id, paper.id],
         note_refs=[], wiki_refs=[], metadata_={},
     )
     exported = export_markdown(asset)
-    assert exported.count("### 1. [AI chip launch]") == 1
+    assert exported.count("### 1. [人工智能芯片发布]") == 1
     html = markdown.markdown(exported, extensions=["extra", "sane_lists", "toc"])
-    assert 'href="#1-ai-chip-launch"' in html
-    assert 'id="1-ai-chip-launch"' in html
-    assert '<a href="https://example.com/news">AI chip launch</a>' in html
+    assert 'href="#1-人工智能芯片发布"' in html
+    assert '<a href="https://example.com/news">人工智能芯片发布</a>' in html
     exported_html = export_html(asset)
-    assert 'href="#1-ai-chip-launch"' in exported_html
-    assert 'id="1-ai-chip-launch"' in exported_html
-    assert '<a href="https://example.com/news">AI chip launch</a>' in exported_html
-    assert 'id="1-ai-chip-launch" class="newsletter-detail-title"' in exported_html
+    assert 'href="#1-人工智能芯片发布"' in exported_html
+    assert 'id="1-人工智能芯片发布"' in exported_html
+    assert '<a href="https://example.com/news">人工智能芯片发布</a>' in exported_html
+    assert 'id="1-人工智能芯片发布" class="newsletter-detail-title"' in exported_html
     assert '.asset-body h3.newsletter-detail-title' in exported_html
     wechat_html = export_wechat_html(asset)
-    assert 'href="#1-ai-chip-launch"' in wechat_html
-    assert 'id="1-ai-chip-launch"' in wechat_html
+    assert "<a " not in wechat_html
+    assert "原文网址（复制到浏览器打开）" in wechat_html
+    assert wechat_html.count("https://example.com/news") == 1
+    assert "人工智能芯片发布<sup> [1]</sup>" in wechat_html
+    assert 'id="1-人工智能芯片发布"' in wechat_html
+    assert "证据说明" not in wechat_html
+    assert "审阅说明" not in wechat_html
+    assert "阅读原文 ↗" not in wechat_html
+    assert "Issue Snapshot" not in exported
 
 
 def test_newsletter_items_with_duplicate_titles_link_to_distinct_details_and_keep_invalid_urls_local():
@@ -100,10 +115,10 @@ def test_newsletter_items_with_duplicate_titles_link_to_distinct_details_and_kee
         title="Weekly", config=NewsletterAutomationConfig(), news_sources=news,
         paper_sources=[], paper_discoveries=[], generated_at=datetime(2026, 9, 3, tzinfo=timezone.utc),
     )
-    assert "[1. Same headline](#1-same-headline)" in content
-    assert "[2. Same headline](#2-same-headline)" in content
-    assert "### 1. [Same headline](/sources/news-1)" in content
-    assert "[Open saved source ↗](/sources/news-1)" in content
+    assert "[1. 待整理素材](#1-待整理素材)" in content
+    assert "[2. 待整理素材](#2-待整理素材)" in content
+    assert "### 1. [待整理素材](/sources/news-1)" in content
+    assert "[查看已保存素材 ↗](/sources/news-1)" in content
     assert "javascript:" not in content
     assert "[3. 机器人系统更新](#3-机器人系统更新)" in content
     assert "### 3. [机器人系统更新](https://example.com/%28research%29)" in content
@@ -130,7 +145,7 @@ def test_newsletter_detail_uses_clean_summary_instead_of_rendering_source_markdo
             "Author: Reporter\n"
             "URL: https://example.com/structured\n\n"
             "## Summary\n"
-            "A **clean**, useful summary with [supporting context](https://example.com/context).\n\n"
+            "这是一段**清晰**的摘要，附有[支撑材料](https://example.com/context)。\n\n"
             "## Content\n"
             "# This heading must not leak into the newsletter detail.\n"
             "Long source body."
@@ -147,7 +162,7 @@ def test_newsletter_detail_uses_clean_summary_instead_of_rendering_source_markdo
         generated_at=datetime(2026, 9, 28, tzinfo=timezone.utc),
     )
 
-    assert "A clean, useful summary with supporting context." in content
+    assert "这是一段清晰的摘要，附有支撑材料。" in content
     assert "This heading must not leak" not in content
     html = markdown.markdown(content, extensions=["extra", "sane_lists", "toc"])
     assert html.count("<h1") == 1
@@ -176,7 +191,7 @@ def test_newsletter_converts_traditional_chinese_content_to_simplified_chinese()
 
     assert "# 技术周报" in content
     assert "AI写程序与软件网络" in content
-    assert "人工智能, 软件开发" in content
+    assert "人工智能、软件开发" in content
     assert "这是一则介绍人工智能应用与网络软件的繁体内容。" in content
     assert "技術" not in content
     assert "寫程式" not in content
@@ -251,7 +266,9 @@ async def test_newsletter_ai_rewrites_each_detail_from_its_own_source_content():
         "而是建立任务级预算、调用链观测和异常熔断机制。不过，现有材料没有提供完整样本规模，因此三十倍差异更适合作为风险信号，而不是所有场景的固定结论。"
     )
     response = MagicMock()
-    response.choices = [MagicMock(message=MagicMock(content=rewritten))]
+    response.choices = [MagicMock(message=MagicMock(content=json.dumps({
+        "title": "代理式 AI 成本变化", "summary": "不同策略的成本差异需要按任务核验。", "detail": rewritten,
+    }, ensure_ascii=False)))]
     client = MagicMock()
     client.chat.completions.create = AsyncMock(return_value=response)
 
@@ -269,8 +286,8 @@ async def test_newsletter_ai_rewrites_each_detail_from_its_own_source_content():
 
     assert model == "test-model"
     assert list(rewrites) == ["source:news-ai"]
-    assert "建立任务级预算" in rewrites["source:news-ai"]
-    assert "三十倍差异更适合作为风险信号" in rewrites["source:news-ai"]
+    assert "建立任务级预算" in rewrites["source:news-ai"].detail
+    assert "三十倍差异更适合作为风险信号" in rewrites["source:news-ai"].detail
     request = client.chat.completions.create.await_args.kwargs
     assert request["model"] == "test-model"
     assert "三十倍" in request["messages"][1]["content"]
@@ -285,7 +302,7 @@ async def test_newsletter_ai_rewrites_each_detail_from_its_own_source_content():
         generated_at=datetime(2026, 9, 29, tzinfo=timezone.utc),
         detail_rewrites=rewrites,
     )
-    assert rewrites["source:news-ai"] in content
+    assert rewrites["source:news-ai"].detail in content
 
 
 @pytest.mark.asyncio
@@ -320,15 +337,98 @@ async def test_newsletter_ai_selects_hottest_news_title_from_candidates():
         config=NewsletterAutomationConfig(audience="技术负责人", topics=["AI agent"]),
         generated_at=datetime(2026, 10, 1, tzinfo=timezone.utc),
         llm_runtime=(client, "test-model"),
+        detail_rewrites={"source:news-2": NewsletterItemCopy("重要智能体平台发布", "平台引入新的智能体运行时。", "材料描述了这次平台更新。")},
     )
 
-    assert title == "Major agent platform launch · 2026-10-01"
+    assert title == "重要智能体平台发布 · 2026-10-01"
     assert source_id == "news-2"
     assert model == "test-model"
     assert mode == "llm"
     request = client.chat.completions.create.await_args.kwargs
     assert "Routine SDK patch" in request["messages"][1]["content"]
     assert "Major agent platform launch" in request["messages"][1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_newsletter_translates_english_items_without_changing_sources_or_extra_calls():
+    source = Source(
+        id="english-news", user_id="user-1", category_id=1, title="OpenAI releases a new model",
+        source_type="article", url="https://example.com/original", raw_content="A model update with limited evaluation evidence.",
+        metadata_={"kind": "news"},
+    )
+    paper = DiscoveryItem(
+        id=77, user_id="user-1", provider="openalex", item_key="paper-77", title="Reliable agent evaluation",
+        url="https://example.com/paper", summary="A study of agent evaluation limitations.", payload={}, status="recommended",
+    )
+    localized = {"title": "OpenAI 发布新模型", "summary": "材料介绍模型更新，但评估证据仍然有限。", "detail": "材料介绍了新的模型更新，目前公开的评估证据有限，实际效果仍需进一步核验。" * 5}
+    response = MagicMock()
+    response.choices = [MagicMock(message=MagicMock(content="```json\n" + json.dumps(localized, ensure_ascii=False) + "\n```"))]
+    client = MagicMock()
+    client.chat.completions.create = AsyncMock(return_value=response)
+    rewrites, model = await _rewrite_newsletter_details([source, paper], config=NewsletterAutomationConfig(), llm_runtime=(client, "test-model"))
+
+    assert len(rewrites) == 2
+    assert model == "test-model"
+    assert client.chat.completions.create.await_count == 2
+    assert rewrites["source:english-news"].title == localized["title"]
+    assert rewrites["discovery:77"].summary == localized["summary"]
+    assert source.title == "OpenAI releases a new model"
+    assert paper.summary == "A study of agent evaluation limitations."
+    request = client.chat.completions.create.await_args.kwargs
+    assert "title、summary、detail 都必须使用简体中文" in request["messages"][0]["content"]
+    assert paper.summary in request["messages"][1]["content"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("response_content", [
+    "This is an English analysis. " * 12,
+    json.dumps({"title": "English headline", "summary": "English summary", "detail": "English detail. " * 15}),
+    json.dumps({"title": "中文标题", "summary": "English summary", "detail": "这是完整的中文解读内容。" * 15}, ensure_ascii=False),
+    json.dumps({"title": "中文标题", "summary": "中文摘要", "detail": "English analysis with details. " * 15}, ensure_ascii=False),
+    json.dumps({"title": "中文标题", "summary": "中文摘要", "detail": "太短。"}, ensure_ascii=False),
+    json.dumps({"title": ["中文标题"], "summary": "中文摘要", "detail": "这是中文正文。" * 30}, ensure_ascii=False),
+])
+async def test_newsletter_invalid_localization_does_not_leak_english_or_retry(response_content):
+    source = Source(id="untranslated", user_id="user-1", category_id=1, title="English headline", source_type="article", url="https://example.com/original", raw_content="English source text that must not leak into the Chinese newsletter.", metadata_={})
+    response = MagicMock()
+    response.choices = [MagicMock(message=MagicMock(content=response_content))]
+    client = MagicMock()
+    client.chat.completions.create = AsyncMock(return_value=response)
+    rewrites, _ = await _rewrite_newsletter_details([source], config=NewsletterAutomationConfig(), llm_runtime=(client, "test-model"))
+    assert rewrites == {}
+    client.chat.completions.create.assert_awaited_once()
+    with patch("pkg.services.application.newsletter_automation._newsletter_llm_runtime", return_value=None):
+        title, source_id, _, mode = await _select_newsletter_title([source], config=NewsletterAutomationConfig(), generated_at=datetime(2026, 10, 25, tzinfo=timezone.utc), detail_rewrites=rewrites)
+    content = build_newsletter_markdown(title=title, config=NewsletterAutomationConfig(), news_sources=[source], paper_sources=[], paper_discoveries=[], generated_at=datetime(2026, 10, 25, tzinfo=timezone.utc), detail_rewrites=rewrites)
+    assert title == "待整理素材 · 2026-10-25"
+    assert source_id == source.id
+    assert mode == "fallback"
+    assert "尚未完成中文整理" in content
+    assert "English" not in content
+    assert "https://example.com/original" in content
+    assert "[Source: untranslated]" in content
+
+
+@pytest.mark.asyncio
+async def test_newsletter_without_news_uses_chinese_issue_title():
+    title, source_id, model, mode = await _select_newsletter_title([], config=NewsletterAutomationConfig(name="Technology Newsletter"), generated_at=datetime(2026, 10, 25, tzinfo=timezone.utc))
+    assert title == "科技简报 · 2026-10-25"
+    assert (source_id, model, mode) == (None, None, "fallback")
+
+
+@pytest.mark.asyncio
+async def test_newsletter_disabled_rewriting_preserves_chinese_source_without_model_calls():
+    source = Source(id="chinese", user_id="user-1", category_id=1, title="中文原稿标题", source_type="article", raw_content="这是已经整理好的中文原稿，模型不可用时保留原有信息。", metadata_={})
+    client = MagicMock()
+    client.chat.completions.create = AsyncMock()
+    with patch("pkg.services.application.newsletter_automation.settings.NEWSLETTER_DETAIL_LLM_ENABLED", False):
+        rewrites, model = await _rewrite_newsletter_details([source], config=NewsletterAutomationConfig(), llm_runtime=(client, "test-model"))
+    assert (rewrites, model) == ({}, None)
+    client.chat.completions.create.assert_not_awaited()
+    content = build_newsletter_markdown(title="中文简报", config=NewsletterAutomationConfig(), news_sources=[source], paper_sources=[], paper_discoveries=[], generated_at=datetime(2026, 10, 25, tzinfo=timezone.utc), detail_rewrites=rewrites)
+    assert source.title in content
+    assert source.raw_content in content
+    assert "尚未完成中文整理" not in content
 
 
 @pytest.mark.asyncio
@@ -440,8 +540,8 @@ async def test_generate_newsletter_creates_draft_asset_from_recent_items(cover_f
     ), patch(
         "pkg.services.application.newsletter_automation._rewrite_newsletter_details",
         new=AsyncMock(return_value=({
-            "source:news-1": "这是根据新闻正文生成的详细解读，涵盖核心变化、关键机制、影响和信息边界。" * 4,
-            "discovery:9": "这是根据论文摘要生成的详细解读，说明研究方法、主要发现、应用价值和限制。" * 4,
+            "source:news-1": NewsletterItemCopy("智能体平台更新", "平台发布更新。", "这是根据新闻正文生成的详细解读，涵盖核心变化、关键机制、影响和信息边界。" * 4),
+            "discovery:9": NewsletterItemCopy("智能体评估论文", "论文研究评估方法。", "这是根据论文摘要生成的详细解读，说明研究方法、主要发现、应用价值和限制。" * 4),
         }, "test-model")),
     ):
         result = await generate_newsletter(session, user_id="user-1", now=now)

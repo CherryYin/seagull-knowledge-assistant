@@ -147,3 +147,95 @@ def test_export_wechat_html_matches_reader_body_without_outline_or_evidence():
     assert "Internal reference appendix" not in rendered
     assert "Digest belongs outside the article body" not in rendered
     assert "[Source: src-1]" not in rendered
+
+
+def test_wechat_newsletter_links_become_deduplicated_copyable_references():
+    content = (
+        "## 目录\n\n- [1. 新闻](#1-新闻)\n\n"
+        '### 1. [新闻](https://example.com/news?a=1&b=2 "原文")\n\n'
+        "[Read the original ↗](https://example.com/news?a=1&b=2)\n\n"
+        "[论文](https://example.com/paper)\n\n"
+        "[站内素材](/sources/private-source)\n\n"
+        "[无效地址](javascript:alert)\n\n"
+        "![配图](https://example.com/image.png)"
+    )
+    asset = Asset(
+        id="newsletter-links", user_id="user-1", asset_type="newsletter_issue",
+        title="Newsletter", draft_content=content, metadata_={},
+    )
+
+    rendered = export_wechat_html(asset)
+
+    assert "<a " not in rendered
+    assert "1. 新闻</li>" in rendered
+    assert "新闻<sup> [1]</sup>" in rendered
+    assert "原文参考<sup> [1]</sup>" in rendered
+    assert "Read the original ↗" not in rendered
+    assert "论文<sup> [2]</sup>" in rendered
+    assert rendered.count("https://example.com/news?a=1&amp;b=2") == 1
+    assert "[2] <span" in rendered
+    assert "请长按复制网址" in rendered
+    assert "原文网址（复制到浏览器打开）" in rendered
+    assert "阅读提示：目录仅作内容概览" in rendered
+    assert "不是可点击的跳转按钮" in rendered
+    assert "/sources/private-source" not in rendered
+    assert "javascript:" not in rendered
+    assert 'src="https://example.com/image.png"' in rendered
+    assert asset.draft_content == content
+
+
+def test_wechat_newsletter_without_external_links_has_no_empty_reference_section():
+    asset = Asset(
+        id="newsletter-no-links", user_id="user-1", asset_type="newsletter_issue",
+        title="Newsletter", draft_content="- [概览](#概览)\n\n## 概览\n\n正文", metadata_={},
+    )
+
+    rendered = export_wechat_html(asset)
+
+    assert "<a " not in rendered
+    assert "概览</li>" in rendered
+    assert "原文网址（复制到浏览器打开）" not in rendered
+    assert "目录仅作内容概览，不支持点击跳转" in rendered
+    assert "完整网址见文末" not in rendered
+
+
+def test_wechat_newsletter_uses_tech_colors_without_changing_other_exports():
+    from pkg.services.application.blog_generation import export_html, export_wechat_preview_html
+
+    asset = Asset(
+        id="newsletter-tech", user_id="user-1", asset_type="newsletter_issue", status="draft",
+        title="Tech newsletter", draft_content="# Tech newsletter\n\n## In Depth\n\n正文", metadata_={},
+    )
+
+    rendered = export_wechat_html(asset)
+    preview = export_wechat_preview_html(asset)
+
+    assert "TECH BRIEF / 科技简报" in rendered
+    assert "background:#0b213a" in rendered
+    assert "color:#67e8f9" in rendered
+    assert "color:#0369a1" in rendered
+    assert "background:#edf7fc" in rendered
+    assert "#a21caf" not in rendered
+    assert "#fae8ff" not in rendered
+    assert rendered in preview
+    ordinary_html = export_html(asset)
+    assert "--accent:#c026d3" in ordinary_html
+    assert "TECH BRIEF / 科技简报" not in ordinary_html
+    asset.asset_type = "blog_post"
+    blog_html = export_wechat_html(asset)
+    assert "#8b5e3c" in blog_html
+    assert "TECH BRIEF / 科技简报" not in blog_html
+
+
+def test_wechat_newsletter_source_button_does_not_imply_public_navigation():
+    asset = Asset(
+        id="newsletter-local", user_id="user-1", asset_type="newsletter_issue",
+        title="Local newsletter", draft_content="[Open saved source ↗](/sources/private-source)", metadata_={},
+    )
+
+    rendered = export_wechat_html(asset)
+
+    assert "已保存素材（仅站内可访问）" in rendered
+    assert "Open saved source ↗" not in rendered
+    assert "/sources/private-source" not in rendered
+    assert "原文网址（复制到浏览器打开）" not in rendered

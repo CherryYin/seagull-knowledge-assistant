@@ -3,6 +3,8 @@ const EDITORIAL_SECTION_HEADINGS = new Set([
   "evidence and confidence",
   "evidence index",
   "review notes",
+  "证据说明",
+  "审阅说明",
 ]);
 
 const KNOWLEDGE_MARKER_PATTERN = /\[(?:Source|Note|Wiki):\s*[^\]\s]+\]/g;
