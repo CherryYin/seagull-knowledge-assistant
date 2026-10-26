@@ -34,6 +34,7 @@ from pkg.models.application.mind_map import (  # noqa: F401
 )
 from pkg.models.application.asset import Asset, AssetVisual  # noqa: F401
 from pkg.models.application import podcast as podcast
+from pkg.models.application import wechat_statistics as wechat_statistics
 from pkg.models.application.project import Project, ProjectResource, TodoResource  # noqa: F401
 
 config = context.config

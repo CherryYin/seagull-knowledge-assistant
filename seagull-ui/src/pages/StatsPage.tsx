@@ -9,6 +9,7 @@ import { knowledgeApi, type KnowledgeStatsItem, type DashboardData } from "@/lib
 import { ModuleSectionNav } from "@/components/SectionNav";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AssetStatisticsPanel } from "@/pages/AssetJourneyStatsPage";
+import { WechatStatisticsPanel } from "@/components/WechatStatisticsPanel";
 import {
   BarChart,
   Bar,
@@ -44,7 +45,7 @@ const CHART_COLORS = {
 export function StatsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedTab = searchParams.get("tab");
-  const activeTab = requestedTab === "knowledge" || requestedTab === "assets" ? requestedTab : "overview";
+  const activeTab = requestedTab === "knowledge" || requestedTab === "assets" || requestedTab === "wechat" ? requestedTab : "overview";
 
   return (
     <div className="h-full overflow-y-auto">
@@ -64,10 +65,12 @@ export function StatsPage() {
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="knowledge">Knowledge Usage</TabsTrigger>
             <TabsTrigger value="assets">Asset Diagnostics</TabsTrigger>
+            <TabsTrigger value="wechat">公众号数据</TabsTrigger>
           </TabsList>
           <TabsContent value="overview" className="h-auto"><KnowledgeOverviewPanel /></TabsContent>
           <TabsContent value="knowledge" className="h-auto"><KnowledgeUsagePanel /></TabsContent>
           <TabsContent value="assets" className="h-auto"><AssetStatisticsPanel /></TabsContent>
+          <TabsContent value="wechat" className="h-auto"><WechatStatisticsPanel /></TabsContent>
         </Tabs>
       </div>
     </div>

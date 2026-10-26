@@ -34,6 +34,7 @@ from pkg.api.knowledge import router as knowledge_router
 from pkg.api.library import router as library_router
 from pkg.api.models import router as models_router
 from pkg.api.dashboard import router as dashboard_router
+from pkg.api.wechat_statistics import router as wechat_statistics_router
 from pkg.api.categories import router as categories_router
 from pkg.api.auth import router as auth_router
 from pkg.api.assets import router as assets_router
@@ -141,6 +142,7 @@ app.include_router(chat_sessions_router, prefix="/chat-sessions", tags=["chat-se
 app.include_router(knowledge_router, prefix="/knowledge", tags=["knowledge"])
 app.include_router(models_router, prefix="/knowledge", tags=["models"])
 app.include_router(dashboard_router, prefix="/knowledge", tags=["dashboard"])
+app.include_router(wechat_statistics_router, prefix="/knowledge", tags=["wechat-statistics"])
 app.include_router(categories_router, prefix="/categories", tags=["categories"])
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(assets_router, prefix="/assets", tags=["assets"])

@@ -17,6 +17,7 @@ export * from "./api/system-jobs";
 export * from "./api/system";
 export * from "./api/assets";
 export * from "./api/podcasts";
+export * from "./api/wechat-statistics";
 export * from "./api/projects";
 export * from "./api/agent-memory";
 export * from "./api/session-contexts";
