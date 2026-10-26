@@ -60,6 +60,14 @@ export const discoveryApi = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  previewWeb: (body: { query: string; max_results?: number }) =>
+    request<DiscoveryWebResult[]>("/discovery/web-search/preview", {
+      method: "POST", body: JSON.stringify(body),
+    }),
+  saveWebMaterials: (body: { query: string; items: DiscoveryWebResult[] }) =>
+    request<{ items: Source[]; created: number; reused: number }>("/discovery/web-results/save", {
+      method: "POST", body: JSON.stringify(body),
+    }),
   feedback: (id: number, action: "keep" | "save" | "dismiss", note?: string | null) =>
     request<{ item: DiscoveryItem; source?: Source | null; created?: boolean | null }>(`/discovery/${id}/feedback`, {
       method: "PATCH",

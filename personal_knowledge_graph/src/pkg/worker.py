@@ -7,6 +7,7 @@ from pkg.services.cross_cutting.scheduler import get_scheduled_tasks, scheduled_
 from pkg.services.cross_cutting.system_jobs import mark_stale_running_jobs_failed
 from pkg.services.foundation.media_processing import media_processing_loop
 from pkg.services.application.asset_visuals import asset_visual_processing_loop
+from pkg.services.application.podcast_renders import podcast_audio_processing_loop
 
 
 logger = logging.getLogger(__name__)
@@ -48,4 +49,5 @@ async def run_worker(*, poll_interval_seconds: int = 30) -> None:
         scheduled_pipeline_loop(poll_interval_seconds=poll_interval_seconds),
         media_processing_loop(),
         asset_visual_processing_loop(),
+        podcast_audio_processing_loop(),
     )

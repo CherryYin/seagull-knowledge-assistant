@@ -8,7 +8,9 @@
     "dev": "node ./node_modules/vite/bin/vite.js",
     "build": "node ./node_modules/typescript/bin/tsc -b && node ./node_modules/vite/bin/vite.js build",
     "preview": "node ./node_modules/vite/bin/vite.js preview",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "wechat:check": "node tools/wechat/check.mjs",
+    "test:wechat-check": "node --test tools/wechat/*.test.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.0",

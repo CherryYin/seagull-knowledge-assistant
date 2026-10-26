@@ -87,6 +87,7 @@ class Settings(BaseSettings):
     QWEN_API_BASE: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     QWEN_API_KEY: str = ""
     QWEN_MODEL: str = "qwen-plus"
+    PODCAST_AUDIO_ENABLED: bool = False
     QWEN_IMAGE_API_BASE: str = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
     QWEN_IMAGE_MODEL: str = "qwen-image-3.0-pro"
     QWEN_IMAGE_TIMEOUT: int = 180

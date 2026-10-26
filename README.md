@@ -24,6 +24,7 @@ Seagull is a self-hosted knowledge workspace that connects information capture, 
 - **Work with agents** — chat, reusable workflows, presets, skills, tools, persistent sessions, execution traces, and user-confirmed memory. An optional read-only WeRead tool accesses books, highlights, reviews, and reading statistics.
 - **Create and improve Assets** — clarify intent, review evidence and claims, edit structured drafts, and optimize the complete document with quality checks; Settings → Dashboard groups knowledge overview, usage rankings, and global or Project-filtered Asset blockers into tabs. Project Outputs reuse the same diagnostics; optional global journey reviews supplement recovery and adoption feedback.
 - **Generate publishing visuals** — AI-planned covers, social images, and inline illustrations, with editable prompts, multiple candidates, and explicit review.
+- **Create Podcast episodes** — paste a finished script or search the web and explicitly save selected summaries as materials; link Projects, choose from 48 voices, and review opt-in Agent candidates before saving and confirming. Preview segmentation and budget at no charge; separately authorized audio tasks provide progress and authenticated MP3 downloads. Synthesis is disabled by default and requires deployment setup; no automatic retries or publishing.
 - **Automate recurring work** — scheduled collection, discovery, digests, and newsletters, with optional cover generation and visible background job status.
 
 ## From Knowledge to Publishable Assets

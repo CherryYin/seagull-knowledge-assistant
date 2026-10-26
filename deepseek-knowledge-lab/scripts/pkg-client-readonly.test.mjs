@@ -48,3 +48,26 @@ test("pkg-client exposes only read-only Agent tools", () => {
   assert.equal(providedClient.saveDocument, undefined);
   assert.equal(providedClient.remember, undefined);
 });
+
+test("podcast reads preserve session authentication and never expose writes", async (context) => {
+  let client;
+  apply({ provide(_name, value) { client = value; } });
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, ...options });
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  };
+  context.after(() => { globalThis.fetch = originalFetch; });
+  await client.readPodcast("session-one", "episode/with space");
+  await client.listPodcastVoices("session-one");
+  assert.match(requests[0].url, /\/assets\/episode%2Fwith%20space\/podcast$/);
+  assert.match(requests[1].url, /\/assets\/podcast\/voices$/);
+  assert.ok(requests.every(request => request.method === "GET"));
+  assert.ok(requests.every(request => request.headers["X-Harness-Session-Id"] === "session-one"));
+  assert.ok(requests.every(request => request.headers["X-Harness-Service-Token"]));
+  assert.ok(requests.every(request => request.body === undefined));
+  await assert.rejects(client.readPodcast("", "episode"), /active Harness session/);
+  assert.equal(client.updatePodcast, undefined);
+  assert.equal(client.generatePodcast, undefined);
+});

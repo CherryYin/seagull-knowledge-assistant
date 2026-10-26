@@ -262,6 +262,14 @@ def worker(
     _run(run_worker(poll_interval_seconds=poll_interval))
 
 
+@app.command(name="podcast-worker")
+def podcast_worker():
+    """Process explicitly authorized Podcast audio tasks without scheduled collection jobs."""
+    from pkg.services.application.podcast_renders import podcast_audio_processing_loop
+
+    _run(podcast_audio_processing_loop())
+
+
 @app.command(name="fetch-feeds")
 def fetch_feeds(
     source_id: Optional[str] = typer.Option(None, help="Fetch a specific feed by source ID"),

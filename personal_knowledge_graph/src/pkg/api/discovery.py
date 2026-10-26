@@ -16,10 +16,14 @@ from pkg.schemas.discovery import (
     DiscoveryWebIngestRequest,
     DiscoveryWebResult,
     DiscoveryWebSearchRequest,
+    DiscoveryWebSaveRequest,
+    DiscoveryWebSaveResult,
     DiscoveryItemList,
     DiscoveryItemRead,
 )
 from pkg.services.foundation.discovery import apply_discovery_feedback, ingest_web_discovery_results, refresh_discovery_recommendations, search_external_web_results
+
+from pkg.services.foundation.web_materials import save_web_materials
 
 router = APIRouter()
 
@@ -109,6 +113,15 @@ async def preview_web_search_results(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except asyncio.TimeoutError as exc:
         raise HTTPException(status_code=504, detail="Web search timed out") from exc
+
+
+@router.post("/web-results/save", response_model=DiscoveryWebSaveResult)
+async def save_web_results(
+    body: DiscoveryWebSaveRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await save_web_materials(session, user_id=user.id, body=body)
 
 
 @router.patch("/{item_id}/feedback", response_model=DiscoveryFeedbackResult)

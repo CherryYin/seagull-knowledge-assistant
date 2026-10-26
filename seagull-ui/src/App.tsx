@@ -21,6 +21,7 @@ const WritingPage = lazy(() => import("./pages/WritingPage").then((m) => ({ defa
 const AssetsPage = lazy(() => import("./pages/AssetsPage").then((m) => ({ default: m.AssetsPage })));
 const AssetGenerationPage = lazy(() => import("./pages/AssetGenerationPage").then((m) => ({ default: m.AssetGenerationPage })));
 const AssetDetailPage = lazy(() => import("./pages/AssetDetailPage").then((m) => ({ default: m.AssetDetailPage })));
+const PodcastEditorPage = lazy(() => import("./pages/PodcastEditorPage").then((m) => ({ default: m.PodcastEditorPage })));
 const NewsletterAutomationPage = lazy(() => import("./pages/NewsletterAutomationPage").then((m) => ({ default: m.NewsletterAutomationPage })));
 const DigestPage = lazy(() => import("./pages/DigestPage").then((m) => ({ default: m.DigestPage })));
 const WikiPage = lazy(() => import("./pages/WikiPage").then((m) => ({ default: m.WikiPage })));
@@ -134,6 +135,8 @@ export default function App() {
             <Route path="/projects" element={<LazyPage><ProjectsPage /></LazyPage>} />
             <Route path="/projects/:id" element={<LazyPage><ProjectDetailPage /></LazyPage>} />
             <Route path="/assets/new" element={<LazyPage><AssetGenerationPage /></LazyPage>} />
+            <Route path="/assets/podcast/new" element={<LazyPage><PodcastEditorPage /></LazyPage>} />
+            <Route path="/assets/:id/podcast" element={<LazyPage><PodcastEditorPage /></LazyPage>} />
             <Route path="/assets/newsletter-automation" element={<LazyPage><NewsletterAutomationPage /></LazyPage>} />
             <Route path="/assets/journey-stats" element={<Navigate to="/stats?tab=assets" replace />} />
             <Route path="/assets/:id" element={<LazyPage><AssetDetailPage /></LazyPage>} />

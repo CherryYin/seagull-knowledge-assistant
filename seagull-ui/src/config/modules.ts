@@ -181,7 +181,7 @@ export const APP_MODULES: AppModuleConfig[] = [
     group: "production",
     route: "/assets",
     icon: FileText,
-    description: "Edit, review, export, and publish writing deliverables.",
+    description: "Create articles and Podcast episodes; review scripts, sources, and publishing deliverables.",
     nav: { primary: true, order: 10 },
     visibility: { defaultEnabled: true, configurable: false },
     dependencies: ["sources", "notes"],

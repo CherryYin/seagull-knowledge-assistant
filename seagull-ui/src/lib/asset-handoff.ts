@@ -1,7 +1,7 @@
 import type { AssetStyleProfileId, AssetType } from "@/lib/api";
 import { defaultAssetStyleProfile } from "@/lib/asset-generation";
 
-export type ManualAssetType = Exclude<AssetType, "newsletter_issue">;
+export type ManualAssetType = Exclude<AssetType, "newsletter_issue" | "podcast">;
 
 export interface AssetHandoffState {
   title?: string;

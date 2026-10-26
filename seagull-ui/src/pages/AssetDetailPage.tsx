@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ProjectAssociations } from "@/components/projects/ProjectAssociations";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useParams, Link, useNavigate, useLocation } from "react-router-dom";
+import { useParams, Link, useNavigate, useLocation, Navigate } from "react-router-dom";
 import { BookOpen, CalendarDays, ChartNoAxesCombined, CheckCircle2, CircleAlert, Clock3, Copy, Download, Eye, FileSearch, ImageIcon, LibraryBig, MailOpen, MessageSquareShare, PenLine, Quote, Sparkles, Square, Trash2, WandSparkles } from "lucide-react";
 import { assetsApi, authApi, notesApi, sourcesApi, wikiApi, type Asset, type AssetClaimProposalInput, type AssetContributionKind, type AssetEvidenceProposalInput, type AssetEvidenceRelation, type AssetKnowledgeProposalInput, type AssetMissingEvidenceRequest, type AssetQualityAuditResult, type AssetStatus, type AssetStyleProfileId, type AssetType, type AssetVisual, type AssetVisualPlan, type AssetVisualRole, type AssetVisualStylePreset, type ReadinessCheckResult } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -639,6 +639,7 @@ const STATUS_LABELS: Record<AssetStatus, string> = {
 };
 
 function assetTypeLabel(assetType?: string) {
+  if (assetType === "podcast") return "Podcast";
   if (assetType === "research_brief") return "Research Brief";
   if (assetType === "knowledge_pack") return "Knowledge Pack";
   if (assetType === "newsletter_issue") return "Newsletter Issue";
@@ -647,6 +648,9 @@ function assetTypeLabel(assetType?: string) {
 }
 
 function assetTypeDescription(assetType?: string) {
+  if (assetType === "podcast") {
+    return "A spoken episode draft. Podcast configuration foundations are available; the dedicated editor and audio generation are not implemented yet.";
+  }
   if (assetType === "research_brief") {
     return "A structured research deliverable focused on findings, risks, recommendations, and evidence-backed references.";
   }
@@ -663,6 +667,19 @@ function assetTypeDescription(assetType?: string) {
 }
 
 function assetReaderPresentation(assetType?: AssetType) {
+  if (assetType === "podcast") {
+    return {
+      layout: "podcast",
+      kicker: "Episode script",
+      briefLabel: "Episode angle",
+      documentLabel: "Spoken script",
+      contentsLabel: "Episode sections",
+      lineageLabel: "Episode sources",
+      headerTone: "from-sky-500/15",
+      accentTone: "bg-sky-500/10 text-sky-700 ring-sky-500/20",
+      ruleTone: "from-sky-500 via-cyan-400 to-transparent",
+    };
+  }
   if (assetType === "research_brief") {
     return {
       layout: "research-brief",
@@ -744,6 +761,9 @@ function AssetReaderIcon({ assetType, className = "h-5 w-5" }: { assetType?: Ass
 }
 
 function assetTypeReadinessGuidance(assetType?: string) {
+  if (assetType === "podcast") {
+    return "A script alone is not an audio delivery. Audio generation, acceptance and the publishing package will be added in later stages.";
+  }
   if (assetType === "research_brief") {
     return "A strong brief usually has at least one grounded wiki angle, attached source evidence, and clear sections for executive summary, findings, risks, and recommendations.";
   }
@@ -760,6 +780,7 @@ function assetTypeReadinessGuidance(assetType?: string) {
 }
 
 function assetTypeReadinessTitle(assetType?: string) {
+  if (assetType === "podcast") return "Podcast Readiness";
   if (assetType === "research_brief") return "Research Brief Readiness";
   if (assetType === "knowledge_pack") return "Knowledge Pack Readiness";
   if (assetType === "newsletter_issue") return "Newsletter Issue Readiness";
@@ -768,6 +789,9 @@ function assetTypeReadinessTitle(assetType?: string) {
 }
 
 function assetTypeReadinessIntro(assetType?: string) {
+  if (assetType === "podcast") {
+    return "Podcast audio delivery is not available yet; this draft cannot be exported or published as a completed episode.";
+  }
   if (assetType === "research_brief") {
     return "Check whether this brief is evidence-backed, decision-ready, and complete enough to export.";
   }
@@ -937,6 +961,16 @@ function ReadinessList({ title, items, tone, empty }: { title: string; items: st
 }
 
 export function AssetDetailPage() {
+  const { id = "" } = useParams();
+  const location = useLocation();
+  const query = useQuery({ queryKey: ["asset", id], queryFn: () => assetsApi.get(id), enabled: Boolean(id) });
+  if (query.isPending) return <p className="p-8">Loading Asset…</p>;
+  if (query.isError && !query.data) return <div className="p-8" role="alert">Could not load Asset.<Button onClick={() => void query.refetch()}>Retry</Button></div>;
+  if (query.data?.asset_type === "podcast") return <Navigate to={`/assets/${encodeURIComponent(id)}/podcast`} state={location.state} replace />;
+  return <TextAssetDetailPage />;
+}
+
+function TextAssetDetailPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const location = useLocation();

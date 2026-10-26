@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, ArrowRight, BookOpen, FileText, NotebookPen, Sparkles } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, FileText, Mic, NotebookPen, Sparkles } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { assetsApi, notesApi, sourcesApi, wikiApi } from "@/lib/api";
 import { reviseAssetIntent } from "@/lib/api/assets";
@@ -270,8 +270,12 @@ export function AssetGenerationPage() {
         </div>
 
         <Card>
-          <CardHeader><CardTitle>1. Choose the deliverable</CardTitle><CardDescription>Newsletter automation is intentionally deferred.</CardDescription></CardHeader>
+          <CardHeader><CardTitle>1. Choose the deliverable</CardTitle><CardDescription>Text Assets use this guide; Podcast episodes open a dedicated spoken-script workspace.</CardDescription></CardHeader>
           <CardContent className="grid gap-3 md:grid-cols-2">
+            <button type="button" className="rounded-xl border border-primary/40 bg-primary/5 p-4 text-left transition-colors hover:border-primary" onClick={() => navigate("/assets/podcast/new", { state: { backTo: "/assets/new", backLabel: "Back to creation guide", podcastSeed: { title, brief: question, source_refs: sourceRefs, note_refs: noteRefs, wiki_refs: wikiRefs } } })}>
+              <span className="flex items-center gap-2 font-medium"><Mic className="h-4 w-4" />播客 · Podcast<ArrowRight className="ml-auto h-4 w-4" /></span>
+              <span className="mt-1 block text-sm text-muted-foreground">热点评论、口播稿、段落来源与音色配置。已填选题和素材会一起带入，不会自动创建节目或生成音频。</span>
+            </button>
             {MANUAL_ASSET_TYPES.map((item) => (
               <button key={item.value} type="button" onClick={() => { setAssetType(item.value); setStyleProfileId(defaultAssetStyleProfile(item.value)); }} className={`rounded-xl border p-4 text-left transition-colors ${assetType === item.value ? "border-primary bg-primary/5" : "hover:border-primary/40"}`}>
                 <p className="font-medium">{item.label}</p><p className="mt-1 text-sm text-muted-foreground">{item.description}</p>

@@ -40,6 +40,10 @@ deepseek-knowledge-lab/
 
 ## PKG API 对接要点
 
+- Podcast：`pkg-client` 保持经 Session-scoped Gateway 的 `readPodcast` / `listPodcastVoices` 只读辅助方法，不注册写工具。PKG 标记脚本确认可用，音频可用性由独立部署策略决定；确认仅由 Seagull 专用编辑页的显式用户操作完成，不授权 Agent 写入。Agent 不得调用 TTS、生成试听或自动发布。P2 支持手写/粘贴、素材选择、逐段来源关联和不可变确认；辅助写作复用 `knowledge-lab` 与 Gateway 临时 Session，用户先授权发送已保存角度、截止时间、当前稿件和有界素材摘要，再接收绑定 Asset/输入哈希的严格 JSON 候选。候选需审核、显式应用到本地、保存后再确认；失败不得覆盖原稿。来源映射只定位素材，不等于 Evidence/Claim 审核通过，完整门禁集成仍待后续实现。
+
+- Podcast 的 `/audio-preflight` 是 Seagull 显式触发的只读生成准备，不注册新的 Agent 工具。它只做确认稿分段、本人凭据元数据检查和用户填写单价的预算估算；通过不等于执行授权、凭据远端有效或允许重试，不创建音频任务。音频执行由 PKG 的默认关闭开关、定价策略有效期和独立 Worker 控制；任务须经 Seagull 用户另行同意文本发送和计费风险，Harness 不获得创建、取消、重试或启用执行的写权限。Agent 不得把预检结果或此前 2 元 P0 预算当作新的 TTS 扣费授权。
+
 - PKG 是 FastAPI 服务，默认运行在 `http://localhost:8000`
 - 用户认证由 Seagull BFF 统一处理：浏览器登录 PKG 后，BFF 按 Harness Session 绑定当前用户 JWT
 - `pkg-client` 通过 BFF `/internal/pkg/*` 调用 PKG，并从工具执行上下文读取 Harness Session ID；禁止把用户名、密码或 JWT 写入 Prompt/工具参数

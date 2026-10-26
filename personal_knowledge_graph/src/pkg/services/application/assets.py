@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.models.application.asset import Asset
+from pkg.models.application.podcast import PodcastConfig, AssetAudioRender
 from pkg.models.foundation.note import Note
 from pkg.models.foundation.source import Source
 from pkg.models.foundation.wiki import WikiPage
@@ -33,9 +34,19 @@ WORKSPACE_METADATA_KEY = "asset_workspace_v1"
 logger = logging.getLogger(__name__)
 
 
+def _validate_podcast_write(asset_type: str, data: dict) -> None:
+    if asset_type != "podcast":
+        return
+    if data.get("status") in {"ready_to_export", "exported", "published"} or data.get("export_format") is not None:
+        raise HTTPException(status_code=409, detail="Podcast publication must use dedicated delivery-record endpoints; download audio through its completed render")
+    metadata = data.get("metadata") or {}
+    if any(key == "podcast" or key.startswith("podcast_") for key in metadata):
+        raise HTTPException(status_code=422, detail="Podcast configuration and task state must use dedicated podcast endpoints")
+
+
 def _preserve_workspace_metadata(current_metadata: dict, candidate_metadata: dict) -> dict:
     metadata = deepcopy(candidate_metadata)
-    for protected_key in (WORKSPACE_METADATA_KEY, EXPERIENCE_METADATA_KEY):
+    for protected_key in (WORKSPACE_METADATA_KEY, EXPERIENCE_METADATA_KEY, "podcast_script_v1", "podcast_delivery_v1"):
         if protected_key in current_metadata:
             metadata[protected_key] = deepcopy(current_metadata[protected_key])
         else:
@@ -100,7 +111,8 @@ async def _validate_refs(session: AsyncSession, *, user_id: str, source_refs: li
     await _ensure_all(WikiPage, wiki_refs, "wiki")
 
 
-async def create_asset(session: AsyncSession, *, user_id: str, body: AssetCreate) -> Asset:
+async def create_asset(session: AsyncSession, *, user_id: str, body: AssetCreate, commit: bool = True) -> Asset:
+    _validate_podcast_write(body.asset_type, body.model_dump(exclude_unset=True))
     await _validate_refs(
         session,
         user_id=user_id,
@@ -144,6 +156,8 @@ async def create_asset(session: AsyncSession, *, user_id: str, body: AssetCreate
     )
     session.add(asset)
     await session.flush()
+    if asset.asset_type == "podcast":
+        session.add(PodcastConfig(asset_id=asset.id))
     await record_asset_production_event(
         session,
         user_id=user_id,
@@ -151,8 +165,9 @@ async def create_asset(session: AsyncSession, *, user_id: str, body: AssetCreate
         event_type="asset_generated",
         detail={"source": "create_asset"},
     )
-    await session.commit()
-    await session.refresh(asset)
+    if commit:
+        await session.commit()
+        await session.refresh(asset)
     return asset
 
 
@@ -261,8 +276,11 @@ async def list_asset_knowledge_lineage(
     return AssetKnowledgeLineageList(target_type=target_type, target_id=target_id, items=items)
 
 
-async def get_asset(session: AsyncSession, *, user_id: str, asset_id: str) -> Asset:
-    row = await session.execute(select(Asset).where(Asset.id == asset_id, Asset.user_id == user_id))
+async def get_asset(session: AsyncSession, *, user_id: str, asset_id: str, for_update: bool = False) -> Asset:
+    statement = select(Asset).where(Asset.id == asset_id, Asset.user_id == user_id)
+    if for_update:
+        statement = statement.with_for_update().execution_options(populate_existing=True)
+    row = await session.execute(statement)
     asset = row.scalar_one_or_none()
     if not asset:
         logger.warning("Asset not found for user", extra={"asset_id": asset_id, "user_id": user_id})
@@ -275,8 +293,13 @@ async def get_asset(session: AsyncSession, *, user_id: str, asset_id: str) -> As
 
 
 async def update_asset(session: AsyncSession, *, user_id: str, asset_id: str, body: AssetUpdate) -> Asset:
-    asset = await get_asset(session, user_id=user_id, asset_id=asset_id)
+    asset = await get_asset(session, user_id=user_id, asset_id=asset_id, for_update=True)
     data = body.model_dump(exclude_unset=True)
+    _validate_podcast_write(asset.asset_type, data)
+    if asset.asset_type == "podcast" and set(data) & {
+        "title", "brief", "outline", "draft_content", "source_refs", "note_refs", "wiki_refs",
+    }:
+        raise HTTPException(status_code=409, detail="Edit podcasts through the revision-checked podcast draft endpoint")
     if "status" in data and data["status"] not in ALLOWED_ASSET_STATUSES:
         raise HTTPException(status_code=400, detail="Unsupported asset status")
     await _validate_refs(
@@ -391,6 +414,13 @@ async def update_asset(session: AsyncSession, *, user_id: str, asset_id: str, bo
 
 async def delete_asset(session: AsyncSession, *, user_id: str, asset_id: str) -> None:
     asset = await get_asset(session, user_id=user_id, asset_id=asset_id)
+    if asset.asset_type == "podcast":
+        locked = (await session.execute(select(Asset.id).where(Asset.id == asset_id, Asset.user_id == user_id).with_for_update())).scalar_one_or_none()
+        if locked is None:
+            raise HTTPException(status_code=404, detail="Asset not found")
+        render = (await session.execute(select(AssetAudioRender.id).where(AssetAudioRender.asset_id == asset_id).limit(1))).scalar_one_or_none()
+        if render is not None:
+            raise HTTPException(status_code=409, detail="Podcast has audio billing history; archive it instead of deleting the ledger")
     await session.delete(asset)
     await session.commit()
 

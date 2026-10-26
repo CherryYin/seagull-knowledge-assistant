@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, BookOpen, CalendarClock, ChartNoAxesCombined, FileText, Filter, Newspaper, Search, Sparkles } from "lucide-react";
+import { ArrowRight, BookOpen, CalendarClock, ChartNoAxesCombined, FileText, Filter, Mic, Newspaper, Search, Sparkles } from "lucide-react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { assetsApi, type Asset, type AssetStatus, type AssetType } from "@/lib/api";
 import { assetTypeLabel, MANUAL_ASSET_TYPES } from "@/lib/asset-generation";
@@ -20,7 +20,7 @@ const STATUS_LABELS: Record<AssetStatus, string> = {
 };
 
 const STATUS_OPTIONS: Array<AssetStatus | "all"> = ["all", "draft", "in_review", "ready_to_export", "exported", "published", "archived"];
-const ASSET_TYPE_OPTIONS: AssetType[] = [...MANUAL_ASSET_TYPES.map((item) => item.value), "newsletter_issue"];
+const ASSET_TYPE_OPTIONS: AssetType[] = [...MANUAL_ASSET_TYPES.map((item) => item.value), "newsletter_issue", "podcast"];
 
 export function AssetsPage() {
   const navigate = useNavigate();
@@ -72,6 +72,8 @@ export function AssetsPage() {
           <div className="flex flex-wrap gap-2"><Button variant="outline" size="lg" onClick={() => navigate("/stats?tab=assets")}><ChartNoAxesCombined className="mr-2 h-4 w-4" />Function Statistics</Button><Button variant="outline" size="lg" onClick={() => navigate("/assets/newsletter-automation", { state: detailState })}><Newspaper className="mr-2 h-4 w-4" />Newsletter Automation</Button><Button size="lg" onClick={() => navigate("/assets/new", { state: detailState })}><Sparkles className="mr-2 h-4 w-4" />Create Asset</Button></div>
         </header>
 
+        <Card className="border-primary/30 bg-primary/5"><CardContent className="flex flex-col gap-4 py-5 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="flex items-center gap-2 text-xl font-semibold"><Mic className="h-5 w-5" />播客 · Podcast</h2><p className="mt-1 text-sm text-muted-foreground">把热点素材整理为有来源的口播稿，选择音色并确认脚本。支持预算预检、音频任务和 MP3 下载；合成默认关闭，需部署启用并单独授权。</p></div><Button size="lg" onClick={() => navigate("/assets/podcast/new", { state: detailState })}>创建播客 · Create Podcast<ArrowRight className="ml-2 h-4 w-4" /></Button></CardContent></Card>
+
         <Card className="border-primary/20 bg-gradient-to-r from-primary/10 via-primary/5 to-background">
           <CardContent className="grid gap-5 py-6 md:grid-cols-[1fr_auto] md:items-center">
             <div>
@@ -95,7 +97,7 @@ export function AssetsPage() {
             <div><h2 className="text-xl font-semibold">Your Assets</h2><p className="text-sm text-muted-foreground">{assetsQuery.data?.total ?? 0} total · {assets.length} shown</p></div>
             <div className="flex flex-col gap-2 sm:flex-row">
               <div className="relative min-w-[260px]"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input aria-label="Search Assets" className="pl-9" placeholder="Search title, brief, or content" value={query} onChange={(event) => updateFilter("q", event.target.value)} /></div>
-              <label className="flex items-center gap-2 rounded-md border bg-background px-3 text-sm"><Filter className="h-4 w-4 text-muted-foreground" /><select aria-label="Asset type filter" className="h-9 bg-transparent outline-none" value={assetType} onChange={(event) => updateFilter("type", event.target.value, "all")}><option value="all">All types</option>{MANUAL_ASSET_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}<option value="newsletter_issue">Newsletter Issue</option></select></label>
+              <label className="flex items-center gap-2 rounded-md border bg-background px-3 text-sm"><Filter className="h-4 w-4 text-muted-foreground" /><select aria-label="Asset type filter" className="h-9 bg-transparent outline-none" value={assetType} onChange={(event) => updateFilter("type", event.target.value, "all")}><option value="all">All types</option>{MANUAL_ASSET_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}<option value="newsletter_issue">Newsletter Issue</option><option value="podcast">Podcast</option></select></label>
               <label className="rounded-md border bg-background px-3 text-sm"><select aria-label="Asset status filter" className="h-9 bg-transparent outline-none" value={status} onChange={(event) => updateFilter("status", event.target.value, "all")}>{STATUS_OPTIONS.map((item) => <option key={item} value={item}>{item === "all" ? "All statuses" : STATUS_LABELS[item]}</option>)}</select></label>
             </div>
           </div>
@@ -117,7 +119,7 @@ function AssetCard({ asset, detailState }: { asset: Asset; detailState: { backTo
   const evidenceCount = asset.source_refs.length + asset.note_refs.length + asset.wiki_refs.length;
   const preview = asset.brief?.trim() || asset.draft_content?.replace(/^#+\s+/gm, "").trim().slice(0, 220) || "This Asset does not have a preview yet.";
   return (
-    <Link to={`/assets/${encodeURIComponent(asset.id)}`} state={detailState} className="group block h-full">
+    <Link to={`/assets/${encodeURIComponent(asset.id)}${asset.asset_type === "podcast" ? "/podcast" : ""}`} state={detailState} className="group block h-full">
       <Card className="h-full overflow-hidden transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md">
         <div className="h-1.5 bg-gradient-to-r from-primary via-sky-400 to-transparent" />
         <CardContent className="flex h-full flex-col p-5">

@@ -413,6 +413,8 @@ def check_readiness(asset: Asset) -> tuple[bool, list[str], list[str], list[str]
     blocking: list[str] = []
     warnings: list[str] = []
     suggestions: list[str] = []
+    if asset.asset_type == "podcast":
+        blocking.append("Podcast requires an accepted audio render; audio generation and acceptance are not implemented yet")
     if not (asset.title or "").strip():
         blocking.append("Missing title")
     if not (asset.brief or "").strip():

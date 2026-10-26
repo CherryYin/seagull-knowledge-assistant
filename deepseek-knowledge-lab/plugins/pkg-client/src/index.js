@@ -55,6 +55,12 @@ class PkgClient {
   listAssetVisuals(sessionId, assetId) {
     return this.request(sessionId, "GET", `/assets/${encodeURIComponent(assetId)}/visuals`);
   }
+  readPodcast(sessionId, assetId) {
+    return this.request(sessionId, "GET", `/assets/${encodeURIComponent(assetId)}/podcast`);
+  }
+  listPodcastVoices(sessionId) {
+    return this.request(sessionId, "GET", "/assets/podcast/voices");
+  }
   planAssetVisual(sessionId, assetId, body) {
     return this.request(sessionId, "POST", `/assets/${encodeURIComponent(assetId)}/visuals/plan`, body);
   }

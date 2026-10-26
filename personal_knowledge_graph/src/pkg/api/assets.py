@@ -2,6 +2,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 from fastapi import HTTPException
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.api.deps import get_current_user
@@ -78,6 +79,33 @@ from pkg.services.application.newsletter_automation import (
     retry_newsletter_cover,
     update_newsletter_config,
 )
+from pkg.schemas.application.podcast import (
+    PodcastAudioPreflight,
+    PodcastAudioPreflightRequest,
+    PodcastAudioRenderRequest,
+    PodcastAudioRenderRead,
+    PodcastAudioAbandonRequest,
+    PodcastApprovalRequest,
+    PodcastConfigurationUpdate,
+    PodcastCreate,
+    PodcastDraft,
+    PodcastDraftUpdate,
+    PodcastState,
+    PodcastVoiceCatalog,
+)
+from pkg.services.application.podcast_audio import preflight_podcast_audio
+from pkg.schemas.application.podcast_delivery import PodcastDeliveryList, PodcastDeliveryRead, PodcastDeliveryUpdate
+from pkg.services.application.podcast_delivery import list_delivery_records, save_delivery_record
+from pkg.services.application.podcast_renders import create_audio_render, list_audio_renders, cancel_audio_render, download_audio_render, abandon_audio_render
+from pkg.services.application.podcasts import (
+    approve_podcast_script,
+    create_podcast,
+    get_podcast,
+    get_podcast_draft,
+    get_voice_catalog,
+    update_podcast,
+    update_podcast_draft,
+)
 from pkg.services.application.asset_experience import list_style_profiles
 from pkg.services.application.asset_visual_delivery import (
     record_visual_delivery_snapshot,
@@ -118,6 +146,116 @@ def _visual_delivery_parts(visuals: dict[str, dict], *, embedded: bool = False) 
 @router.get("/style-profiles", response_model=AssetStyleProfileList)
 async def list_asset_style_profiles_route(user: User = Depends(get_current_user)):
     return AssetStyleProfileList(items=list_style_profiles())
+
+
+@router.get("/podcast/voices", response_model=PodcastVoiceCatalog)
+async def list_podcast_voices_route(user: User = Depends(get_current_user)):
+    return get_voice_catalog()
+
+
+@router.post("/podcast", response_model=PodcastDraft)
+async def create_podcast_route(
+    body: PodcastCreate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await create_podcast(session, user_id=user.id, body=body)
+
+
+@router.get("/{asset_id}/podcast/draft", response_model=PodcastDraft)
+async def get_podcast_draft_route(
+    asset_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await get_podcast_draft(session, user_id=user.id, asset_id=asset_id)
+
+
+@router.put("/{asset_id}/podcast/draft", response_model=PodcastDraft)
+async def update_podcast_draft_route(
+    asset_id: str,
+    body: PodcastDraftUpdate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await update_podcast_draft(session, user_id=user.id, asset_id=asset_id, body=body)
+
+
+@router.post("/{asset_id}/podcast/script-approvals", response_model=PodcastDraft)
+async def approve_podcast_script_route(
+    asset_id: str,
+    body: PodcastApprovalRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await approve_podcast_script(session, user_id=user.id, asset_id=asset_id, body=body)
+
+
+@router.post("/{asset_id}/podcast/audio-preflight", response_model=PodcastAudioPreflight)
+async def preflight_podcast_audio_route(
+    asset_id: str,
+    body: PodcastAudioPreflightRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await preflight_podcast_audio(session, user_id=user.id, asset_id=asset_id, body=body)
+
+
+@router.get("/{asset_id}/podcast/audio-renders")
+async def list_audio_renders_route(asset_id: str, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    return {"items": await list_audio_renders(session, user_id=user.id, asset_id=asset_id)}
+
+
+@router.post("/{asset_id}/podcast/audio-renders", response_model=PodcastAudioRenderRead)
+async def create_audio_render_route(asset_id: str, body: PodcastAudioRenderRequest, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    return await create_audio_render(session, user_id=user.id, asset_id=asset_id, body=body)
+
+
+@router.post("/{asset_id}/podcast/audio-renders/{render_id}/cancel", response_model=PodcastAudioRenderRead)
+async def cancel_audio_render_route(asset_id: str, render_id: str, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    return await cancel_audio_render(session, user_id=user.id, asset_id=asset_id, render_id=render_id)
+
+
+@router.post("/{asset_id}/podcast/audio-renders/{render_id}/abandon", response_model=PodcastAudioRenderRead)
+async def abandon_audio_render_route(asset_id: str, render_id: str, body: PodcastAudioAbandonRequest, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    return await abandon_audio_render(session, user_id=user.id, asset_id=asset_id, render_id=render_id, body=body)
+
+
+@router.get("/{asset_id}/podcast/audio-renders/{render_id}/download")
+async def download_audio_render_route(asset_id: str, render_id: str, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    payload = await download_audio_render(session, user_id=user.id, asset_id=asset_id, render_id=render_id)
+    return Response(payload, media_type="audio/mpeg", headers={"Content-Disposition": "attachment; filename=seagull-podcast.mp3", "Cache-Control": "private, no-store"})
+
+
+@router.get("/{asset_id}/podcast/delivery-records", response_model=PodcastDeliveryList)
+async def list_podcast_delivery_route(asset_id: str, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    return await list_delivery_records(session, user_id=user.id, asset_id=asset_id)
+
+
+@router.put("/{asset_id}/podcast/delivery-records/{record_id}", response_model=PodcastDeliveryRead)
+async def save_podcast_delivery_route(asset_id: str, record_id: str, body: PodcastDeliveryUpdate, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    if len(record_id) > 100:
+        raise HTTPException(status_code=422, detail="Record ID is too long")
+    return await save_delivery_record(session, user_id=user.id, asset_id=asset_id, record_id=record_id, body=body)
+
+
+@router.get("/{asset_id}/podcast", response_model=PodcastState)
+async def get_podcast_route(
+    asset_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await get_podcast(session, user_id=user.id, asset_id=asset_id)
+
+
+@router.put("/{asset_id}/podcast", response_model=PodcastState)
+async def update_podcast_route(
+    asset_id: str,
+    body: PodcastConfigurationUpdate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await update_podcast(session, user_id=user.id, asset_id=asset_id, body=body)
 
 
 @router.post("", response_model=AssetRead)

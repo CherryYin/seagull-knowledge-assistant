@@ -54,7 +54,7 @@ export interface AssetIntentProposal {
 }
 
 export const MANUAL_ASSET_TYPES: Array<{
-  value: Exclude<AssetType, "newsletter_issue">;
+  value: Exclude<AssetType, "newsletter_issue" | "podcast">;
   label: string;
   description: string;
 }> = [
@@ -105,11 +105,13 @@ export function assetStyleProfile(profileId: AssetStyleProfileId) {
 }
 
 export function assetTypeLabel(assetType: AssetType) {
+  if (assetType === "podcast") return "Podcast";
   return MANUAL_ASSET_TYPES.find((item) => item.value === assetType)?.label
     ?? (assetType === "newsletter_issue" ? "Newsletter Issue" : "Asset");
 }
 
 const ASSET_REQUIRED_SECTIONS: Record<AssetType, string[]> = {
+  podcast: ["Opening", "Key Facts", "Analysis", "Closing", "Source Notes"],
   blog_post: [
     "Introduction",
     "Main Argument",
@@ -251,6 +253,10 @@ export function renderAssetDraftRepairRequest(
 }
 
 const ASSET_QUALITY_CRITERIA: Record<AssetType, string[]> = {
+  podcast: [
+    "Write natural spoken Chinese, distinguishing verified facts from the author's interpretation.",
+    "Preserve source grounding and the information cutoff; a written script is not an accepted audio delivery.",
+  ],
   blog_post: [
     "Open with a concrete reader problem and state one clear thesis.",
     "Prefer readable narrative and examples over a catalogue of notes.",

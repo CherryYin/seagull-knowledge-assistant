@@ -41,6 +41,18 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
+export async function requestBlob(path: string, init?: RequestInit): Promise<Blob> {
+  const headers = authHeaders(new Headers(init?.headers));
+  const fullPath = path.startsWith("/api") ? path : `/api${path}`;
+  const res = await fetch(`${API_BASE}${fullPath}`, { ...init, headers, credentials: "include" });
+  if (res.status === 401) {
+    notifyAuthExpired();
+    throw new AuthError("PKG authentication expired");
+  }
+  if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`);
+  return res.blob();
+}
+
 export async function downloadFile(path: string, fallbackFilename = "download") {
   const headers = authHeaders(new Headers());
   const fullPath = path.startsWith("/api") ? path : `/api${path}`;

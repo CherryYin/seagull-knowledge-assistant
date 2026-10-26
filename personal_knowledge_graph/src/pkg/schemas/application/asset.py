@@ -3,8 +3,9 @@ from datetime import datetime
 from typing import Literal, Self
 
 from pydantic import BaseModel, Field, model_validator
+from pkg.schemas.application.podcast import PodcastDraftFields
 
-ASSET_TYPE_PATTERN = r"^(blog_post|research_brief|knowledge_pack|newsletter_issue|topic_report)$"
+ASSET_TYPE_PATTERN = r"^(blog_post|research_brief|knowledge_pack|newsletter_issue|topic_report|podcast)$"
 ASSET_STATUS_PATTERN = r"^(draft|in_review|ready_to_export|exported|published|archived)$"
 ASSET_STYLE_PROFILE_PATTERN = r"^(editorial_story|executive_brief|visual_digest|knowledge_atlas)$"
 
@@ -30,6 +31,15 @@ class AssetCreate(BaseModel):
     style_profile_id: str | None = Field(default=None, pattern=ASSET_STYLE_PROFILE_PATTERN)
     metadata: dict | None = None
     provenance: AssetProvenance | None = None
+
+    @model_validator(mode="after")
+    def validate_podcast_draft(self) -> Self:
+        if self.asset_type == "podcast":
+            PodcastDraftFields.model_validate({
+                name: getattr(self, name) or ([] if name.endswith("_refs") else "")
+                for name in PodcastDraftFields.model_fields
+            })
+        return self
 
 
 class AssetForkRequest(BaseModel):
