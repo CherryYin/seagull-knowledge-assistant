@@ -29,6 +29,7 @@ import { mindMapsApi, type AssetOutlineDocumentPatchProposal, type AssetOutlineP
 import { ASSET_STYLE_PROFILES, defaultAssetStyleProfile } from "@/lib/asset-generation";
 import { renderMermaidDiagramsForWechat } from "@/lib/mermaid-export";
 import { renderAssetJourneyReviewContext } from "@/lib/asset-journey-review";
+import { DocumentOptimizationWatchdog } from "@/lib/document-optimization-watchdog";
 
 type AssetOutlineRefreshOperation = "add" | "move" | "rename" | "delete";
 
@@ -279,8 +280,6 @@ interface DiffLine {
   kind: "same" | "removed" | "added";
   text: string;
 }
-
-const DOCUMENT_OPTIMIZATION_TIMEOUT_MS = 5 * 60 * 1000;
 
 function assetDocumentSignature(blocks: AssetBlock[]) {
   const value = JSON.stringify(blocks.map((block) => ({
@@ -1230,6 +1229,7 @@ export function AssetDetailPage() {
   const editorSnapshotRef = useRef<AssetEditorSnapshot | null>(null);
   const allowNextHistoryPopRef = useRef(false);
   const documentRevisionAbortRef = useRef<AbortController | null>(null);
+  const documentRevisionWatchdogRef = useRef<DocumentOptimizationWatchdog | null>(null);
   const [evidenceAgent, setEvidenceAgent] = useState<EvidenceAgentState>({ instruction: "", streaming: false, status: "" });
   const [forkOpen, setForkOpen] = useState(false);
   const [forkTitle, setForkTitle] = useState("");
@@ -2163,14 +2163,18 @@ export function AssetDetailPage() {
         .map((candidate) => ({ id: candidate.id, title: candidate.title, content: candidate.content, claimRefs: candidate.claim_refs, status: candidate.status })),
     };
     const abortController = new AbortController();
-    const startedAt = Date.now();
-    let timedOut = false;
+    const requestText = `Process the following JSON contract using the revise-asset-document workflow:\n\n${JSON.stringify(request, null, 2)}`;
+    const watchdog = new DocumentOptimizationWatchdog(requestText.length, Date.now());
+    let progressPhase = "Agent is reviewing the complete argument and knowledge trace";
+    let lastStatusSeconds = 0;
+    let documentRunCompleted = false;
     let documentPatchSeen = false;
     let documentPatchAccepted = false;
     let completedDocumentProposal: AssetDocumentPatch | undefined;
     let documentRunFailed = false;
     let documentPatchIssue = "Agent returned an invalid document patch contract.";
     const captureDocumentPatch = (value: unknown) => {
+      if (abortController.signal.aborted || documentRevisionAbortRef.current !== abortController) return;
       documentPatchSeen = true;
       const proposal = parseAssetDocumentPatch(value);
       const revisionIssue = !proposal
@@ -2181,6 +2185,7 @@ export function AssetDetailPage() {
       if (proposal && !revisionIssue) {
         documentPatchAccepted = true;
         completedDocumentProposal = proposal;
+        progressPhase = "The complete proposal is validated; waiting for the run to finish";
         setDocumentRevision((current) => ({
           ...current,
           proposal: undefined,
@@ -2194,6 +2199,7 @@ export function AssetDetailPage() {
     };
     documentRevisionAbortRef.current?.abort();
     documentRevisionAbortRef.current = abortController;
+    documentRevisionWatchdogRef.current = watchdog;
     setDocumentRevision((current) => ({
       ...current,
       streaming: true,
@@ -2203,28 +2209,36 @@ export function AssetDetailPage() {
       pendingQuestion: undefined,
       proposal: undefined,
       error: undefined,
+      diagnostic: `Input: ${requestText.length} characters · Active limit: ${watchdog.activeLimitMs / 60_000} minutes · Idle limit: 5 minutes. No automatic retries.`,
     }));
     const progressInterval = window.setInterval(() => {
-      const elapsedSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+      if (documentRevisionAbortRef.current !== abortController || abortController.signal.aborted) return;
+      const progress = watchdog.status(Date.now());
+      if (progress.timeout) {
+        abortController.abort();
+        setDocumentRevision((current) => ({
+          ...current,
+          proposal: undefined,
+          pendingQuestion: undefined,
+          error: progress.timeout === "idle"
+            ? `No model progress for 5 minutes while rewriting ${editBlocks.length} source blocks. Stopped waiting and requested cancellation; the editor is unchanged. No automatic retry was made.`
+            : `Full-document rewrite reached its ${progress.limitMinutes}-minute active limit for ${editBlocks.length} source blocks. Stopped waiting and requested cancellation; the editor is unchanged. No automatic retry was made.`,
+        }));
+        return;
+      }
+      if (progress.elapsedSeconds - lastStatusSeconds < 10) return;
+      lastStatusSeconds = progress.elapsedSeconds;
       setDocumentRevision((current) => {
         if (!current.streaming || current.pendingQuestion || current.proposal || current.error) return current;
         return {
           ...current,
-          status: `Agent is rewriting the complete document from ${editBlocks.length} source blocks · ${elapsedSeconds}s elapsed.`,
+          status: `${progressPhase} · ${editBlocks.length} source blocks · ${progress.elapsedSeconds}s active · last progress ${progress.idleSeconds}s ago.`,
         };
       });
-    }, 10_000);
-    const timeout = window.setTimeout(() => {
-      timedOut = true;
-      abortController.abort();
-      setDocumentRevision((current) => ({
-        ...current,
-        error: `Full-document rewrite stopped after 5 minutes while reviewing ${editBlocks.length} source blocks. Retry with a more specific focus or a shorter source draft.`,
-      }));
-    }, DOCUMENT_OPTIMIZATION_TIMEOUT_MS);
+    }, 1000);
     try {
       for await (const event of harnessChat(
-        `Process the following JSON contract using the revise-asset-document workflow:\n\n${JSON.stringify(request, null, 2)}`,
+        requestText,
         {
           preset: "revise-asset-document",
           createSession: true,
@@ -2233,24 +2247,36 @@ export function AssetDetailPage() {
           signal: abortController.signal,
         },
       )) {
+        if (abortController.signal.aborted || documentRevisionAbortRef.current !== abortController) break;
         if (event.type === "session" && event.session_id) {
           setDocumentRevision((current) => ({ ...current, sessionId: event.session_id }));
+        } else if (event.type === "progress" && (event.phase === "reasoning" || event.phase === "tool_arguments")) {
+          watchdog.activity(Date.now());
+          progressPhase = event.phase === "reasoning"
+            ? "Model is analyzing the document (private reasoning is not displayed)"
+            : `Model is generating tool arguments · ${event.generated_characters ?? 0} characters received (not yet validated)`;
+          setDocumentRevision((current) => ({ ...current, status: progressPhase }));
         } else if (event.type === "text" && event.content) {
+          watchdog.activity(Date.now());
           setDocumentRevision((current) => ({ ...current, status: `${current.status}${event.content}`.slice(-1200) }));
         } else if (event.type === "tool_call") {
+          watchdog.activity(Date.now());
           if (event.tool === "propose_asset_document_patch") {
             documentPatchSeen = true;
+            progressPhase = "Agent is submitting the complete proposal for validation";
             setDocumentRevision((current) => ({ ...current, proposal: undefined, status: "Agent is submitting the rewritten document for validation…" }));
           } else {
             setDocumentRevision((current) => ({ ...current, status: "Agent is rewriting and validating the complete document…", diagnostic: `Tool: ${event.tool || "unknown"}` }));
           }
         } else if (event.type === "tool_result") {
+          watchdog.activity(Date.now());
           if (event.tool === "propose_asset_document_patch") {
             captureDocumentPatch(event.result);
           } else if (event.tool === "skill") {
             setDocumentRevision((current) => ({ ...current, status: `Optimization instructions loaded. Agent is rewriting the complete document from ${editBlocks.length} source blocks…` }));
           }
         } else if (event.type === "question" && event.rpc_id && event.session_id && event.questions?.length) {
+          watchdog.waitForAnswer(true, Date.now());
           setDocumentRevision((current) => ({
             ...current,
             pendingQuestion: { rpcId: event.rpc_id!, sessionId: event.session_id!, questions: event.questions! },
@@ -2261,6 +2287,7 @@ export function AssetDetailPage() {
           completedDocumentProposal = undefined;
           setDocumentRevision((current) => ({ ...current, error: event.content || "Complete Asset optimization failed." }));
         } else if (event.type === "done") {
+          documentRunCompleted = true;
           if (!documentRunFailed && documentPatchAccepted && completedDocumentProposal) {
             const proposal = completedDocumentProposal;
             setDocumentRevision((current) => ({
@@ -2276,17 +2303,28 @@ export function AssetDetailPage() {
               error: documentPatchSeen ? documentPatchIssue : "Agent finished without returning a complete rewritten document.",
             }));
           }
+          break;
         }
       }
     } catch (error) {
-      if (!abortController.signal.aborted && !timedOut) {
+      if (!abortController.signal.aborted && documentRevisionAbortRef.current === abortController) {
         setDocumentRevision((current) => ({ ...current, error: error instanceof Error ? error.message : "Complete Asset optimization failed." }));
       }
     } finally {
       window.clearInterval(progressInterval);
-      window.clearTimeout(timeout);
-      if (documentRevisionAbortRef.current === abortController) documentRevisionAbortRef.current = null;
-      setDocumentRevision((current) => ({ ...current, streaming: false }));
+      if (documentRevisionAbortRef.current === abortController) {
+        documentRevisionAbortRef.current = null;
+        documentRevisionWatchdogRef.current = null;
+        setDocumentRevision((current) => ({
+          ...current,
+          streaming: false,
+          pendingQuestion: undefined,
+          ...(!documentRunCompleted && !abortController.signal.aborted && !current.error ? {
+            proposal: undefined,
+            error: "The connection ended before the complete rewrite was confirmed. The editor is unchanged; no automatic retry was made.",
+          } : {}),
+        }));
+      }
     }
   };
 
@@ -3390,7 +3428,10 @@ export function AssetDetailPage() {
                           <QuestionCard
                             questions={documentRevision.pendingQuestion.questions}
                             onSubmit={async (answers: HarnessQuestionAnswer[]) => {
+                              const watchdog = documentRevisionWatchdogRef.current;
                               await answerHarnessQuestion(documentRevision.pendingQuestion!.rpcId, documentRevision.pendingQuestion!.sessionId, answers);
+                              if (documentRevisionWatchdogRef.current !== watchdog) return;
+                              watchdog?.waitForAnswer(false, Date.now());
                               setDocumentRevision((current) => ({ ...current, pendingQuestion: undefined, status: "Clarification submitted. Agent is continuing the complete optimization…" }));
                             }}
                           />

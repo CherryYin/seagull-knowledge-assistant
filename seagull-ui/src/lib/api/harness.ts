@@ -6,7 +6,9 @@ function notifyIfAuthExpired(response: Response): void {
 }
 
 export interface HarnessChatEvent {
-  type: "session" | "text" | "tool_call" | "tool_result" | "question" | "done" | "error";
+  type: "session" | "text" | "progress" | "tool_call" | "tool_result" | "question" | "done" | "error";
+  phase?: "reasoning" | "tool_arguments";
+  generated_characters?: number;
   content?: string;
   tool?: string;
   args?: unknown;

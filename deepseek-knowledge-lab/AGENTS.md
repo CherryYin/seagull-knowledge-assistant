@@ -56,6 +56,8 @@ deepseek-knowledge-lab/
 
 ## 开发约定
 
+- 整篇 Asset 优化不再使用固定五分钟总时限：UI 按输入体量给予 10–20 分钟有上限的活动时间，五分钟没有真实模型进度才请求取消；等待用户澄清不消耗活动时间。Gateway 仅向 `revise-asset-document` 发送节流的 `progress` 事件，标记 reasoning/tool_arguments 阶段与工具参数累计字符数，不传思考正文或半成品参数。完整工具结果通过合同校验且收到 turn 完成事件后才展示候选；断线、超时、取消及过期 run 不可应用或覆盖编辑器，不自动重试。取消仅为尽力请求，不能据此推断服务商计费已终止。
+
 - 插件使用 TypeScript，遵循 Cordis 插件规范
 - 实验模板用 Markdown，包含任务描述、预期输入输出、评估标准
 - 配置变更通过 `cordis.patch.yml` 而非直接修改 bundle

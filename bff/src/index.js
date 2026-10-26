@@ -718,6 +718,9 @@ async function harnessChat(req, res, requestId, agentMemoryStore) {
 
     const streamedSteps = new Set();
     const toolNamesByCallId = new Map();
+    let lastProgressAt = 0;
+    let lastProgressPhase;
+    let generatedToolCharacters = 0;
     for await (const envelope of events) {
       const frame = envelope?.payload;
       if (!frame) continue;
@@ -746,7 +749,21 @@ async function harnessChat(req, res, requestId, agentMemoryStore) {
       if (frame.type !== "session/event") continue;
       const event = frame.event;
       const stepKey = `${event.data?.turn ?? ""}:${event.data?.step ?? ""}`;
-      if (event.type === "assistant/chunk" && event.data?.chunk?.type === "text-delta") {
+      const chunk = event.data?.chunk;
+      if (preset === "revise-asset-document" && event.type === "assistant/chunk"
+        && (chunk?.type === "reasoning-delta" || chunk?.type === "tool-call-delta")) {
+        const delta = chunk.type === "reasoning-delta" ? chunk.text : chunk.argumentsDelta;
+        if (typeof delta === "string" && delta.length > 0) {
+          const phase = chunk.type === "reasoning-delta" ? "reasoning" : "tool_arguments";
+          if (phase === "tool_arguments") generatedToolCharacters += delta.length;
+          const now = Date.now();
+          if (phase !== lastProgressPhase || now - lastProgressAt >= 2000) {
+            sse(res, { type: "progress", phase, generated_characters: generatedToolCharacters, session_id: sessionId });
+            lastProgressAt = now;
+            lastProgressPhase = phase;
+          }
+        }
+      } else if (event.type === "assistant/chunk" && chunk?.type === "text-delta") {
         const text = event.data.chunk.text;
         if (text) {
           streamedSteps.add(stepKey);

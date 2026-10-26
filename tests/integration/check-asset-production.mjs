@@ -167,7 +167,8 @@ export async function checkAssetProductionIntegration() {
     'type: "client-response"',
   ])
   includesAll(values.harnessApi, files.harnessApi, [
-    'type: "session" | "text" | "tool_call" | "tool_result" | "question"',
+    'type: "session" | "text" | "progress" | "tool_call" | "tool_result" | "question"',
+    'phase?: "reasoning" | "tool_arguments"',
     'answerHarnessQuestion',
     'rpc_id: rpcId',
   ])

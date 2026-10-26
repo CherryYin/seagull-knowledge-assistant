@@ -1947,10 +1947,11 @@ test("Asset Production previews and downloads the preferred HTML delivery", asyn
   await expect.poll(() => state.htmlExportRequests).toBe(1);
 });
 
-test("Asset complete optimization records a saved first round before running the audit-guided second round", async ({ page }) => {
+function documentOptimizationState(blockCount = 2): MockState {
   const initialBlocks = [
     { id: "block-title", type: "heading", markdown: "# Original Asset", revision: 1, claim_refs: [] },
     { id: "block-body", type: "paragraph", markdown: "Original evidence-backed paragraph.", revision: 1, claim_refs: ["claim-1"] },
+    ...Array.from({ length: blockCount - 2 }, (_, index) => ({ id: `block-extra-${index}`, type: "paragraph", markdown: `Evidence-backed source paragraph ${index + 1}.`, revision: 1, claim_refs: ["claim-1"] })),
   ];
   const state: MockState = {
     loggedIn: false,
@@ -1960,7 +1961,7 @@ test("Asset complete optimization records a saved first round before running the
       brief: "An Asset ready for iterative optimization.",
       asset_type: "research_brief",
       status: "draft",
-      draft_content: "# Original Asset\n\nOriginal evidence-backed paragraph.",
+      draft_content: initialBlocks.map(block => block.markdown).join("\n\n"),
       source_refs: ["source-input"],
       note_refs: [],
       wiki_refs: [],
@@ -1991,6 +1992,11 @@ test("Asset complete optimization records a saved first round before running the
     memory: null,
     sessionContext: null,
   };
+  return state;
+}
+
+test("Asset complete optimization records a saved first round before running the audit-guided second round", async ({ page }) => {
+  const state = documentOptimizationState();
   await installMockBff(page, state);
   await signIn(page);
 
@@ -2024,6 +2030,115 @@ test("Asset complete optimization records a saved first round before running the
   expect(optimization.history).toHaveLength(2);
   expect(optimization.history?.[1]).toMatchObject({ round: 2, workspace_revision: 7, audit_verdict: "warn", finding_ids: ["PKG-EVIDENCE-004"] });
   expect(state.documentOptimizationCalls).toBe(2);
+});
+
+async function mockTimedDocumentRewrite(page: Page, options: { progress: boolean; complete: boolean; endWithoutDone?: boolean }) {
+  await page.addInitScript((settings) => {
+    const originalFetch = window.fetch.bind(window);
+    const browser = window as typeof window & { documentRewriteRequests: number; documentRewriteBlocks: number };
+    browser.documentRewriteRequests = 0;
+    window.fetch = async (input, init) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : {};
+      if (!String(input).endsWith("/api/chat") || body.preset !== "revise-asset-document") return originalFetch(input, init);
+      browser.documentRewriteRequests += 1;
+      const contract = JSON.parse(body.prompt.match(/\{[\s\S]*\}$/)[0]);
+      browser.documentRewriteBlocks = contract.asset.blocks.length;
+      const encoder = new TextEncoder();
+      const timers: number[] = [];
+      let ended = false;
+      return new Response(new ReadableStream({
+        start(controller) {
+          const send = (event: Record<string, unknown>) => {
+            if (!ended) controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+          };
+          const abort = () => {
+            if (ended) return;
+            ended = true;
+            timers.forEach(timer => window.clearTimeout(timer));
+            controller.error(new DOMException("Aborted", "AbortError"));
+          };
+          init?.signal?.addEventListener("abort", abort, { once: true });
+          send({ type: "session", session_id: "long-document-session" });
+          if (settings.progress) timers.push(window.setTimeout(() => send({ type: "progress", phase: "reasoning", generated_characters: 0 }), 4 * 60_000));
+          if (settings.complete) timers.push(window.setTimeout(() => {
+            send({ type: "progress", phase: "tool_arguments", generated_characters: 1000 });
+            const proposal = { assetId: contract.assetId, baseWorkspaceRevision: contract.baseWorkspaceRevision,
+              rewriteMode: "replace_document", baseDocumentSignature: contract.baseDocumentSignature,
+              replacementTitle: "Long draft optimized", replacementBrief: "A reviewed full rewrite.",
+              blocks: [], replacementBlocks: [{ markdown: "# Long draft optimized", claimRefs: [] }, { markdown: "The complete rewritten argument.", claimRefs: ["claim-1"] }] };
+            send({ type: "tool_result", tool: "propose_asset_document_patch", result: JSON.stringify(proposal) });
+            if (!settings.endWithoutDone) send({ type: "done", session_id: "long-document-session" });
+            ended = true;
+            init?.signal?.removeEventListener("abort", abort);
+            controller.close();
+          }, 6 * 60_000));
+        },
+      }), { headers: { "Content-Type": "text/event-stream" } });
+    };
+  }, options);
+}
+
+test("Asset complete optimization retains 58 blocks and accepts a validated proposal after five minutes of real progress", async ({ page }) => {
+  const state = documentOptimizationState(58);
+  await mockTimedDocumentRewrite(page, { progress: true, complete: true });
+  await installMockBff(page, state);
+  await signIn(page);
+  await page.goto("/assets/asset-e2e");
+  await page.getByRole("tab", { name: "Edit", exact: true }).click();
+  await page.clock.install();
+  await page.getByRole("button", { name: "Optimize Entire Draft" }).click();
+  await expect(page.locator('[data-agent-run-status="running"]')).toBeVisible();
+  await page.clock.fastForward(4 * 60_000);
+  await expect(page.locator('[data-agent-run-status="running"]')).toContainText("private reasoning is not displayed");
+  await page.clock.fastForward(61_000);
+  await expect(page.getByText("Complete document optimization failed", { exact: true })).toHaveCount(0);
+  await expect(page.locator("[data-document-agent-diff-preview]")).toHaveCount(0);
+  await page.clock.fastForward(61_000);
+  await expect(page.locator("[data-document-agent-diff-preview]")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Apply to Editor", exact: true })).toBeEnabled();
+  expect(await page.evaluate(() => (window as typeof window & { documentRewriteRequests: number }).documentRewriteRequests)).toBe(1);
+  expect(await page.evaluate(() => (window as typeof window & { documentRewriteBlocks: number }).documentRewriteBlocks)).toBe(58);
+  expect(state.savedAssetBody?.draft_content).toContain("Original evidence-backed paragraph.");
+  expect(state.savedAssetBody?.draft_content).not.toContain("The complete rewritten argument.");
+});
+
+test("Asset complete optimization stops an idle stream without retrying or changing the draft", async ({ page }) => {
+  const state = documentOptimizationState(58);
+  const original = state.savedAssetBody?.draft_content;
+  await mockTimedDocumentRewrite(page, { progress: false, complete: false });
+  await installMockBff(page, state);
+  await signIn(page);
+  await page.goto("/assets/asset-e2e");
+  await page.getByRole("tab", { name: "Edit", exact: true }).click();
+  await page.clock.install();
+  await page.getByRole("button", { name: "Optimize Entire Draft" }).click();
+  await expect(page.locator('[data-agent-run-status="running"]')).toBeVisible();
+  await page.clock.fastForward(301_000);
+  await expect(page.getByText("Complete document optimization failed", { exact: true })).toBeVisible();
+  await page.locator("[data-action-error]").getByText("Details", { exact: true }).click();
+  await expect(page.getByText(/No model progress for 5 minutes while rewriting 58 source blocks/)).toBeVisible();
+  await expect(page.locator("[data-document-agent-diff-preview]")).toHaveCount(0);
+  expect(state.savedAssetBody?.draft_content).toBe(original);
+  expect(await page.evaluate(() => (window as typeof window & { documentRewriteRequests: number }).documentRewriteRequests)).toBe(1);
+});
+
+test("Asset complete optimization discards a proposal if the stream closes without completion", async ({ page }) => {
+  const state = documentOptimizationState(58);
+  const original = state.savedAssetBody?.draft_content;
+  await mockTimedDocumentRewrite(page, { progress: true, complete: true, endWithoutDone: true });
+  await installMockBff(page, state);
+  await signIn(page);
+  await page.goto("/assets/asset-e2e");
+  await page.getByRole("tab", { name: "Edit", exact: true }).click();
+  await page.clock.install();
+  await page.getByRole("button", { name: "Optimize Entire Draft" }).click();
+  await expect(page.locator('[data-agent-run-status="running"]')).toBeVisible();
+  await page.clock.fastForward(4 * 60_000);
+  await page.clock.fastForward(121_000);
+  await page.locator("[data-action-error]").getByText("Details", { exact: true }).click();
+  await expect(page.getByText(/The connection ended before the complete rewrite was confirmed/)).toBeVisible();
+  await expect(page.locator("[data-document-agent-diff-preview]")).toHaveCount(0);
+  expect(state.savedAssetBody?.draft_content).toBe(original);
 });
 
 test("Claim analysis recovers when the model corrects an invalid tool call", async ({ page }) => {

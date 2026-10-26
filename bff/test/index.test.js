@@ -418,6 +418,17 @@ test("login cookie authenticates direct API requests and preserves query params"
             stream.close();
             return;
           }
+          if (promptText.endsWith("document progress")) {
+            for (const chunk of [
+              { type: "reasoning-delta", text: "private analysis must not reach the browser" },
+              { type: "reasoning-delta", text: "more private analysis" },
+              { type: "tool-call-delta", argumentsDelta: "private partial arguments" },
+              { type: "tool-call-delta", argumentsDelta: "" },
+            ]) {
+              push({ type: "session/event", sessionId: chatSessionId,
+                event: { type: "assistant/chunk", seq: 0, time: Date.now(), data: { turn: 1, step: 1, chunk } } });
+            }
+          }
           push({
             type: "session/event",
             sessionId: chatSessionId,
@@ -1099,6 +1110,17 @@ test("login cookie authenticates direct API requests and preserves query params"
   const contextCheck = pkgReceived.findLast(item => item.url === "/projects/project-one/context-preview");
   assert.deepEqual(contextCheck.body, { base_revision: 2, reminder_id: null, resources: [{ resource_type: "note", resource_id: "selected-note" }], expected_fingerprint: projectSnapshot.fingerprint });
   assert.match(contextCheck.authorization, /^Bearer /);
+
+  const documentProgress = await fetch(`${base}/api/chat`, {
+    method: "POST", headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt: "document progress", preset: "revise-asset-document", create_session: true, ephemeral_session: true }),
+  });
+  const progressText = await documentProgress.text();
+  const progressEvents = progressText.split("\n\n").filter(Boolean).map(frame => JSON.parse(frame.slice("data: ".length)));
+  assert.deepEqual(progressEvents.filter(event => event.type === "progress").map(event => event.phase), ["reasoning", "tool_arguments"]);
+  assert.equal(progressEvents.find(event => event.phase === "tool_arguments").generated_characters, "private partial arguments".length);
+  assert.ok(!progressText.includes("private analysis"));
+  assert.ok(!progressText.includes("private partial arguments"));
 
   const logout = await fetch(`${base}/api/auth/logout`, {
     method: "POST",
