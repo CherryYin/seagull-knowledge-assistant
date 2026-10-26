@@ -96,6 +96,8 @@ npm run stack:start
 
 Open `http://127.0.0.1:5173`.
 
+If Harness or the frontend is already running outside this script, confirm it is the intended instance and run `npm run stack:start -- --reuse-existing`. These responding services stay unmanaged (shown as `external` in status); stack stop/restart and logs do not control them. Add `--skip-worker` to avoid starting scheduled jobs, or use `npm run stack:stop -- --keep-infra` to leave the database available to external services.
+
 When upgrading an existing installation, apply PKG migrations (`cd personal_knowledge_graph && .venv/bin/alembic upgrade head`) before restarting the PKG API and Gateway. Projects are available from the sidebar and the Projects button on resource details.
 
 ```bash

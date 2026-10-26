@@ -31,7 +31,7 @@ cp .dsh/.env.example .dsh/.env
 # 2. 安装 dsh（首次）
 npm install
 
-# 3. 安装 web/headless profile 的本地插件依赖
+# 3. 安装上游依赖、构建 Host/Client，再安装 web/headless profile 的本地插件依赖
 npm run profiles:install
 
 # 4. 验证两个 profile 可以完成配置组装
@@ -41,6 +41,12 @@ npm run profiles:check
 npm run dev
 # 或：npx @deepseek-ai/dsh web --profile knowledge-agent
 ```
+
+更新上游子模块后也需要重新运行 `npm run profiles:install`。只运行
+`build:lib:host` 不会生成所有 Web UI 插件的 Node 入口和浏览器产物，可能导致
+`Cannot find package '@deepseek-ai/dsh-client-ui-reference'` 等启动错误。
+如果子模块有未解决的合并冲突，先用 `git -C dsh-harness status` 检查并完成合并，
+再安装和构建；不要通过删除插件配置或从 npm 单独安装同名包绕过本地构建。
 
 打开 `http://127.0.0.1:3080`，在聊天框中输入任务即可开始实验。
 

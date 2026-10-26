@@ -96,6 +96,8 @@ npm run stack:start
 
 访问 `http://127.0.0.1:5173`。
 
+如果 Harness 或前端已由其他终端启动，确认是要使用的实例后执行 `npm run stack:start -- --reuse-existing`。这些服务仍不由脚本管理（状态显示 `external`），停止、重启和日志命令不会接管它们。可追加 `--skip-worker` 避免启动定时任务；使用 `npm run stack:stop -- --keep-infra` 可为外部服务保留数据库。
+
 已有安装升级时，先执行 PKG 数据库迁移（`cd personal_knowledge_graph && .venv/bin/alembic upgrade head`），再重启 PKG API 和 Gateway。项目入口位于侧边栏，各类资源详情也提供 Projects 按钮。
 
 ```bash

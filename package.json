@@ -17,6 +17,7 @@
     "test:ui": "npm --prefix seagull-ui run build",
     "test:gateway": "npm --prefix bff test",
     "test:lab": "npm --prefix deepseek-knowledge-lab run profiles:check",
-    "test:integration": "node tests/integration/check-agent-memory.mjs && node tests/integration/check-asset-production.mjs && node tests/integration/check-shared-settings.mjs && node tests/integration/check-source-mind-map.mjs"
+    "test:stack": "node --test tests/integration/dev-stack.test.mjs",
+    "test:integration": "npm run test:stack && node tests/integration/check-agent-memory.mjs && node tests/integration/check-asset-production.mjs && node tests/integration/check-shared-settings.mjs && node tests/integration/check-source-mind-map.mjs"
   }
 }

@@ -21,6 +21,7 @@
 **/*.tsbuildinfo
 
 # Runtime state
+deepseek-knowledge-lab/.dsh/.anonymous-user-id
 **/tmp/
 **/temp/
 **/*.log

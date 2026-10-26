@@ -15,6 +15,7 @@ HARNESS_URL="${HARNESS_URL:-http://127.0.0.1:3080}"
 BFF_URL="${BFF_URL:-http://127.0.0.1:4000}"
 SEAGULL_URL="${SEAGULL_URL:-http://127.0.0.1:5173}"
 START_TIMEOUT_SECONDS="${START_TIMEOUT_SECONDS:-90}"
+REUSE_EXISTING=false
 
 SERVICES=(pkg-api pkg-worker harness bff seagull)
 STARTED_SERVICES=()
@@ -24,15 +25,20 @@ usage() {
 Usage: ./scripts/dev-stack.sh <command> [options]
 
 Commands:
-  start [--skip-infra] [--skip-worker]  Start the complete local platform
+  start [--skip-infra] [--skip-worker] [--reuse-existing]
+                                        Start the complete local platform
   stop [--keep-infra]                   Stop managed services and optionally infrastructure
-  restart [--skip-infra] [--skip-worker]
+  restart [--skip-infra] [--skip-worker] [--reuse-existing]
                                         Restart the complete local platform
   status                                Show process and infrastructure status
   logs [service|all]                    Follow logs (default: all)
   check                                 Validate directories, env files, and commands
 
 Services: pkg-api, pkg-worker, harness, bff, seagull
+
+--reuse-existing reuses responding service URLs without adopting their processes.
+Reused services remain unmanaged: stack:stop/restart will not stop/restart them,
+and stack:logs cannot show their logs. Use stop --keep-infra if they need the DB.
 
 Environment overrides:
   PKG_URL, HARNESS_URL, BFF_URL, SEAGULL_URL, START_TIMEOUT_SECONDS
@@ -41,6 +47,30 @@ EOF
 
 log() {
   printf '[dev-stack] %s\n' "$*"
+}
+
+service_url() {
+  case "$1" in
+    pkg-api) printf '%s/health' "$PKG_URL" ;;
+    harness) printf '%s/' "$HARNESS_URL" ;;
+    bff) printf '%s/api/health' "$BFF_URL" ;;
+    seagull) printf '%s/' "$SEAGULL_URL" ;;
+  esac
+}
+
+check_existing_services() {
+  local service health_url
+  for service in "${SERVICES[@]}"; do
+    health_url="$(service_url "$service")"
+    if [[ -n "$health_url" ]] && ! is_running "$service" &&
+      curl --fail --silent --show-error --max-time 2 "$health_url" >/dev/null 2>&1; then
+      if [[ "$REUSE_EXISTING" != true ]]; then
+        log "$service URL is already served by an unmanaged process: $health_url"
+        log "confirm it is the intended local service, then use: npm run stack:start -- --reuse-existing"
+        return 1
+      fi
+    fi
+  done
 }
 
 fail() {
@@ -124,7 +154,12 @@ start_service() {
     return
   fi
   if [[ -n "$health_url" ]] && curl --fail --silent --show-error --max-time 2 "$health_url" >/dev/null 2>&1; then
+    if [[ "$REUSE_EXISTING" == true ]]; then
+      log "reusing $service at $health_url (unmanaged; not adopted or stopped by this script)"
+      return
+    fi
     log "$service URL is already served by an unmanaged process: $health_url"
+    log "confirm it is the intended local service, then use: npm run stack:start -- --reuse-existing"
     return 1
   fi
 
@@ -196,8 +231,21 @@ rollback_started() {
   done
 }
 
+check_harness_checkout() {
+  local unmerged
+  unmerged="$(git -C "$LAB_ROOT/dsh-harness" diff --name-only --diff-filter=U)" ||
+    fail "could not inspect the Harness checkout"
+  if [[ -n "$unmerged" ]]; then
+    printf '[dev-stack] Harness has unresolved merge conflicts:\n%s\n' "$unmerged" >&2
+    fail "resolve the merge in deepseek-knowledge-lab/dsh-harness, then run npm --prefix deepseek-knowledge-lab run profiles:install before starting the stack"
+  fi
+}
+
 check_prerequisites() {
   require_command bash
+  require_command git
+  require_directory "$LAB_ROOT/dsh-harness"
+  check_harness_checkout
   require_command curl
   require_command docker
   require_command npm
@@ -242,12 +290,14 @@ start_stack() {
     case "$1" in
       --skip-infra) skip_infra=true ;;
       --skip-worker) skip_worker=true ;;
+      --reuse-existing) REUSE_EXISTING=true ;;
       *) fail "unknown start option: $1" ;;
     esac
     shift
   done
 
   check_prerequisites
+  check_existing_services
   mkdir -p "$RUN_ROOT" "$LOG_ROOT"
   trap rollback_started ERR INT TERM
 
@@ -277,7 +327,7 @@ start_stack() {
   printf '  Seagull: %s\n  Harness: %s\n  BFF:     %s\n  PKG:     %s\n' \
     "$SEAGULL_URL" "$HARNESS_URL" "$BFF_URL" "$PKG_URL"
   log "use './scripts/dev-stack.sh logs' to follow logs"
-  log "use './scripts/dev-stack.sh stop' to stop everything"
+  log "use './scripts/dev-stack.sh stop' to stop managed services and infrastructure; reused processes are not stopped"
 }
 
 stop_stack() {
@@ -310,6 +360,14 @@ show_status() {
       state=stale
     else
       state=stopped
+    fi
+    if [[ "$state" != running ]]; then
+      local health_url
+      health_url="$(service_url "$service")"
+      if [[ -n "$health_url" ]] && curl --fail --silent --show-error --max-time 2 "$health_url" >/dev/null 2>&1; then
+        state=external
+        pid=""
+      fi
     fi
     printf '%-14s %-10s %s\n' "$service" "$state" "${pid:--}"
   done
