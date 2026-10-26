@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { RefreshCw, Search } from "lucide-react";
 import { notesApi } from "@/lib/api/notes";
 import { ADOPTION_STATUSES, JOURNEY_STEPS, loadAssetJourneyReviewNotes, parseJourneyReviewNote, selectJourneyReviews, summarizeJourneyReviews } from "@/lib/asset-journey-stats";
@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { AssetFunctionalOverview } from "@/components/AssetFunctionalOverview";
+import { ProjectDiagnosticsPicker } from "@/components/projects/ProjectDiagnosticsPicker";
 
 const STEP_LABELS = {
   intent: "Intent", evidence: "Evidence", claims: "Claims", draft: "Draft",
@@ -29,6 +30,8 @@ const numberFormat = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2
 const RECORDS_PER_PAGE = 20;
 
 export function AssetStatisticsPanel() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const projectId = searchParams.get("project_id") || undefined;
   const [search, setSearch] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -38,7 +41,7 @@ export function AssetStatisticsPanel() {
   const reviewsQuery = useQuery({
     queryKey: ["asset-journey-reviews"],
     queryFn: () => loadAssetJourneyReviewNotes(params => notesApi.list(params)),
-    enabled: showReviews,
+    enabled: showReviews && !projectId,
   });
   const records = useMemo(() => (reviewsQuery.data?.notes ?? []).map(parseJourneyReviewNote), [reviewsQuery.data]);
   const selected = useMemo(() => selectJourneyReviews(records, { search, from, to, mode }), [records, search, from, to, mode]);
@@ -52,12 +55,18 @@ export function AssetStatisticsPanel() {
       <section className="space-y-6" aria-label="Asset diagnostics">
         <div>
           <h2 className="text-xl font-semibold">Asset Function Statistics</h2>
-          <p className="mt-2 max-w-3xl text-sm text-muted-foreground">Every owned Asset, across all functional areas. Diagnose saved-state blockers and pending decisions; user-reported journey reviews provide optional evidence about recovery and adoption.</p>
+          <p className="mt-2 max-w-3xl text-sm text-muted-foreground">{projectId ? "All Assets directly linked to the selected Project, across functional areas. Counts cover the full scope, not the current issue page; saved-state signals do not establish adoption or task completion." : "Every owned Asset, across all functional areas. Diagnose saved-state blockers and pending decisions; user-reported journey reviews provide optional evidence about recovery and adoption."}</p>
         </div>
 
-        <AssetFunctionalOverview />
+        <ProjectDiagnosticsPicker projectId={projectId} onChange={id => {
+          const next = new URLSearchParams(searchParams);
+          if (id) next.set("project_id", id);
+          else next.delete("project_id");
+          setSearchParams(next);
+        }} />
+        <AssetFunctionalOverview key={projectId ?? "global"} projectId={projectId} />
 
-        <details className="rounded-xl border p-4" onToggle={event => setShowReviews(event.currentTarget.open)}>
+        {projectId ? <p className="text-sm text-muted-foreground">User-reported journey reviews remain available in the global view only; they are not mixed into Project-filtered statistics.</p> : <details className="rounded-xl border p-4" onToggle={event => setShowReviews(event.currentTarget.open)}>
           <summary className="cursor-pointer font-semibold">User-reported journey reviews (supplementary)</summary>
           <div className="mt-4 space-y-6">
           <Button variant="outline" onClick={() => void reviewsQuery.refetch()} disabled={reviewsQuery.isFetching}><RefreshCw className="h-4 w-4" />{reviewsQuery.isFetching ? "Refreshing…" : "Refresh reviews"}</Button>
@@ -104,7 +113,7 @@ export function AssetStatisticsPanel() {
           {records.length > 0 && <Card><CardHeader><CardTitle>Review records</CardTitle><CardDescription>Open the original note to inspect reasons, recovery actions, measurements, and the structured summary. Legacy or invalid reports remain readable but do not contribute to counts.</CardDescription></CardHeader><CardContent><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b text-left"><th className="py-2">Review</th><th>Saved (UTC)</th><th>Asset</th><th>Adoption</th><th>Data quality</th></tr></thead><tbody>{visible.map(record => <tr key={record.note.id} className="border-b align-top"><td className="py-3 pr-4"><Link className="text-primary hover:underline" to={`/notes/${encodeURIComponent(record.note.id)}`}>{record.note.title}</Link></td><td className="py-3 pr-4 whitespace-nowrap">{Number.isFinite(Date.parse(record.note.created_at)) ? new Date(record.note.created_at).toISOString().slice(0, 10) : "Unknown"}</td><td className="py-3 pr-4">{record.report?.asset_id ? <Link className="text-primary hover:underline" to={`/assets/${encodeURIComponent(record.report.asset_id)}`}>{record.report.asset_id}</Link> : "—"}</td><td className="py-3 pr-4">{record.report ? ADOPTION_LABELS[record.report.adoption.status] : "Unknown"}</td><td className="py-3">{record.error ? <span className="text-amber-800">Excluded: {record.error}</span> : <Badge variant="secondary">Structured</Badge>}</td></tr>)}</tbody></table>{selected.length === 0 && <p className="py-5 text-muted-foreground">No reviews match these filters.</p>}</div>{pageCount > 1 && <div className="mt-4 flex items-center justify-between"><Button variant="outline" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous records</Button><span className="text-sm text-muted-foreground">Page {currentPage + 1} of {pageCount}</span><Button variant="outline" disabled={currentPage >= pageCount - 1} onClick={() => setPage(currentPage + 1)}>Next records</Button></div>}</CardContent></Card>}
         </>}
           </div>
-        </details>
+        </details>}
       </section>
   );
 }

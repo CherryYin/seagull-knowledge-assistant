@@ -24,7 +24,8 @@ async function mockProjects(page: Page, initial = [project()]) {
     links: new Map<string, ProjectResource[]>(), taskLinks: [] as TodoResource[], failResources: false, failResults: false,
     sessions: [] as ChatSessionRecord[], chatRequests: [] as Record<string, unknown>[], failPreview: false, summary: "Selected source summary",
     conflictOnce: false, failList: false, patches: [] as Record<string, unknown>[], outputSaves: 0,
-    loseResultResponseOnce: false, failReceiptOnce: false, resultRequests: [] as Record<string, unknown>[] };
+    loseResultResponseOnce: false, failReceiptOnce: false, resultRequests: [] as Record<string, unknown>[],
+    analyticsAssets: [asset] as ProjectResourceOption[], analyticsRequests: [] as string[], failAnalytics: false, ignoreProjectScope: false };
   const update = (saved: Project) => {
     saved.revision += 1;
     saved.resource_counts = {};
@@ -74,6 +75,32 @@ async function mockProjects(page: Page, initial = [project()]) {
       return json(route, { ...request.postDataJSON(), id: `saved-${path.slice(1)}-${state.outputSaves}` }, 201);
     }
     if (path === "/harness/models") return json(route, { models: [], default_model: null });
+    if (path === "/assets/analytics") {
+      state.analyticsRequests.push(url.searchParams.toString());
+      if (state.failAnalytics) return json(route, { detail: "Project statistics unavailable" }, 503);
+      const projectId = url.searchParams.get("project_id");
+      const selectedProject = state.projects.find(item => item.id === projectId);
+      if (projectId && !selectedProject) return json(route, { detail: "Project not found" }, 404);
+      const linkedIds = new Set((state.links.get(projectId ?? "") ?? []).filter(item => item.resource_type === "asset").map(item => item.resource_id));
+      let selectedAssets = state.analyticsAssets.filter(item => !projectId || linkedIds.has(item.resource_id));
+      if (url.searchParams.get("status")) selectedAssets = selectedAssets.filter(item => item.status === url.searchParams.get("status"));
+      if (url.searchParams.get("asset_type") && url.searchParams.get("asset_type") !== "blog_post") selectedAssets = [];
+      const total = selectedAssets.length;
+      const featureFilter = url.searchParams.get("feature");
+      const issues = featureFilter && featureFilter !== "blocks" ? [] : selectedAssets.map(item => ({ asset_id: item.resource_id, title: item.title, asset_type: "blog_post", asset_status: item.status ?? "draft", feature: "blocks", state: "needs_review", reason: "Review legacy content blocks", block_ids: ["block-one"] }));
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      const limit = Number(url.searchParams.get("limit") ?? 30);
+      return json(route, { project_id: state.ignoreProjectScope ? undefined : projectId, project_title: selectedProject?.title ?? null, project_archived: Boolean(selectedProject?.archived_at), generated_at: now,
+        total_assets: total, assets_with_attention: total, assets_without_workspace: total, by_type: { blog_post: total }, by_status: { draft: total },
+        features: ["intent", "evidence", "claims", "draft", "blocks", "optimization", "quality", "outline", "visuals", "export", "wechat", "knowledge"].map(feature => ({ feature, label: feature === "blocks" ? "Content blocks and Claim links" : feature,
+          optional: ["visuals", "optimization", "quality", "outline", "wechat", "knowledge"].includes(feature),
+          completed: feature === "draft" ? total : 0, needs_review: feature === "blocks" ? total : 0, blocked: 0,
+          in_progress: 0, not_started: 0, failed: 0, unknown: ["draft", "blocks"].includes(feature) ? 0 : total,
+          recorded_failure_assets: null, reasons: feature === "blocks" ? { "Review legacy content blocks": total } : {} })),
+        visual_metrics: { total_tasks: 0, failed_tasks: 0, active_tasks: 0, processing_attempts: 0, retry_attempts: 0, timed_tasks: 0, mean_elapsed_seconds: null },
+        issues: issues.slice(offset, offset + limit), issue_total: issues.length, issue_offset: offset, issue_limit: limit,
+        measurement_limits: ["Missing measurements remain unknown; saved content is not adoption."] });
+    }
     if (path.startsWith("/harness/session-contexts/")) return json(route, { context: null });
     if (path.startsWith("/harness/memory-recalls")) return json(route, { items: [] });
     if (path === "/chat-sessions") {
@@ -970,6 +997,109 @@ test("saved result choices support project and Todo pagination with recoverable 
   expect(state.resultRequests[0].reminder_id).toBe("result-task-12");
   expect(state.taskLinks).toHaveLength(1);
   expect(state.outputSaves).toBe(0);
+});
+
+function seedDiagnosticAssets(state: Awaited<ReturnType<typeof mockProjects>>, projectId = "project-one", count = 45) {
+  const resources: ProjectResource[] = Array.from({ length: count }, (_, index) => ({ ...asset,
+    id: `diagnostic-link-${index + 1}`, resource_id: `diagnostic-asset-${index + 1}`, title: `Diagnostic Asset ${index + 1}`,
+    href: `/assets/diagnostic-asset-${index + 1}`, reason: "Output", created_at: now }));
+  state.links.set(projectId, resources);
+  state.analyticsAssets = [...resources, asset];
+  state.projects.find(item => item.id === projectId)!.resource_counts = { asset: count };
+  return resources;
+}
+
+test("Project Outputs reuse full Asset diagnostics independently of resource and issue pagination", async ({ page }) => {
+  const state = await mockProjects(page);
+  seedDiagnosticAssets(state);
+  await page.goto("/projects/project-one?tab=outputs");
+  await expect(page.getByRole("link", { name: "Diagnostic Asset 1", exact: true })).toBeVisible();
+  expect(state.analyticsRequests).toHaveLength(0);
+  await page.getByRole("button", { name: "Next linked resources", exact: true }).click();
+  await expect(page.getByRole("link", { name: "Diagnostic Asset 21", exact: true })).toBeVisible();
+  await page.getByText("Asset diagnostics for this Project", { exact: true }).click();
+  const diagnostics = page.getByRole("region", { name: "Project Asset functional overview" });
+  await expect(diagnostics.getByTestId("global-asset-total")).toHaveText("45");
+  await expect(diagnostics.getByTestId("global-workspace-unknown")).toHaveText("45");
+  await expect(diagnostics.getByTestId("global-feature-intent")).toContainText("45");
+  await expect(diagnostics).toContainText("Unknown");
+  await diagnostics.getByRole("button", { name: "Next affected Assets", exact: true }).click();
+  await expect(diagnostics.getByRole("link", { name: "Diagnostic Asset 31", exact: true })).toBeVisible();
+  await expect(diagnostics.getByTestId("global-asset-total")).toHaveText("45");
+  expect(state.analyticsRequests.at(-1)).toContain("project_id=project-one");
+  expect(state.analyticsRequests.at(-1)).toContain("offset=30");
+  await expect(page.getByRole("link", { name: "Open this Project’s Asset diagnostics in Settings Dashboard", exact: true })).toHaveAttribute("href", "/stats?tab=assets&project_id=project-one");
+});
+
+test("Dashboard Project scope survives reload and tabs and clears without leaking scoped counts", async ({ page }) => {
+  const state = await mockProjects(page, [project(), project("project-two", "Shared output")]);
+  const resources = seedDiagnosticAssets(state);
+  state.links.set("project-two", [resources[0]]);
+  await page.goto("/stats?tab=assets&project_id=project-one");
+  await expect(page.getByTestId("global-asset-total")).toHaveText("45");
+  await expect(page.getByText("Selected Project: Real goal", { exact: true })).toBeVisible();
+  await expect(page.getByText("User-reported journey reviews (supplementary)", { exact: true })).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByTestId("global-asset-total")).toHaveText("45");
+  await page.getByRole("tab", { name: "Knowledge Usage", exact: true }).click();
+  await expect(page).toHaveURL(/project_id=project-one/);
+  await page.getByRole("tab", { name: "Asset Diagnostics", exact: true }).click();
+  await expect(page.getByTestId("global-asset-total")).toHaveText("45");
+  await page.getByRole("button", { name: "Show all Assets", exact: true }).click();
+  await expect(page.getByTestId("global-asset-total")).toHaveText("46");
+  await expect(page).not.toHaveURL(/project_id=/);
+  await page.getByRole("button", { name: "Choose diagnostic Project", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Shared output · active", exact: true }).click();
+  await expect(page.getByTestId("global-asset-total")).toHaveText("1");
+  await page.getByRole("combobox", { name: "Project Asset status", exact: true }).selectOption("published");
+  await expect(page.getByTestId("global-asset-total")).toHaveText("0");
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+test("diagnostic Project choices recover from failure and include searchable paginated archived scopes", async ({ page }) => {
+  const state = await mockProjects(page, [project(), ...Array.from({ length: 11 }, (_, index) => project(`scope-${index + 1}`, `Scope ${index + 1}`)), { ...project("archived-scope", "Archived scope"), archived_at: now }]);
+  const resources = seedDiagnosticAssets(state);
+  state.links.set("scope-11", [resources[0]]);
+  state.links.set("archived-scope", [resources[0]]);
+  await page.goto("/stats?tab=assets");
+  state.failList = true;
+  await page.getByRole("button", { name: "Choose diagnostic Project", exact: true }).click();
+  await expect(page.getByRole("dialog").getByRole("alert")).toContainText("unavailable, not empty");
+  state.failList = false;
+  await page.getByRole("button", { name: "Retry diagnostic Project choices", exact: true }).click();
+  await page.getByRole("button", { name: "Next diagnostic Projects", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Scope 11 · active", exact: true }).click();
+  await expect(page.getByTestId("global-asset-total")).toHaveText("1");
+  await page.getByRole("button", { name: "Choose diagnostic Project", exact: true }).click();
+  await page.getByLabel("Search diagnostic Projects", { exact: true }).fill("Archived");
+  await page.getByLabel("Show archived Projects", { exact: true }).check();
+  await page.getByRole("dialog").getByRole("button", { name: "Archived scope · archived", exact: true }).click();
+  await expect(page.getByTestId("global-asset-total")).toHaveText("1");
+  await expect(page.getByRole("region", { name: "Project Asset functional overview" })).toContainText("archived, read-only");
+  await page.reload();
+  await expect(page).toHaveURL(/project_id=archived-scope/);
+  await expect(page.getByTestId("global-asset-total")).toHaveText("1");
+});
+
+test("project diagnostics refuse unavailable or unconfirmed scope instead of showing global counts or zero", async ({ page }) => {
+  const state = await mockProjects(page);
+  seedDiagnosticAssets(state);
+  state.failAnalytics = true;
+  await page.goto("/stats?tab=assets&project_id=project-one");
+  const diagnostics = page.getByRole("region", { name: "Project Asset functional overview" });
+  await expect(diagnostics.getByRole("alert")).toContainText("Counts are unavailable, not zero");
+  await expect(page.getByTestId("global-asset-total")).toHaveCount(0);
+  state.failAnalytics = false;
+  state.ignoreProjectScope = true;
+  await page.getByRole("button", { name: "Retry project statistics", exact: true }).click();
+  await expect(diagnostics.getByRole("alert")).toContainText("API did not confirm");
+  await expect(page.getByTestId("global-asset-total")).toHaveCount(0);
+  state.ignoreProjectScope = false;
+  await page.getByRole("button", { name: "Retry project statistics", exact: true }).click();
+  await expect(page.getByTestId("global-asset-total")).toHaveText("45");
+  await page.goto("/stats?tab=assets&project_id=missing");
+  await expect(page.getByRole("region", { name: "Project Asset functional overview" }).getByRole("alert")).toContainText("Project not found");
+  await expect(page.getByTestId("global-asset-total")).toHaveCount(0);
 });
 
 test("project context preview failure is recoverable without starting a model or session", async ({ page }) => {

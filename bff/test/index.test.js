@@ -109,7 +109,13 @@ test("login cookie authenticates direct API requests and preserves query params"
       return;
     }
     if (req.url?.startsWith("/assets/analytics?")) {
-      res.end(JSON.stringify({ total_assets: 251, features: [] }));
+      const projectId = new URL(req.url, "http://pkg.test").searchParams.get("project_id");
+      if (!req.headers.authorization || projectId === "foreign") {
+        res.writeHead(projectId === "foreign" ? 404 : 401);
+        res.end(JSON.stringify({ detail: projectId === "foreign" ? "Project not found" : "Unauthorized" }));
+        return;
+      }
+      res.end(JSON.stringify({ total_assets: 251, features: [], project_id: projectId }));
       return;
     }
     if (req.url === "/auth/login") {
@@ -994,6 +1000,16 @@ test("login cookie authenticates direct API requests and preserves query params"
   assert.equal((await analytics.json()).total_assets, 251);
   assert.equal(pkgReceived.at(-1).url, "/assets/analytics?feature=blocks&offset=30&limit=30");
   assert.match(pkgReceived.at(-1).authorization, /^Bearer /);
+
+  const scopedAnalytics = await fetch(`${base}/api/assets/analytics?project_id=project-one&feature=blocks&offset=30&limit=30`, { headers: { Cookie: cookie } });
+  assert.equal(scopedAnalytics.status, 200);
+  assert.equal((await scopedAnalytics.json()).project_id, "project-one");
+  assert.equal(pkgReceived.at(-1).url, "/assets/analytics?project_id=project-one&feature=blocks&offset=30&limit=30");
+  assert.match(pkgReceived.at(-1).authorization, /^Bearer /);
+  const foreignAnalytics = await fetch(`${base}/api/assets/analytics?project_id=foreign`, { headers: { Cookie: cookie } });
+  assert.equal(foreignAnalytics.status, 404);
+  const anonymousAnalytics = await fetch(`${base}/api/assets/analytics?project_id=project-one`);
+  assert.equal(anonymousAnalytics.status, 401);
 
   const projectList = await fetch(`${base}/api/projects?archived=true&offset=20&limit=20`, {
     headers: { Cookie: cookie },

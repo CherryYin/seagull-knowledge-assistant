@@ -145,6 +145,7 @@ async def list_assets_route(
 @router.get("/analytics", response_model=AssetAnalytics)
 async def asset_analytics_route(
     asset_type: str | None = None,
+    project_id: str | None = Query(default=None, min_length=1, max_length=200),
     status: str | None = Query(default=None, pattern=r"^(draft|in_review|ready_to_export|exported|published|archived)$"),
     feature: str | None = None,
     offset: int = Query(default=0, ge=0),
@@ -155,7 +156,7 @@ async def asset_analytics_route(
     if feature is not None and feature not in FEATURE_IDS:
         raise HTTPException(status_code=422, detail="Unknown Asset feature")
     return await get_asset_analytics(session, user_id=user.id, asset_type=asset_type,
-        status=status, feature=feature, offset=offset, limit=limit)
+        status=status, feature=feature, offset=offset, limit=limit, project_id=project_id)
 
 
 @router.get("/newsletter/automation", response_model=NewsletterAutomationConfig)

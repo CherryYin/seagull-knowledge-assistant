@@ -209,7 +209,7 @@ Overview 的“最近更新”只展示已有关联对象的更新时间，不�
 | `POST /projects/{id}/context-session` | P3a 已实现：确认 fingerprint，原子建立独立项目会话、关联及执行快照；支持同 session_id 幂等重试 |
 | `PUT /projects/{id}/context-session/{session_id}` | P3a 已实现：确认更新同项目的执行快照，不重写旧消息或更换执行项目 |
 | `POST /projects/{id}/saved-result` | P3b 已实现：将已保存 Note／Asset／Wiki 显式关联项目，可同时关联一次性 Todo 的 Note／Asset result；原子写入，响应丢失重试不重复建关联 |
-| `GET /assets/analytics?project_id=...` | 在现有全局诊断上增加项目过滤 |
+| `GET /assets/analytics?project_id=...` | P4 已实现：验证项目所有权，对全部直接关联 Asset 去重统计，分页仅影响卡点列表；返回确认后的项目范围 |
 
 Project 删除不是首版主入口，先提供归档。若之后提供永久删除，只删除 Project、其资源关系及项目级任务关系；Todo 的 project_id 置空，所有知识、Asset、会话和记忆均不得级联删除。记忆失去有效项目时不召回，清理由用户另行确认。
 
@@ -287,10 +287,14 @@ P3b 复用现有两类关联表，不增加迁移；P3a 已部署的环境只需
 
 ### P4：诊断与真实使用验证
 
-- [ ] Dashboard Asset Diagnostics 增加可选 Project 筛选，Project Outputs 复用相同诊断。
+- [x] Dashboard Asset Diagnostics 增加可选 Project 筛选，Project Outputs 按需复用相同诊断。
 - [ ] 对 2–3 个真实项目做连续使用验证，记录“是否减少重复背景输入、能否迅速找到下一步”。
 
 退出标准：项目筛选覆盖全部关联 Assets，分页不影响计数；未记录指标继续显示未知；用户隔几天重新进入项目能恢复推进。
+
+诊断范围保存在 Dashboard 的 `project_id` URL 参数中，切换标签与刷新保留；切换项目或返回全局会重置诊断子筛选和卡点页码。可搜索、分页选择 active／completed 项目，也可切换到 archived 项目只读查看。统计只包含当前用户直接关联的 Asset，同一 Asset 被多个项目引用时，各项目各计一次，全局仍计一次；不沿着 Note、Todo 或 Chat 反推 Asset，不把关系数量当采用率或完成率。Asset 类型、状态与功能筛选复用原接口。旧 API 未确认 scope、404 或加载失败均显示不可用，不显示全局数值或假零值。用户复盘目前仍是全局补充视角，项目范围下隐藏，避免混算。无需新迁移，只需重启 PKG API。
+
+真实使用验证仍待用户完成，不以自动测试代替：选 2–3 个已有项目，每个至少做一次「选下一步 → 确认上下文 → 工作 → 保存 → 显式关联成果」，隔几天再进入。每次记录「找到下一步是否困难、重复输入了哪些背景、哪一步需要手动补救、产物是否采用及原因」；耗时只写实际记录或明确标记估计，没记录就保持未知。根据这些反馈再决定是否增加项目记忆或任务状态，不预先扩展任务模型。
 
 ## 11. 验证矩阵与设计确认点
 

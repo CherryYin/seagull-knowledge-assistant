@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pkg.models.application.asset import Asset, AssetVisual
 from pkg.models.application.mind_map import MindMap
+from pkg.models.application.project import ProjectResource
 from pkg.schemas.application.asset_analytics import (
     AssetAnalytics,
     AssetFeatureCounts,
@@ -17,6 +18,7 @@ from pkg.schemas.application.asset_analytics import (
 from pkg.services.application.asset_workspace import audit_asset_workspace
 from pkg.services.application.blog_generation import check_readiness
 from pkg.services.application.mind_maps import build_asset_outline_proposal
+from pkg.services.application.projects import owned_project
 
 FEATURES = [
     ("intent", "Intent confirmation", False),
@@ -257,19 +259,30 @@ def summarize_asset_features(
 async def get_asset_analytics(
     session: AsyncSession, *, user_id: str, asset_type: str | None = None,
     status: str | None = None, feature: str | None = None, offset: int = 0, limit: int = 50,
+    project_id: str | None = None,
 ) -> AssetAnalytics:
     filters = [Asset.user_id == user_id]
+    project = None
+    if project_id:
+        project = await owned_project(session, user_id, project_id)
+        linked_assets = select(ProjectResource.asset_id).where(
+            ProjectResource.project_id == project.id, ProjectResource.resource_type == "asset")
+        filters.append(Asset.id.in_(linked_assets))
     if asset_type:
         filters.append(Asset.asset_type == asset_type)
     if status:
         filters.append(Asset.status == status)
     assets_result = await session.execute(select(Asset).where(*filters).order_by(Asset.updated_at.desc(), Asset.id))
     assets = list(assets_result.scalars())
-    if not assets:
-        return summarize_asset_features([], [], [], feature=feature, offset=offset, limit=limit)
-    visuals_result = await session.execute(select(AssetVisual).join(Asset, Asset.id == AssetVisual.asset_id)
-        .where(AssetVisual.user_id == user_id, *filters))
-    maps_result = await session.execute(select(MindMap).join(Asset, Asset.id == MindMap.owner_id)
-        .where(MindMap.user_id == user_id, MindMap.owner_type == "asset", *filters))
-    return summarize_asset_features(assets, list(visuals_result.scalars()), list(maps_result.scalars()),
-        feature=feature, offset=offset, limit=limit)
+    visuals, maps = [], []
+    if assets:
+        visuals_result = await session.execute(select(AssetVisual).join(Asset, Asset.id == AssetVisual.asset_id)
+            .where(AssetVisual.user_id == user_id, *filters))
+        maps_result = await session.execute(select(MindMap).join(Asset, Asset.id == MindMap.owner_id)
+            .where(MindMap.user_id == user_id, MindMap.owner_type == "asset", *filters))
+        visuals, maps = list(visuals_result.scalars()), list(maps_result.scalars())
+    result = summarize_asset_features(assets, visuals, maps, feature=feature, offset=offset, limit=limit)
+    if project:
+        result.project_id, result.project_title, result.project_archived = project.id, project.title, bool(project.archived_at)
+        result.measurement_limits.append("Project scope includes only directly linked owned Assets, counted once; task and session activity is not inferred. Archived Projects remain readable.")
+    return result

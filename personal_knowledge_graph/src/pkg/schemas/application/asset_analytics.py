@@ -46,6 +46,9 @@ class AssetVisualMetrics(BaseModel):
 
 
 class AssetAnalytics(BaseModel):
+    project_id: str | None = None
+    project_title: str | None = None
+    project_archived: bool = False
     generated_at: datetime
     total_assets: int
     assets_with_attention: int

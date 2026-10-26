@@ -8,6 +8,7 @@ import { ProjectTasks, ProjectTaskOverview } from "@/components/projects/Project
 import { ProjectResults } from "@/components/projects/TaskResources";
 import { ProjectWorkDialog } from "@/components/projects/ProjectWorkDialog";
 import { ProjectResourcePicker, PROJECT_RESOURCE_LABELS } from "@/components/projects/ProjectResourcePicker";
+import { AssetFunctionalOverview } from "@/components/AssetFunctionalOverview";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -43,13 +44,24 @@ export function ProjectDetailPage() {
         <TabsContent value="tasks" className="h-auto"><ProjectTasks key={project.id} project={project} /></TabsContent>
         <TabsContent value="overview" className="h-auto space-y-6"><section className="rounded-xl border bg-card p-5"><h2 className="font-semibold">Completion criteria</h2><p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{project.completion_criteria || "Not defined yet. Add criteria before deciding whether the goal is complete."}</p></section><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{[["Materials", project.resource_counts.source ?? 0], ["Knowledge", (project.resource_counts.note ?? 0) + (project.resource_counts.wiki ?? 0)], ["Outputs", project.resource_counts.asset ?? 0], ["Sessions", project.resource_counts.chat_session ?? 0]].map(([label, count]) => <div key={label} className="rounded-xl border p-5"><p className="text-sm text-muted-foreground">{label}</p><p className="mt-2 text-3xl font-semibold">{count}</p></div>)}</div><ProjectTaskOverview project={project} /><ProjectResults project={project} /><p className="text-sm text-muted-foreground">Linked-object counts are not a completion percentage. Project memory and automatic result linking come later.</p><p className="text-xs text-muted-foreground">Project revision {project.revision} · updated {new Date(project.updated_at).toLocaleString()}</p></TabsContent>
         <TabsContent value="knowledge" className="h-auto"><ProjectResourcesPanel project={project} types={["source", "note", "wiki"]} /></TabsContent>
-        <TabsContent value="outputs" className="h-auto"><ProjectResourcesPanel project={project} types={["asset"]} /></TabsContent>
+        <TabsContent value="outputs" className="h-auto space-y-6"><ProjectResourcesPanel project={project} types={["asset"]} /><ProjectOutputDiagnostics project={project} /></TabsContent>
         <TabsContent value="sessions" className="h-auto"><ProjectResourcesPanel project={project} types={["chat_session"]} /></TabsContent>
       </Tabs>
       <Dialog open={editing} onOpenChange={setEditing}><DialogContent className="max-h-[85vh] overflow-y-auto"><DialogHeader><DialogTitle>Edit Project</DialogTitle></DialogHeader>{editing && <ProjectForm project={editSnapshot} onSaved={() => setEditing(false)} />}</DialogContent></Dialog>
       <Dialog open={Boolean(action)} onOpenChange={open => { if (!open && !change.isPending) setAction(null); }}><DialogContent><DialogHeader><DialogTitle>{action === "complete" ? "Mark this project complete?" : action === "reopen" ? "Reopen this project?" : action === "restore" ? "Restore this project?" : "Archive this project?"}</DialogTitle></DialogHeader><p className="text-sm text-muted-foreground">{action === "complete" ? "Confirm against your goal and completion criteria. This does not complete Todos, approve Assets, or establish adoption." : action === "archive" ? "Only the project is archived. Linked knowledge, Assets, conversations, and reminders are not deleted or stopped." : "This changes only the project lifecycle, not its linked content."}</p>{action === "complete" && !project.completion_criteria && <p className="mt-3 text-sm text-amber-700">Completion criteria have not been defined.</p>}{change.isError && <div role="alert" className="mt-3 space-y-2 text-sm text-destructive"><p>{change.error.message}</p><Button variant="outline" disabled={projectQuery.isFetching} onClick={() => void projectQuery.refetch()}>Load current project</Button></div>}<Button className="mt-4" disabled={change.isPending || projectQuery.isFetching} onClick={() => change.mutate()}>{change.isPending ? "Updating…" : "Confirm project change"}</Button></DialogContent></Dialog>
     </>}
   </div></div>;
+}
+
+function ProjectOutputDiagnostics({ project }: { project: Project }) {
+  const [open, setOpen] = useState(false);
+  return <section className="space-y-3">
+    <Link className="text-sm text-primary hover:underline" to={`/stats?${new URLSearchParams({ tab: "assets", project_id: project.id })}`}>Open this Project’s Asset diagnostics in Settings Dashboard</Link>
+    <details className="rounded-xl border bg-card p-4" onToggle={event => setOpen(event.currentTarget.open)}><summary className="cursor-pointer font-semibold">Asset diagnostics for this Project</summary>
+      <p className="my-4 text-sm text-muted-foreground">Read-only diagnostics use the same statistics as Settings Dashboard. All linked Assets are covered, including those beyond the resource list’s current page. This does not measure Project progress or result adoption.</p>
+      {open && <AssetFunctionalOverview key={project.id} projectId={project.id} />}
+    </details>
+  </section>;
 }
 
 function ProjectResourcesPanel({ project, types }: { project: Project; types: ProjectResourceType[] }) {

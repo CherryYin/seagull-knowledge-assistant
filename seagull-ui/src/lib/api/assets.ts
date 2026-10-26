@@ -63,6 +63,9 @@ export interface AssetFeatureIssue {
 }
 
 export interface AssetAnalytics {
+  project_id?: string | null;
+  project_title?: string | null;
+  project_archived?: boolean;
   generated_at: string;
   total_assets: number;
   assets_with_attention: number;
@@ -493,7 +496,7 @@ export const reviseAssetIntent = (id: string, body: AssetIntentRevisionRequest) 
 );
 
 export const assetsApi = {
-  analytics: (params?: { asset_type?: string; status?: string; feature?: string; limit?: number; offset?: number }) => {
+  analytics: (params?: { asset_type?: string; status?: string; feature?: string; limit?: number; offset?: number; project_id?: string }) => {
     const query = new URLSearchParams();
     for (const [key, value] of Object.entries(params ?? {})) {
       if (value !== undefined && value !== "") query.set(key, String(value));

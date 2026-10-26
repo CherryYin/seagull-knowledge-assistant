@@ -174,10 +174,46 @@ async def test_global_analytics_route_uses_authenticated_owner_and_validates_fea
     expected = summarize_asset_features([], [], [])
     with patch("pkg.api.assets.get_asset_analytics", new=AsyncMock(return_value=expected)) as service:
         result = await asset_analytics_route(user=owner, session=session, asset_type=None, status=None,
-                                            feature="visuals", offset=0, limit=30)
+                                            feature="visuals", offset=0, limit=30, project_id="project-one")
     assert result.total_assets == 0
     service.assert_awaited_once_with(session, user_id="user-1", asset_type=None, status=None,
-                                   feature="visuals", offset=0, limit=30)
+                                   feature="visuals", offset=0, limit=30, project_id="project-one")
     with pytest.raises(HTTPException) as error:
         await asset_analytics_route(user=owner, session=session, feature="unknown")
     assert error.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_project_analytics_reuses_owned_scope_on_all_batched_queries():
+    session = AsyncMock()
+    session.execute.side_effect = [ScalarResult([make_asset()]), ScalarResult([]), ScalarResult([])]
+    project = MagicMock(id="project-one", title="Real work", archived_at=datetime.now(timezone.utc))
+    with patch("pkg.services.application.asset_analytics.owned_project", new=AsyncMock(return_value=project)) as owned:
+        result = await get_asset_analytics(session, user_id="user-1", project_id="project-one", feature="blocks", offset=30)
+    owned.assert_awaited_once_with(session, "user-1", "project-one")
+    assert result.project_id == "project-one" and result.project_title == "Real work" and result.project_archived
+    assert result.total_assets == 1
+    for call in session.execute.await_args_list:
+        sql = str(call.args[0].compile(compile_kwargs={"literal_binds": True}))
+        assert "assets.user_id" in sql and "user-1" in sql
+        assert "project_resources" in sql and "project-one" in sql and "assets.id IN" in sql
+        assert "LIMIT" not in sql and "OFFSET" not in sql
+    session.commit.assert_not_awaited()
+    session.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_empty_project_is_valid_but_foreign_or_missing_project_is_unavailable():
+    session = AsyncMock()
+    session.execute.return_value = ScalarResult([])
+    project = MagicMock(id="empty", title="Empty Project", archived_at=None)
+    with patch("pkg.services.application.asset_analytics.owned_project", new=AsyncMock(return_value=project)):
+        result = await get_asset_analytics(session, user_id="user-1", project_id="empty")
+    assert result.project_id == "empty" and result.total_assets == 0 and result.visual_metrics.mean_elapsed_seconds is None
+    assert session.execute.await_count == 1
+    session.execute.reset_mock()
+    with patch("pkg.services.application.asset_analytics.owned_project", new=AsyncMock(side_effect=HTTPException(404, "Project not found"))):
+        with pytest.raises(HTTPException) as error:
+            await get_asset_analytics(session, user_id="user-1", project_id="private")
+    assert error.value.status_code == 404
+    session.execute.assert_not_awaited()
