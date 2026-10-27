@@ -4,6 +4,8 @@
 import http from "node:http";
 import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { HarnessClient, HarnessRpcError } from "./harness-client.js";
 import { Harness2Lab } from "../../deepseek-knowledge-lab/experiments/harness2-newsletter/lab_gateway.js";
 import {
   AgentMemoryStore,
@@ -78,16 +80,8 @@ const defaultSessionContextStore = process.env.SESSION_CONTEXT_STORE_PATH || !se
 
 let counter = 0;
 function rid() { return `req-${Date.now()}-${++counter}`; }
-function rpcId() { return `bff-rpc-${Date.now()}-${++counter}`; }
-
-class HarnessRpcError extends Error {
-  constructor(method, error) {
-    super(error?.message || `Harness RPC ${method} failed`);
-    this.name = "HarnessRpcError";
-    this.code = error?.code;
-    this.details = error?.details;
-  }
-}
+const defaultHarnessClient = new HarnessClient({ baseUrl: HARNESS_BASE });
+const harnessClients = new AsyncLocalStorage();
 
 function setCORS(req, res) {
   const origin = req.headers.origin;
@@ -397,25 +391,7 @@ async function streamForward(req, res, baseUrl, upstreamPath, requestId, label) 
 }
 
 async function harnessRpc(method, payload, { signal, requestId } = {}) {
-  const id = rpcId();
-  const response = await fetch(`${HARNESS_BASE}/api/${method}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(requestId ? { "X-Request-Id": requestId } : {}),
-    },
-    body: JSON.stringify({ type: "client-request", rpcId: id, method, payload }),
-    signal,
-  });
-  if (!response.ok) throw new Error(`Harness RPC ${method} returned HTTP ${response.status}`);
-  const envelope = await response.json();
-  if (envelope?.type !== "server-response" || envelope.rpcId !== id) {
-    throw new Error(`Harness RPC ${method} returned an invalid envelope`);
-  }
-  if (!envelope.result?.ok) {
-    throw new HarnessRpcError(method, envelope.result?.error);
-  }
-  return envelope.result.value;
+  return (harnessClients.getStore() || defaultHarnessClient).rpc(method, payload, { signal, requestId });
 }
 
 export async function runHarnessModelSync() {
@@ -439,104 +415,11 @@ export async function runHarnessModelSync() {
 }
 
 async function harnessRespond(message, { signal, requestId } = {}) {
-  const response = await fetch(`${HARNESS_BASE}/api/respond`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(requestId ? { "X-Request-Id": requestId } : {}),
-    },
-    body: JSON.stringify(message),
-    signal,
-  });
-  if (!response.ok) throw new Error(`Harness respond returned HTTP ${response.status}`);
-  return response.json();
+  return (harnessClients.getStore() || defaultHarnessClient).respond(message, { signal, requestId });
 }
 
-async function openHarnessEvents(signal) {
-  if (typeof WebSocket !== "function") {
-    throw new Error("Harness event stream requires WebSocket support");
-  }
-  const url = new URL("/api/events.mux", HARNESS_BASE);
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-
-  const socket = new WebSocket(url);
-  const inbox = [];
-  let wake;
-  let opened = false;
-  const enqueue = (item) => {
-    inbox.push(item);
-    wake?.();
-    wake = undefined;
-  };
-  const onMessage = (event) => {
-    if (typeof event.data !== "string") {
-      enqueue({ error: new Error("Harness event stream returned a binary frame") });
-      return;
-    }
-    try {
-      enqueue({ value: JSON.parse(event.data) });
-    } catch {
-      enqueue({ error: new Error("Harness event stream returned invalid JSON") });
-    }
-  };
-  const onClose = () => enqueue({ done: true });
-  socket.addEventListener("message", onMessage);
-  socket.addEventListener("close", onClose, { once: true });
-
-  await new Promise((resolve, reject) => {
-    const cleanup = () => {
-      socket.removeEventListener("open", onOpen);
-      socket.removeEventListener("error", onError);
-      socket.removeEventListener("close", onEarlyClose);
-      signal?.removeEventListener("abort", onAbort);
-    };
-    const onOpen = () => {
-      opened = true;
-      cleanup();
-      resolve();
-    };
-    const onError = () => {
-      cleanup();
-      reject(new Error("Harness event WebSocket connection failed"));
-    };
-    const onEarlyClose = () => {
-      if (opened) return;
-      cleanup();
-      reject(new Error("Harness event WebSocket closed before opening"));
-    };
-    const onAbort = () => {
-      cleanup();
-      socket.close();
-      reject(signal.reason || new Error("Harness event WebSocket aborted"));
-    };
-    socket.addEventListener("open", onOpen, { once: true });
-    socket.addEventListener("error", onError, { once: true });
-    socket.addEventListener("close", onEarlyClose, { once: true });
-    signal?.addEventListener("abort", onAbort, { once: true });
-    if (signal?.aborted) onAbort();
-  });
-
-  return (async function* readHarnessEvents() {
-    const onAbort = () => socket.close();
-    signal?.addEventListener("abort", onAbort, { once: true });
-    if (signal?.aborted) onAbort();
-    try {
-      while (true) {
-        while (inbox.length) {
-          const item = inbox.shift();
-          if (item.error) throw item.error;
-          if (item.done) return;
-          yield item.value;
-        }
-        await new Promise((resolve) => { wake = resolve; });
-      }
-    } finally {
-      signal?.removeEventListener("abort", onAbort);
-      socket.removeEventListener("message", onMessage);
-      socket.removeEventListener("close", onClose);
-      if (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN) socket.close();
-    }
-  })();
+async function openHarnessEvents(sessionId, signal) {
+  return (harnessClients.getStore() || defaultHarnessClient).events(sessionId, signal);
 }
 
 function sse(res, event) {
@@ -627,6 +510,7 @@ async function harnessChat(req, res, requestId, agentMemoryStore) {
   const abort = new AbortController();
   let activeHarnessSessionId;
   let turnCompleted = false;
+  let events;
   res.on("close", () => {
     if (!res.writableEnded) {
       abort.abort();
@@ -645,7 +529,6 @@ async function harnessChat(req, res, requestId, agentMemoryStore) {
   });
 
   try {
-    const events = await openHarnessEvents(abort.signal);
     let created;
     let sessionId = allocatedSessionId;
     const createSession = async () => harnessRpc("session.create", {
@@ -686,7 +569,9 @@ async function harnessChat(req, res, requestId, agentMemoryStore) {
       selectedIds: verifiedProjectContext ? [] : body?.memory_ids,
     });
     const memoryContext = formatAgentMemoryContext(recalled.memories);
+    events = await openHarnessEvents(sessionId, abort.signal);
     const promptPayload = {
+      requestId: randomUUID(),
       sessionId,
       mode: "queue",
       content: [{ type: "text", text: [memoryContext, verifiedProjectContext?.context_text, prompt].filter(Boolean).join("\n\n") }],
@@ -809,6 +694,8 @@ async function harnessChat(req, res, requestId, agentMemoryStore) {
   } catch (err) {
     if (!abort.signal.aborted) sse(res, { type: "error", content: err.message });
   } finally {
+    abort.abort();
+    await events?.return().catch(() => undefined);
     if (!res.writableEnded) res.end();
   }
 }
@@ -1053,9 +940,11 @@ async function harnessSessionContexts(req, res, path, requestId, sessionContextS
 }
 
 async function harnessPresets(req, res, requestId) {
-  if (!authHeader(req)) return json(req, res, 401, { error: "Unauthorized" });
+  const authorization = authHeader(req);
+  if (!authorization) return json(req, res, 401, { error: "Unauthorized" });
   if (req.method !== "GET") return json(req, res, 405, { error: "Method not allowed" });
   try {
+    await currentPkgUser(authorization, requestId);
     const value = await harnessRpc("agentPreset.list", {}, { requestId });
     return json(req, res, 200, value.presets
       .filter((preset) => !preset.broken)
@@ -1067,6 +956,7 @@ async function harnessPresets(req, res, requestId) {
         is_default: preset.isDefault,
       })));
   } catch (err) {
+    if (err.status === 401) return respondAuthExpired(req, res, authorization);
     return json(req, res, 502, { error: err.message });
   }
 }
@@ -1234,8 +1124,9 @@ export function createBffServer({
   agentMemoryStore = defaultAgentMemoryStore,
   sessionContextStore = defaultSessionContextStore,
   harness2Lab = new Harness2Lab(),
+  harnessClient = defaultHarnessClient,
 } = {}) {
-  return http.createServer(async (req, res) => {
+  return http.createServer((req, res) => harnessClients.run(harnessClient, async () => {
   const id = req.headers["x-request-id"] || rid();
   const method = req.method.toUpperCase();
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
@@ -1307,7 +1198,7 @@ export function createBffServer({
 
   // ── All other /api/* → strip /api prefix, forward to PKG ──
   return pkgForward(req, res, `${path.slice(4)}${url.search}`, { requestId: id });
-  });
+  }));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

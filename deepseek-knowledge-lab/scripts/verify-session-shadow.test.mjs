@@ -8,7 +8,8 @@ import {
 } from './verify-session-shadow.mjs'
 
 const meta = {
-  version: 0,
+  version: 3,
+  isSeeded: false,
   id: 'session-1',
   createdAt: 1,
   cwd: '/workspace',
@@ -18,19 +19,26 @@ const meta = {
 function session(values, sessionMeta = meta) {
   return {
     meta: sessionMeta,
-    events: values.map((value, seq) => ({ type: 'assistant/chunk', seq, time: seq + 1, data: { value } })),
+    inheritedEventCount: 0,
+    events: values.map((value, seq) => ({ type: 'feedback/record', seq, time: seq + 1, data: { text: value } })),
   }
 }
 
 function reader(sessions) {
   return {
     async list() {
-      return [...sessions.values()].map(value => value.meta)
+      return [...sessions.values()].map(value => ({ header: value.meta }))
     },
-    async inspect(id) {
+    async open(id, access) {
+      assert.equal(access, 'read')
       const value = sessions.get(id)
       if (!value) throw new Error(`missing ${id}`)
-      return structuredClone(value)
+      return {
+        header: value.meta,
+        inheritedEventCount: value.inheritedEventCount,
+        async read() { return { events: structuredClone(value.events), eventState: 'detached' } },
+        async close() {},
+      }
     },
   }
 }
@@ -45,7 +53,8 @@ test('parseCliOptions uses PKG_DATABASE_URL and stable defaults', () => {
 
 test('compareSession distinguishes header, count, and content mismatches', () => {
   assert.equal(compareSession(meta.id, session(['a']), session(['a'])).status, 'matched')
-  assert.equal(compareSession(meta.id, session(['a']), session(['a'], { ...meta, delegationDepth: undefined })).status, 'header-mismatch')
+  assert.equal(compareSession(meta.id, session(['a']), session(['a'], { ...meta, delegationDepth: 1 })).status, 'header-mismatch')
+  assert.equal(compareSession(meta.id, session(['a']), { ...session(['a']), inheritedEventCount: 1 }).status, 'header-mismatch')
   assert.equal(compareSession(meta.id, session(['a', 'b']), session(['a'])).status, 'event-count-mismatch')
   assert.equal(compareSession(meta.id, session(['a']), session(['b'])).status, 'event-hash-mismatch')
 })

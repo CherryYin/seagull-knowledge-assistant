@@ -32,7 +32,7 @@ cp .dsh/.env.example .dsh/.env
 # 2. 安装 dsh（首次）
 npm install
 
-# 3. 安装上游依赖、构建 Host/Client，再安装 web/headless profile 的本地插件依赖
+# 3. 安装上游依赖、构建 Host/Client 和 Web 页面，再安装 profile 的本地插件依赖
 npm run profiles:install
 
 # 4. 验证两个 profile 可以完成配置组装
@@ -46,10 +46,29 @@ npm run dev
 更新上游子模块后也需要重新运行 `npm run profiles:install`。只运行
 `build:lib:host` 不会生成所有 Web UI 插件的 Node 入口和浏览器产物，可能导致
 `Cannot find package '@deepseek-ai/dsh-client-ui-reference'` 等启动错误。
+`build:lib` 也不会重建 `apps/web/dist` 页面壳；旧页面与新版模块加载器混用会导致
+`window.__ModuleLoader__ already installed (double boot?)` 和白屏。
+`profiles:install` 会在插件构建后执行 `build:web`，保持页面与插件一致。
+如果已完成插件构建，仅页面产物过旧，可运行 `CI=true pnpm --dir dsh-harness run build:web`，
+然后强制刷新浏览器；无需清理会话或数据库。
+上游依赖安装和 Host/Client 构建使用 `CI=true`，跳过不兼容子模块布局的 Git Hook 安装，包括 pnpm 在运行构建脚本前自动触发的依赖安装；依赖自身的安装脚本仍正常执行。
+安装命令同时构建上游 JSONL 文件锁需要的本机原生扩展（需要 C 编译工具链）。
+上游删除或移动模块后，旧构建产物可能保留已失效的导入；此时先运行 `CI=true pnpm --dir dsh-harness run clean`，再重新安装构建。上游清理器仅清理生成产物，遇到不认识的残留文件会拒绝删除，不清理 `.dsh` 会话数据。
 如果子模块有未解决的合并冲突，先用 `git -C dsh-harness status` 检查并完成合并，
 再安装和构建；不要通过删除插件配置或从 npm 单独安装同名包绕过本地构建。
 
+PostgreSQL 历史会话通过上游格式转换链只读访问；原始 Header、事件和版本不改写。不支持转换的历史内容会明确报错。旧会话暂不能直接续写，须先备份并另行实施后继版本迁移；不要手工修改版本号、清空表、删除 JSONL 或切换到空存储目录。新会话使用新版句柄接口持久化。升级前先停止旧 Harness 写进程，避免新旧写入协议并存；本安装命令不执行业务数据迁移。
+
 打开 `http://127.0.0.1:3080`，在聊天框中输入任务即可开始实验。
+
+Seagull BFF 通过 web profile 的 `seagull-connection` 插件接入新版 Remote API。
+插件在 `.dsh/run/seagull-harness.json` 原子写入权限为 `0600` 的进程登录连接文件；
+BFF 在服务端交换 Cookie，不读取 `.credentials.yaml`，不把登录凭据传给浏览器。
+默认要求 Harness 和 BFF 以同一系统用户运行。自定义位置时，在两个进程中设置相同的
+绝对 `HARNESS_AUTH_FILE`；文件中的 origin 必须与 `HARNESS_API_URL` 一致。
+该插件还提供经过原有鉴权的只读历史游标查询，使 BFF 使用 `session/page` 读取历史，
+而不因查看历史启动冷会话。部署新接入代码后需重启 Harness 与 BFF，无需迁移业务数据。
+验证方式与当前限制见 `../bff/README.md`。
 
 ### 一键启动完整平台
 

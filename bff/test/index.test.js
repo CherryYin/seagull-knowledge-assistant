@@ -4,6 +4,8 @@ import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { EventEmitter } from "node:events";
+import { HarnessClient } from "../src/harness-client.js";
 
 test("non-loopback BFF deployments require a strong explicit Harness service token", async () => {
   const { resolveHarnessServiceToken } = await import(`../src/index.js?token-test=${Date.now()}`);
@@ -34,7 +36,7 @@ function close(server) {
 
 test("login cookie authenticates direct API requests and preserves query params", async (t) => {
   const originalWebSocket = globalThis.WebSocket;
-  class MockWebSocket extends EventTarget {
+  class MockWebSocket extends EventEmitter {
     static CONNECTING = 0;
     static OPEN = 1;
     static CLOSING = 2;
@@ -50,18 +52,45 @@ test("login cookie authenticates direct API requests and preserves query params"
       MockWebSocket.urls.push(this.url);
       queueMicrotask(() => {
         this.readyState = MockWebSocket.OPEN;
-        this.dispatchEvent(new Event("open"));
+        this.emit("open");
       });
     }
 
-    push(payload) {
-      this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(payload) }));
+    send(bytes) {
+      const request = JSON.parse(bytes);
+      if (request.endpoint === "$events") {
+        this.eventsId = request.streamId;
+        queueMicrotask(() => this.emitFrame(this.eventsId, { type: "ready", clientId: "fixture-client" }));
+      } else if (request.endpoint === "session/follow") {
+        this.followId = request.streamId;
+        this.seq = 0;
+        this.chunkIndex = 0;
+        const sessionId = request.payload.args.request.address.sessionId;
+        queueMicrotask(() => this.emitFrame(this.followId, { type: "snapshot", header: { id: sessionId }, cursor: -1, records: [], hasMore: false }));
+      }
+    }
+
+    emitFrame(streamId, value) {
+      this.emit("message", JSON.stringify({ type: "item", streamId, value }));
+    }
+
+    push(envelope) {
+      const payload = envelope.payload;
+      if (payload.type === "question/requested") {
+        this.emitFrame(this.eventsId, { type: "waterfall", event: "user-questions/request", agentId: payload.sessionId, eventId: envelope.rpcId, request: { questions: payload.questions } });
+      } else if (payload.event?.type === "assistant/chunk") {
+        if (this.chunkIndex === 0) this.emitFrame(this.followId, { type: "assistant-stream", frame: { type: "start", attemptId: "fixture-attempt", turn: 1, step: 1 } });
+        this.emitFrame(this.followId, { type: "assistant-stream", frame: { type: "chunk", attemptId: "fixture-attempt", index: this.chunkIndex++, time: Date.now(), chunk: payload.event.data.chunk } });
+      } else {
+        this.emitFrame(this.followId, { type: "event", event: { ...payload.event, seq: this.seq++ } });
+      }
     }
 
     close() {
       if (this.readyState === MockWebSocket.CLOSED) return;
       this.readyState = MockWebSocket.CLOSED;
-      this.dispatchEvent(new Event("close"));
+      MockWebSocket.sockets = MockWebSocket.sockets.filter(socket => socket !== this);
+      this.emit("close");
     }
   }
   globalThis.WebSocket = MockWebSocket;
@@ -252,13 +281,22 @@ test("login cookie authenticates direct API requests and preserves query params"
       res.end(JSON.stringify({ id: "experiment-1" }));
       return;
     }
+    if (req.url.startsWith("/api/seagull/session-cursor?")) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ cursor: -1 }));
+      return;
+    }
     if (req.url === "/api/respond" && req.method === "POST") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ accepted: true }));
       return;
     }
     if (req.method === "POST" && req.url?.startsWith("/api/")) {
-      const envelope = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      const wire = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      assert.equal(req.url, `/api/${wire.method}`);
+      assert.ok(wire.payload.args);
+      const aliases = { "agentPresets/list": "agentPreset.list", "session/modelCatalog": "llm.models", "session/page": "session.history" };
+      const envelope = { ...wire, method: aliases[wire.method] || wire.method.replace("/", "."), payload: wire.payload.args.request || wire.payload.args };
       harnessRpcCalls.push(envelope);
       const reply = (value) => {
         res.writeHead(200, { "Content-Type": "application/json" });
@@ -298,7 +336,7 @@ test("login cookie authenticates direct API requests and preserves query params"
         return;
       }
       if (envelope.method === "session.history") {
-        reply({ events: [], hasMore: false });
+        reply({ records: [], hasMore: false });
         return;
       }
       if (envelope.method === "agentPreset.list") {
@@ -497,7 +535,10 @@ test("login cookie authenticates direct API requests and preserves query params"
   process.env.SESSION_CONTEXT_STORE_PATH = join(memoryDirectory, "session-contexts.json");
   t.after(() => rm(memoryDirectory, { recursive: true, force: true }));
   const { createBffServer } = await import(`../src/index.js?test=${Date.now()}`);
-  const bff = createBffServer();
+  const harnessClient = new HarnessClient({ baseUrl: process.env.HARNESS_API_URL, WebSocketImpl: MockWebSocket });
+  harnessClient.cookie = "fixture=authenticated";
+  harnessClient.authenticate = async () => harnessClient.cookie;
+  const bff = createBffServer({ harnessClient });
   await listen(bff);
   t.after(() => close(bff));
   const base = `http://127.0.0.1:${bff.address().port}`;
@@ -642,20 +683,8 @@ test("login cookie authenticates direct API requests and preserves query params"
       answers: [{ id: "audience", selected: ["Architecture reviewers"] }],
     }),
   });
-  assert.equal(questionAnswer.status, 200);
-  assert.deepEqual(await questionAnswer.json(), { accepted: true });
-  const respondRequest = harnessReceived.find((request) => request.url === "/api/respond");
-  assert.deepEqual(JSON.parse(respondRequest.body), {
-    type: "client-response",
-    rpcId: "question-rpc-1",
-    result: {
-      ok: true,
-      value: {
-        sessionId: "session-1",
-        answer: { answers: [{ id: "audience", selected: ["Architecture reviewers"] }] },
-      },
-    },
-  });
+  assert.equal(questionAnswer.status, 409);
+  assert.equal(harnessReceived.some(request => request.url === "/api/respond"), false);
 
   const foreignContext = await fetch(`${base}/api/harness/session-contexts/foreign-session`, { headers: { Cookie: cookie } });
   assert.equal(foreignContext.status, 404);
@@ -801,7 +830,7 @@ test("login cookie authenticates direct API requests and preserves query params"
   assert.deepEqual(chatEvents[2].args, { query: "test" });
   assert.equal(chatEvents[3].tool, "pkg_search");
   assert.equal(chatEvents[3].result, "search complete");
-  assert.match(MockWebSocket.urls[0], /^ws:\/\/127\.0\.0\.1:\d+\/api\/events\.mux$/);
+  assert.match(MockWebSocket.urls[0], /^ws:\/\/127\.0\.0\.1:\d+\/api\/remote\.mux$/);
 
   const followup = await fetch(`${base}/api/chat`, {
     method: "POST",
@@ -989,7 +1018,7 @@ test("login cookie authenticates direct API requests and preserves query params"
       answers: [{ question_id: "audience", option_labels: ["Architecture reviewers"] }],
     }),
   });
-  assert.equal(ephemeralAnswer.status, 200);
+  assert.equal(ephemeralAnswer.status, 409);
 
   const invalidEphemeralReuse = await fetch(`${base}/api/chat`, {
     method: "POST",

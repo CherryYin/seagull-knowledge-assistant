@@ -63,7 +63,7 @@ check_existing_services() {
   for service in "${SERVICES[@]}"; do
     health_url="$(service_url "$service")"
     if [[ -n "$health_url" ]] && ! is_running "$service" &&
-      curl --fail --silent --show-error --max-time 2 "$health_url" >/dev/null 2>&1; then
+      service_responding "$service" "$health_url"; then
       if [[ "$REUSE_EXISTING" != true ]]; then
         log "$service URL is already served by an unmanaged process: $health_url"
         log "confirm it is the intended local service, then use: npm run stack:start -- --reuse-existing"
@@ -71,6 +71,29 @@ check_existing_services() {
       fi
     fi
   done
+}
+
+service_responding() {
+  local service="$1"
+  local url="$2"
+  local status body
+  status="$(curl --silent --show-error --max-time 2 --output /dev/null --write-out '%{http_code}' "$url" 2>/dev/null)" || return 1
+  case "$status" in
+    2??|3??) return 0 ;;
+    401)
+      [[ "$service" == harness ]] || return 1
+      body="$(curl --silent --show-error --max-time 2 --max-filesize 256 "$url" 2>/dev/null)" || return 1
+      [[ "$body" == 'dsh web authentication required; reopen the URL printed by dsh web.' ]]
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+startup_log_tail() {
+  local service="$1"
+  local first_line="${2:-1}"
+  tail -n "+$first_line" "$(log_file "$service")" | tail -n 30 |
+    sed -E 's/([?&]token=)[^&[:space:]]+/\1[REDACTED]/g' >&2 || true
 }
 
 fail() {
@@ -125,17 +148,18 @@ clean_stale_pid() {
 wait_for_url() {
   local service="$1"
   local url="$2"
+  local first_log_line="${3:-1}"
   local deadline=$((SECONDS + START_TIMEOUT_SECONDS))
 
-  until curl --fail --silent --show-error --max-time 2 "$url" >/dev/null 2>&1; do
+  until service_responding "$service" "$url"; do
     if ! is_running "$service"; then
       log "$service exited before becoming ready; last log lines:"
-      tail -n 30 "$(log_file "$service")" >&2 || true
+      startup_log_tail "$service" "$first_log_line"
       return 1
     fi
     if (( SECONDS >= deadline )); then
       log "$service did not become ready within ${START_TIMEOUT_SECONDS}s: $url"
-      tail -n 30 "$(log_file "$service")" >&2 || true
+      startup_log_tail "$service" "$first_log_line"
       return 1
     fi
     sleep 0.5
@@ -153,7 +177,7 @@ start_service() {
     log "$service already running (PID $(read_pid "$service"))"
     return
   fi
-  if [[ -n "$health_url" ]] && curl --fail --silent --show-error --max-time 2 "$health_url" >/dev/null 2>&1; then
+  if [[ -n "$health_url" ]] && service_responding "$service" "$health_url"; then
     if [[ "$REUSE_EXISTING" == true ]]; then
       log "reusing $service at $health_url (unmanaged; not adopted or stopped by this script)"
       return
@@ -164,6 +188,10 @@ start_service() {
   fi
 
   mkdir -p "$RUN_ROOT" "$LOG_ROOT"
+  local first_log_line=1
+  if [[ -f "$(log_file "$service")" ]]; then
+    first_log_line=$(( $(wc -l <"$(log_file "$service")") + 1 ))
+  fi
   log "starting $service"
   (
     cd "$directory"
@@ -176,17 +204,17 @@ start_service() {
   sleep 0.2
   if ! kill -0 "$pid" 2>/dev/null; then
     log "$service failed to start; last log lines:"
-    tail -n 30 "$(log_file "$service")" >&2 || true
+    startup_log_tail "$service" "$first_log_line"
     return 1
   fi
 
   if [[ -n "$health_url" ]]; then
-    wait_for_url "$service" "$health_url"
+    wait_for_url "$service" "$health_url" "$first_log_line"
   fi
   sleep 0.2
   if ! is_running "$service"; then
     log "$service exited immediately after becoming ready; last log lines:"
-    tail -n 30 "$(log_file "$service")" >&2 || true
+      startup_log_tail "$service" "$first_log_line"
     return 1
   fi
   log "$service ready (PID $pid${health_url:+, $health_url})"
@@ -266,6 +294,7 @@ check_prerequisites() {
 
   [[ -x "$PKG_ROOT/.venv/bin/pkg" ]] || fail "missing PKG virtualenv executable: $PKG_ROOT/.venv/bin/pkg"
   [[ -d "$LAB_ROOT/node_modules" ]] || fail "Lab dependencies are not installed; run npm install"
+  [[ -d "$BFF_ROOT/node_modules/ws" ]] || fail "Gateway dependencies are not installed; run npm --prefix bff ci"
   [[ -d "$LAB_ROOT/.dsh/profiles/web/node_modules" ]] || fail "Harness web profile dependencies are not installed; run npm run profiles:install"
   [[ -d "$SEAGULL_ROOT/node_modules" ]] || fail "Seagull dependencies are not installed"
 
@@ -313,7 +342,7 @@ start_stack() {
       "$PKG_ROOT/.venv/bin/pkg" worker --poll-interval 30
   fi
 
-  start_service harness "$LAB_ROOT" "$HARNESS_URL/" npm run run-web
+  start_service harness "$LAB_ROOT" "$HARNESS_URL/" npm run run-web -- --no-open
 
   start_service bff "$BFF_ROOT" "$BFF_URL/api/health" \
     bash -c 'set -a; source "$1"; source "$2"; set +a; exec npm run start' \
@@ -364,7 +393,7 @@ show_status() {
     if [[ "$state" != running ]]; then
       local health_url
       health_url="$(service_url "$service")"
-      if [[ -n "$health_url" ]] && curl --fail --silent --show-error --max-time 2 "$health_url" >/dev/null 2>&1; then
+      if [[ -n "$health_url" ]] && service_responding "$service" "$health_url"; then
         state=external
         pid=""
       fi

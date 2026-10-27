@@ -13,7 +13,8 @@ deepseek-knowledge-lab/
 ├── plugins/            # deepseek-harness 插件与 Lab 运行时模块
 │   ├── pkg-client/     # PKG 知识 API 客户端插件
 │   ├── agent-memory/   # Harness Agent Memory 领域存储（由 BFF 调用）
-│   └── session-context/ # 用户隔离的 Asset 生成上下文（由 BFF 调用）
+│   ├── session-context/ # 用户隔离的 Asset 生成上下文（由 BFF 调用）
+│   └── seagull-connection/ # 私有登录连接文件与不恢复执行的历史游标查询
 ├── experiments/        # 实验任务模板（Markdown prompt + 配置）
 ├── config/             # dsh 配置文件
 │   ├── cordis.patch.yml   # 插件补丁，注入 pkg-client 等自定义插件

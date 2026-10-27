@@ -2,6 +2,7 @@ node_modules/
 __pycache__/
 *.py[cod]
 .dsh/.env
+.dsh/.credentials.yaml
 .dsh/agent-memory.json
 .dsh/agent-memory.json.*.tmp
 .dsh/sessions/

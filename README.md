@@ -99,6 +99,8 @@ Open `http://127.0.0.1:5173`.
 
 If Harness or the frontend is already running outside this script, confirm it is the intended instance and run `npm run stack:start -- --reuse-existing`. These responding services stay unmanaged (shown as `external` in status); stack stop/restart and logs do not control them. Add `--skip-worker` to avoid starting scheduled jobs, or use `npm run stack:stop -- --keep-infra` to leave the database available to external services.
 
+Harness now authenticates its browser entry page. The stack probe accepts its specific HTTP 401 sign-in prompt as a responding service without disabling authentication or reading credentials; other 401/403/error responses still fail. This is a reachability check, not an authenticated RPC or database health check. Startup failures show only the current attempt's log tail, with launch tokens redacted. The stack does not automatically open the Harness browser UI.
+
 When upgrading an existing installation, apply PKG migrations (`cd personal_knowledge_graph && .venv/bin/alembic upgrade head`) before restarting the PKG API and Gateway. Projects are available from the sidebar and the Projects button on resource details.
 
 ```bash

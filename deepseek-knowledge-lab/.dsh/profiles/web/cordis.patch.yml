@@ -41,6 +41,9 @@
     includeUserRoot: true
 
 - insert:
+    - id: seagull-connection
+      name: ../../../plugins/seagull-connection/src/index.js
+      inject: [connection, webServer, sessionQuery]
     - id: pkg-client
       name: ../../../plugins/pkg-client/src/index.js
       inject: [tools]

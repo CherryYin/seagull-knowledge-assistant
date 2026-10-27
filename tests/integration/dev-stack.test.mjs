@@ -9,10 +9,10 @@ import test from "node:test";
 const script = fileURLToPath(new URL("../../scripts/dev-stack.sh", import.meta.url));
 const urls = "http://127.0.0.1:8000/health http://127.0.0.1:3080/ http://127.0.0.1:4000/api/health http://127.0.0.1:5173/";
 
-test("profile installation prepares upstream dependencies and both build faces", () => {
+test("profile installation prepares upstream dependencies, both build faces and the web shell", () => {
   const manifest = JSON.parse(readFileSync(new URL("../../deepseek-knowledge-lab/package.json", import.meta.url), "utf8"));
   assert.equal(manifest.scripts["profiles:install"],
-    "pnpm --dir dsh-harness install --frozen-lockfile && pnpm --dir dsh-harness run build:lib && pnpm --dir .dsh/profiles/headless install && pnpm --dir .dsh/profiles/web install");
+    "CI=true pnpm --dir dsh-harness install --frozen-lockfile && CI=true pnpm --dir dsh-harness run build:native-system && CI=true pnpm --dir dsh-harness run build:lib && CI=true pnpm --dir dsh-harness run build:web && pnpm --dir .dsh/profiles/headless install && pnpm --dir .dsh/profiles/web install");
 });
 
 function runShell(body, externalUrls = "") {
@@ -26,7 +26,8 @@ function runShell(body, externalUrls = "") {
       check_prerequisites() { :; }
       curl() {
         local url="\${!#}"
-        [[ " $TEST_EXTERNAL_URLS " == *" $url "* ]]
+        [[ " $TEST_EXTERNAL_URLS " == *" $url "* ]] || return 7
+        printf '200'
       }
       docker() { printf 'docker %s\\n' "$*" >>"$TEST_EVENTS"; }
       ${body}
@@ -172,4 +173,86 @@ test("unknown flags still fail instead of starting services", () => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /unknown start option/);
   assert.equal(result.events, "");
+});
+
+const harnessAuthPrompt = "dsh web authentication required; reopen the URL printed by dsh web.";
+
+test("Harness auth prompt passes readiness without credentials or disabling auth", () => {
+  const result = runShell(`
+    curl() {
+      if [[ " $* " == *' --write-out '* ]]; then printf '401';
+      else printf '%s\\n' '${harnessAuthPrompt}'; fi
+    }
+    is_running() { return 0; }
+    wait_for_url harness "$HARNESS_URL/"
+  `);
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("authenticated unmanaged Harness is detected before starting anything", () => {
+  const result = runShell(`
+    curl() {
+      [[ "\${!#}" == "$HARNESS_URL/" ]] || return 7
+      if [[ " $* " == *' --write-out '* ]]; then printf '401';
+      else printf '%s\\n' '${harnessAuthPrompt}'; fi
+    }
+    start_infrastructure() { echo infrastructure >>"$TEST_EVENTS"; }
+    start_service() { echo "start $1" >>"$TEST_EVENTS"; }
+    start_stack
+  `);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stdout, /harness URL is already served by an unmanaged process/);
+  assert.equal(result.events, "");
+});
+
+test("authenticated Harness can be reused and shown as external without adoption", () => {
+  const result = runShell(`
+    curl() {
+      [[ "\${!#}" == "$HARNESS_URL/" ]] || return 7
+      if [[ " $* " == *' --write-out '* ]]; then printf '401';
+      else printf '%s\\n' '${harnessAuthPrompt}'; fi
+    }
+    REUSE_EXISTING=true
+    start_service harness "$2" "$HARNESS_URL/" /bin/false
+    show_status
+  `);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /reusing harness/);
+  assert.match(result.stdout, /harness\s+external\s+-/);
+  assert.ok(!result.files.some(file => file.endsWith(".pid")));
+});
+
+test("readiness rejects generic auth errors, forbidden, server errors and connection failures", () => {
+  const result = runShell(`
+    status=401
+    body='${harnessAuthPrompt}'
+    curl() {
+      if [[ " $* " == *' --write-out '* ]]; then printf '%s' "$status";
+      else printf '%s' "$body"; fi
+    }
+    for service in pkg-api bff seagull; do
+      if service_responding "$service" "$HARNESS_URL/"; then exit 9; fi
+    done
+    body=unauthorized
+    if service_responding harness "$HARNESS_URL/"; then exit 10; fi
+    for status in 000 403 404 500 503; do
+      if service_responding harness "$HARNESS_URL/"; then exit 11; fi
+    done
+    curl() { printf '200'; return 7; }
+    if service_responding harness "$HARNESS_URL/"; then exit 12; fi
+  `);
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("startup errors exclude old attempts and redact launch tokens", () => {
+  const result = runShell(`
+    mkdir -p "$LOG_ROOT" "$RUN_ROOT"
+    printf 'old missing module error\\n' >"$(log_file harness)"
+    if start_service harness "$2" "$HARNESS_URL/" bash -c 'printf "new failure ?token=test-secret&next=home\\n"; exit 1'; then
+      exit 9
+    fi
+  `);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /new failure \?token=\[REDACTED\]&next=home/);
+  assert.doesNotMatch(result.stderr, /old missing module error|test-secret/);
 });

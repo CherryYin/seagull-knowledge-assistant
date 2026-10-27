@@ -11,7 +11,7 @@ const HEADER_FIELDS = [
   'createdAt',
   'cwd',
   'parentSession',
-  'seedLength',
+  'isSeeded',
   'origin',
   'delegationDepth',
   'agentPreset',
@@ -105,7 +105,9 @@ function digestEvents(events) {
 }
 
 function headersEqual(left, right) {
-  return HEADER_FIELDS.every(field => left[field] === right[field])
+  return HEADER_FIELDS.every(field => field === 'delegationDepth'
+    ? (left[field] ?? 0) === (right[field] ?? 0)
+    : left[field] === right[field])
 }
 
 function errorMessage(error) {
@@ -116,15 +118,16 @@ export function compareSession(id, postgres, jsonl) {
   const postgresDigest = digestEvents(postgres.events)
   const jsonlDigest = digestEvents(jsonl.events)
   const base = { id, postgres: postgresDigest, jsonl: jsonlDigest }
-  if (!headersEqual(postgres.meta, jsonl.meta)) return { ...base, status: 'header-mismatch' }
+  if (!headersEqual(postgres.meta, jsonl.meta)
+    || postgres.inheritedEventCount !== jsonl.inheritedEventCount) return { ...base, status: 'header-mismatch' }
   if (postgresDigest.eventCount !== jsonlDigest.eventCount) return { ...base, status: 'event-count-mismatch' }
   if (postgresDigest.eventHash !== jsonlDigest.eventHash) return { ...base, status: 'event-hash-mismatch' }
   return { ...base, status: 'matched' }
 }
 
 export async function verifyReaders(postgres, jsonl) {
-  const postgresHeaders = await postgres.list()
-  const jsonlHeaders = await jsonl.list()
+  const postgresHeaders = (await postgres.list()).map(snapshot => snapshot.header)
+  const jsonlHeaders = (await jsonl.list()).map(snapshot => snapshot.header)
   const jsonlIds = new Set(jsonlHeaders.map(header => header.id))
   const postgresIds = new Set(postgresHeaders.map(header => header.id))
   const entries = []
@@ -137,8 +140,8 @@ export async function verifyReaders(postgres, jsonl) {
     }
     try {
       const [postgresSession, jsonlSession] = await Promise.all([
-        postgres.inspect(id),
-        jsonl.inspect(id),
+        readSession(postgres, id),
+        readSession(jsonl, id),
       ])
       entries.push(compareSession(id, postgresSession, jsonlSession))
     } catch (error) {
@@ -159,6 +162,17 @@ export async function verifyReaders(postgres, jsonl) {
     entries,
     jsonlOnly,
   }
+}
+
+async function readSession(reader, id) {
+  const handle = await reader.open(id, 'read')
+  try {
+    return {
+      meta: handle.header,
+      inheritedEventCount: handle.inheritedEventCount,
+      events: (await handle.read()).events,
+    }
+  } finally { await handle.close() }
 }
 
 export async function verifyWithRetries(readers, options, sleep = ms => new Promise(resolveDelay => setTimeout(resolveDelay, ms))) {

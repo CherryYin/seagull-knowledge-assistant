@@ -16,8 +16,9 @@
     "test:pkg": "personal_knowledge_graph/.venv/bin/pytest personal_knowledge_graph/tests -q",
     "test:ui": "npm --prefix seagull-ui run build",
     "test:gateway": "npm --prefix bff test",
+    "test:harness-remote": "node --test deepseek-knowledge-lab/plugins/seagull-connection/test/plugin.test.js tests/integration/harness-remote-smoke.test.mjs",
     "test:lab": "npm --prefix deepseek-knowledge-lab run profiles:check",
     "test:stack": "node --test tests/integration/dev-stack.test.mjs",
-    "test:integration": "npm run test:stack && node tests/integration/check-agent-memory.mjs && node tests/integration/check-asset-production.mjs && node tests/integration/check-shared-settings.mjs && node tests/integration/check-source-mind-map.mjs"
+    "test:integration": "npm run test:stack && npm run test:harness-remote && node tests/integration/check-agent-memory.mjs && node tests/integration/check-asset-production.mjs && node tests/integration/check-shared-settings.mjs && node tests/integration/check-source-mind-map.mjs"
   }
 }

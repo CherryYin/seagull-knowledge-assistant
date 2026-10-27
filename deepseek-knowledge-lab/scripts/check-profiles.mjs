@@ -25,6 +25,9 @@ for (const profile of ["headless", "web"]) {
   if (!result.stdout.includes("session-persistence-postgres")) {
     throw new Error(`${profile} profile does not compose ${primaryPackage}`);
   }
+  if (profile === "web" && !result.stdout.includes("seagull-connection")) {
+    throw new Error("web profile does not compose the private Seagull connection bootstrap");
+  }
   if (!result.stdout.includes("pkg-web-search")) {
     throw new Error(`${profile} profile does not compose the PKG-backed web_search plugin`);
   }
